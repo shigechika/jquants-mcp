@@ -1,0 +1,36 @@
+[project]
+name = "j-quants-dat-mcp"
+version = "0.1.0"
+description = "MCP server for retrieving Japanese stock market data via J-Quants API v2"
+readme = "README.md"
+authors = [{ name = "shige" }]
+license = { text = "MIT" }
+requires-python = ">=3.10"
+
+dependencies = [
+    "fastmcp>=2.0.0",
+    "httpx>=0.25.0",
+    "tomli>=2.0.0; python_version < '3.11'",
+]
+
+[project.scripts]
+j-quants-dat-mcp = "j_quants_dat_mcp.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "respx>=0.22.0",
+    "mcp>=1.16.0",
+    "ruff>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/j_quants_dat_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

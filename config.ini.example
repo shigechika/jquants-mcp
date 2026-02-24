@@ -1,0 +1,23 @@
+[jquants]
+# API キーは ~/.jquants-api/jquants-api.toml から自動読み込み。
+# 上書きが必要な場合のみ指定:
+# api_key = your_api_key_here
+
+# Plan: free / light / standard / premium
+plan = free
+
+# Cache directory (default: ~/.cache/j-quants-dat-mcp)
+# cache_dir = ~/.cache/j-quants-dat-mcp
+
+# API base URL
+# base_url = https://api.jpx-jquants.com/v2
+
+[client]
+# Max retry attempts for failed requests
+# max_retries = 5
+
+# Base delay (seconds) for exponential backoff
+# retry_base_delay = 1.0
+
+# Max pages per paginated request
+# max_pages = 10

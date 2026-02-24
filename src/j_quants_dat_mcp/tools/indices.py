@@ -1,0 +1,151 @@
+"""Index-related tools for j-quants-dat-mcp."""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from fastmcp import FastMCP
+
+from ..cache.store import CacheStore, TTL_24H, make_cache_key
+from ..client import JQuantsClient
+from ..exceptions import APIError, format_api_error
+
+logger = logging.getLogger(__name__)
+
+
+def register(
+    mcp: FastMCP,
+    get_client: callable,
+    get_cache: callable,
+) -> None:
+    """Register index tools on the MCP server."""
+
+    @mcp.tool()
+    async def get_indices_bars_daily(
+        code: str | None = None,
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        """Retrieve daily index bars (OHLC).
+
+        指数四本値（日足）を取得する。TOPIX・日経225・グロース250など各種指数の
+        始値・高値・安値・終値・出来高を日次で取得できる。
+
+        [対応プラン] Standard / Premium
+
+        Args:
+            code: 指数コード（例: 0000 = TOPIX, 0010 = 日経225）
+            date: 日付（YYYYMMDD or YYYY-MM-DD）
+            date_from: 期間指定の開始日
+            date_to: 期間指定の終了日
+        """
+        client: JQuantsClient = get_client()
+        cache: CacheStore = get_cache()
+
+        params = {"code": code, "date": date, "from": date_from, "to": date_to}
+        cache_key = make_cache_key("/indices/bars/daily", params)
+        cached = cache.get_response(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            data = await client.get_all_pages("/indices/bars/daily", params)
+            result = {"count": len(data), "data": data}
+            cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
+            return result
+        except APIError as e:
+            return format_api_error(e)
+
+    @mcp.tool()
+    async def get_indices_bars_daily_topix(
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        """Retrieve daily TOPIX bars (OHLC) with Tier 1 cache.
+
+        TOPIX の日足四本値を取得する。TOPIX に特化したエンドポイントで、
+        Tier 1 キャッシュ（行レベル）による効率的な増分取得が可能。
+
+        [対応プラン] Light / Standard / Premium
+
+        Args:
+            date_from: 期間指定の開始日（YYYYMMDD or YYYY-MM-DD）
+            date_to: 期間指定の終了日（YYYYMMDD or YYYY-MM-DD）
+        """
+        client: JQuantsClient = get_client()
+        cache: CacheStore = get_cache()
+
+        return await _get_topix_with_cache(client, cache, date_from, date_to)
+
+
+async def _get_topix_with_cache(
+    client: JQuantsClient,
+    cache: CacheStore,
+    date_from: str | None,
+    date_to: str | None,
+) -> dict[str, Any]:
+    """TOPIX 日足を Tier 1 キャッシュ付きで取得する。"""
+    try:
+        # キャッシュから既存データを取得
+        cached_data = cache.get_rows(
+            "indices_bars_daily_topix",
+            key_filter={},
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+        # キャッシュ済み日付の確認
+        cached_dates = cache.get_cached_dates(
+            "indices_bars_daily_topix",
+            key_filter={},
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+        params: dict[str, Any] = {}
+        if date_from:
+            params["from"] = date_from
+        if date_to:
+            params["to"] = date_to
+
+        if cached_dates:
+            # 増分取得: キャッシュの最新日付以降を取得
+            latest_cached = max(cached_dates)
+            if date_to and latest_cached >= date_to:
+                # 全期間キャッシュ済み
+                logger.info("TOPIX 全データキャッシュ済み (%d件)", len(cached_data))
+                return {"count": len(cached_data), "data": cached_data, "source": "cache"}
+            params["from"] = latest_cached
+
+        api_data = await client.get_all_pages("/indices/bars/daily/topix", params)
+
+        if api_data:
+            cache.put_rows(
+                "indices_bars_daily_topix",
+                api_data,
+                key_columns=["Date"],
+            )
+
+        # マージ（重複排除）
+        seen_keys: set[str] = set()
+        merged: list[dict[str, Any]] = []
+        for row in api_data:
+            key = row.get("Date", "")
+            if key not in seen_keys:
+                seen_keys.add(key)
+                merged.append(row)
+        for row in cached_data:
+            key = row.get("Date", "")
+            if key not in seen_keys:
+                seen_keys.add(key)
+                merged.append(row)
+
+        merged.sort(key=lambda r: r.get("Date", ""))
+
+        source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")
+        return {"count": len(merged), "data": merged, "source": source}
+
+    except APIError as e:
+        return format_api_error(e)
