@@ -126,7 +126,7 @@ Add to Claude Desktop config file:
 {
   "mcpServers": {
     "jquants-dat-mcp": {
-      "command": "jquants-dat-mcp",
+      "command": "/path/to/jquants-dat-mcp/.venv/bin/jquants-dat-mcp",
       "env": {
         "JQUANTS_PLAN": "premium"
       }
@@ -134,6 +134,8 @@ Add to Claude Desktop config file:
   }
 }
 ```
+
+> **Note:** Claude Desktop has a limited `PATH` (`/usr/local/bin`, `/usr/bin`, etc.), so you must specify the full path to the executable.
 
 Restart Claude Desktop after editing.
 
