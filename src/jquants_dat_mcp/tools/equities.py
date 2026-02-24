@@ -236,6 +236,9 @@ async def _get_bars_daily_with_cache(
     date_to: str | None,
 ) -> dict[str, Any]:
     """株価四本値を Tier 1 キャッシュ付きで取得する。"""
+    # 4桁コードを5桁に正規化（普通株式: 末尾0）
+    cache_code = code + "0" if len(code) == 4 else code
+
     try:
         # まず最新1件をAPIから取得して分割チェック
         probe_params: dict[str, Any] = {"code": code}
@@ -244,16 +247,16 @@ async def _get_bars_daily_with_cache(
         elif date_to:
             probe_params["date"] = date_to
 
-        # キャッシュから既存データを取得
+        # キャッシュから既存データを取得（5桁コードで検索）
         effective_date = date or date_from
         cached_data = cache.get_rows(
             "equities_bars_daily",
-            key_filter={"code": code},
+            key_filter={"code": cache_code},
             date_from=effective_date or date_from,
             date_to=date_to,
         )
 
-        # API にリクエスト
+        # API にリクエスト（元のコードをそのまま渡す）
         params: dict[str, Any] = {"code": code}
         if date:
             params["date"] = date
@@ -265,14 +268,13 @@ async def _get_bars_daily_with_cache(
         # キャッシュ済み日付の確認
         cached_dates = cache.get_cached_dates(
             "equities_bars_daily",
-            key_filter={"code": code},
+            key_filter={"code": cache_code},
             date_from=date_from or date,
             date_to=date_to,
         )
 
         if cached_dates and not date:
             # 増分取得: キャッシュにない期間のみ API から取得
-            # 簡易的に、キャッシュの最新日付以降を取得する
             latest_cached = max(cached_dates)
             if date_to and latest_cached >= date_to:
                 # 全期間キャッシュ済み
@@ -284,15 +286,22 @@ async def _get_bars_daily_with_cache(
             if date_to:
                 params["to"] = date_to
 
-        api_data = await client.get_all_pages("/equities/bars/daily", params)
+        try:
+            api_data = await client.get_all_pages("/equities/bars/daily", params)
+        except APIError:
+            # API 失敗でもキャッシュデータがあればそれを返す
+            if cached_data:
+                logger.info("API失敗、キャッシュデータを返却: code=%s (%d件)", code, len(cached_data))
+                return {"count": len(cached_data), "data": cached_data, "source": "cache"}
+            raise
 
         if api_data:
             # 株式分割チェック
             latest_row = api_data[-1]
             adj_factor = latest_row.get("AdjFactor")
-            if not cache.check_adj_factor(code, adj_factor):
+            if not cache.check_adj_factor(cache_code, adj_factor):
                 # 分割検知 → キャッシュ無効化して全件再取得
-                cache.invalidate_rows("equities_bars_daily", {"code": code})
+                cache.invalidate_rows("equities_bars_daily", {"code": cache_code})
                 logger.info("株式分割検知、キャッシュ再取得: code=%s", code)
                 params_full = {"code": code}
                 if date_from:
