@@ -32,7 +32,7 @@ pip install jquants-dat-mcp
 ### From source
 
 ```bash
-git clone https://github.com/your-username/jquants-dat-mcp.git
+git clone https://github.com/shigechika/j-quants-dat-mcp.git
 cd jquants-dat-mcp
 uv sync --dev
 ```
