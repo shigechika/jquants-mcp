@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from j_quants_dat_mcp.cache.store import CacheStore, make_cache_key
+from jquants_dat_mcp.cache.store import CacheStore, make_cache_key
 
 
 class TestMakeCacheKey:

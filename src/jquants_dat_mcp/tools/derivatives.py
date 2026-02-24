@@ -1,4 +1,4 @@
-"""Derivative-related tools for j-quants-dat-mcp."""
+"""Derivative-related tools for jquants-dat-mcp."""
 
 from __future__ import annotations
 

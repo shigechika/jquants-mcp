@@ -1,4 +1,4 @@
-"""Shared test fixtures for j-quants-dat-mcp."""
+"""Shared test fixtures for jquants-dat-mcp."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from j_quants_dat_mcp.cache.store import CacheStore
-from j_quants_dat_mcp.config import Settings
+from jquants_dat_mcp.cache.store import CacheStore
+from jquants_dat_mcp.config import Settings
 
 
 @pytest.fixture()

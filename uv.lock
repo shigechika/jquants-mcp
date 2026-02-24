@@ -462,7 +462,7 @@ wheels = [
 ]
 
 [[package]]
-name = "j-quants-dat-mcp"
+name = "jquants-dat-mcp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

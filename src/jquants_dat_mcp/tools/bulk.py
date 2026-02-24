@@ -1,4 +1,4 @@
-"""Bulk download tools for j-quants-dat-mcp."""
+"""Bulk download tools for jquants-dat-mcp."""
 
 from __future__ import annotations
 

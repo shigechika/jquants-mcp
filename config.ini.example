@@ -6,11 +6,11 @@
 # Plan: free / light / standard / premium
 plan = free
 
-# Cache directory (default: ~/.cache/j-quants-dat-mcp)
-# cache_dir = ~/.cache/j-quants-dat-mcp
+# Cache directory (default: ~/.cache/jquants-dat-mcp)
+# cache_dir = ~/.cache/jquants-dat-mcp
 
 # API base URL
-# base_url = https://api.jpx-jquants.com/v2
+# base_url = https://api.jquants.com/v2
 
 [client]
 # Max retry attempts for failed requests

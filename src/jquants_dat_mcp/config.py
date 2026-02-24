@@ -1,8 +1,8 @@
-"""Configuration management for j-quants-dat-mcp.
+"""Configuration management for jquants-dat-mcp.
 
 設定の優先順位（後勝ち）:
 1. ~/.jquants-api/jquants-api.toml  （J-Quants 公式設定: api_key のみ）
-2. ~/.config/j-quants-dat-mcp/config.ini  （ユーザーグローバル）
+2. ~/.config/jquants-dat-mcp/config.ini  （ユーザーグローバル）
 3. ./config.ini                            （カレントディレクトリ）
 4. 環境変数                                 （MCP クライアント / CLI）
 5. コンストラクタ引数                        （テスト用）
@@ -39,7 +39,7 @@ _CONFIG_DEFS: list[tuple[str, str, str, str, str]] = [
         "jquants",
         "base_url",
         "JQUANTS_BASE_URL",
-        "https://api.jpx-jquants.com/v2",
+        "https://api.jquants.com/v2",
     ),
     ("jquants_plan", "jquants", "plan", "JQUANTS_PLAN", "free"),
     ("jquants_cache_dir", "jquants", "cache_dir", "JQUANTS_CACHE_DIR", ""),
@@ -63,16 +63,16 @@ def _xdg_config_dir() -> Path:
     """XDG 準拠のグローバル設定ディレクトリを返す。"""
     xdg = os.environ.get("XDG_CONFIG_HOME")
     if xdg:
-        return Path(xdg) / "j-quants-dat-mcp"
-    return Path.home() / ".config" / "j-quants-dat-mcp"
+        return Path(xdg) / "jquants-dat-mcp"
+    return Path.home() / ".config" / "jquants-dat-mcp"
 
 
 def _default_cache_dir() -> Path:
     """XDG 準拠のデフォルトキャッシュディレクトリを返す。"""
     xdg = os.environ.get("XDG_CACHE_HOME")
     if xdg:
-        return Path(xdg) / "j-quants-dat-mcp"
-    return Path.home() / ".cache" / "j-quants-dat-mcp"
+        return Path(xdg) / "jquants-dat-mcp"
+    return Path.home() / ".cache" / "jquants-dat-mcp"
 
 
 def _read_jquants_toml(path: Path | None = None) -> str:

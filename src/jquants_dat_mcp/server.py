@@ -14,7 +14,7 @@ from .config import Settings
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("j-quants-dat-mcp")
+mcp = FastMCP("jquants-dat-mcp")
 
 # グローバルな共有インスタンス（サーバー起動時に初期化）
 _settings: Settings | None = None
@@ -60,7 +60,7 @@ def health_check() -> dict[str, Any]:
     has_key = bool(settings.jquants_api_key)
     return {
         "status": "healthy",
-        "service": "j-quants-dat-mcp",
+        "service": "jquants-dat-mcp",
         "version": __version__,
         "api_key_configured": has_key,
         "plan": settings.jquants_plan,
@@ -117,5 +117,5 @@ _register_tools()
 def run_server() -> None:
     """Start the MCP server."""
     logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
-    logger.info("j-quants-dat-mcp v%s を起動します", __version__)
+    logger.info("jquants-dat-mcp v%s を起動します", __version__)
     mcp.run()

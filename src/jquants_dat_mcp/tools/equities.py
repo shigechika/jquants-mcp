@@ -1,4 +1,4 @@
-"""Equity-related tools for j-quants-dat-mcp."""
+"""Equity-related tools for jquants-dat-mcp."""
 
 from __future__ import annotations
 

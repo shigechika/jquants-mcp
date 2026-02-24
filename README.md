@@ -1,4 +1,4 @@
-# j-quants-dat-mcp
+# jquants-dat-mcp
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that retrieves Japanese stock market data via [J-Quants API v2](https://jpx-jquants.com/).
 
@@ -23,17 +23,17 @@ This is a companion to [j-quants-doc-mcp](https://github.com/knishioka/j-quants-
 
 ```bash
 # Using uv (recommended)
-uv pip install j-quants-dat-mcp
+uv pip install jquants-dat-mcp
 
 # Using pip
-pip install j-quants-dat-mcp
+pip install jquants-dat-mcp
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/your-username/j-quants-dat-mcp.git
-cd j-quants-dat-mcp
+git clone https://github.com/your-username/jquants-dat-mcp.git
+cd jquants-dat-mcp
 uv sync --dev
 ```
 
@@ -42,7 +42,7 @@ uv sync --dev
 Settings are loaded with the following priority (later wins):
 
 1. `~/.jquants-api/jquants-api.toml` — API key only (J-Quants official config)
-2. `~/.config/j-quants-dat-mcp/config.ini` (user global)
+2. `~/.config/jquants-dat-mcp/config.ini` (user global)
 3. `./config.ini` (current directory)
 4. Environment variables (from MCP client or shell)
 
@@ -57,8 +57,8 @@ MCP-specific settings (plan, cache, client behavior):
 ```ini
 [jquants]
 plan = premium
-# cache_dir = ~/.cache/j-quants-dat-mcp
-# base_url = https://api.jpx-jquants.com/v2
+# cache_dir = ~/.cache/jquants-dat-mcp
+# base_url = https://api.jquants.com/v2
 
 [client]
 # max_retries = 5
@@ -72,8 +72,8 @@ plan = premium
 |---|---|---|---|
 | `JQUANTS_API_KEY` | No* | — | J-Quants API key |
 | `JQUANTS_PLAN` | No | `free` | Plan: `free` / `light` / `standard` / `premium` |
-| `JQUANTS_CACHE_DIR` | No | `~/.cache/j-quants-dat-mcp` | Cache directory path |
-| `JQUANTS_BASE_URL` | No | `https://api.jpx-jquants.com/v2` | API base URL |
+| `JQUANTS_CACHE_DIR` | No | `~/.cache/jquants-dat-mcp` | Cache directory path |
+| `JQUANTS_BASE_URL` | No | `https://api.jquants.com/v2` | API base URL |
 | `MAX_RETRIES` | No | `5` | Max retry attempts for failed requests |
 | `RETRY_BASE_DELAY` | No | `1.0` | Base delay (seconds) for exponential backoff |
 | `MAX_PAGES` | No | `10` | Max pages to fetch per paginated request |
@@ -89,17 +89,17 @@ Environment variables override both `config.ini` and `jquants-api.toml`. This al
 Register the MCP server with `claude mcp add`:
 
 ```bash
-claude mcp add j-quants-dat-mcp \
+claude mcp add jquants-dat-mcp \
   -e JQUANTS_PLAN=premium \
-  -- j-quants-dat-mcp
+  -- jquants-dat-mcp
 ```
 
 Or if installed from source:
 
 ```bash
-claude mcp add j-quants-dat-mcp \
+claude mcp add jquants-dat-mcp \
   -e JQUANTS_PLAN=premium \
-  -- /path/to/j-quants-dat-mcp/.venv/bin/j-quants-dat-mcp
+  -- /path/to/jquants-dat-mcp/.venv/bin/jquants-dat-mcp
 ```
 
 The `--scope` (`-s`) option controls where the configuration is stored:
@@ -125,8 +125,8 @@ Add to Claude Desktop config file:
 ```json
 {
   "mcpServers": {
-    "j-quants-dat-mcp": {
-      "command": "j-quants-dat-mcp",
+    "jquants-dat-mcp": {
+      "command": "jquants-dat-mcp",
       "env": {
         "JQUANTS_PLAN": "premium"
       }
@@ -140,7 +140,7 @@ Restart Claude Desktop after editing.
 ### Standalone
 
 ```bash
-j-quants-dat-mcp
+jquants-dat-mcp
 ```
 
 ## Available Tools
@@ -213,7 +213,7 @@ The server uses a two-tier SQLite cache:
   - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`
 - **Tier 2 (Response-level)**: Full API responses cached with configurable TTL (6h / 24h / 7d).
 
-Cache is stored at `~/.cache/j-quants-dat-mcp/cache.db` by default.
+Cache is stored at `~/.cache/jquants-dat-mcp/cache.db` by default.
 
 ## Development
 

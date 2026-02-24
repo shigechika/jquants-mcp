@@ -1,10 +1,10 @@
-"""Exception classes for j-quants-dat-mcp."""
+"""Exception classes for jquants-dat-mcp."""
 
 from __future__ import annotations
 
 
 class JQuantsDatMCPError(Exception):
-    """j-quants-dat-mcp の基底例外クラス"""
+    """jquants-dat-mcp の基底例外クラス"""
 
     def to_dict(self) -> dict:
         return {"error": True, "error_type": type(self).__name__, "message": str(self)}

@@ -5,16 +5,27 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
-from j_quants_dat_mcp.config import RATE_LIMITS, Settings
+from jquants_dat_mcp.config import RATE_LIMITS, Settings
 
 
 def test_default_settings():
     """デフォルト設定値の確認。"""
-    s = Settings(jquants_api_key="dummy")
-    assert s.jquants_base_url == "https://api.jpx-jquants.com/v2"
-    assert s.jquants_plan == "free"
-    assert s.max_retries == 5
-    assert s.max_pages == 10
+    import configparser
+
+    # 環境変数・config.ini・toml をすべて無効化してデフォルト値を確認
+    env_keys = [k for k in os.environ if k.startswith("JQUANTS_") or k in ("MAX_RETRIES", "RETRY_BASE_DELAY", "MAX_PAGES")]
+    with (
+        patch.dict(os.environ, {}, clear=False),
+        patch("jquants_dat_mcp.config._load_config_files", return_value=configparser.ConfigParser()),
+        patch("jquants_dat_mcp.config._read_jquants_toml", return_value=""),
+    ):
+        for k in env_keys:
+            os.environ.pop(k, None)
+        s = Settings(jquants_api_key="dummy")
+        assert s.jquants_base_url == "https://api.jquants.com/v2"
+        assert s.jquants_plan == "free"
+        assert s.max_retries == 5
+        assert s.max_pages == 10
 
 
 def test_rate_limit_by_plan():
@@ -53,7 +64,7 @@ def test_config_ini_loading(tmp_path):
         "[jquants]\napi_key = ini-key\nplan = premium\n\n[client]\nmax_retries = 3\n",
         encoding="utf-8",
     )
-    with patch("j_quants_dat_mcp.config._load_config_files") as mock_load:
+    with patch("jquants_dat_mcp.config._load_config_files") as mock_load:
         import configparser
 
         config = configparser.ConfigParser()
@@ -71,7 +82,7 @@ def test_env_overrides_config_ini(tmp_path):
     ini_file = tmp_path / "config.ini"
     ini_file.write_text("[jquants]\napi_key = ini-key\nplan = light\n", encoding="utf-8")
     with (
-        patch("j_quants_dat_mcp.config._load_config_files") as mock_load,
+        patch("jquants_dat_mcp.config._load_config_files") as mock_load,
         patch.dict(os.environ, {"JQUANTS_API_KEY": "env-key", "JQUANTS_PLAN": "premium"}),
     ):
         import configparser
@@ -97,8 +108,8 @@ def test_reads_api_key_from_jquants_toml(tmp_path):
     toml_file = tmp_path / "jquants-api.toml"
     toml_file.write_bytes(b'[jquants-api-client]\napi_key = "toml-key-123"\n')
     with (
-        patch("j_quants_dat_mcp.config._JQUANTS_TOML_PATH", toml_file),
-        patch("j_quants_dat_mcp.config._load_config_files") as mock_load,
+        patch("jquants_dat_mcp.config._JQUANTS_TOML_PATH", toml_file),
+        patch("jquants_dat_mcp.config._load_config_files") as mock_load,
     ):
         import configparser
 
@@ -115,8 +126,8 @@ def test_config_ini_overrides_jquants_toml(tmp_path):
     ini_file = tmp_path / "config.ini"
     ini_file.write_text("[jquants]\napi_key = ini-key\n", encoding="utf-8")
     with (
-        patch("j_quants_dat_mcp.config._JQUANTS_TOML_PATH", toml_file),
-        patch("j_quants_dat_mcp.config._load_config_files") as mock_load,
+        patch("jquants_dat_mcp.config._JQUANTS_TOML_PATH", toml_file),
+        patch("jquants_dat_mcp.config._load_config_files") as mock_load,
     ):
         import configparser
 
@@ -133,7 +144,7 @@ def test_env_overrides_jquants_toml(tmp_path):
     toml_file = tmp_path / "jquants-api.toml"
     toml_file.write_bytes(b'[jquants-api-client]\napi_key = "toml-key"\n')
     with (
-        patch("j_quants_dat_mcp.config._JQUANTS_TOML_PATH", toml_file),
+        patch("jquants_dat_mcp.config._JQUANTS_TOML_PATH", toml_file),
         patch.dict(os.environ, {"JQUANTS_API_KEY": "env-key"}),
     ):
         s = Settings()
@@ -143,6 +154,6 @@ def test_env_overrides_jquants_toml(tmp_path):
 def test_missing_toml_file_no_error(tmp_path):
     """jquants-api.toml が存在しなくてもエラーにならないこと。"""
     nonexistent = tmp_path / "nonexistent.toml"
-    with patch("j_quants_dat_mcp.config._JQUANTS_TOML_PATH", nonexistent):
+    with patch("jquants_dat_mcp.config._JQUANTS_TOML_PATH", nonexistent):
         s = Settings(jquants_api_key="fallback")
         assert s.jquants_api_key == "fallback"

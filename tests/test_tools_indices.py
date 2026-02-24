@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import j_quants_dat_mcp.server as server_module
-from j_quants_dat_mcp.cache.store import CacheStore
-from j_quants_dat_mcp.client import JQuantsClient
-from j_quants_dat_mcp.config import Settings
-from j_quants_dat_mcp.exceptions import APIError
+import jquants_dat_mcp.server as server_module
+from jquants_dat_mcp.cache.store import CacheStore
+from jquants_dat_mcp.client import JQuantsClient
+from jquants_dat_mcp.config import Settings
+from jquants_dat_mcp.exceptions import APIError
 
 
 @pytest.fixture()

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-j-quants-dat-mcp is an MCP server that retrieves Japanese stock market data via J-Quants API v2.
+jquants-dat-mcp is an MCP server that retrieves Japanese stock market data via J-Quants API v2.
 Built with FastMCP v3, httpx, pydantic-settings, SQLite cache.
 
 ## Commands
@@ -16,7 +16,7 @@ uv run ruff format src/ tests/  # Format
 
 ## Architecture
 
-- `src/j_quants_dat_mcp/` — Main package
+- `src/jquants_dat_mcp/` — Main package
   - `server.py` — FastMCP server, lazy globals (_settings, _client, _cache)
   - `client.py` — httpx async client with rate limiting, retry, pagination
   - `config.py` — configparser + env vars hybrid configuration

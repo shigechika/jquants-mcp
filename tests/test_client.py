@@ -6,9 +6,9 @@ import pytest
 import httpx
 import respx
 
-from j_quants_dat_mcp.client import JQuantsClient
-from j_quants_dat_mcp.config import Settings
-from j_quants_dat_mcp.exceptions import (
+from jquants_dat_mcp.client import JQuantsClient
+from jquants_dat_mcp.config import Settings
+from jquants_dat_mcp.exceptions import (
     APIError,
     AuthenticationError,
     PlanRestrictionError,

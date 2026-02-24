@@ -1,4 +1,4 @@
-"""CLI entry point for j-quants-dat-mcp."""
+"""CLI entry point for jquants-dat-mcp."""
 
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
 
     if "--help" in args or "-h" in args:
-        print("j-quants-dat-mcp - MCP server for J-Quants API v2 data retrieval")
+        print("jquants-dat-mcp - MCP server for J-Quants API v2 data retrieval")
         print()
-        print("Usage: j-quants-dat-mcp [OPTIONS]")
+        print("Usage: jquants-dat-mcp [OPTIONS]")
         print()
         print("Options:")
         print("  --help, -h       Show this help message")
@@ -29,7 +29,7 @@ def main(argv: list[str] | None = None) -> int:
         print()
         print("Configuration (loaded in order, later wins):")
         print("  1. ~/.jquants-api/jquants-api.toml  (API key, auto-detected)")
-        print("  2. ~/.config/j-quants-dat-mcp/config.ini")
+        print("  2. ~/.config/jquants-dat-mcp/config.ini")
         print("  3. ./config.ini")
         print("  4. Environment variables")
         print()
@@ -40,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if "--version" in args or "-v" in args:
-        print(f"j-quants-dat-mcp {__version__}")
+        print(f"jquants-dat-mcp {__version__}")
         return 0
 
     try:

@@ -1,4 +1,4 @@
-# j-quants-dat-mcp
+# jquants-dat-mcp
 
 [J-Quants API v2](https://jpx-jquants.com/) を使って日本株市場データを取得する [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) サーバーです。
 
@@ -23,17 +23,17 @@
 
 ```bash
 # uv（推奨）
-uv pip install j-quants-dat-mcp
+uv pip install jquants-dat-mcp
 
 # pip
-pip install j-quants-dat-mcp
+pip install jquants-dat-mcp
 ```
 
 ### ソースから
 
 ```bash
-git clone https://github.com/your-username/j-quants-dat-mcp.git
-cd j-quants-dat-mcp
+git clone https://github.com/your-username/jquants-dat-mcp.git
+cd jquants-dat-mcp
 uv sync --dev
 ```
 
@@ -42,7 +42,7 @@ uv sync --dev
 設定は以下の優先順位で読み込まれます（後勝ち）:
 
 1. `~/.jquants-api/jquants-api.toml` — API キーのみ（J-Quants 公式設定）
-2. `~/.config/j-quants-dat-mcp/config.ini`（ユーザーグローバル）
+2. `~/.config/jquants-dat-mcp/config.ini`（ユーザーグローバル）
 3. `./config.ini`（カレントディレクトリ）
 4. 環境変数（MCP クライアントや CLI から）
 
@@ -57,8 +57,8 @@ MCP 固有の設定（プラン、キャッシュ、クライアント動作）:
 ```ini
 [jquants]
 plan = premium
-# cache_dir = ~/.cache/j-quants-dat-mcp
-# base_url = https://api.jpx-jquants.com/v2
+# cache_dir = ~/.cache/jquants-dat-mcp
+# base_url = https://api.jquants.com/v2
 
 [client]
 # max_retries = 5
@@ -72,8 +72,8 @@ plan = premium
 |---|---|---|---|
 | `JQUANTS_API_KEY` | いいえ* | — | J-Quants API キー |
 | `JQUANTS_PLAN` | いいえ | `free` | プラン: `free` / `light` / `standard` / `premium` |
-| `JQUANTS_CACHE_DIR` | いいえ | `~/.cache/j-quants-dat-mcp` | キャッシュディレクトリのパス |
-| `JQUANTS_BASE_URL` | いいえ | `https://api.jpx-jquants.com/v2` | API ベース URL |
+| `JQUANTS_CACHE_DIR` | いいえ | `~/.cache/jquants-dat-mcp` | キャッシュディレクトリのパス |
+| `JQUANTS_BASE_URL` | いいえ | `https://api.jquants.com/v2` | API ベース URL |
 | `MAX_RETRIES` | いいえ | `5` | リクエスト失敗時の最大リトライ回数 |
 | `RETRY_BASE_DELAY` | いいえ | `1.0` | 指数バックオフの基本遅延（秒） |
 | `MAX_PAGES` | いいえ | `10` | ページネーション時の最大ページ数 |
@@ -89,17 +89,17 @@ plan = premium
 `claude mcp add` で MCP サーバーを登録:
 
 ```bash
-claude mcp add j-quants-dat-mcp \
+claude mcp add jquants-dat-mcp \
   -e JQUANTS_PLAN=premium \
-  -- j-quants-dat-mcp
+  -- jquants-dat-mcp
 ```
 
 ソースからインストールした場合:
 
 ```bash
-claude mcp add j-quants-dat-mcp \
+claude mcp add jquants-dat-mcp \
   -e JQUANTS_PLAN=premium \
-  -- /path/to/j-quants-dat-mcp/.venv/bin/j-quants-dat-mcp
+  -- /path/to/jquants-dat-mcp/.venv/bin/jquants-dat-mcp
 ```
 
 `--scope`（`-s`）オプションで設定の保存先を指定できます:
@@ -125,8 +125,8 @@ Claude Desktop の設定ファイルに追加:
 ```json
 {
   "mcpServers": {
-    "j-quants-dat-mcp": {
-      "command": "j-quants-dat-mcp",
+    "jquants-dat-mcp": {
+      "command": "jquants-dat-mcp",
       "env": {
         "JQUANTS_PLAN": "premium"
       }
@@ -140,7 +140,7 @@ Claude Desktop の設定ファイルに追加:
 ### スタンドアロン
 
 ```bash
-j-quants-dat-mcp
+jquants-dat-mcp
 ```
 
 ## 提供ツール一覧
@@ -213,7 +213,7 @@ j-quants-dat-mcp
   - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`
 - **Tier 2（レスポンスレベル）**: API レスポンス全体を TTL 付きでキャッシュ（6h / 24h / 7d）。
 
-キャッシュの保存先はデフォルトで `~/.cache/j-quants-dat-mcp/cache.db` です。
+キャッシュの保存先はデフォルトで `~/.cache/jquants-dat-mcp/cache.db` です。
 
 ## 開発
 
