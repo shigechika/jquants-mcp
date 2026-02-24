@@ -212,10 +212,29 @@ jquants-dat-mcp
 2層構造の SQLite キャッシュを使用しています:
 
 - **Tier 1（行レベル）**: 時系列データを日付×コードで管理。増分取得・株式分割検知（AdjFactor 比較）に対応。
-  - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`
+  - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`
 - **Tier 2（レスポンスレベル）**: API レスポンス全体を TTL 付きでキャッシュ（6h / 24h / 7d）。
 
 キャッシュの保存先はデフォルトで `~/.cache/jquants-dat-mcp/cache.db` です。
+
+### バルクデータ一括取得
+
+`scripts/bulk_fetch_all.py` は J-Quants Bulk API から CSV データを一括ダウンロードし、SQLite キャッシュにインポートするスクリプトです。過去データを効率的にローカルキャッシュに蓄積できます。
+
+```bash
+# Light プランの全データを取得（fins_summary, investor_types, topix, equities_master）
+uv run python scripts/bulk_fetch_all.py
+
+# 特定のエンドポイントのみ取得
+uv run python scripts/bulk_fetch_all.py --endpoints fins_summary topix
+
+# ドライラン — ファイル一覧とサイズのみ表示
+uv run python scripts/bulk_fetch_all.py --dry-run
+```
+
+プラン別のレート制限（例: Light は 60 req/min）を遵守し、429 エラー時は自動リトライします。
+
+別途 `scripts/import_csv_to_cache.py` で、ローカルの CSV ファイル（JPX の過去データダウンロード等）をキャッシュにインポートすることもできます。
 
 ## 開発
 

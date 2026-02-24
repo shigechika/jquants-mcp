@@ -33,6 +33,11 @@ _TIER1_TABLES = {
         "primary_key": "date",
         "extra_columns": "",
     },
+    "investor_types": {
+        "key_columns": "pub_date TEXT NOT NULL, section TEXT NOT NULL",
+        "primary_key": "pub_date, section",
+        "extra_columns": "",
+    },
 }
 
 # Tier 2 テーブル: レスポンスレベルキャッシュ
