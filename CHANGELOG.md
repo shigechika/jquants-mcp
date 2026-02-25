@@ -6,6 +6,17 @@
 ---
 
 ## 2026-02-25
+### 日次データ取得スクリプト（`daily_fetch.py`）
+- `scripts/daily_fetch.py` を追加 — jquantsapi.ClientV2 で追加データを取得し SQLite キャッシュに直接投入
+- `~/.config/jquants-dat-mcp/config.ini` の `plan` 設定（または `JQUANTS_PLAN` 環境変数）に応じて取得対象を自動決定
+  - Free: `fins_summary`（決算サマリー）、`earnings_cal`（決算発表予定）
+  - Light: `topix`（TOPIX 日足）、`investor_types`（投資部門別売買動向）
+  - Standard: `short_ratio`（業種別空売り比率）、`margin_interest`（信用取引残高）、`margin_alert`（増担保規制情報）、`short_sale_report`（空売り残高報告）
+  - Premium: `breakdown`（売買内訳）
+- Tier 1（行レベル差分投入）と Tier 2（レスポンスレベル TTL 付き）の両方に対応
+- 403 等の権限エラーは graceful にスキップ（パイプラインを止めない）
+- `--endpoint名` フラグで個別指定も可能（プラン外指定時は警告してスキップ）
+
 ### CSV 差分インポート（`--incremental`）
 - `scripts/import_csv_to_cache.py` に `--incremental` フラグを追加
 - 通常日: キャッシュ最新日より新しい行だけ INSERT（~4,000行/日、全件530万行に対し大幅高速化）
