@@ -8,6 +8,7 @@ build/
 .eggs/
 
 .env
+.envrc
 .venv/
 venv/
 
