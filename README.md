@@ -234,7 +234,24 @@ uv run python scripts/bulk_fetch_all.py --dry-run
 
 The script respects the plan-based rate limit (e.g. 60 req/min for Light) and retries on 429 errors.
 
-A separate `scripts/import_csv_to_cache.py` script is available for importing local CSV files (e.g. from JPX historical data downloads) into the cache.
+### CSV Import
+
+`scripts/import_csv_to_cache.py` imports local CSV files into the cache. Useful for sideloading data from other pipelines without calling the API.
+
+```bash
+# Full import (initial setup)
+uv run python scripts/import_csv_to_cache.py \
+    --market-history /path/to/jpx-market-history.csv \
+    --tickers /path/to/jpx-tickers.csv
+
+# Incremental import (daily operation)
+uv run python scripts/import_csv_to_cache.py \
+    --market-history /path/to/jpx-market-history.csv \
+    --tickers /path/to/jpx-tickers.csv \
+    --incremental
+```
+
+With `--incremental`, only rows newer than the latest cached date are imported (~4,000 rows/day instead of 5M+). Stock splits and reverse splits are automatically detected via `AdjFactor != 1.0` — affected stocks are fully re-imported to update adjusted prices across all dates.
 
 ## Development
 

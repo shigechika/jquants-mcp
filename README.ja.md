@@ -234,7 +234,24 @@ uv run python scripts/bulk_fetch_all.py --dry-run
 
 プラン別のレート制限（例: Light は 60 req/min）を遵守し、429 エラー時は自動リトライします。
 
-別途 `scripts/import_csv_to_cache.py` で、ローカルの CSV ファイル（JPX の過去データダウンロード等）をキャッシュにインポートすることもできます。
+### CSV インポート
+
+`scripts/import_csv_to_cache.py` はローカルの CSV ファイルをキャッシュにインポートします。API を叩かずに他のパイプラインからデータをサイドロードできます。
+
+```bash
+# 全件インポート（初回セットアップ）
+uv run python scripts/import_csv_to_cache.py \
+    --market-history /path/to/jpx-market-history.csv \
+    --tickers /path/to/jpx-tickers.csv
+
+# 差分インポート（日次運用）
+uv run python scripts/import_csv_to_cache.py \
+    --market-history /path/to/jpx-market-history.csv \
+    --tickers /path/to/jpx-tickers.csv \
+    --incremental
+```
+
+`--incremental` を指定すると、キャッシュ最新日より新しい行だけをインポートします（530万行超の全件ではなく ~4,000行/日）。株式分割・併合は `AdjFactor != 1.0` で自動検知し、該当銘柄の全期間データを再インポートして調整済み値を更新します。
 
 ## 開発
 
