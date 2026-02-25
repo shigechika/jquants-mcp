@@ -253,6 +253,32 @@ uv run python scripts/import_csv_to_cache.py \
 
 `--incremental` を指定すると、キャッシュ最新日より新しい行だけをインポートします（530万行超の全件ではなく ~4,000行/日）。株式分割・併合は `AdjFactor != 1.0` で自動検知し、該当銘柄の全期間データを再インポートして調整済み値を更新します。
 
+### 日次データ取得
+
+`scripts/daily_fetch.py` は `jquantsapi.ClientV2` で追加データを取得し、SQLite キャッシュに直接投入するスクリプトです。外部の日次パイプライン（cron やシェルスクリプト）から呼び出す想定です。
+
+`~/.config/jquants-dat-mcp/config.ini`（または `JQUANTS_PLAN` 環境変数）からプランを読み取り、取得対象を自動決定します:
+
+| プラン | 取得対象 |
+|---|---|
+| Free | `fins_summary`（決算サマリー）、`earnings_cal`（決算発表予定） |
+| Light | + `topix`（TOPIX 日足）、`investor_types`（投資部門別売買動向） |
+| Standard | + `short_ratio`（業種別空売り比率）、`margin_interest`（信用取引残高）、`margin_alert`（増担保規制情報）、`short_sale_report`（空売り残高報告） |
+| Premium | + `breakdown`（売買内訳） |
+
+```bash
+# プランに応じた全データ取得
+python3 scripts/daily_fetch.py
+
+# 特定のエンドポイントのみ取得
+python3 scripts/daily_fetch.py --topix --investor-types
+
+# キャッシュ DB パスを指定
+python3 scripts/daily_fetch.py --db /path/to/cache.db
+```
+
+権限エラー（403）は graceful にスキップし、次のエンドポイントに進みます。
+
 ## 開発
 
 ```bash

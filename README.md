@@ -253,6 +253,32 @@ uv run python scripts/import_csv_to_cache.py \
 
 With `--incremental`, only rows newer than the latest cached date are imported (~4,000 rows/day instead of 5M+). Stock splits and reverse splits are automatically detected via `AdjFactor != 1.0` — affected stocks are fully re-imported to update adjusted prices across all dates.
 
+### Daily Fetch
+
+`scripts/daily_fetch.py` fetches additional J-Quants data via `jquantsapi.ClientV2` and inserts it directly into the SQLite cache. Designed to be called from an external daily pipeline (e.g. a cron job or shell script).
+
+The script reads the plan from `~/.config/jquants-dat-mcp/config.ini` (or `JQUANTS_PLAN` env var) and automatically determines which endpoints to fetch:
+
+| Plan | Endpoints |
+|---|---|
+| Free | `fins_summary`, `earnings_cal` |
+| Light | + `topix`, `investor_types` |
+| Standard | + `short_ratio`, `margin_interest`, `margin_alert`, `short_sale_report` |
+| Premium | + `breakdown` |
+
+```bash
+# Fetch all endpoints available for your plan
+python3 scripts/daily_fetch.py
+
+# Fetch specific endpoints only
+python3 scripts/daily_fetch.py --topix --investor-types
+
+# Use a custom cache DB path
+python3 scripts/daily_fetch.py --db /path/to/cache.db
+```
+
+Permission errors (403) are handled gracefully — the script logs the error and continues to the next endpoint without crashing.
+
 ## Development
 
 ```bash
