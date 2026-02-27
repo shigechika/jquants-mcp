@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 
 from . import __version__
@@ -16,37 +17,42 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Exit code (0 for success, 1 for error)
     """
-    args = argv if argv is not None else sys.argv[1:]
+    parser = argparse.ArgumentParser(
+        prog="jquants-dat-mcp",
+        description="MCP server for J-Quants API v2 data retrieval",
+    )
+    parser.add_argument(
+        "--version",
+        "-v",
+        action="version",
+        version=f"jquants-dat-mcp {__version__}",
+    )
+    parser.add_argument(
+        "--transport",
+        "-t",
+        choices=["stdio", "streamable-http"],
+        default="stdio",
+        help="Transport type (default: stdio)",
+    )
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Bind address for HTTP transport (default: 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--port",
+        "-p",
+        type=int,
+        default=8080,
+        help="Port for HTTP transport (default: 8080)",
+    )
 
-    if "--help" in args or "-h" in args:
-        print("jquants-dat-mcp - MCP server for J-Quants API v2 data retrieval")
-        print()
-        print("Usage: jquants-dat-mcp [OPTIONS]")
-        print()
-        print("Options:")
-        print("  --help, -h       Show this help message")
-        print("  --version, -v    Show version")
-        print()
-        print("Configuration (loaded in order, later wins):")
-        print("  1. ~/.jquants-api/jquants-api.toml  (API key, auto-detected)")
-        print("  2. ~/.config/jquants-dat-mcp/config.ini")
-        print("  3. ./config.ini")
-        print("  4. Environment variables")
-        print()
-        print("Environment variables:")
-        print("  JQUANTS_API_KEY      J-Quants API key (auto-detected from toml)")
-        print("  JQUANTS_PLAN         Plan: free/light/standard/premium (default: free)")
-        print("  JQUANTS_CACHE_DIR    Cache directory path")
-        return 0
-
-    if "--version" in args or "-v" in args:
-        print(f"jquants-dat-mcp {__version__}")
-        return 0
+    args = parser.parse_args(argv)
 
     try:
         from .server import run_server
 
-        run_server()
+        run_server(transport=args.transport, host=args.host, port=args.port)
         return 0
     except KeyboardInterrupt:
         print("\nシャットダウンします。")

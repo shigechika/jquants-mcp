@@ -114,8 +114,23 @@ _register_tools()
 # ------------------------------------------------------------------
 
 
-def run_server() -> None:
-    """Start the MCP server."""
+def run_server(
+    transport: str = "stdio",
+    host: str = "0.0.0.0",
+    port: int = 8080,
+) -> None:
+    """Start the MCP server.
+
+    Args:
+        transport: Transport type ("stdio" or "streamable-http")
+        host: Bind address for HTTP transport
+        port: Port number for HTTP transport
+    """
     logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
-    logger.info("jquants-dat-mcp v%s を起動します", __version__)
-    mcp.run()
+    logger.info("jquants-dat-mcp v%s を起動します (transport=%s)", __version__, transport)
+
+    if transport == "stdio":
+        mcp.run(transport="stdio")
+    else:
+        logger.info("HTTP サーバー: http://%s:%d/mcp", host, port)
+        mcp.run(transport=transport, host=host, port=port)

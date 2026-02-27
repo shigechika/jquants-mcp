@@ -139,11 +139,33 @@ Add to Claude Desktop config file:
 
 Restart Claude Desktop after editing.
 
-### Standalone
+### Standalone (stdio)
 
 ```bash
 jquants-dat-mcp
 ```
+
+### Streamable HTTP (remote access)
+
+Run the server over HTTP so that MCP clients on other machines can connect:
+
+```bash
+jquants-dat-mcp --transport streamable-http --port 8080
+```
+
+This exposes the MCP endpoint at `http://<host>:8080/mcp`. Clients on the same LAN (or via SSH tunnel) can connect to the server.
+
+**Claude Code (remote):**
+
+```bash
+claude mcp add jquants-dat-mcp --transport http http://your-server:8080/mcp
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--transport`, `-t` | `stdio` | Transport type: `stdio` or `streamable-http` |
+| `--host` | `0.0.0.0` | Bind address |
+| `--port`, `-p` | `8080` | Port number |
 
 ## Available Tools
 
