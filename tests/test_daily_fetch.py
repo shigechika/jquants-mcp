@@ -13,7 +13,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 import sys
 
 # daily_fetch.py は jquantsapi に依存するが、jquants-dat-mcp の .venv には入っていない。
@@ -23,11 +22,10 @@ sys.modules.setdefault("jquantsapi", _jquantsapi_mock)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from daily_fetch import (
+from daily_fetch import (  # noqa: E402
     ENDPOINT_MIN_PLAN,
     FETCH_REGISTRY,
     TTL_6H,
-    TTL_7D,
     TTL_24H,
     _available_endpoints,
     _ensure_tables,

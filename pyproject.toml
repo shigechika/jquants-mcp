@@ -16,7 +16,7 @@ dependencies = [
 [project.scripts]
 jquants-dat-mcp = "jquants_dat_mcp.cli:main"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

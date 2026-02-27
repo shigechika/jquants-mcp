@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import sqlite3
-import textwrap
+import sys
 from pathlib import Path
 
 import pytest
 
-# スクリプトの関数を直接インポートできないため、sys.path で追加
-import sys
-
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
-from import_csv_to_cache import (
+from import_csv_to_cache import (  # noqa: E402
     _ensure_tables,
     import_market_history,
     import_market_history_incremental,
