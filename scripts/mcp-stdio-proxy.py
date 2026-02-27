@@ -6,7 +6,7 @@ Claude Desktop (stdio) <-> this proxy <-> remote MCP server (Streamable HTTP)
 Usage:
     python mcp-stdio-proxy.py [URL]
 
-    URL defaults to http://m1.local:8080/mcp
+    URL defaults to http://192.0.2.1:8080/mcp
 """
 
 import json
@@ -14,7 +14,7 @@ import sys
 
 import httpx
 
-DEFAULT_URL = "http://m1.local:8080/mcp"
+DEFAULT_URL = "http://192.0.2.1:8080/mcp"
 HEADERS = {
     "Content-Type": "application/json",
     "Accept": "application/json, text/event-stream",
