@@ -167,6 +167,39 @@ claude mcp add jquants-dat-mcp --transport http http://your-server:8080/mcp
 | `--host` | `0.0.0.0` | Bind address |
 | `--port`, `-p` | `8080` | Port number |
 
+### Claude Desktop (remote via stdio proxy)
+
+Claude Desktop does not support Streamable HTTP transport directly. Use `mcp-stdio-proxy.py` to bridge stdio to a remote MCP server:
+
+```json
+{
+  "mcpServers": {
+    "jquants-dat-mcp": {
+      "command": "/path/to/jquants-dat-mcp/.venv/bin/python",
+      "args": ["/path/to/jquants-dat-mcp/mcp-stdio-proxy.py"]
+    }
+  }
+}
+```
+
+The proxy connects to `http://m1.local:8080/mcp` by default. To specify a different URL:
+
+```json
+{
+  "mcpServers": {
+    "jquants-dat-mcp": {
+      "command": "/path/to/jquants-dat-mcp/.venv/bin/python",
+      "args": [
+        "/path/to/jquants-dat-mcp/mcp-stdio-proxy.py",
+        "http://your-server:8080/mcp"
+      ]
+    }
+  }
+}
+```
+
+Restart Claude Desktop after editing.
+
 ## Available Tools
 
 ### Equities (6 tools)
