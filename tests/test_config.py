@@ -13,10 +13,16 @@ def test_default_settings():
     import configparser
 
     # 環境変数・config.ini・toml をすべて無効化してデフォルト値を確認
-    env_keys = [k for k in os.environ if k.startswith("JQUANTS_") or k in ("MAX_RETRIES", "RETRY_BASE_DELAY", "MAX_PAGES")]
+    env_keys = [
+        k
+        for k in os.environ
+        if k.startswith("JQUANTS_") or k in ("MAX_RETRIES", "RETRY_BASE_DELAY", "MAX_PAGES")
+    ]
     with (
         patch.dict(os.environ, {}, clear=False),
-        patch("jquants_dat_mcp.config._load_config_files", return_value=configparser.ConfigParser()),
+        patch(
+            "jquants_dat_mcp.config._load_config_files", return_value=configparser.ConfigParser()
+        ),
         patch("jquants_dat_mcp.config._read_jquants_toml", return_value=""),
     ):
         for k in env_keys:

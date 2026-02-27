@@ -210,10 +210,12 @@ class TestFetchTopix:
 
     def test_empty_cache_full_fetch(self, db_conn):
         """キャッシュ空 → 全期間取得。"""
-        df = FakeDataFrame([
-            {"Date": "2026-02-24", "O": 2700, "C": 2750},
-            {"Date": "2026-02-25", "O": 2750, "C": 2800},
-        ])
+        df = FakeDataFrame(
+            [
+                {"Date": "2026-02-24", "O": 2700, "C": 2750},
+                {"Date": "2026-02-25", "O": 2750, "C": 2800},
+            ]
+        )
         cli = _mock_cli(get_idx_bars_daily_topix=df)
 
         n = fetch_topix(cli, db_conn)
@@ -266,10 +268,12 @@ class TestFetchFinsSummary:
     """fetch_fins_summary のテスト。"""
 
     def test_basic_fetch(self, db_conn):
-        df = FakeDataFrame([
-            {"Code": "72030", "DiscDate": "2026-02-25", "Revenue": 1000000},
-            {"Code": "99830", "DiscDate": "2026-02-25", "Revenue": 2000000},
-        ])
+        df = FakeDataFrame(
+            [
+                {"Code": "72030", "DiscDate": "2026-02-25", "Revenue": 1000000},
+                {"Code": "99830", "DiscDate": "2026-02-25", "Revenue": 2000000},
+            ]
+        )
         cli = MagicMock()
         cli.get_fin_summary.side_effect = [df] + [FakeDataFrame()] * 6
 
@@ -297,10 +301,12 @@ class TestFetchEarningsCalendar:
     """fetch_earnings_calendar のテスト。"""
 
     def test_basic_fetch(self, db_conn):
-        df = FakeDataFrame([
-            {"Code": "72030", "Date": "2026-03-01"},
-            {"Code": "99830", "Date": "2026-03-15"},
-        ])
+        df = FakeDataFrame(
+            [
+                {"Code": "72030", "Date": "2026-03-01"},
+                {"Code": "99830", "Date": "2026-03-15"},
+            ]
+        )
         cli = _mock_cli(get_eq_earnings_cal=df)
 
         n = fetch_earnings_calendar(cli, db_conn)
@@ -328,10 +334,12 @@ class TestFetchInvestorTypes:
     """fetch_investor_types のテスト。"""
 
     def test_basic_fetch(self, db_conn):
-        df = FakeDataFrame([
-            {"PubDate": "2026-02-20", "Section": "TSEPrime", "FrgnBuy": 100},
-            {"PubDate": "2026-02-20", "Section": "TSEStandard", "FrgnBuy": 50},
-        ])
+        df = FakeDataFrame(
+            [
+                {"PubDate": "2026-02-20", "Section": "TSEPrime", "FrgnBuy": 100},
+                {"PubDate": "2026-02-20", "Section": "TSEStandard", "FrgnBuy": 50},
+            ]
+        )
         cli = _mock_cli(get_eq_investor_types=df)
 
         n = fetch_investor_types(cli, db_conn)
@@ -342,12 +350,16 @@ class TestFetchInvestorTypes:
 
     def test_upsert(self, db_conn):
         """同じ pub_date+section で上書きされること。"""
-        df1 = FakeDataFrame([
-            {"PubDate": "2026-02-20", "Section": "TSEPrime", "FrgnBuy": 100},
-        ])
-        df2 = FakeDataFrame([
-            {"PubDate": "2026-02-20", "Section": "TSEPrime", "FrgnBuy": 999},
-        ])
+        df1 = FakeDataFrame(
+            [
+                {"PubDate": "2026-02-20", "Section": "TSEPrime", "FrgnBuy": 100},
+            ]
+        )
+        df2 = FakeDataFrame(
+            [
+                {"PubDate": "2026-02-20", "Section": "TSEPrime", "FrgnBuy": 999},
+            ]
+        )
 
         cli = _mock_cli(get_eq_investor_types=df1)
         fetch_investor_types(cli, db_conn)
@@ -418,7 +430,10 @@ class TestFetchDailyToCache:
         method = MagicMock(return_value=df)
 
         _fetch_daily_to_cache(
-            method, db_conn, "/test/custom", TTL_24H,
+            method,
+            db_conn,
+            "/test/custom",
+            TTL_24H,
             date_param="calculated_date",
         )
         call_kwargs = method.call_args_list[0].kwargs

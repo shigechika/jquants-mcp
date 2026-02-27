@@ -291,7 +291,9 @@ async def _get_bars_daily_with_cache(
         except APIError:
             # API 失敗でもキャッシュデータがあればそれを返す
             if cached_data:
-                logger.info("API失敗、キャッシュデータを返却: code=%s (%d件)", code, len(cached_data))
+                logger.info(
+                    "API失敗、キャッシュデータを返却: code=%s (%d件)", code, len(cached_data)
+                )
                 return {"count": len(cached_data), "data": cached_data, "source": "cache"}
             raise
 
