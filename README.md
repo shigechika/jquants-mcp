@@ -64,6 +64,11 @@ plan = premium
 # max_retries = 5
 # retry_base_delay = 1.0
 # max_pages = 10
+
+[server]
+# ssl_certfile = /path/to/fullchain.pem
+# ssl_keyfile = /path/to/privkey.pem
+# bearer_token = <secret>
 ```
 
 ### Environment Variables
@@ -77,6 +82,9 @@ plan = premium
 | `MAX_RETRIES` | No | `5` | Max retry attempts for failed requests |
 | `RETRY_BASE_DELAY` | No | `1.0` | Base delay (seconds) for exponential backoff |
 | `MAX_PAGES` | No | `10` | Max pages to fetch per paginated request |
+| `SSL_CERTFILE` | No | — | Path to SSL certificate file (HTTP transport) |
+| `SSL_KEYFILE` | No | — | Path to SSL private key file (HTTP transport) |
+| `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication |
 
 \* API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `JQUANTS_API_KEY` only to override.
 
@@ -168,6 +176,43 @@ claude mcp add jquants-dat-mcp \
 | `--transport`, `-t` | `stdio` | Transport type: `stdio` or `streamable-http` |
 | `--host` | `0.0.0.0` | Bind address |
 | `--port`, `-p` | `8080` | Port number |
+| `--ssl-certfile` | — | Path to SSL certificate file |
+| `--ssl-keyfile` | — | Path to SSL private key file |
+| `--bearer-token` | — | Bearer token for authentication |
+
+### TLS + Bearer Token Authentication
+
+For secure remote access over the internet (e.g., IPv6), enable TLS encryption and Bearer token authentication:
+
+```bash
+# Generate a bearer token
+python3 -c "import secrets; print(secrets.token_hex(32))"
+
+# Start with TLS and authentication
+jquants-dat-mcp -t streamable-http --port 8080 \
+  --ssl-certfile /path/to/fullchain.pem \
+  --ssl-keyfile /path/to/privkey.pem \
+  --bearer-token <TOKEN>
+```
+
+Or configure via `config.ini` (no CLI flags needed):
+
+```ini
+[server]
+ssl_certfile = /path/to/fullchain.pem
+ssl_keyfile = /path/to/privkey.pem
+bearer_token = <TOKEN>
+```
+
+**Claude Code (remote with TLS):**
+
+```bash
+claude mcp add jquants-dat-mcp \
+  -e JQUANTS_PLAN=premium \
+  --transport http \
+  --header "Authorization: Bearer <TOKEN>" \
+  https://[2001:db8::1]:8080/mcp
+```
 
 ### Claude Desktop (remote via stdio proxy)
 
@@ -181,6 +226,23 @@ Claude Desktop does not support Streamable HTTP transport directly. Use `scripts
       "args": [
         "/path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py",
         "http://192.0.2.1:8080/mcp"
+      ]
+    }
+  }
+}
+```
+
+To connect to a TLS-enabled server with Bearer token authentication:
+
+```json
+{
+  "mcpServers": {
+    "jquants-dat-mcp": {
+      "command": "/path/to/jquants-dat-mcp/.venv/bin/python",
+      "args": [
+        "/path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py",
+        "https://[2001:db8::1]:8080/mcp",
+        "--bearer-token", "<TOKEN>"
       ]
     }
   }

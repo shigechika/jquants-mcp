@@ -64,6 +64,11 @@ plan = premium
 # max_retries = 5
 # retry_base_delay = 1.0
 # max_pages = 10
+
+[server]
+# ssl_certfile = /path/to/fullchain.pem
+# ssl_keyfile = /path/to/privkey.pem
+# bearer_token = <secret>
 ```
 
 ### 環境変数
@@ -77,6 +82,9 @@ plan = premium
 | `MAX_RETRIES` | いいえ | `5` | リクエスト失敗時の最大リトライ回数 |
 | `RETRY_BASE_DELAY` | いいえ | `1.0` | 指数バックオフの基本遅延（秒） |
 | `MAX_PAGES` | いいえ | `10` | ページネーション時の最大ページ数 |
+| `SSL_CERTFILE` | いいえ | — | SSL 証明書ファイルのパス（HTTP トランスポート用） |
+| `SSL_KEYFILE` | いいえ | — | SSL 秘密鍵ファイルのパス（HTTP トランスポート用） |
+| `MCP_BEARER_TOKEN` | いいえ | — | HTTP 認証用の Bearer トークン |
 
 \* API キーは `~/.jquants-api/jquants-api.toml` から自動検出されます。上書きが必要な場合のみ `JQUANTS_API_KEY` を設定してください。
 
@@ -168,6 +176,43 @@ claude mcp add jquants-dat-mcp \
 | `--transport`, `-t` | `stdio` | トランスポート: `stdio` または `streamable-http` |
 | `--host` | `0.0.0.0` | バインドアドレス |
 | `--port`, `-p` | `8080` | ポート番号 |
+| `--ssl-certfile` | — | SSL 証明書ファイルのパス |
+| `--ssl-keyfile` | — | SSL 秘密鍵ファイルのパス |
+| `--bearer-token` | — | Bearer トークン認証 |
+
+### TLS + Bearer Token 認証
+
+インターネット経由（IPv6 等）で安全にリモートアクセスするには、TLS 暗号化と Bearer token 認証を有効にします:
+
+```bash
+# Bearer トークンを生成
+python3 -c "import secrets; print(secrets.token_hex(32))"
+
+# TLS + 認証付きで起動
+jquants-dat-mcp -t streamable-http --port 8080 \
+  --ssl-certfile /path/to/fullchain.pem \
+  --ssl-keyfile /path/to/privkey.pem \
+  --bearer-token <TOKEN>
+```
+
+または `config.ini` で設定（CLI フラグ不要）:
+
+```ini
+[server]
+ssl_certfile = /path/to/fullchain.pem
+ssl_keyfile = /path/to/privkey.pem
+bearer_token = <TOKEN>
+```
+
+**Claude Code（TLS 付きリモート接続）:**
+
+```bash
+claude mcp add jquants-dat-mcp \
+  -e JQUANTS_PLAN=premium \
+  --transport http \
+  --header "Authorization: Bearer <TOKEN>" \
+  https://[2001:db8::1]:8080/mcp
+```
 
 ### Claude Desktop（stdio プロキシ経由のリモート接続）
 
@@ -181,6 +226,23 @@ Claude Desktop は Streamable HTTP トランスポートに直接対応してい
       "args": [
         "/path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py",
         "http://192.0.2.1:8080/mcp"
+      ]
+    }
+  }
+}
+```
+
+TLS + Bearer token 認証付きサーバーに接続する場合:
+
+```json
+{
+  "mcpServers": {
+    "jquants-dat-mcp": {
+      "command": "/path/to/jquants-dat-mcp/.venv/bin/python",
+      "args": [
+        "/path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py",
+        "https://[2001:db8::1]:8080/mcp",
+        "--bearer-token", "<TOKEN>"
       ]
     }
   }
