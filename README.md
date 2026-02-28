@@ -206,12 +206,14 @@ bearer_token = <TOKEN>
 
 **Claude Code (remote with TLS):**
 
+> **Note:** `claude mcp add --transport http --header "Authorization: Bearer ..."` does not send the header during health checks ([claude-code#29562](https://github.com/anthropics/claude-code/issues/29562)). Use the stdio proxy as a workaround:
+
 ```bash
-claude mcp add jquants-dat-mcp \
-  -e JQUANTS_PLAN=premium \
-  --transport http \
-  --header "Authorization: Bearer <TOKEN>" \
-  https://[2001:db8::1]:8080/mcp
+claude mcp add jquants-dat-mcp -- \
+  /path/to/jquants-dat-mcp/.venv/bin/python \
+  /path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py \
+  https://[2001:db8::1]:8080/mcp \
+  --bearer-token <TOKEN>
 ```
 
 ### Claude Desktop (remote via stdio proxy)
