@@ -46,6 +46,9 @@ _CONFIG_DEFS: list[tuple[str, str, str, str, str]] = [
     ("max_retries", "client", "max_retries", "MAX_RETRIES", "5"),
     ("retry_base_delay", "client", "retry_base_delay", "RETRY_BASE_DELAY", "1.0"),
     ("max_pages", "client", "max_pages", "MAX_PAGES", "10"),
+    ("ssl_certfile", "server", "ssl_certfile", "SSL_CERTFILE", ""),
+    ("ssl_keyfile", "server", "ssl_keyfile", "SSL_KEYFILE", ""),
+    ("bearer_token", "server", "bearer_token", "MCP_BEARER_TOKEN", ""),
 ]
 
 # 型変換テーブル

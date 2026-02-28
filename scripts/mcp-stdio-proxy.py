@@ -4,25 +4,31 @@
 Claude Desktop (stdio) <-> this proxy <-> remote MCP server (Streamable HTTP)
 
 Usage:
-    python mcp-stdio-proxy.py [URL]
-
-    URL defaults to http://192.0.2.1:8080/mcp
+    python mcp-stdio-proxy.py [URL] [--bearer-token TOKEN]
 """
 
+import argparse
 import json
 import sys
 
 import httpx
 
 DEFAULT_URL = "http://192.0.2.1:8080/mcp"
-HEADERS = {
-    "Content-Type": "application/json",
-    "Accept": "application/json, text/event-stream",
-}
 
 
 def main():
-    remote_url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_URL
+    parser = argparse.ArgumentParser(description="MCP stdio-to-HTTP proxy")
+    parser.add_argument("url", nargs="?", default=DEFAULT_URL, help="Remote MCP server URL")
+    parser.add_argument("--bearer-token", default="", help="Bearer token for authentication")
+    args = parser.parse_args()
+
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    if args.bearer_token:
+        headers["Authorization"] = f"Bearer {args.bearer_token}"
+
     session_id = None
     client = httpx.Client(timeout=60)
 
@@ -31,12 +37,12 @@ def main():
         if not line:
             continue
 
-        headers = dict(HEADERS)
+        req_headers = dict(headers)
         if session_id:
-            headers["Mcp-Session-Id"] = session_id
+            req_headers["Mcp-Session-Id"] = session_id
 
         try:
-            resp = client.post(remote_url, content=line, headers=headers)
+            resp = client.post(args.url, content=line, headers=req_headers)
         except Exception as e:
             print(
                 json.dumps(

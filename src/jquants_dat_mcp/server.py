@@ -118,6 +118,9 @@ def run_server(
     transport: str = "stdio",
     host: str = "0.0.0.0",
     port: int = 8080,
+    ssl_certfile: str = "",
+    ssl_keyfile: str = "",
+    bearer_token: str = "",
 ) -> None:
     """Start the MCP server.
 
@@ -125,6 +128,9 @@ def run_server(
         transport: Transport type ("stdio" or "streamable-http")
         host: Bind address for HTTP transport
         port: Port number for HTTP transport
+        ssl_certfile: Path to SSL certificate file
+        ssl_keyfile: Path to SSL private key file
+        bearer_token: Bearer token for authentication
     """
     logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
     logger.info("jquants-dat-mcp v%s を起動します (transport=%s)", __version__, transport)
@@ -132,5 +138,27 @@ def run_server(
     if transport == "stdio":
         mcp.run(transport="stdio")
     else:
-        logger.info("HTTP サーバー: http://%s:%d/mcp", host, port)
-        mcp.run(transport=transport, host=host, port=port)
+        # config.ini / 環境変数からのフォールバック
+        settings = _get_settings()
+        ssl_certfile = ssl_certfile or settings.ssl_certfile
+        ssl_keyfile = ssl_keyfile or settings.ssl_keyfile
+        bearer_token = bearer_token or settings.bearer_token
+
+        # Bearer token 認証
+        if bearer_token:
+            from .auth import BearerTokenVerifier
+
+            mcp.auth = BearerTokenVerifier(bearer_token)
+            logger.info("Bearer token 認証を有効化しました")
+
+        # TLS 設定
+        uvicorn_config: dict[str, Any] = {}
+        if ssl_certfile and ssl_keyfile:
+            uvicorn_config["ssl_certfile"] = ssl_certfile
+            uvicorn_config["ssl_keyfile"] = ssl_keyfile
+            scheme = "https"
+        else:
+            scheme = "http"
+
+        logger.info("%s サーバー: %s://%s:%d/mcp", transport, scheme, host, port)
+        mcp.run(transport=transport, host=host, port=port, uvicorn_config=uvicorn_config)

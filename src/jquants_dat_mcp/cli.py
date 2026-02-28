@@ -46,13 +46,35 @@ def main(argv: list[str] | None = None) -> int:
         default=8080,
         help="Port for HTTP transport (default: 8080)",
     )
+    parser.add_argument(
+        "--ssl-certfile",
+        default="",
+        help="Path to SSL certificate file",
+    )
+    parser.add_argument(
+        "--ssl-keyfile",
+        default="",
+        help="Path to SSL private key file",
+    )
+    parser.add_argument(
+        "--bearer-token",
+        default="",
+        help="Bearer token for authentication",
+    )
 
     args = parser.parse_args(argv)
 
     try:
         from .server import run_server
 
-        run_server(transport=args.transport, host=args.host, port=args.port)
+        run_server(
+            transport=args.transport,
+            host=args.host,
+            port=args.port,
+            ssl_certfile=args.ssl_certfile,
+            ssl_keyfile=args.ssl_keyfile,
+            bearer_token=args.bearer_token,
+        )
         return 0
     except KeyboardInterrupt:
         print("\nシャットダウンします。")
