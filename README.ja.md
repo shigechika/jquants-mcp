@@ -181,10 +181,7 @@ Claude Desktop は Streamable HTTP トランスポートに直接対応してい
       "args": [
         "/path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py",
         "http://192.0.2.1:8080/mcp"
-      ],
-      "env": {
-        "JQUANTS_PLAN": "premium"
-      }
+      ]
     }
   }
 }
