@@ -158,7 +158,9 @@ This exposes the MCP endpoint at `http://<host>:8080/mcp`. Clients on the same L
 **Claude Code (remote):**
 
 ```bash
-claude mcp add jquants-dat-mcp --transport http http://192.0.2.1:8080/mcp
+claude mcp add jquants-dat-mcp \
+  -e JQUANTS_PLAN=premium \
+  --transport http http://192.0.2.1:8080/mcp
 ```
 
 | Option | Default | Description |

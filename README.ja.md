@@ -158,7 +158,9 @@ MCP エンドポイントは `http://<host>:8080/mcp` で公開されます。�
 **Claude Code（リモート接続）:**
 
 ```bash
-claude mcp add jquants-dat-mcp --transport http http://192.0.2.1:8080/mcp
+claude mcp add jquants-dat-mcp \
+  -e JQUANTS_PLAN=premium \
+  --transport http http://192.0.2.1:8080/mcp
 ```
 
 | オプション | デフォルト | 説明 |
