@@ -113,7 +113,9 @@ def import_market_history(conn: sqlite3.Connection, csv_path: Path) -> int:
     return count
 
 
-def import_market_history_incremental(conn: sqlite3.Connection, csv_path: Path) -> tuple[int, list[str]]:
+def import_market_history_incremental(
+    conn: sqlite3.Connection, csv_path: Path
+) -> tuple[int, list[str]]:
     """株価四本値 CSV を差分インポートする。
 
     通常日: キャッシュ最新日より新しい行だけ INSERT（~4,000行）。
@@ -232,10 +234,14 @@ def main() -> None:
     parser.add_argument("--market-history", type=Path, help="株価四本値 CSV ファイルパス")
     parser.add_argument("--tickers", type=Path, help="銘柄マスタ CSV ファイルパス")
     parser.add_argument(
-        "--db", type=Path, default=DEFAULT_DB_PATH, help=f"キャッシュ DB パス (default: {DEFAULT_DB_PATH})"
+        "--db",
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help=f"キャッシュ DB パス (default: {DEFAULT_DB_PATH})",
     )
     parser.add_argument(
-        "--incremental", action="store_true",
+        "--incremental",
+        action="store_true",
         help="差分インポート（新しい日付のみ。株式分割検知時は該当コードを全件再取得）",
     )
     args = parser.parse_args()

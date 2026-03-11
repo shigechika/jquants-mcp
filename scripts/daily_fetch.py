@@ -56,6 +56,7 @@ ENDPOINT_MIN_PLAN: dict[str, str] = {
 TTL_6H = 6 * 3600
 TTL_24H = 24 * 3600
 TTL_7D = 7 * 24 * 3600
+TTL_90D = 90 * 24 * 3600
 
 
 def _load_plan() -> str:
@@ -83,7 +84,8 @@ def _available_endpoints(plan: str) -> list[str]:
     """プランで取得可能なエンドポイント一覧を返す。"""
     plan_level = PLAN_LEVELS.get(plan, 0)
     return [
-        ep for ep, min_plan in ENDPOINT_MIN_PLAN.items()
+        ep
+        for ep, min_plan in ENDPOINT_MIN_PLAN.items()
         if PLAN_LEVELS.get(min_plan, 0) <= plan_level
     ]
 
@@ -138,7 +140,9 @@ def fetch_topix(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
 
     if max_date:
         # 日付に時刻部分が含まれる場合があるので先頭10文字だけ使う
-        from_date = (datetime.strptime(max_date[:10], "%Y-%m-%d") + timedelta(days=1)).strftime("%Y%m%d")
+        from_date = (datetime.strptime(max_date[:10], "%Y-%m-%d") + timedelta(days=1)).strftime(
+            "%Y%m%d"
+        )
         print(f"  キャッシュ最新日: {max_date}、{from_date} から取得")
         df = cli.get_idx_bars_daily_topix(from_yyyymmdd=from_date)
     else:
@@ -200,7 +204,11 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> in
 
 
 def fetch_earnings_calendar(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """決算発表予定を取得して Tier 2 レスポンスキャッシュに投入する。"""
+    """決算発表予定を取得して Tier 2 レスポンスキャッシュに日付別で蓄積する。
+
+    APIは翌営業日の発表予定を返す。日付付きキーで保存することで
+    約3ヶ月分（TTL 90日）の決算カレンダーを蓄積できる。
+    """
     df = cli.get_eq_earnings_cal()
 
     if df is None or len(df) == 0:
@@ -209,14 +217,29 @@ def fetch_earnings_calendar(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) 
 
     records = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
 
-    cache_key = "/equities/earnings-calendar"
-    response_data = json.dumps(records, ensure_ascii=False, default=str)
-    now = time.time()
+    # 発表予定日（Date フィールド）を取得してキーに含める
+    date_str = records[0].get("Date", "") if records else ""
+    if date_str:
+        date_key = date_str.replace("-", "")
+    else:
+        date_key = datetime.today().strftime("%Y%m%d")
 
+    now = time.time()
+    response_data = json.dumps(records, ensure_ascii=False, default=str)
+
+    # 日付別キーで蓄積（TTL 90日）
+    cache_key = f"/equities/earnings-calendar?date={date_key}"
     conn.execute(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
-        (cache_key, response_data, now, TTL_6H),
+        (cache_key, response_data, now, TTL_90D),
     )
+
+    # パラメータなしキーも更新（最新データ用）
+    conn.execute(
+        "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
+        ("/equities/earnings-calendar", response_data, now, TTL_90D),
+    )
+
     conn.commit()
 
     return len(records)
@@ -254,7 +277,10 @@ def fetch_investor_types(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> 
 
 
 def _store_response_cache(
-    conn: sqlite3.Connection, cache_key: str, records: list[dict], ttl: int,
+    conn: sqlite3.Connection,
+    cache_key: str,
+    records: list[dict],
+    ttl: int,
 ) -> int:
     """レコード群を Tier 2 レスポンスキャッシュに投入する汎用ヘルパー。"""
     if not records:
@@ -310,28 +336,40 @@ def _fetch_daily_to_cache(
 def fetch_short_ratio(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
     """業種別空売り比率を取得して Tier 2 キャッシュに投入する (Standard+)。"""
     return _fetch_daily_to_cache(
-        cli.get_mkt_short_ratio, conn, "/markets/short-ratio", TTL_24H,
+        cli.get_mkt_short_ratio,
+        conn,
+        "/markets/short-ratio",
+        TTL_24H,
     )
 
 
 def fetch_margin_interest(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
     """信用取引残高を取得して Tier 2 キャッシュに投入する (Standard+)。"""
     return _fetch_daily_to_cache(
-        cli.get_mkt_margin_interest, conn, "/markets/margin-interest", TTL_7D,
+        cli.get_mkt_margin_interest,
+        conn,
+        "/markets/margin-interest",
+        TTL_7D,
     )
 
 
 def fetch_margin_alert(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
     """増担保規制情報を取得して Tier 2 キャッシュに投入する (Standard+)。"""
     return _fetch_daily_to_cache(
-        cli.get_mkt_margin_alert, conn, "/markets/margin-alert", TTL_24H,
+        cli.get_mkt_margin_alert,
+        conn,
+        "/markets/margin-alert",
+        TTL_24H,
     )
 
 
 def fetch_short_sale_report(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
     """空売り残高報告を取得して Tier 2 キャッシュに投入する (Standard+)。"""
     return _fetch_daily_to_cache(
-        cli.get_mkt_short_sale_report, conn, "/markets/short-sale-report", TTL_24H,
+        cli.get_mkt_short_sale_report,
+        conn,
+        "/markets/short-sale-report",
+        TTL_24H,
         date_param="calculated_date",
     )
 
@@ -339,7 +377,10 @@ def fetch_short_sale_report(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) 
 def fetch_breakdown(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
     """売買内訳データを取得して Tier 2 キャッシュに投入する (Premium)。"""
     return _fetch_daily_to_cache(
-        cli.get_mkt_breakdown, conn, "/markets/breakdown", TTL_24H,
+        cli.get_mkt_breakdown,
+        conn,
+        "/markets/breakdown",
+        TTL_24H,
     )
 
 
@@ -368,14 +409,26 @@ def main() -> None:
     parser.add_argument("--topix", action="store_true", help="TOPIX 日足を取得 (Light+)")
     parser.add_argument("--fins-summary", action="store_true", help="決算サマリーを取得 (Free+)")
     parser.add_argument("--earnings-cal", action="store_true", help="決算発表予定を取得 (Free+)")
-    parser.add_argument("--investor-types", action="store_true", help="投資部門別売買動向を取得 (Light+)")
-    parser.add_argument("--short-ratio", action="store_true", help="業種別空売り比率を取得 (Standard+)")
-    parser.add_argument("--margin-interest", action="store_true", help="信用取引残高を取得 (Standard+)")
-    parser.add_argument("--margin-alert", action="store_true", help="増担保規制情報を取得 (Standard+)")
-    parser.add_argument("--short-sale-report", action="store_true", help="空売り残高報告を取得 (Standard+)")
+    parser.add_argument(
+        "--investor-types", action="store_true", help="投資部門別売買動向を取得 (Light+)"
+    )
+    parser.add_argument(
+        "--short-ratio", action="store_true", help="業種別空売り比率を取得 (Standard+)"
+    )
+    parser.add_argument(
+        "--margin-interest", action="store_true", help="信用取引残高を取得 (Standard+)"
+    )
+    parser.add_argument(
+        "--margin-alert", action="store_true", help="増担保規制情報を取得 (Standard+)"
+    )
+    parser.add_argument(
+        "--short-sale-report", action="store_true", help="空売り残高報告を取得 (Standard+)"
+    )
     parser.add_argument("--breakdown", action="store_true", help="売買内訳データを取得 (Premium)")
     parser.add_argument(
-        "--db", type=Path, default=DEFAULT_DB_PATH,
+        "--db",
+        type=Path,
+        default=DEFAULT_DB_PATH,
         help=f"キャッシュ DB パス (default: {DEFAULT_DB_PATH})",
     )
     args = parser.parse_args()

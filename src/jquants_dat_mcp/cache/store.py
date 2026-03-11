@@ -55,11 +55,12 @@ TTL_NONE = 0  # キャッシュしない
 TTL_6H = 6 * 3600
 TTL_24H = 24 * 3600
 TTL_7D = 7 * 24 * 3600
+TTL_90D = 90 * 24 * 3600
 
 # エンドポイントパス → TTL のマッピング
 ENDPOINT_TTL: dict[str, int] = {
     "/markets/calendar": TTL_7D,
-    "/equities/earnings-calendar": TTL_6H,
+    "/equities/earnings-calendar": TTL_90D,
     "/equities/investor-types": TTL_7D,
     "/markets/margin-interest": TTL_7D,
     "/markets/margin-alert": TTL_24H,

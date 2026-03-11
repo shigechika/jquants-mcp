@@ -27,6 +27,7 @@ from daily_fetch import (  # noqa: E402
     FETCH_REGISTRY,
     TTL_6H,
     TTL_24H,
+    TTL_90D,
     _available_endpoints,
     _ensure_tables,
     _fetch_daily_to_cache,
@@ -304,7 +305,7 @@ class TestFetchEarningsCalendar:
         df = FakeDataFrame(
             [
                 {"Code": "72030", "Date": "2026-03-01"},
-                {"Code": "99830", "Date": "2026-03-15"},
+                {"Code": "99830", "Date": "2026-03-01"},
             ]
         )
         cli = _mock_cli(get_eq_earnings_cal=df)
@@ -312,12 +313,21 @@ class TestFetchEarningsCalendar:
         n = fetch_earnings_calendar(cli, db_conn)
         assert n == 2
 
+        # パラメータなしキー（最新データ用）
         row = db_conn.execute(
             "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
             ("/equities/earnings-calendar",),
         ).fetchone()
         assert row is not None
-        assert row[1] == TTL_6H
+        assert row[1] == TTL_90D
+
+        # 日付別キー（蓄積用）
+        row_dated = db_conn.execute(
+            "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
+            ("/equities/earnings-calendar?date=20260301",),
+        ).fetchone()
+        assert row_dated is not None
+        assert row_dated[1] == TTL_90D
 
     def test_empty_response(self, db_conn):
         cli = _mock_cli(get_eq_earnings_cal=FakeDataFrame())

@@ -7,7 +7,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from ..cache.store import ENDPOINT_TTL, CacheStore, TTL_24H, TTL_6H, make_cache_key
+from ..cache.store import ENDPOINT_TTL, CacheStore, TTL_24H, TTL_90D, make_cache_key
 from ..client import JQuantsClient
 from ..exceptions import APIError, format_api_error
 
@@ -196,18 +196,42 @@ def register(
             return format_api_error(e)
 
     @mcp.tool()
-    async def get_equities_earnings_calendar() -> dict[str, Any]:
+    async def get_equities_earnings_calendar(
+        date: str | None = None,
+        code: str | None = None,
+    ) -> dict[str, Any]:
         """Retrieve earnings announcement schedule.
 
-        翌日発表予定の決算情報を取得する。
-        決算発表予定日・企業名・決算期・業種名・市場区分を含む。
+        決算発表予定を取得する。日次取得で約3ヶ月分を蓄積。
+        日付指定でその日の発表予定、銘柄コード指定で直近の決算日を検索できる。
         対象は3月期・9月期決算企業（REIT除く）。
 
         [対応プラン] Free / Light / Standard / Premium
+
+        Args:
+            date: 発表予定日(YYYYMMDD or YYYY-MM-DD)。省略時は最新データ。
+            code: 銘柄コード(5桁 例: 72030、4桁指定時は末尾0を補完)。
+                  指定時は蓄積データから該当銘柄の決算予定を検索。
         """
         client: JQuantsClient = get_client()
         cache: CacheStore = get_cache()
 
+        # 銘柄コード検索: 蓄積データから該当銘柄を抽出
+        if code is not None:
+            if len(code) == 4:
+                code = code + "0"
+            return _search_earnings_by_code(cache, code)
+
+        # 日付指定: 蓄積データから取得
+        if date is not None:
+            date_key = date.replace("-", "")
+            cache_key = make_cache_key("/equities/earnings-calendar", {"date": date_key})
+            cached = cache.get_response(cache_key)
+            if cached is not None:
+                return cached
+            return {"count": 0, "data": [], "message": f"日付 {date} のデータなし"}
+
+        # パラメータなし: 最新データ
         cache_key = make_cache_key("/equities/earnings-calendar")
         cached = cache.get_response(cache_key)
         if cached is not None:
@@ -216,10 +240,36 @@ def register(
         try:
             data = await client.get_all_pages("/equities/earnings-calendar")
             result = {"count": len(data), "data": data}
-            cache.put_response(cache_key, result, ttl_seconds=TTL_6H)
+            cache.put_response(cache_key, result, ttl_seconds=TTL_90D)
             return result
         except APIError as e:
             return format_api_error(e)
+
+    def _search_earnings_by_code(cache: CacheStore, code: str) -> dict[str, Any]:
+        """Search accumulated earnings calendar data for a specific stock code."""
+        conn = cache._ensure_connection()
+        rows = conn.execute(
+            "SELECT data FROM response_cache WHERE cache_key LIKE '/equities/earnings-calendar?date=%'"
+        ).fetchall()
+
+        import json
+
+        matches = []
+        seen_dates = set()
+        for row in rows:
+            records = json.loads(row["data"])
+            if isinstance(records, dict):
+                records = records.get("data", [])
+            for rec in records:
+                rec_code = str(rec.get("Code", ""))
+                if rec_code == code:
+                    date = rec.get("Date", "")
+                    if date not in seen_dates:
+                        seen_dates.add(date)
+                        matches.append(rec)
+
+        matches.sort(key=lambda r: r.get("Date", ""), reverse=True)
+        return {"count": len(matches), "data": matches}
 
 
 # ------------------------------------------------------------------
