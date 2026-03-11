@@ -30,9 +30,10 @@ from daily_fetch import (  # noqa: E402
     TTL_90D,
     _available_endpoints,
     _ensure_tables,
-    _fetch_daily_to_cache,
+    _fetch_markets_tier1,
     _sanitize_row,
     _store_response_cache,
+    _store_tier1,
     fetch_earnings_calendar,
     fetch_fins_summary,
     fetch_investor_types,
@@ -391,82 +392,146 @@ class TestFetchInvestorTypes:
 
 
 # ============================================================
-# _fetch_daily_to_cache（Standard/Premium 共通ロジック）
+# _store_tier1（Tier 1 汎用ヘルパー）
 # ============================================================
 
 
-class TestFetchDailyToCache:
-    """_fetch_daily_to_cache のテスト。"""
+class TestStoreTier1:
+    """_store_tier1 のテスト。"""
+
+    def test_basic_store(self, db_conn):
+        rows = [
+            {"S33": "0050", "Date": "2026-03-10", "Ratio": 0.35},
+            {"S33": "0050", "Date": "2026-03-11", "Ratio": 0.40},
+        ]
+        n = _store_tier1(
+            db_conn, "markets_short_ratio", rows,
+            key_mapping=[("S33", "s33"), ("Date", "date")],
+        )
+        assert n == 2
+
+        count = db_conn.execute("SELECT COUNT(*) FROM markets_short_ratio").fetchone()[0]
+        assert count == 2
+
+    def test_upsert(self, db_conn):
+        rows1 = [{"Code": "72030", "Date": "2026-03-10", "LoanBalance": 100}]
+        rows2 = [{"Code": "72030", "Date": "2026-03-10", "LoanBalance": 999}]
+
+        _store_tier1(db_conn, "markets_margin_interest", rows1, [("Code", "code"), ("Date", "date")])
+        _store_tier1(db_conn, "markets_margin_interest", rows2, [("Code", "code"), ("Date", "date")])
+
+        count = db_conn.execute("SELECT COUNT(*) FROM markets_margin_interest").fetchone()[0]
+        assert count == 1
+
+        row = db_conn.execute("SELECT data FROM markets_margin_interest").fetchone()
+        data = json.loads(row[0])
+        assert data["LoanBalance"] == 999
+
+    def test_empty_rows(self, db_conn):
+        n = _store_tier1(db_conn, "markets_calendar", [], [("Date", "date")])
+        assert n == 0
+
+
+# ============================================================
+# _fetch_markets_tier1（Markets Tier 1 取得ロジック）
+# ============================================================
+
+
+class TestFetchMarketsTier1:
+    """_fetch_markets_tier1 のテスト。"""
 
     def test_basic_fetch(self, db_conn):
-        df = FakeDataFrame([{"S33": "0050", "Ratio": 0.35}])
+        df = FakeDataFrame([{"S33": "0050", "Date": "2026-03-10", "Ratio": 0.35}])
         method = MagicMock(return_value=df)
 
-        n = _fetch_daily_to_cache(method, db_conn, "/test/endpoint", TTL_24H)
+        n = _fetch_markets_tier1(
+            method, db_conn,
+            table="markets_short_ratio",
+            key_mapping=[("S33", "s33"), ("Date", "date")],
+        )
         assert n == 1
 
-        row = db_conn.execute(
-            "SELECT data FROM response_cache WHERE cache_key=?",
-            ("/test/endpoint",),
-        ).fetchone()
-        assert row is not None
+        count = db_conn.execute("SELECT COUNT(*) FROM markets_short_ratio").fetchone()[0]
+        assert count == 1
+
+    def test_incremental_fetch(self, db_conn):
+        """キャッシュあり → 差分取得。"""
+        _store_tier1(
+            db_conn, "markets_short_ratio",
+            [{"S33": "0050", "Date": "2026-03-09", "Ratio": 0.30}],
+            [("S33", "s33"), ("Date", "date")],
+        )
+
+        df = FakeDataFrame([{"S33": "0050", "Date": "2026-03-10", "Ratio": 0.35}])
+        method = MagicMock(return_value=df)
+
+        n = _fetch_markets_tier1(
+            method, db_conn,
+            table="markets_short_ratio",
+            key_mapping=[("S33", "s33"), ("Date", "date")],
+        )
+        assert n == 1
+        # 差分取得で from_yyyymmdd が指定されていること
+        call_kwargs = method.call_args.kwargs
+        assert "from_yyyymmdd" in call_kwargs
+        assert call_kwargs["from_yyyymmdd"] == "20260310"
+
+    def test_exception_returns_zero(self, db_conn):
+        method = MagicMock(side_effect=Exception("403 Forbidden"))
+
+        n = _fetch_markets_tier1(
+            method, db_conn,
+            table="markets_margin_interest",
+            key_mapping=[("Code", "code"), ("Date", "date")],
+        )
+        assert n == 0
 
     def test_fallback_on_empty(self, db_conn):
         """当日データ空 → パラメータなしでフォールバック。"""
-        df = FakeDataFrame([{"val": 42}])
+        df = FakeDataFrame([{"Code": "72030", "Date": "2026-03-10", "Val": 42}])
         method = MagicMock(side_effect=[FakeDataFrame(), df])
 
-        n = _fetch_daily_to_cache(method, db_conn, "/test/fallback", TTL_24H)
+        n = _fetch_markets_tier1(
+            method, db_conn,
+            table="markets_margin_interest",
+            key_mapping=[("Code", "code"), ("Date", "date")],
+        )
         assert n == 1
         assert method.call_count == 2
 
-    def test_exception_returns_zero(self, db_conn):
-        """API 例外時は 0 を返す。"""
-        method = MagicMock(side_effect=Exception("403 Forbidden"))
-
-        n = _fetch_daily_to_cache(method, db_conn, "/test/error", TTL_24H)
-        assert n == 0
-
-    def test_fallback_exception(self, db_conn):
-        """フォールバックも例外時は 0 を返す。"""
-        method = MagicMock(side_effect=[FakeDataFrame(), Exception("timeout")])
-
-        n = _fetch_daily_to_cache(method, db_conn, "/test/err2", TTL_24H)
-        assert n == 0
-
-    def test_custom_date_param(self, db_conn):
-        """date_param のカスタマイズ（short_sale_report 用）。"""
-        df = FakeDataFrame([{"Code": "72030"}])
+    def test_backfill_with_date_range(self, db_conn):
+        """バックフィル: from/to 指定で取得。"""
+        df = FakeDataFrame([
+            {"Code": "72030", "Date": "2026-03-01", "Val": 1},
+            {"Code": "72030", "Date": "2026-03-02", "Val": 2},
+        ])
         method = MagicMock(return_value=df)
 
-        _fetch_daily_to_cache(
-            method,
-            db_conn,
-            "/test/custom",
-            TTL_24H,
-            date_param="calculated_date",
+        n = _fetch_markets_tier1(
+            method, db_conn,
+            table="markets_breakdown",
+            key_mapping=[("Code", "code"), ("Date", "date")],
+            from_yyyymmdd="20260301",
+            to_yyyymmdd="20260302",
+            incremental=False,
         )
-        call_kwargs = method.call_args_list[0].kwargs
-        assert "calculated_date" in call_kwargs
-
-    def test_both_empty(self, db_conn):
-        """当日もフォールバックも空の場合。"""
-        method = MagicMock(return_value=FakeDataFrame())
-
-        n = _fetch_daily_to_cache(method, db_conn, "/test/both-empty", TTL_24H)
-        assert n == 0
+        assert n == 2
+        call_kwargs = method.call_args.kwargs
+        assert call_kwargs["from_yyyymmdd"] == "20260301"
+        assert call_kwargs["to_yyyymmdd"] == "20260302"
 
     def test_nan_sanitized(self, db_conn):
-        """NaN が None に変換されて JSON 保存されること。"""
-        df = FakeDataFrame([{"val": float("nan"), "ok": 1.0}])
+        """NaN が None に変換されて保存されること。"""
+        df = FakeDataFrame([{"Code": "72030", "Date": "2026-03-10", "val": float("nan"), "ok": 1.0}])
         method = MagicMock(return_value=df)
 
-        _fetch_daily_to_cache(method, db_conn, "/test/nan", TTL_24H)
+        _fetch_markets_tier1(
+            method, db_conn,
+            table="markets_margin_interest",
+            key_mapping=[("Code", "code"), ("Date", "date")],
+        )
 
-        row = db_conn.execute(
-            "SELECT data FROM response_cache WHERE cache_key=?",
-            ("/test/nan",),
-        ).fetchone()
-        records = json.loads(row[0])
-        assert records[0]["val"] is None
-        assert records[0]["ok"] == 1.0
+        row = db_conn.execute("SELECT data FROM markets_margin_interest").fetchone()
+        data = json.loads(row[0])
+        assert data["val"] is None
+        assert data["ok"] == 1.0

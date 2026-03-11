@@ -15,6 +15,7 @@ Usage:
     python3 scripts/daily_fetch.py --earnings-cal    # 決算発表予定のみ
     python3 scripts/daily_fetch.py --short-ratio     # 業種別空売り比率のみ (Standard+)
     python3 scripts/daily_fetch.py --margin-interest # 信用取引残高のみ (Standard+)
+    python3 scripts/daily_fetch.py --backfill 90     # 過去90日分のバックフィル
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ PLAN_LEVELS = {"free": 0, "light": 1, "standard": 2, "premium": 3}
 ENDPOINT_MIN_PLAN: dict[str, str] = {
     "fins_summary": "free",
     "earnings_cal": "free",
+    "calendar": "free",
     "topix": "light",
     "investor_types": "light",
     "short_ratio": "standard",
@@ -125,6 +127,50 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             ttl_seconds INTEGER NOT NULL
         )
     """)
+    # Markets Tier 1 テーブル
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS markets_margin_interest (
+            code TEXT NOT NULL,
+            date TEXT NOT NULL,
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (code, date)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS markets_margin_alert (
+            code TEXT NOT NULL,
+            date TEXT NOT NULL,
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (code, date)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS markets_short_ratio (
+            s33 TEXT NOT NULL,
+            date TEXT NOT NULL,
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (s33, date)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS markets_breakdown (
+            code TEXT NOT NULL,
+            date TEXT NOT NULL,
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (code, date)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS markets_calendar (
+            date TEXT NOT NULL PRIMARY KEY,
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL
+        )
+    """)
     conn.commit()
 
 
@@ -133,14 +179,57 @@ def _sanitize_row(row_data: dict) -> dict:
     return {k: (None if isinstance(v, float) and v != v else v) for k, v in row_data.items()}
 
 
+def _store_tier1(
+    conn: sqlite3.Connection,
+    table: str,
+    rows: list[dict],
+    key_mapping: list[tuple[str, str]],
+) -> int:
+    """Tier 1 テーブルにレコードを投入する汎用ヘルパー。
+
+    Args:
+        conn: SQLite connection
+        table: テーブル名
+        rows: APIレスポンスの行データ
+        key_mapping: (APIカラム名, DBカラム名) のリスト
+
+    Returns:
+        投入行数
+    """
+    if not rows:
+        return 0
+
+    now = time.time()
+    db_col_names = ", ".join([db_col for _, db_col in key_mapping])
+    placeholders = ", ".join(["?"] * (len(key_mapping) + 2))
+    sql = f"INSERT OR REPLACE INTO {table} ({db_col_names}, data, fetched_at) VALUES ({placeholders})"
+
+    count = 0
+    for row in rows:
+        key_values = [str(row.get(api_col, "")) for api_col, _ in key_mapping]
+        data_json = json.dumps(row, ensure_ascii=False, default=str)
+        conn.execute(sql, key_values + [data_json, now])
+        count += 1
+
+    conn.commit()
+    return count
+
+
+def _get_max_date(conn: sqlite3.Connection, table: str, date_column: str = "date") -> str | None:
+    """Tier 1 テーブルのキャッシュ最新日を取得する。"""
+    try:
+        row = conn.execute(f"SELECT MAX({date_column}) FROM {table}").fetchone()
+        return row[0][:10] if row and row[0] else None
+    except sqlite3.OperationalError:
+        return None
+
+
 def fetch_topix(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
     """TOPIX 日足を差分取得してキャッシュに投入する。"""
-    row = conn.execute("SELECT MAX(date) FROM indices_bars_daily_topix").fetchone()
-    max_date = row[0] if row and row[0] else None
+    max_date = _get_max_date(conn, "indices_bars_daily_topix")
 
     if max_date:
-        # 日付に時刻部分が含まれる場合があるので先頭10文字だけ使う
-        from_date = (datetime.strptime(max_date[:10], "%Y-%m-%d") + timedelta(days=1)).strftime(
+        from_date = (datetime.strptime(max_date, "%Y-%m-%d") + timedelta(days=1)).strftime(
             "%Y%m%d"
         )
         print(f"  キャッシュ最新日: {max_date}、{from_date} から取得")
@@ -297,22 +386,122 @@ def _store_response_cache(
     return len(records)
 
 
-def _fetch_daily_to_cache(
+# ------------------------------------------------------------------
+# Markets Tier 1 取得関数
+# ------------------------------------------------------------------
+
+
+def _fetch_markets_tier1(
     cli_method,
     conn: sqlite3.Connection,
-    cache_key: str,
-    ttl: int,
+    table: str,
+    key_mapping: list[tuple[str, str]],
     *,
-    date_param: str = "date_yyyymmdd",
+    from_yyyymmdd: str = "",
+    to_yyyymmdd: str = "",
+    date_yyyymmdd: str = "",
+    date_column: str = "date",
+    incremental: bool = True,
+    **extra_params,
 ) -> int:
-    """当日分のデータを取得して Tier 2 キャッシュに投入する汎用関数。
+    """Markets 系データを Tier 1 キャッシュに投入する汎用関数。
 
-    403 等の権限エラーは捕捉してスキップする。
-    当日データが空の場合はパラメータなしでフォールバック取得を試行する。
+    Args:
+        cli_method: jquantsapi のメソッド
+        conn: SQLite connection
+        table: Tier 1 テーブル名
+        key_mapping: (APIカラム名, DBカラム名) のリスト
+        from_yyyymmdd: 期間開始日
+        to_yyyymmdd: 期間終了日
+        date_yyyymmdd: 特定日付
+        date_column: DB の日付カラム名
+        incremental: True なら差分取得
+        **extra_params: cli_method に渡す追加パラメータ
+    """
+    # 差分取得: キャッシュ最新日の翌日から
+    if incremental and not from_yyyymmdd and not date_yyyymmdd:
+        max_date = _get_max_date(conn, table, date_column)
+        if max_date:
+            from_yyyymmdd = (
+                datetime.strptime(max_date[:10], "%Y-%m-%d") + timedelta(days=1)
+            ).strftime("%Y%m%d")
+            print(f"  キャッシュ最新日: {max_date}、{from_yyyymmdd} から取得")
+
+    params = {**extra_params}
+    if from_yyyymmdd:
+        params["from_yyyymmdd"] = from_yyyymmdd
+    if to_yyyymmdd:
+        params["to_yyyymmdd"] = to_yyyymmdd
+    if date_yyyymmdd:
+        params["date_yyyymmdd"] = date_yyyymmdd
+
+    # 日次取得で日付指定なしの場合はデフォルトで当日
+    if not from_yyyymmdd and not to_yyyymmdd and not date_yyyymmdd:
+        params["date_yyyymmdd"] = datetime.today().strftime("%Y%m%d")
+
+    try:
+        df = cli_method(**params)
+    except Exception as e:
+        print(f"  エラー: {e}")
+        return 0
+
+    if df is None or len(df) == 0:
+        # 当日データなしの場合、パラメータなしでフォールバック
+        if date_yyyymmdd or params.get("date_yyyymmdd"):
+            print("  当日データなし、パラメータなしで取得")
+            try:
+                df = cli_method(**{k: v for k, v in extra_params.items()})
+            except Exception as e:
+                print(f"  フォールバックエラー: {e}")
+                return 0
+
+    if df is None or len(df) == 0:
+        print("  データなし")
+        return 0
+
+    rows = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
+    return _store_tier1(conn, table, rows, key_mapping)
+
+
+def fetch_short_ratio(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
+    """業種別空売り比率を取得して Tier 1 キャッシュに投入する (Standard+)。"""
+    return _fetch_markets_tier1(
+        cli.get_mkt_short_ratio,
+        conn,
+        table="markets_short_ratio",
+        key_mapping=[("S33", "s33"), ("Date", "date")],
+    )
+
+
+def fetch_margin_interest(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
+    """信用取引残高を取得して Tier 1 キャッシュに投入する (Standard+)。"""
+    return _fetch_markets_tier1(
+        cli.get_mkt_margin_interest,
+        conn,
+        table="markets_margin_interest",
+        key_mapping=[("Code", "code"), ("Date", "date")],
+    )
+
+
+def fetch_margin_alert(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
+    """増担保規制情報を取得して Tier 1 キャッシュに投入する (Standard+)。"""
+    return _fetch_markets_tier1(
+        cli.get_mkt_margin_alert,
+        conn,
+        table="markets_margin_alert",
+        key_mapping=[("Code", "code"), ("PubDate", "date")],
+        date_column="date",
+    )
+
+
+def fetch_short_sale_report(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
+    """空売り残高報告を取得して Tier 2 キャッシュに投入する (Standard+)。
+
+    同一銘柄+日付に複数報告者のレコードがあるため Tier 2 のまま。
     """
     today = datetime.today().strftime("%Y%m%d")
     try:
-        df = cli_method(**{date_param: today})
+        df = cli.get_mkt_short_sale_report(calculated_date=today)
     except Exception as e:
         print(f"  エラー: {e}")
         return 0
@@ -320,7 +509,7 @@ def _fetch_daily_to_cache(
     if df is None or len(df) == 0:
         print("  当日データなし、パラメータなしで取得")
         try:
-            df = cli_method()
+            df = cli.get_mkt_short_sale_report()
         except Exception as e:
             print(f"  フォールバックエラー: {e}")
             return 0
@@ -330,57 +519,59 @@ def _fetch_daily_to_cache(
         return 0
 
     records = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
-    return _store_response_cache(conn, cache_key, records, ttl)
-
-
-def fetch_short_ratio(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """業種別空売り比率を取得して Tier 2 キャッシュに投入する (Standard+)。"""
-    return _fetch_daily_to_cache(
-        cli.get_mkt_short_ratio,
-        conn,
-        "/markets/short-ratio",
-        TTL_24H,
-    )
-
-
-def fetch_margin_interest(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """信用取引残高を取得して Tier 2 キャッシュに投入する (Standard+)。"""
-    return _fetch_daily_to_cache(
-        cli.get_mkt_margin_interest,
-        conn,
-        "/markets/margin-interest",
-        TTL_7D,
-    )
-
-
-def fetch_margin_alert(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """増担保規制情報を取得して Tier 2 キャッシュに投入する (Standard+)。"""
-    return _fetch_daily_to_cache(
-        cli.get_mkt_margin_alert,
-        conn,
-        "/markets/margin-alert",
-        TTL_24H,
-    )
-
-
-def fetch_short_sale_report(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """空売り残高報告を取得して Tier 2 キャッシュに投入する (Standard+)。"""
-    return _fetch_daily_to_cache(
-        cli.get_mkt_short_sale_report,
-        conn,
-        "/markets/short-sale-report",
-        TTL_24H,
-        date_param="calculated_date",
-    )
+    return _store_response_cache(conn, "/markets/short-sale-report", records, TTL_24H)
 
 
 def fetch_breakdown(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """売買内訳データを取得して Tier 2 キャッシュに投入する (Premium)。"""
-    return _fetch_daily_to_cache(
+    """売買内訳データを取得して Tier 1 キャッシュに投入する (Premium)。"""
+    return _fetch_markets_tier1(
         cli.get_mkt_breakdown,
         conn,
-        "/markets/breakdown",
-        TTL_24H,
+        table="markets_breakdown",
+        key_mapping=[("Code", "code"), ("Date", "date")],
+    )
+
+
+def fetch_calendar(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
+    """取引カレンダーを取得して Tier 1 キャッシュに投入する (Free+)。"""
+    try:
+        df = cli.get_mkt_calendar()
+    except Exception as e:
+        print(f"  エラー: {e}")
+        return 0
+
+    if df is None or len(df) == 0:
+        print("  データなし")
+        return 0
+
+    rows = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
+    return _store_tier1(conn, "markets_calendar", rows, [("Date", "date")])
+
+
+# ------------------------------------------------------------------
+# バックフィル: 過去データの一括取得
+# ------------------------------------------------------------------
+
+
+def _backfill_markets_tier1(
+    cli_method,
+    conn: sqlite3.Connection,
+    table: str,
+    key_mapping: list[tuple[str, str]],
+    from_yyyymmdd: str,
+    to_yyyymmdd: str,
+    **extra_params,
+) -> int:
+    """Markets 系の過去データを一括取得して Tier 1 に投入する。"""
+    return _fetch_markets_tier1(
+        cli_method,
+        conn,
+        table=table,
+        key_mapping=key_mapping,
+        from_yyyymmdd=from_yyyymmdd,
+        to_yyyymmdd=to_yyyymmdd,
+        incremental=False,
+        **extra_params,
     )
 
 
@@ -395,7 +586,75 @@ FETCH_REGISTRY: dict[str, tuple[str, callable]] = {
     "margin_alert": ("増担保規制情報", fetch_margin_alert),
     "short_sale_report": ("空売り残高報告", fetch_short_sale_report),
     "breakdown": ("売買内訳", fetch_breakdown),
+    "calendar": ("取引カレンダー", fetch_calendar),
 }
+
+# バックフィル対応エンドポイント（from/to 範囲指定可能なもの）
+BACKFILL_REGISTRY: dict[str, tuple[str, callable, str, list[tuple[str, str]]]] = {
+    # key: (表示名, cli_method_name, table, key_mapping)
+    "short_ratio": ("業種別空売り比率", "get_mkt_short_ratio", "markets_short_ratio", [("S33", "s33"), ("Date", "date")]),
+    "margin_interest": ("信用取引残高", "get_mkt_margin_interest", "markets_margin_interest", [("Code", "code"), ("Date", "date")]),
+    "margin_alert": ("増担保規制情報", "get_mkt_margin_alert", "markets_margin_alert", [("Code", "code"), ("PubDate", "date")]),
+    "breakdown": ("売買内訳", "get_mkt_breakdown", "markets_breakdown", [("Code", "code"), ("Date", "date")]),
+}
+
+
+def _run_backfill(
+    cli: jquantsapi.ClientV2,
+    conn: sqlite3.Connection,
+    targets: list[str],
+    days: int,
+) -> None:
+    """指定日数分のバックフィルを実行する。"""
+    today = datetime.today()
+    from_date = (today - timedelta(days=days)).strftime("%Y%m%d")
+    to_date = today.strftime("%Y%m%d")
+
+    print(f"バックフィル: {from_date} → {to_date} ({days}日間)")
+
+    for ep in targets:
+        if ep not in BACKFILL_REGISTRY:
+            print(f"  {ep}: バックフィル非対応、スキップ")
+            continue
+
+        label, method_name, table, key_mapping = BACKFILL_REGISTRY[ep]
+        cli_method = getattr(cli, method_name)
+        print(f"{label}をバックフィル中...")
+        t0 = time.time()
+        try:
+            n = _backfill_markets_tier1(
+                cli_method, conn, table, key_mapping,
+                from_yyyymmdd=from_date, to_yyyymmdd=to_date,
+            )
+        except Exception as e:
+            print(f"  エラー: {e}")
+            n = 0
+        print(f"  完了: {n} 件 ({time.time() - t0:.1f}秒)")
+
+    # カレンダーはバックフィル対象に含まれていたら全件取得
+    if "calendar" in targets:
+        print("取引カレンダーを取得中...")
+        t0 = time.time()
+        try:
+            n = fetch_calendar(cli, conn)
+        except Exception as e:
+            print(f"  エラー: {e}")
+            n = 0
+        print(f"  完了: {n} 件 ({time.time() - t0:.1f}秒)")
+
+
+# Tier 1 テーブル一覧（結果サマリー用）
+_TIER1_TABLES = [
+    "indices_bars_daily_topix",
+    "fins_summary",
+    "investor_types",
+    "markets_margin_interest",
+    "markets_margin_alert",
+    "markets_short_ratio",
+    "markets_breakdown",
+    "markets_calendar",
+    "response_cache",
+]
 
 
 def main() -> None:
@@ -425,6 +684,13 @@ def main() -> None:
         "--short-sale-report", action="store_true", help="空売り残高報告を取得 (Standard+)"
     )
     parser.add_argument("--breakdown", action="store_true", help="売買内訳データを取得 (Premium)")
+    parser.add_argument("--calendar", action="store_true", help="取引カレンダーを取得 (Free+)")
+    parser.add_argument(
+        "--backfill",
+        type=int,
+        metavar="DAYS",
+        help="過去N日分のバックフィル（Markets系 Tier 1 対象）",
+    )
     parser.add_argument(
         "--db",
         type=Path,
@@ -444,6 +710,7 @@ def main() -> None:
         "margin_alert": args.margin_alert,
         "short_sale_report": args.short_sale_report,
         "breakdown": args.breakdown,
+        "calendar": args.calendar,
     }
     has_explicit = any(explicit.values())
 
@@ -467,19 +734,25 @@ def main() -> None:
 
     cli = jquantsapi.ClientV2()
 
-    for ep in targets:
-        label, func = FETCH_REGISTRY[ep]
-        print(f"{label}を取得中...")
-        t0 = time.time()
-        try:
-            n = func(cli, conn)
-        except Exception as e:
-            print(f"  エラー: {e}")
-            n = 0
-        print(f"  完了: {n} 件 ({time.time() - t0:.1f}秒)")
+    # バックフィルモード
+    if args.backfill:
+        _run_backfill(cli, conn, targets, args.backfill)
+    else:
+        # 通常の日次取得
+        for ep in targets:
+            label, func = FETCH_REGISTRY[ep]
+            print(f"{label}を取得中...")
+            t0 = time.time()
+            try:
+                n = func(cli, conn)
+            except Exception as e:
+                print(f"  エラー: {e}")
+                n = 0
+            print(f"  完了: {n} 件 ({time.time() - t0:.1f}秒)")
 
-    # 結果確認
-    for table in ["indices_bars_daily_topix", "fins_summary", "response_cache"]:
+    # 結果サマリー
+    print("--- テーブル件数 ---")
+    for table in _TIER1_TABLES:
         try:
             row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
             print(f"  {table}: {row[0]:,} 行")

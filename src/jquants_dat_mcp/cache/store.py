@@ -38,6 +38,31 @@ _TIER1_TABLES = {
         "primary_key": "pub_date, section",
         "extra_columns": "",
     },
+    "markets_margin_interest": {
+        "key_columns": "code TEXT NOT NULL, date TEXT NOT NULL",
+        "primary_key": "code, date",
+        "extra_columns": "",
+    },
+    "markets_margin_alert": {
+        "key_columns": "code TEXT NOT NULL, date TEXT NOT NULL",
+        "primary_key": "code, date",
+        "extra_columns": "",
+    },
+    "markets_short_ratio": {
+        "key_columns": "s33 TEXT NOT NULL, date TEXT NOT NULL",
+        "primary_key": "s33, date",
+        "extra_columns": "",
+    },
+    "markets_breakdown": {
+        "key_columns": "code TEXT NOT NULL, date TEXT NOT NULL",
+        "primary_key": "code, date",
+        "extra_columns": "",
+    },
+    "markets_calendar": {
+        "key_columns": "date TEXT NOT NULL",
+        "primary_key": "date",
+        "extra_columns": "",
+    },
 }
 
 # Tier 2 テーブル: レスポンスレベルキャッシュ

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Bulk fetch all Light plan data from J-Quants API into SQLite cache.
+"""Bulk fetch data from J-Quants API into SQLite cache.
 
-Lightプランで取得可能な全データをバルクダウンロードし、キャッシュDBにインポートする。
+バルクダウンロードで全データをキャッシュDBにインポートする。
 Bulk API で月次/日次 CSV を一括取得し、INSERT OR REPLACE で既存データを上書きする。
 
 Usage:
     uv run python scripts/bulk_fetch_all.py
-    uv run python scripts/bulk_fetch_all.py --endpoints fins_summary topix investor_types
+    uv run python scripts/bulk_fetch_all.py --endpoints fins_summary topix margin_interest
     uv run python scripts/bulk_fetch_all.py --dry-run
 """
 
@@ -65,6 +65,36 @@ ENDPOINTS: dict[str, dict] = {
         "table": "equities_master",
         "csv_key_map": [("Code", "code"), ("Date", "date")],
     },
+    "margin_interest": {
+        "api_path": "/markets/margin-interest",
+        "table": "markets_margin_interest",
+        "csv_key_map": [("Code", "code"), ("Date", "date")],
+    },
+    "margin_alert": {
+        "api_path": "/markets/margin-alert",
+        "table": "markets_margin_alert",
+        "csv_key_map": [("Code", "code"), ("PubDate", "date")],
+    },
+    "short_ratio": {
+        "api_path": "/markets/short-ratio",
+        "table": "markets_short_ratio",
+        "csv_key_map": [("S33", "s33"), ("Date", "date")],
+    },
+    "short_sale_report": {
+        "api_path": "/markets/short-sale-report",
+        "table": "markets_short_sale_report",
+        "csv_key_map": [("Code", "code"), ("DiscDate", "disc_date"), ("SSName", "reporter_name")],
+    },
+    "breakdown": {
+        "api_path": "/markets/breakdown",
+        "table": "markets_breakdown",
+        "csv_key_map": [("Code", "code"), ("Date", "date")],
+    },
+    "calendar": {
+        "api_path": "/markets/calendar",
+        "table": "markets_calendar",
+        "csv_key_map": [("Date", "date")],
+    },
 }
 
 # テーブル DDL（store.py の定義と同じ構造）
@@ -102,6 +132,59 @@ TABLE_DDL: dict[str, str] = {
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
             PRIMARY KEY (code, date)
+        )
+    """,
+    "markets_margin_interest": """
+        CREATE TABLE IF NOT EXISTS markets_margin_interest (
+            code TEXT NOT NULL,
+            date TEXT NOT NULL,
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (code, date)
+        )
+    """,
+    "markets_margin_alert": """
+        CREATE TABLE IF NOT EXISTS markets_margin_alert (
+            code TEXT NOT NULL,
+            date TEXT NOT NULL,
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (code, date)
+        )
+    """,
+    "markets_short_ratio": """
+        CREATE TABLE IF NOT EXISTS markets_short_ratio (
+            s33 TEXT NOT NULL,
+            date TEXT NOT NULL,
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (s33, date)
+        )
+    """,
+    "markets_short_sale_report": """
+        CREATE TABLE IF NOT EXISTS markets_short_sale_report (
+            code TEXT NOT NULL,
+            disc_date TEXT NOT NULL,
+            reporter_name TEXT NOT NULL,
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (code, disc_date, reporter_name)
+        )
+    """,
+    "markets_breakdown": """
+        CREATE TABLE IF NOT EXISTS markets_breakdown (
+            code TEXT NOT NULL,
+            date TEXT NOT NULL,
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (code, date)
+        )
+    """,
+    "markets_calendar": """
+        CREATE TABLE IF NOT EXISTS markets_calendar (
+            date TEXT NOT NULL PRIMARY KEY,
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL
         )
     """,
 }
@@ -343,7 +426,7 @@ class BulkFetcher:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Light プランの全データをバルクダウンロードしてキャッシュ DB にインポート",
+        description="J-Quants Bulk API でデータをダウンロードしてキャッシュ DB にインポート",
     )
     parser.add_argument(
         "--endpoints",

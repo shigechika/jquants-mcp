@@ -55,15 +55,48 @@ class TestGetMarketsMarginInterest:
             assert result["count"] == 1
             assert result["data"][0]["LoanBalance"] == 1000000
 
-    async def test_uses_cache_on_second_call(self, mock_env):
+    async def test_tier1_cache_incremental(self, mock_env):
+        """Tier 1 キャッシュ: 2回目の呼び出しは増分取得。"""
+        data_day1 = [
+            {"Code": "72030", "Date": "2024-01-04", "LoanBalance": 1000000},
+        ]
+        data_day2 = [
+            {"Code": "72030", "Date": "2024-01-05", "LoanBalance": 1100000},
+        ]
+        mock_fn = AsyncMock(side_effect=[data_day1, data_day2])
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result1 = await _call(
+                "get_markets_margin_interest", code="72030",
+                date_from="2024-01-04", date_to="2024-01-05",
+            )
+            assert result1["count"] == 1
+
+            result2 = await _call(
+                "get_markets_margin_interest", code="72030",
+                date_from="2024-01-04", date_to="2024-01-05",
+            )
+            # 2回目: キャッシュ + API マージ
+            assert result2["count"] == 2
+            assert mock_fn.call_count == 2
+
+    async def test_tier1_cache_full_hit(self, mock_env):
+        """Tier 1 キャッシュ: 全期間キャッシュ済みなら API 呼び出しなし。"""
         mock_data = [
             {"Code": "72030", "Date": "2024-01-04", "LoanBalance": 1000000},
+            {"Code": "72030", "Date": "2024-01-05", "LoanBalance": 1100000},
         ]
         mock_fn = AsyncMock(return_value=mock_data)
         with patch.object(mock_env["client"], "get_all_pages", mock_fn):
-            await _call("get_markets_margin_interest", code="72030")
-            result = await _call("get_markets_margin_interest", code="72030")
-            assert result["count"] == 1
+            await _call(
+                "get_markets_margin_interest", code="72030",
+                date_from="2024-01-04", date_to="2024-01-05",
+            )
+            result = await _call(
+                "get_markets_margin_interest", code="72030",
+                date_from="2024-01-04", date_to="2024-01-05",
+            )
+            assert result["count"] == 2
+            assert result["source"] == "cache"
             assert mock_fn.call_count == 1
 
     async def test_api_error_returns_error_dict(self, mock_env):
@@ -80,7 +113,7 @@ class TestGetMarketsMarginInterest:
 class TestGetMarketsMarginAlert:
     async def test_returns_data(self, mock_env):
         mock_data = [
-            {"Code": "72030", "Date": "2024-01-04", "AlertType": "1"},
+            {"Code": "72030", "PubDate": "2024-01-04", "AlertType": "1"},
         ]
         with patch.object(
             mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
@@ -88,15 +121,22 @@ class TestGetMarketsMarginAlert:
             result = await _call("get_markets_margin_alert", code="72030")
             assert result["count"] == 1
 
-    async def test_uses_cache_on_second_call(self, mock_env):
+    async def test_tier1_cache_full_hit(self, mock_env):
         mock_data = [
-            {"Code": "72030", "Date": "2024-01-04", "AlertType": "1"},
+            {"Code": "72030", "PubDate": "2024-01-04", "AlertType": "1"},
         ]
         mock_fn = AsyncMock(return_value=mock_data)
         with patch.object(mock_env["client"], "get_all_pages", mock_fn):
-            await _call("get_markets_margin_alert", code="72030")
-            result = await _call("get_markets_margin_alert", code="72030")
+            await _call(
+                "get_markets_margin_alert", code="72030",
+                date_from="2024-01-04", date_to="2024-01-04",
+            )
+            result = await _call(
+                "get_markets_margin_alert", code="72030",
+                date_from="2024-01-04", date_to="2024-01-04",
+            )
             assert result["count"] == 1
+            assert result["source"] == "cache"
             assert mock_fn.call_count == 1
 
 
@@ -112,15 +152,22 @@ class TestGetMarketsShortRatio:
             assert result["count"] == 1
             assert result["data"][0]["ShortSaleRatio"] == 40.5
 
-    async def test_uses_cache_on_second_call(self, mock_env):
+    async def test_tier1_cache_full_hit(self, mock_env):
         mock_data = [
             {"Date": "2024-01-04", "S33": "0050", "ShortSaleRatio": 40.5},
         ]
         mock_fn = AsyncMock(return_value=mock_data)
         with patch.object(mock_env["client"], "get_all_pages", mock_fn):
-            await _call("get_markets_short_ratio", s33="0050", date="2024-01-04")
-            result = await _call("get_markets_short_ratio", s33="0050", date="2024-01-04")
+            await _call(
+                "get_markets_short_ratio", s33="0050",
+                date_from="2024-01-04", date_to="2024-01-04",
+            )
+            result = await _call(
+                "get_markets_short_ratio", s33="0050",
+                date_from="2024-01-04", date_to="2024-01-04",
+            )
             assert result["count"] == 1
+            assert result["source"] == "cache"
             assert mock_fn.call_count == 1
 
 
@@ -181,15 +228,22 @@ class TestGetMarketsBreakdown:
             assert result["count"] == 1
             assert result["data"][0]["FrgnBuy"] == 500000
 
-    async def test_uses_cache_on_second_call(self, mock_env):
+    async def test_tier1_cache_full_hit(self, mock_env):
         mock_data = [
             {"Code": "72030", "Date": "2024-01-04", "FrgnBuy": 500000},
         ]
         mock_fn = AsyncMock(return_value=mock_data)
         with patch.object(mock_env["client"], "get_all_pages", mock_fn):
-            await _call("get_markets_breakdown", code="72030", date="2024-01-04")
-            result = await _call("get_markets_breakdown", code="72030", date="2024-01-04")
+            await _call(
+                "get_markets_breakdown", code="72030",
+                date_from="2024-01-04", date_to="2024-01-04",
+            )
+            result = await _call(
+                "get_markets_breakdown", code="72030",
+                date_from="2024-01-04", date_to="2024-01-04",
+            )
             assert result["count"] == 1
+            assert result["source"] == "cache"
             assert mock_fn.call_count == 1
 
     async def test_api_error_returns_error_dict(self, mock_env):
@@ -235,7 +289,7 @@ class TestGetMarketsCalendar:
             )
             assert result["count"] == 2
 
-    async def test_uses_cache_on_second_call(self, mock_env):
+    async def test_tier1_cache_full_hit(self, mock_env):
         mock_response = {
             "data": [
                 {"Date": "2024-01-04", "HolDiv": "0"},
@@ -248,6 +302,7 @@ class TestGetMarketsCalendar:
                 "get_markets_calendar", date_from="2024-01-04", date_to="2024-01-04"
             )
             assert result["count"] == 1
+            assert result["source"] == "cache"
             assert mock_fn.call_count == 1
 
     async def test_api_error_returns_error_dict(self, mock_env):

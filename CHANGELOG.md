@@ -5,6 +5,22 @@
 
 ---
 
+## 2026-03-12
+### Markets ツール Tier 1 キャッシュ移行
+- Markets 系 5 ツール（`margin_interest`, `margin_alert`, `short_ratio`, `breakdown`, `calendar`）を Tier 2（TTL 付きレスポンスキャッシュ）から Tier 1（行レベル永続キャッシュ）に移行
+  - `short_sale_report` は 1 つの code+date に複数レポーターが存在するため Tier 2 のまま
+- `store.py`: 5 テーブル（`markets_margin_interest`, `markets_margin_alert`, `markets_short_ratio`, `markets_breakdown`, `markets_calendar`）を Tier 1 テーブル定義に追加
+- `markets.py`: 汎用ヘルパー `_get_with_tier1_cache()` を追加（`date_field` パラメータで `PubDate` 等の非標準日付カラムに対応）
+
+### `scripts/bulk_fetch_all.py` Markets 対応
+- 6 エンドポイント追加: `margin_interest`, `margin_alert`, `short_ratio`, `short_sale_report`, `breakdown`, `calendar`
+  - `calendar` は Bulk API 非対応（400 エラー）のため `daily_fetch.py --calendar` で取得
+
+### `scripts/daily_fetch.py` 拡張
+- Markets 系データを Tier 1 テーブルに直接投入するように変更（`_store_tier1()`, `_fetch_markets_tier1()` ヘルパー追加）
+- `--calendar` オプション追加（取引カレンダー取得、Free プラン以上）
+- `--backfill DAYS` オプション追加（Markets 系 Tier 1 対象の過去データバックフィル）
+
 ## 2026-02-25
 ### 日次データ取得スクリプト（`daily_fetch.py`）
 - `scripts/daily_fetch.py` を追加 — jquantsapi.ClientV2 で追加データを取得し SQLite キャッシュに直接投入

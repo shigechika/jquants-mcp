@@ -320,7 +320,7 @@ Restart Claude Desktop after editing.
 The server uses a two-tier SQLite cache:
 
 - **Tier 1 (Row-level)**: Time-series data cached by date and code. Supports incremental fetching and stock split detection via AdjFactor comparison.
-  - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`
+  - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`, `markets_margin_interest`, `markets_margin_alert`, `markets_short_ratio`, `markets_breakdown`, `markets_calendar`
 - **Tier 2 (Response-level)**: Full API responses cached with configurable TTL (6h / 24h / 7d).
 
 Cache is stored at `~/.cache/jquants-dat-mcp/cache.db` by default.
@@ -330,11 +330,11 @@ Cache is stored at `~/.cache/jquants-dat-mcp/cache.db` by default.
 The `scripts/bulk_fetch_all.py` script downloads all available bulk CSV data from the J-Quants Bulk API and imports it into the SQLite cache. This is the fastest way to populate the local cache with historical data.
 
 ```bash
-# Fetch all Light plan data (fins_summary, investor_types, topix, equities_master)
+# Fetch all available data for your plan
 uv run python scripts/bulk_fetch_all.py
 
 # Fetch specific endpoints only
-uv run python scripts/bulk_fetch_all.py --endpoints fins_summary topix
+uv run python scripts/bulk_fetch_all.py --endpoints fins_summary topix margin_interest
 
 # Dry run — show file list and sizes without downloading
 uv run python scripts/bulk_fetch_all.py --dry-run
@@ -380,6 +380,12 @@ python3 scripts/daily_fetch.py
 
 # Fetch specific endpoints only
 python3 scripts/daily_fetch.py --topix --investor-types
+
+# Fetch trading calendar
+python3 scripts/daily_fetch.py --calendar
+
+# Backfill historical Markets data (past N days)
+python3 scripts/daily_fetch.py --backfill 90
 
 # Use a custom cache DB path
 python3 scripts/daily_fetch.py --db /path/to/cache.db

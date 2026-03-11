@@ -320,7 +320,7 @@ TLS + Bearer token 認証付きサーバーに接続する場合:
 2層構造の SQLite キャッシュを使用しています:
 
 - **Tier 1（行レベル）**: 時系列データを日付×コードで管理。増分取得・株式分割検知（AdjFactor 比較）に対応。
-  - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`
+  - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`, `markets_margin_interest`, `markets_margin_alert`, `markets_short_ratio`, `markets_breakdown`, `markets_calendar`
 - **Tier 2（レスポンスレベル）**: API レスポンス全体を TTL 付きでキャッシュ（6h / 24h / 7d）。
 
 キャッシュの保存先はデフォルトで `~/.cache/jquants-dat-mcp/cache.db` です。
@@ -330,11 +330,11 @@ TLS + Bearer token 認証付きサーバーに接続する場合:
 `scripts/bulk_fetch_all.py` は J-Quants Bulk API から CSV データを一括ダウンロードし、SQLite キャッシュにインポートするスクリプトです。過去データを効率的にローカルキャッシュに蓄積できます。
 
 ```bash
-# Light プランの全データを取得（fins_summary, investor_types, topix, equities_master）
+# プランに応じた全データを取得
 uv run python scripts/bulk_fetch_all.py
 
 # 特定のエンドポイントのみ取得
-uv run python scripts/bulk_fetch_all.py --endpoints fins_summary topix
+uv run python scripts/bulk_fetch_all.py --endpoints fins_summary topix margin_interest
 
 # ドライラン — ファイル一覧とサイズのみ表示
 uv run python scripts/bulk_fetch_all.py --dry-run
@@ -380,6 +380,12 @@ python3 scripts/daily_fetch.py
 
 # 特定のエンドポイントのみ取得
 python3 scripts/daily_fetch.py --topix --investor-types
+
+# 取引カレンダーを取得
+python3 scripts/daily_fetch.py --calendar
+
+# Markets 系の過去データをバックフィル（過去N日分）
+python3 scripts/daily_fetch.py --backfill 90
 
 # キャッシュ DB パスを指定
 python3 scripts/daily_fetch.py --db /path/to/cache.db
