@@ -305,16 +305,16 @@ async def _get_with_tier1_cache(
             date_to=date_to,
         )
 
-        # API パラメータの構築（ハイフン除去）
+        # API パラメータの構築
         params: dict[str, Any] = {}
         if key_value:
             params[key_name] = key_value
         if date:
-            params["date"] = _normalize_date(date)
+            params["date"] = date
         if date_from:
-            params["from"] = _normalize_date(date_from)
+            params["from"] = date_from
         if date_to:
-            params["to"] = _normalize_date(date_to)
+            params["to"] = date_to
 
         # キャッシュ済み日付の確認
         cached_dates = cache.get_cached_dates(
@@ -421,14 +421,13 @@ async def _get_calendar_with_cache(
             date_to=date_to,
         )
 
-        # API パラメータ（ハイフン除去）
         params: dict[str, Any] = {}
         if hol_div:
             params["hol_div"] = hol_div
         if date_from:
-            params["from"] = _normalize_date(date_from)
+            params["from"] = date_from
         if date_to:
-            params["to"] = _normalize_date(date_to)
+            params["to"] = date_to
 
         if cached_dates:
             latest_cached = max(cached_dates)

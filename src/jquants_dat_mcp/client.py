@@ -85,6 +85,19 @@ class JQuantsClient:
         """
         client = await self._ensure_client()
         params = {k: v for k, v in (params or {}).items() if v is not None}
+        # J-Quants API requires YYYYMMDD format — strip hyphens from date params
+        _DATE_KEYS = (
+            "date",
+            "from",
+            "to",
+            "disc_date",
+            "disc_date_from",
+            "disc_date_to",
+            "calc_date",
+        )
+        for key in _DATE_KEYS:
+            if key in params and isinstance(params[key], str):
+                params[key] = params[key].replace("-", "")
 
         last_error: Exception | None = None
         for attempt in range(self._settings.max_retries):
