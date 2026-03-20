@@ -69,6 +69,14 @@ plan = premium
 # ssl_certfile = /path/to/fullchain.pem
 # ssl_keyfile = /path/to/privkey.pem
 # bearer_token = <secret>
+# encryption_key = <ランダムな秘密値>   # ユーザーごとの API キー保存を有効化（マルチユーザーモード）
+
+[oauth]
+# github_client_id = <GitHub OAuth App のクライアント ID>
+# github_client_secret = <クライアントシークレット>
+# base_url = https://mcp.example.com
+# jwt_signing_key = <ランダムな秘密値>  # 省略可: 省略時は自動生成
+# require_consent = true
 ```
 
 ### 環境変数
@@ -85,10 +93,147 @@ plan = premium
 | `SSL_CERTFILE` | いいえ | — | SSL 証明書ファイルのパス（HTTP トランスポート用） |
 | `SSL_KEYFILE` | いいえ | — | SSL 秘密鍵ファイルのパス（HTTP トランスポート用） |
 | `MCP_BEARER_TOKEN` | いいえ | — | HTTP 認証用の Bearer トークン |
+| `GITHUB_CLIENT_ID` | いいえ | — | GitHub OAuth App のクライアント ID（OAuth 2.1 を有効化） |
+| `GITHUB_CLIENT_SECRET` | いいえ | — | GitHub OAuth App のクライアントシークレット |
+| `OAUTH_BASE_URL` | いいえ | — | サーバーの公開ベース URL（例: `https://mcp.example.com`） |
+| `OAUTH_JWT_SIGNING_KEY` | いいえ | 自動 | JWT 署名用シークレット。省略時は起動ごとに自動生成 |
+| `OAUTH_REQUIRE_CONSENT` | いいえ | `true` | GitHub OAuth 同意画面の表示（`true`/`false`） |
+| `MCP_ENCRYPTION_KEY` | いいえ | — | ユーザー API キーの AES-256-GCM 暗号化に使うパスフレーズ |
 
 \* API キーは `~/.jquants-api/jquants-api.toml` から自動検出されます。上書きが必要な場合のみ `JQUANTS_API_KEY` を設定してください。
 
 環境変数は `config.ini` と `jquants-api.toml` の両方を上書きします。普段使いの設定は `config.ini` や `jquants-api.toml` に任せ、MCP クライアント（Claude Desktop, Claude Code）からは `env` ブロックで必要な設定だけ渡すことができます。
+
+## 認証
+
+jquants-dat-mcp は 3 つの認証モードに対応しています:
+
+| モード | 用途 |
+|---|---|
+| なし | ローカル stdio または信頼済み LAN（シングルユーザー） |
+| Bearer Token | HTTPS 経由のシングルユーザーリモートアクセス |
+| GitHub OAuth 2.1 | マルチユーザー / Claude Desktop Connectors |
+
+起動時に設定に基づいて自動的にモードが選択されます:
+
+1. **GitHub OAuth 2.1** — `GITHUB_CLIENT_ID`・`GITHUB_CLIENT_SECRET`・`OAUTH_BASE_URL` がすべて設定されている場合
+2. **Bearer Token** — `MCP_BEARER_TOKEN`（または `config.ini` の `bearer_token`）が設定されている場合
+3. **なし** — 認証なし（stdio トランスポートまたは信頼済み環境）
+
+### GitHub OAuth 2.1
+
+サーバーが OAuth 2.1 認可サーバーとして機能し、GitHub を上流 IdP（identity provider）として使用します。クライアントは GitHub のログイン画面にリダイレクトされ、サーバーが認可コードを署名済み JWT と交換してユーザーを識別します。
+
+#### 1. GitHub OAuth App を作成する
+
+1. **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App** へ移動
+2. 以下を入力:
+   - **Application name**: `jquants-dat-mcp`（任意の名前でも可）
+   - **Homepage URL**: サーバーの公開ベース URL（例: `https://mcp.example.com`）
+   - **Authorization callback URL**: `https://mcp.example.com/oauth/callback/github`
+3. **Register application** をクリック後、**Generate a new client secret** でシークレットを生成
+4. **Client ID** と生成した **Client secret** をコピーしておく
+
+#### 2. サーバーを設定する
+
+**環境変数で設定:**
+
+```bash
+export GITHUB_CLIENT_ID=Ov23liXXXXXXXXXXXXXX
+export GITHUB_CLIENT_SECRET=<クライアントシークレット>
+export OAUTH_BASE_URL=https://mcp.example.com      # 外部から到達可能な URL
+export OAUTH_JWT_SIGNING_KEY=<ランダムな秘密値>    # 省略可: 省略時は自動生成
+export MCP_ENCRYPTION_KEY=<ランダムな秘密値>       # ユーザーごとの API キー保存に必要
+```
+
+**`config.ini` で設定:**
+
+```ini
+[oauth]
+github_client_id = Ov23liXXXXXXXXXXXXXX
+github_client_secret = <クライアントシークレット>
+base_url = https://mcp.example.com
+# jwt_signing_key = <ランダムな秘密値>   # 省略可: 省略時は自動生成
+# require_consent = true              # デフォルト: true
+
+[server]
+encryption_key = <ランダムな秘密値>    # ユーザーごとの API キー保存に必要
+```
+
+#### 3. OAuth 付きでサーバーを起動する
+
+```bash
+jquants-dat-mcp -t streamable-http --port 8080 \
+  --ssl-certfile /path/to/fullchain.pem \
+  --ssl-keyfile /path/to/privkey.pem \
+  --github-client-id <ID> \
+  --github-client-secret <SECRET> \
+  --oauth-base-url https://mcp.example.com
+```
+
+環境変数や `config.ini` で OAuth 設定が完了している場合、CLI フラグは省略可能です。起動時に自動的に OAuth が有効化されます。
+
+| CLI オプション | 説明 |
+|---|---|
+| `--github-client-id` | GitHub OAuth App のクライアント ID |
+| `--github-client-secret` | GitHub OAuth App のクライアントシークレット |
+| `--oauth-base-url` | サーバーの公開ベース URL（リダイレクト URI の構築に使用） |
+
+## マルチユーザーモード
+
+GitHub OAuth 2.1 と `MCP_ENCRYPTION_KEY` を両方設定すると、**マルチユーザーモード**で動作します。認証された各ユーザーが自分の J-Quants API キーをサーバーに登録でき、データ取得ツールは自動的にそのキーを使用します。キャッシュは全ユーザーで共有され、レート制限はユーザーごとに独立します。
+
+### ユーザーフロー
+
+```mermaid
+sequenceDiagram
+    participant U as ユーザー
+    participant C as Claude
+    participant S as jquants-dat-mcp
+    participant G as GitHub
+    participant J as J-Quants API
+    U->>C: 接続（Connectors UI / Claude Code）
+    C->>G: OAuth 2.1 認可
+    G-->>C: アクセストークン（JWT）
+    U->>C: "J-Quants API キーを登録して: <key>"
+    C->>S: register_api_key(api_key="<key>", plan="light")
+    S->>S: キーを暗号化して保存（AES-256-GCM）
+    S-->>C: {"status": "ok"}
+    U->>C: "TOPIX の日足データを取得して"
+    C->>S: get_indices_bars_daily_topix(...)
+    S->>J: ユーザーのキーで API 呼び出し
+    J-->>S: データ
+    S-->>C: 結果
+```
+
+### マルチユーザーモード用ツール
+
+| ツール | 必要条件 | 説明 |
+|---|---|---|
+| `register_api_key` | OAuth 2.1 + `MCP_ENCRYPTION_KEY` | J-Quants API キーを暗号化して登録 |
+| `delete_api_key` | OAuth 2.1 + `MCP_ENCRYPTION_KEY` | 登録済みの API キーを削除 |
+
+**キーの登録**（Claude に伝える）:
+
+> 「J-Quants の API キー `<リフレッシュトークン>` を light プランで登録して」
+
+Claude が `register_api_key(api_key="...", plan="light")` を呼び出します。有効なプラン: `free`・`light`・`standard`・`premium`（ユーザーごとのレート制限に影響）。
+
+### セキュリティ
+
+- API キーは **AES-256-GCM**（認証付き暗号化）で暗号化して保存
+- 暗号化キーは `MCP_ENCRYPTION_KEY` から **PBKDF2-HMAC-SHA256**（60 万回反復）で導出
+- 暗号化のたびにランダムな 12 バイトのノンスを生成。同じキーを 2 回暗号化しても異なる暗号文になる
+- 改ざん・切り詰めされた暗号文は復号前に検出して拒否
+
+### 後方互換性
+
+| 設定状態 | 動作 |
+|---|---|
+| 認証なし・`MCP_ENCRYPTION_KEY` なし | シングルユーザー: 全接続で共通の `JQUANTS_API_KEY` を使用 |
+| Bearer Token のみ | シングルユーザー: 同上（HTTP 認証あり） |
+| OAuth + `MCP_ENCRYPTION_KEY` なし | OAuth 認証あり、全ユーザーで共通の `JQUANTS_API_KEY` を使用 |
+| OAuth + `MCP_ENCRYPTION_KEY` あり | フルマルチユーザー: ユーザーごとに独立した暗号化 API キー |
 
 ## 使い方
 
@@ -253,6 +398,43 @@ TLS + Bearer token 認証付きサーバーに接続する場合:
 
 設定後、Claude Desktop を再起動してください。
 
+### Claude Desktop Connectors（OAuth 2.1）
+
+Claude Desktop の **Connectors** 機能を使うと、ネイティブな OAuth 2.1 認証フローが利用できます。Connectors パネルで **Connect** をクリックすると、自動的に GitHub のログイン画面にリダイレクトされます。トークンの手動管理は不要です。
+
+> **必要条件:**
+> - **HTTPS** でアクセス可能なサーバー（TLS 証明書が必要）
+> - GitHub OAuth 2.1 の設定済み（[GitHub OAuth 2.1](#github-oauth-21) を参照）
+> - サーバー側で `MCP_ENCRYPTION_KEY` を設定済み（ユーザーごとの API キー保存に必要）
+
+**サーバー側の起動コマンド:**
+
+```bash
+jquants-dat-mcp -t streamable-http --port 8080 \
+  --ssl-certfile /path/to/fullchain.pem \
+  --ssl-keyfile /path/to/privkey.pem \
+  --github-client-id <ID> \
+  --github-client-secret <SECRET> \
+  --oauth-base-url https://mcp.example.com
+```
+
+**`claude_desktop_config.json`（Connectors UI）:**
+
+```json
+{
+  "mcpServers": {
+    "jquants-dat-mcp": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}
+```
+
+初回接続時に GitHub OAuth のブラウザウィンドウが開きます。認証後はトークンが自動保存され、以降の接続はサイレントに行われます。
+
+> **注意:** Claude Desktop の Connectors 対応（`"type": "http"` + OAuth）は段階的にロールアウト中です。まだ利用できない場合は [stdio プロキシ](#claude-desktop-stdio-プロキシ経由のリモート接続) をフォールバックとして使用してください。
+
 ## 提供ツール一覧
 
 ### 株式 (Equities) — 6ツール
@@ -307,13 +489,15 @@ TLS + Bearer token 認証付きサーバーに接続する場合:
 | `get_bulk_list` | `/bulk/list` | Light+ | ダウンロード可能ファイル一覧 |
 | `get_bulk_download_url` | `/bulk/get` | Light+ | 署名付きダウンロード URL 取得 |
 
-### ユーティリティ — 3ツール
+### ユーティリティ — 5ツール
 
-| ツール名 | 説明 |
-|---|---|
-| `health_check` | サーバー稼働状態・API キー設定確認 |
-| `cache_status` | キャッシュ統計情報 |
-| `cache_clear` | キャッシュクリア |
+| ツール名 | 必要条件 | 説明 |
+|---|---|---|
+| `health_check` | — | サーバー稼働状態・API キー設定確認 |
+| `cache_status` | — | キャッシュ統計情報 |
+| `cache_clear` | — | キャッシュクリア |
+| `register_api_key` | OAuth 2.1 | J-Quants API キーを暗号化して登録（マルチユーザーモード） |
+| `delete_api_key` | OAuth 2.1 | 登録済みの J-Quants API キーを削除 |
 
 ## キャッシュ
 
