@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 
 from ..cache.store import ENDPOINT_TTL, CacheStore, TTL_24H, TTL_90D, make_cache_key
 from ..client import JQuantsClient
-from ..exceptions import APIError, format_api_error
+from ..exceptions import APIError, UserNotConfiguredError, format_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def register(
             code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
             date: 基準日（YYYYMMDD or YYYY-MM-DD）
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         params = {"code": code, "date": date}
@@ -51,7 +51,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -76,7 +76,7 @@ def register(
             date_from: 期間指定の開始日
             date_to: 期間指定の終了日
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         # code 指定 + 期間指定の場合は Tier 1 キャッシュで増分取得
@@ -95,7 +95,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -118,7 +118,7 @@ def register(
             date_from: 期間指定の開始日
             date_to: 期間指定の終了日
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         params = {"code": code, "date": date, "from": date_from, "to": date_to}
@@ -132,7 +132,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -150,13 +150,13 @@ def register(
         Args:
             code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）。省略時は全銘柄。
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
 
         # リアルタイムデータのためキャッシュしない
         try:
             data = await client.get_all_pages("/equities/bars/daily/am", {"code": code})
             return {"count": len(data), "data": data}
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -177,7 +177,7 @@ def register(
             date_from: 期間指定の開始日（YYYYMMDD or YYYY-MM-DD）
             date_to: 期間指定の終了日（YYYYMMDD or YYYY-MM-DD）
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         params = {"section": section, "from": date_from, "to": date_to}
@@ -192,7 +192,7 @@ def register(
             ttl = ENDPOINT_TTL.get("/equities/investor-types", TTL_24H)
             cache.put_response(cache_key, result, ttl_seconds=ttl)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -213,7 +213,7 @@ def register(
             code: 銘柄コード(5桁 例: 72030、4桁指定時は末尾0を補完)。
                   指定時は蓄積データから該当銘柄の決算予定を検索。
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         # 銘柄コード検索: 蓄積データから該当銘柄を抽出
@@ -247,7 +247,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_90D)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     def _search_earnings_by_code(cache: CacheStore, code: str) -> dict[str, Any]:
@@ -398,5 +398,5 @@ async def _get_bars_daily_with_cache(
         source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")
         return {"count": len(merged), "data": merged, "source": source}
 
-    except APIError as e:
+    except (APIError, UserNotConfiguredError) as e:
         return format_api_error(e)
