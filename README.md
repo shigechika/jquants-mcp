@@ -577,6 +577,90 @@ python3 scripts/daily_fetch.py --db /path/to/cache.db
 
 Permission errors (403) are handled gracefully — the script logs the error and continues to the next endpoint without crashing.
 
+## Cloud Run Deployment
+
+This server can be deployed to [Google Cloud Run](https://cloud.google.com/run) using the "in-memory + GCS write-back" pattern:
+
+- On startup, `cache.db` is downloaded from GCS to `/tmp`
+- SQLite runs entirely in `/tmp` (Cloud Run ephemeral filesystem)
+- Every 5 minutes (configurable) and on SIGTERM, the DB is uploaded back to GCS
+
+> **Note:** `maxScale: 1` is required to avoid concurrent SQLite writes from multiple instances.
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and [Google Cloud SDK](https://cloud.google.com/sdk/docs/install)
+- A GCS bucket for cache persistence
+- A service account with `roles/storage.objectAdmin` on that bucket
+
+### Build and push
+
+```bash
+PROJECT_ID=your-project-id
+REGION=asia-northeast1
+REPO=your-artifact-registry-repo
+IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/jquants-dat-mcp:latest"
+
+# Build (includes google-cloud-storage via [cloud-run] extra)
+docker build -t "${IMAGE}" .
+
+# Push
+docker push "${IMAGE}"
+```
+
+### Deploy
+
+```bash
+# Edit cloud-run-service.yaml: replace PROJECT_ID, REGION, REPO, GCS_BUCKET,
+# and uncomment secret references for JQUANTS_API_KEY and MCP_BEARER_TOKEN.
+
+gcloud run services replace cloud-run-service.yaml \
+  --region "${REGION}"
+```
+
+### Environment variables
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `GCS_BUCKET` | Yes | — | GCS bucket name for cache persistence |
+| `GCS_PREFIX` | No | `jquants-dat-mcp/` | Object key prefix in the bucket |
+| `GCS_SYNC_INTERVAL` | No | `300` | Upload interval in seconds |
+| `PORT` | No | `8000` | HTTP port (set by Cloud Run) |
+| `JQUANTS_API_KEY` | Yes | — | J-Quants API key (use Secret Manager) |
+| `JQUANTS_PLAN` | No | `free` | Plan: `free` / `light` / `standard` / `premium` |
+| `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication |
+
+### IAM setup
+
+```bash
+# Create service account
+gcloud iam service-accounts create jquants-dat-mcp \
+  --display-name "jquants-dat-mcp Cloud Run SA"
+
+# Grant GCS access
+gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET \
+  --member "serviceAccount:jquants-dat-mcp@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role "roles/storage.objectAdmin"
+
+# Grant Secret Manager access (if using Secret Manager)
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member "serviceAccount:jquants-dat-mcp@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role "roles/secretmanager.secretAccessor"
+```
+
+### Initial cache upload
+
+Before the first deployment, upload an existing `cache.db` to GCS:
+
+```bash
+gcloud storage cp ~/.cache/jquants-dat-mcp/cache.db \
+  gs://YOUR_BUCKET/jquants-dat-mcp/cache.db
+```
+
+### Memory requirements
+
+`cache.db` can grow to 4 GB or more depending on the plan and date range. The service yaml sets `memory: 8Gi` to provide sufficient headroom. Cloud Run gen2 is required for memory allocations above 4 Gi.
+
 ## Development
 
 ```bash
