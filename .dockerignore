@@ -1,0 +1,46 @@
+# Version control
+.git/
+.gitignore
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# Development tools cache
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+
+# Environment files
+.env
+.envrc
+config.ini
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# macOS
+.DS_Store
+
+# Claude Code
+.claude/
+
+# Tests (not needed in container)
+tests/
+
+# Documentation
+*.md
+LICENSE
+CHANGELOG.md

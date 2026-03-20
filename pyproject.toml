@@ -13,6 +13,11 @@ dependencies = [
     "tomli>=2.0.0; python_version < '3.11'",
 ]
 
+[project.optional-dependencies]
+cloud-run = [
+    "google-cloud-storage>=2.0.0",
+]
+
 [project.scripts]
 jquants-dat-mcp = "jquants_dat_mcp.cli:main"
 
