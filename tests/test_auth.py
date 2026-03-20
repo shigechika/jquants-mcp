@@ -48,14 +48,18 @@ async def test_empty_token(verifier):
 
 def test_create_auth_provider_no_auth():
     """Returns None when no auth settings are configured."""
-    settings = Settings(bearer_token="", github_client_id="", github_client_secret="", oauth_base_url="")
+    settings = Settings(
+        bearer_token="", github_client_id="", github_client_secret="", oauth_base_url=""
+    )
     result = create_auth_provider(settings)
     assert result is None
 
 
 def test_create_auth_provider_bearer_token():
     """Returns BearerTokenVerifier when only bearer_token is set."""
-    settings = Settings(bearer_token="mysecret", github_client_id="", github_client_secret="", oauth_base_url="")
+    settings = Settings(
+        bearer_token="mysecret", github_client_id="", github_client_secret="", oauth_base_url=""
+    )
     result = create_auth_provider(settings)
     assert isinstance(result, BearerTokenVerifier)
 
