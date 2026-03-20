@@ -256,7 +256,7 @@ class CacheStore:
         )
 
         for row in rows:
-            key_values = [str(row.get(k, "")) for k in key_columns]
+            key_values = [_normalize_date_value(str(row.get(k, ""))) for k in key_columns]
             data_json = json.dumps(row, ensure_ascii=False)
 
             if has_adj:
@@ -412,6 +412,19 @@ def _key_col_names(table: str) -> list[str]:
     schema = _TIER1_TABLES[table]
     # "code TEXT NOT NULL, date TEXT NOT NULL" → ["code", "date"]
     return [part.strip().split()[0] for part in schema["key_columns"].split(",")]
+
+
+def _normalize_date_value(value: str) -> str:
+    """Normalize date-like strings: strip time suffix and hyphens.
+
+    "2026-03-16 00:00:00" -> "2026-03-16"
+    "2026-03-16T00:00:00" -> "2026-03-16"
+    """
+    if " " in value:
+        value = value.split(" ")[0]
+    elif "T" in value:
+        value = value.split("T")[0]
+    return value
 
 
 def make_cache_key(endpoint: str, params: dict[str, Any] | None = None) -> str:

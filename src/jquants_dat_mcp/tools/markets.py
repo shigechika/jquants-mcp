@@ -14,6 +14,13 @@ from ..exceptions import APIError, format_api_error
 logger = logging.getLogger(__name__)
 
 
+def _normalize_date(d: str | None) -> str | None:
+    """Normalize date string to YYYYMMDD format (strip hyphens)."""
+    if d is None:
+        return None
+    return d.replace("-", "")
+
+
 def register(
     mcp: FastMCP,
     get_client: callable,
@@ -47,13 +54,16 @@ def register(
         # code 指定 + 期間指定の場合は Tier 1 キャッシュで増分取得
         if code or date or date_from or date_to:
             return await _get_with_tier1_cache(
-                client, cache,
+                client,
+                cache,
                 table="markets_margin_interest",
                 endpoint="/markets/margin-interest",
                 key_name="code",
                 key_value=code,
                 key_column="Code",
-                date=date, date_from=date_from, date_to=date_to,
+                date=date,
+                date_from=date_from,
+                date_to=date_to,
             )
 
         # パラメータなし: Tier 2 フォールバック
@@ -84,13 +94,16 @@ def register(
 
         if code or date or date_from or date_to:
             return await _get_with_tier1_cache(
-                client, cache,
+                client,
+                cache,
                 table="markets_margin_alert",
                 endpoint="/markets/margin-alert",
                 key_name="code",
                 key_value=code,
                 key_column="Code",
-                date=date, date_from=date_from, date_to=date_to,
+                date=date,
+                date_from=date_from,
+                date_to=date_to,
                 date_field="PubDate",
             )
 
@@ -121,13 +134,16 @@ def register(
 
         if s33 or date or date_from or date_to:
             return await _get_with_tier1_cache(
-                client, cache,
+                client,
+                cache,
                 table="markets_short_ratio",
                 endpoint="/markets/short-ratio",
                 key_name="s33",
                 key_value=s33,
                 key_column="S33",
-                date=date, date_from=date_from, date_to=date_to,
+                date=date,
+                date_from=date_from,
+                date_to=date_to,
             )
 
         return await _tier2_fallback(client, cache, "/markets/short-ratio", {})
@@ -203,13 +219,16 @@ def register(
 
         if code or date or date_from or date_to:
             return await _get_with_tier1_cache(
-                client, cache,
+                client,
+                cache,
                 table="markets_breakdown",
                 endpoint="/markets/breakdown",
                 key_name="code",
                 key_value=code,
                 key_column="Code",
-                date=date, date_from=date_from, date_to=date_to,
+                date=date,
+                date_from=date_from,
+                date_to=date_to,
             )
 
         return await _tier2_fallback(client, cache, "/markets/breakdown", {})
@@ -236,7 +255,11 @@ def register(
         cache: CacheStore = get_cache()
 
         return await _get_calendar_with_cache(
-            client, cache, hol_div, date_from, date_to,
+            client,
+            cache,
+            hol_div,
+            date_from,
+            date_to,
         )
 
 
@@ -268,7 +291,9 @@ async def _get_with_tier1_cache(
         # キーフィルタの構築
         key_filter: dict[str, str] = {}
         if key_value:
-            cache_key_val = key_value + "0" if len(key_value) == 4 and key_name == "code" else key_value
+            cache_key_val = (
+                key_value + "0" if len(key_value) == 4 and key_name == "code" else key_value
+            )
             key_filter[key_name] = cache_key_val
 
         effective_date_from = date or date_from
@@ -280,16 +305,16 @@ async def _get_with_tier1_cache(
             date_to=date_to,
         )
 
-        # API パラメータの構築
+        # API パラメータの構築（ハイフン除去）
         params: dict[str, Any] = {}
         if key_value:
             params[key_name] = key_value
         if date:
-            params["date"] = date
+            params["date"] = _normalize_date(date)
         if date_from:
-            params["from"] = date_from
+            params["from"] = _normalize_date(date_from)
         if date_to:
-            params["to"] = date_to
+            params["to"] = _normalize_date(date_to)
 
         # キャッシュ済み日付の確認
         cached_dates = cache.get_cached_dates(
@@ -303,9 +328,7 @@ async def _get_with_tier1_cache(
             # 増分取得: キャッシュの最新日付以降を取得
             latest_cached = max(cached_dates)
             if date_to and latest_cached >= date_to:
-                logger.info(
-                    "%s 全データキャッシュ済み (%d件)", table, len(cached_data)
-                )
+                logger.info("%s 全データキャッシュ済み (%d件)", table, len(cached_data))
                 return {"count": len(cached_data), "data": cached_data, "source": "cache"}
             params["from"] = latest_cached
 
@@ -313,9 +336,7 @@ async def _get_with_tier1_cache(
             api_data = await client.get_all_pages(endpoint, params)
         except APIError:
             if cached_data:
-                logger.info(
-                    "API失敗、キャッシュデータを返却: %s (%d件)", table, len(cached_data)
-                )
+                logger.info("API失敗、キャッシュデータを返却: %s (%d件)", table, len(cached_data))
                 return {"count": len(cached_data), "data": cached_data, "source": "cache"}
             raise
 
@@ -400,13 +421,14 @@ async def _get_calendar_with_cache(
             date_to=date_to,
         )
 
+        # API パラメータ（ハイフン除去）
         params: dict[str, Any] = {}
         if hol_div:
             params["hol_div"] = hol_div
         if date_from:
-            params["from"] = date_from
+            params["from"] = _normalize_date(date_from)
         if date_to:
-            params["to"] = date_to
+            params["to"] = _normalize_date(date_to)
 
         if cached_dates:
             latest_cached = max(cached_dates)

@@ -228,6 +228,8 @@ def register(
             cache_key = make_cache_key("/equities/earnings-calendar", {"date": date_key})
             cached = cache.get_response(cache_key)
             if cached is not None:
+                if isinstance(cached, list):
+                    cached = {"count": len(cached), "data": cached}
                 return cached
             return {"count": 0, "data": [], "message": f"日付 {date} のデータなし"}
 
@@ -235,6 +237,9 @@ def register(
         cache_key = make_cache_key("/equities/earnings-calendar")
         cached = cache.get_response(cache_key)
         if cached is not None:
+            # daily_fetch.py が生リストで保存した場合を吸収
+            if isinstance(cached, list):
+                cached = {"count": len(cached), "data": cached}
             return cached
 
         try:

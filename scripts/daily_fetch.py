@@ -202,7 +202,9 @@ def _store_tier1(
     now = time.time()
     db_col_names = ", ".join([db_col for _, db_col in key_mapping])
     placeholders = ", ".join(["?"] * (len(key_mapping) + 2))
-    sql = f"INSERT OR REPLACE INTO {table} ({db_col_names}, data, fetched_at) VALUES ({placeholders})"
+    sql = (
+        f"INSERT OR REPLACE INTO {table} ({db_col_names}, data, fetched_at) VALUES ({placeholders})"
+    )
 
     count = 0
     for row in rows:
@@ -229,9 +231,7 @@ def fetch_topix(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
     max_date = _get_max_date(conn, "indices_bars_daily_topix")
 
     if max_date:
-        from_date = (datetime.strptime(max_date, "%Y-%m-%d") + timedelta(days=1)).strftime(
-            "%Y%m%d"
-        )
+        from_date = (datetime.strptime(max_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y%m%d")
         print(f"  キャッシュ最新日: {max_date}、{from_date} から取得")
         df = cli.get_idx_bars_daily_topix(from_yyyymmdd=from_date)
     else:
@@ -592,10 +592,30 @@ FETCH_REGISTRY: dict[str, tuple[str, callable]] = {
 # バックフィル対応エンドポイント（from/to 範囲指定可能なもの）
 BACKFILL_REGISTRY: dict[str, tuple[str, callable, str, list[tuple[str, str]]]] = {
     # key: (表示名, cli_method_name, table, key_mapping)
-    "short_ratio": ("業種別空売り比率", "get_mkt_short_ratio", "markets_short_ratio", [("S33", "s33"), ("Date", "date")]),
-    "margin_interest": ("信用取引残高", "get_mkt_margin_interest", "markets_margin_interest", [("Code", "code"), ("Date", "date")]),
-    "margin_alert": ("増担保規制情報", "get_mkt_margin_alert", "markets_margin_alert", [("Code", "code"), ("PubDate", "date")]),
-    "breakdown": ("売買内訳", "get_mkt_breakdown", "markets_breakdown", [("Code", "code"), ("Date", "date")]),
+    "short_ratio": (
+        "業種別空売り比率",
+        "get_mkt_short_ratio",
+        "markets_short_ratio",
+        [("S33", "s33"), ("Date", "date")],
+    ),
+    "margin_interest": (
+        "信用取引残高",
+        "get_mkt_margin_interest",
+        "markets_margin_interest",
+        [("Code", "code"), ("Date", "date")],
+    ),
+    "margin_alert": (
+        "増担保規制情報",
+        "get_mkt_margin_alert",
+        "markets_margin_alert",
+        [("Code", "code"), ("PubDate", "date")],
+    ),
+    "breakdown": (
+        "売買内訳",
+        "get_mkt_breakdown",
+        "markets_breakdown",
+        [("Code", "code"), ("Date", "date")],
+    ),
 }
 
 
@@ -623,8 +643,12 @@ def _run_backfill(
         t0 = time.time()
         try:
             n = _backfill_markets_tier1(
-                cli_method, conn, table, key_mapping,
-                from_yyyymmdd=from_date, to_yyyymmdd=to_date,
+                cli_method,
+                conn,
+                table,
+                key_mapping,
+                from_yyyymmdd=from_date,
+                to_yyyymmdd=to_date,
             )
         except Exception as e:
             print(f"  エラー: {e}")
