@@ -121,6 +121,9 @@ def run_server(
     ssl_certfile: str = "",
     ssl_keyfile: str = "",
     bearer_token: str = "",
+    github_client_id: str = "",
+    github_client_secret: str = "",
+    oauth_base_url: str = "",
 ) -> None:
     """Start the MCP server.
 
@@ -130,26 +133,38 @@ def run_server(
         port: Port number for HTTP transport
         ssl_certfile: Path to SSL certificate file
         ssl_keyfile: Path to SSL private key file
-        bearer_token: Bearer token for authentication
+        bearer_token: Bearer token for authentication (fallback if OAuth not configured)
+        github_client_id: GitHub OAuth App client ID (enables OAuth 2.1)
+        github_client_secret: GitHub OAuth App client secret
+        oauth_base_url: Public base URL for OAuth endpoints (e.g. https://mcp.example.com)
     """
     logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
-    logger.info("jquants-dat-mcp v%s を起動します (transport=%s)", __version__, transport)
+    logger.info("jquants-dat-mcp v%s starting (transport=%s)", __version__, transport)
 
     if transport == "stdio":
         mcp.run(transport="stdio")
     else:
-        # config.ini / 環境変数からのフォールバック
+        # Apply CLI overrides to settings before creating auth provider
         settings = _get_settings()
         ssl_certfile = ssl_certfile or settings.ssl_certfile
         ssl_keyfile = ssl_keyfile or settings.ssl_keyfile
-        bearer_token = bearer_token or settings.bearer_token
 
-        # Bearer token 認証
+        # CLI overrides take precedence over config for OAuth/Bearer settings
         if bearer_token:
-            from .auth import BearerTokenVerifier
+            settings.bearer_token = bearer_token
+        if github_client_id:
+            settings.github_client_id = github_client_id
+        if github_client_secret:
+            settings.github_client_secret = github_client_secret
+        if oauth_base_url:
+            settings.oauth_base_url = oauth_base_url
 
-            mcp.auth = BearerTokenVerifier(bearer_token)
-            logger.info("Bearer token 認証を有効化しました")
+        # Configure authentication
+        from .auth import create_auth_provider
+
+        auth_provider = create_auth_provider(settings)
+        if auth_provider is not None:
+            mcp.auth = auth_provider
 
         # TLS 設定
         uvicorn_config: dict[str, Any] = {}
@@ -160,5 +175,5 @@ def run_server(
         else:
             scheme = "http"
 
-        logger.info("%s サーバー: %s://%s:%d/mcp", transport, scheme, host, port)
+        logger.info("%s server: %s://%s:%d/mcp", transport, scheme, host, port)
         mcp.run(transport=transport, host=host, port=port, uvicorn_config=uvicorn_config)
