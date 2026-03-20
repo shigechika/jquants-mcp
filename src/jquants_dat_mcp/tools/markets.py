@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 
 from ..cache.store import CacheStore, TTL_24H, make_cache_key
 from ..client import JQuantsClient
-from ..exceptions import APIError, format_api_error
+from ..exceptions import APIError, UserNotConfiguredError, format_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ def register(
             date_from: 期間指定の開始日
             date_to: 期間指定の終了日
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         # code 指定 + 期間指定の場合は Tier 1 キャッシュで増分取得
@@ -89,7 +89,7 @@ def register(
             date_from: 期間指定の開始日
             date_to: 期間指定の終了日
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         if code or date or date_from or date_to:
@@ -129,7 +129,7 @@ def register(
             date_from: 期間指定の開始日
             date_to: 期間指定の終了日
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         if s33 or date or date_from or date_to:
@@ -171,7 +171,7 @@ def register(
             calc_date: 算定日（YYYYMMDD or YYYY-MM-DD）
         """
         # short_sale_report は Tier 2 のまま（同一銘柄+日付に複数報告者のレコードあり）
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         params = {
@@ -191,7 +191,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -214,7 +214,7 @@ def register(
             date_from: 期間指定の開始日
             date_to: 期間指定の終了日
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         if code or date or date_from or date_to:
@@ -251,7 +251,7 @@ def register(
             date_from: 期間指定の開始日（YYYYMMDD or YYYY-MM-DD）
             date_to: 期間指定の終了日（YYYYMMDD or YYYY-MM-DD）
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         return await _get_calendar_with_cache(
@@ -366,7 +366,7 @@ async def _get_with_tier1_cache(
         source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")
         return {"count": len(merged), "data": merged, "source": source}
 
-    except APIError as e:
+    except (APIError, UserNotConfiguredError) as e:
         return format_api_error(e)
 
 
@@ -387,7 +387,7 @@ async def _tier2_fallback(
         result = {"count": len(data), "data": data}
         cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
         return result
-    except APIError as e:
+    except (APIError, UserNotConfiguredError) as e:
         return format_api_error(e)
 
 
@@ -471,7 +471,7 @@ async def _get_calendar_with_cache(
         source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")
         return {"count": len(filtered), "data": filtered, "source": source}
 
-    except APIError as e:
+    except (APIError, UserNotConfiguredError) as e:
         return format_api_error(e)
 
 

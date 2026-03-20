@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 
 from ..cache.store import CacheStore, TTL_24H, make_cache_key
 from ..client import JQuantsClient
-from ..exceptions import APIError, format_api_error
+from ..exceptions import APIError, UserNotConfiguredError, format_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def register(
             category: 商品区分（例: Futures225, FuturesTOPIX）
             contract_flag: 限月フラグ（例: 0 = 全限月, 1 = 期近, 2 = 期先）
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         params = {"date": date, "category": category, "contract_flag": contract_flag}
@@ -53,7 +53,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -76,7 +76,7 @@ def register(
             code: 銘柄コード
             contract_flag: 限月フラグ（例: 0 = 全限月, 1 = 期近, 2 = 期先）
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         params = {
@@ -95,7 +95,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -112,7 +112,7 @@ def register(
         Args:
             date: 日付（YYYYMMDD or YYYY-MM-DD）（必須）
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         params = {"date": date}
@@ -126,5 +126,5 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)

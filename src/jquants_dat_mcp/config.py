@@ -55,6 +55,8 @@ _CONFIG_DEFS: list[tuple[str, str, str, str, str]] = [
     ("oauth_base_url", "oauth", "base_url", "OAUTH_BASE_URL", ""),
     ("oauth_jwt_signing_key", "oauth", "jwt_signing_key", "OAUTH_JWT_SIGNING_KEY", ""),
     ("oauth_require_consent", "oauth", "require_consent", "OAUTH_REQUIRE_CONSENT", "true"),
+    # Multi-user: encryption key for per-user API key storage
+    ("encryption_key", "server", "encryption_key", "MCP_ENCRYPTION_KEY", ""),
 ]
 
 # 型変換テーブル

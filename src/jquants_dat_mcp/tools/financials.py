@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 
 from ..cache.store import CacheStore, TTL_24H, make_cache_key
 from ..client import JQuantsClient
-from ..exceptions import APIError, format_api_error
+from ..exceptions import APIError, UserNotConfiguredError, format_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def register(
             code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
             date: 日付（YYYYMMDD or YYYY-MM-DD）。指定日に開示された財務情報を取得。
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         # Tier 1 キャッシュ: code 指定時
@@ -58,7 +58,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -78,7 +78,7 @@ def register(
             code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
             date: 日付（YYYY-MM-DD）。指定日に開示された財務諸表を取得。
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         params = {"code": code, "date": date}
@@ -92,7 +92,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -115,7 +115,7 @@ def register(
             date_from: 期間指定の開始日
             date_to: 期間指定の終了日
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         params = {"code": code, "date": date, "from": date_from, "to": date_to}
@@ -129,7 +129,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
 
@@ -198,5 +198,5 @@ async def _get_fins_summary_with_cache(
 
         return {"count": len(merged), "data": merged, "source": source}
 
-    except APIError as e:
+    except (APIError, UserNotConfiguredError) as e:
         return format_api_error(e)
