@@ -40,8 +40,24 @@ class PlanRestrictionError(APIError):
     """プラン制限によるアクセス不可（403）"""
 
 
-def format_api_error(error: APIError) -> dict:
-    """API エラーを MCP レスポンス用の辞書に整形する。"""
+class UserNotConfiguredError(JQuantsDatMCPError):
+    """No J-Quants API key registered for the authenticated user."""
+
+    def __init__(self, user_id: str) -> None:
+        super().__init__(
+            f"No J-Quants API key registered for user '{user_id}'. "
+            "Call the register_api_key tool to register your API key."
+        )
+        self.user_id = user_id
+
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["hint"] = "Use the register_api_key tool to register your J-Quants API key."
+        return d
+
+
+def format_api_error(error: JQuantsDatMCPError) -> dict:
+    """Format a JQuantsDatMCPError into an MCP-compatible response dict."""
     d = error.to_dict()
     if isinstance(error, PlanRestrictionError):
         d["hint"] = (
