@@ -59,7 +59,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--bearer-token",
         default="",
-        help="Bearer token for authentication",
+        help="Bearer token for authentication (used when OAuth is not configured)",
+    )
+
+    # GitHub OAuth 2.1 options
+    oauth_group = parser.add_argument_group("GitHub OAuth 2.1")
+    oauth_group.add_argument(
+        "--github-client-id",
+        default="",
+        metavar="CLIENT_ID",
+        help="GitHub OAuth App client ID (enables OAuth 2.1; overrides GITHUB_CLIENT_ID env var)",
+    )
+    oauth_group.add_argument(
+        "--github-client-secret",
+        default="",
+        metavar="CLIENT_SECRET",
+        help="GitHub OAuth App client secret (overrides GITHUB_CLIENT_SECRET env var)",
+    )
+    oauth_group.add_argument(
+        "--oauth-base-url",
+        default="",
+        metavar="URL",
+        help="Public base URL for OAuth endpoints, e.g. https://mcp.example.com (overrides OAUTH_BASE_URL env var)",
     )
 
     args = parser.parse_args(argv)
@@ -74,6 +95,9 @@ def main(argv: list[str] | None = None) -> int:
             ssl_certfile=args.ssl_certfile,
             ssl_keyfile=args.ssl_keyfile,
             bearer_token=args.bearer_token,
+            github_client_id=args.github_client_id,
+            github_client_secret=args.github_client_secret,
+            oauth_base_url=args.oauth_base_url,
         )
         return 0
     except KeyboardInterrupt:

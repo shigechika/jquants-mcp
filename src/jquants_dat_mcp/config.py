@@ -49,6 +49,12 @@ _CONFIG_DEFS: list[tuple[str, str, str, str, str]] = [
     ("ssl_certfile", "server", "ssl_certfile", "SSL_CERTFILE", ""),
     ("ssl_keyfile", "server", "ssl_keyfile", "SSL_KEYFILE", ""),
     ("bearer_token", "server", "bearer_token", "MCP_BEARER_TOKEN", ""),
+    # GitHub OAuth 2.1 settings
+    ("github_client_id", "oauth", "github_client_id", "GITHUB_CLIENT_ID", ""),
+    ("github_client_secret", "oauth", "github_client_secret", "GITHUB_CLIENT_SECRET", ""),
+    ("oauth_base_url", "oauth", "base_url", "OAUTH_BASE_URL", ""),
+    ("oauth_jwt_signing_key", "oauth", "jwt_signing_key", "OAUTH_JWT_SIGNING_KEY", ""),
+    ("oauth_require_consent", "oauth", "require_consent", "OAUTH_REQUIRE_CONSENT", "true"),
 ]
 
 # 型変換テーブル
@@ -57,6 +63,9 @@ _TYPE_MAP: dict[str, type] = {
     "retry_base_delay": float,
     "max_pages": int,
 }
+
+# Boolean settings — treated as bool after string conversion
+_BOOL_SETTINGS: frozenset[str] = frozenset({"oauth_require_consent"})
 
 # J-Quants 公式設定ファイルのデフォルトパス
 _JQUANTS_TOML_PATH = Path.home() / ".jquants-api" / "jquants-api.toml"
@@ -137,6 +146,8 @@ class Settings:
             target_type = _TYPE_MAP.get(attr)
             if target_type and not isinstance(value, target_type):
                 value = target_type(value)
+            elif attr in _BOOL_SETTINGS and not isinstance(value, bool):
+                value = str(value).lower() not in ("false", "0", "no", "off", "")
 
             setattr(self, attr, value)
 
