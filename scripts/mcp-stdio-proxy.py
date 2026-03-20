@@ -10,10 +10,40 @@ Usage:
 import argparse
 import json
 import sys
+import time
 
 import httpx
 
 DEFAULT_URL = "http://192.0.2.1:8080/mcp"
+MAX_RETRIES = 3
+RETRY_DELAY = 1  # seconds
+
+
+def log(msg: str) -> None:
+    """Log to stderr (visible in Claude Desktop logs)."""
+    print(f"[mcp-stdio-proxy] {msg}", file=sys.stderr, flush=True)
+
+
+def send_request(
+    client: httpx.Client,
+    url: str,
+    content: str,
+    headers: dict[str, str],
+) -> httpx.Response:
+    """Send a request with retry logic."""
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = client.post(url, content=content, headers=headers)
+            return resp
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout) as e:
+            last_error = e
+            log(f"attempt {attempt}/{MAX_RETRIES} failed: {e}")
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY * attempt)
+        except Exception as e:
+            raise e
+    raise last_error
 
 
 def main():
@@ -21,6 +51,8 @@ def main():
     parser.add_argument("url", nargs="?", default=DEFAULT_URL, help="Remote MCP server URL")
     parser.add_argument("--bearer-token", default="", help="Bearer token for authentication")
     args = parser.parse_args()
+
+    log(f"connecting to {args.url}")
 
     headers = {
         "Content-Type": "application/json",
@@ -30,7 +62,8 @@ def main():
         headers["Authorization"] = f"Bearer {args.bearer_token}"
 
     session_id = None
-    client = httpx.Client(timeout=60)
+    # connect timeout は短く、read timeout は長めに
+    client = httpx.Client(timeout=httpx.Timeout(connect=10, read=120, write=30, pool=10))
 
     for line in sys.stdin:
         line = line.strip()
@@ -42,8 +75,11 @@ def main():
             req_headers["Mcp-Session-Id"] = session_id
 
         try:
-            resp = client.post(args.url, content=line, headers=req_headers)
+            resp = send_request(client, args.url, line, req_headers)
         except Exception as e:
+            log(f"request failed after retries: {e}")
+            # セッションが切れた可能性があるのでリセット
+            session_id = None
             print(
                 json.dumps(
                     {
@@ -55,6 +91,27 @@ def main():
                 flush=True,
             )
             continue
+
+        # セッション切れ（404 = session not found）の場合はリセットしてリトライ
+        if resp.status_code == 404 and session_id:
+            log("session expired, resetting session_id and retrying")
+            session_id = None
+            req_headers = dict(headers)
+            try:
+                resp = send_request(client, args.url, line, req_headers)
+            except Exception as e:
+                log(f"retry after session reset failed: {e}")
+                print(
+                    json.dumps(
+                        {
+                            "jsonrpc": "2.0",
+                            "error": {"code": -32000, "message": str(e)},
+                            "id": None,
+                        }
+                    ),
+                    flush=True,
+                )
+                continue
 
         if "mcp-session-id" in resp.headers:
             session_id = resp.headers["mcp-session-id"]
