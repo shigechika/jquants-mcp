@@ -1,0 +1,86 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: jquants-dat-mcp
+  annotations:
+    # Allow unauthenticated requests (protect via MCP_BEARER_TOKEN instead)
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        # Gen2 execution environment for larger memory and better performance
+        run.googleapis.com/execution-environment: gen2
+        # Single instance to avoid concurrent SQLite writes
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "1"
+        # Increase startup timeout for large GCS downloads (4 GB cache)
+        run.googleapis.com/startup-cpu-boost: "true"
+    spec:
+      # Service account with GCS read/write permissions
+      # Required roles: roles/storage.objectAdmin (on the GCS bucket)
+      serviceAccountName: jquants-dat-mcp@PROJECT_ID.iam.gserviceaccount.com
+
+      # Allow up to 3600s for graceful shutdown (final GCS upload)
+      timeoutSeconds: 3600
+
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/REPO/jquants-dat-mcp:latest
+          ports:
+            - containerPort: 8000
+
+          resources:
+            limits:
+              # 8 Gi recommended: cache.db up to 4 GB + OS overhead
+              memory: 8Gi
+              cpu: "2"
+
+          env:
+            # ---- GCS sync settings ----
+            - name: GCS_BUCKET
+              value: "YOUR_GCS_BUCKET_NAME"
+            - name: GCS_PREFIX
+              value: "jquants-dat-mcp/"
+            - name: GCS_SYNC_INTERVAL
+              value: "300"  # seconds between periodic uploads
+
+            # ---- MCP server settings ----
+            - name: PORT
+              value: "8000"
+            - name: JQUANTS_CACHE_DIR
+              value: "/tmp"
+            - name: JQUANTS_PLAN
+              value: "premium"
+
+            # ---- Secrets (use Secret Manager in production) ----
+            # Uncomment and replace with your Secret Manager secret names.
+            #
+            # - name: JQUANTS_API_KEY
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: jquants-api-key
+            #       key: latest
+            #
+            # - name: MCP_BEARER_TOKEN
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: mcp-bearer-token
+            #       key: latest
+
+          # Liveness probe: check /mcp endpoint
+          livenessProbe:
+            httpGet:
+              path: /mcp
+              port: 8000
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+
+          # Startup probe: wait for GCS download + server startup
+          startupProbe:
+            httpGet:
+              path: /mcp
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 30  # up to 5 minutes for large cache download
