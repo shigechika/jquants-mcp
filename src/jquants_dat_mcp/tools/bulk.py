@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 
 from ..cache.store import CacheStore, TTL_6H, make_cache_key
 from ..client import JQuantsClient
-from ..exceptions import APIError, format_api_error
+from ..exceptions import APIError, UserNotConfiguredError, format_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def register(
                 "hint": f"指定可能な値: {', '.join(VALID_BULK_ENDPOINTS)}",
             }
 
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
         params = {"endpoint": endpoint}
@@ -89,7 +89,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_6H)
             return result
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -106,7 +106,7 @@ def register(
         Args:
             key: ファイルのキー（get_bulk_list で取得した Key 値）
         """
-        client: JQuantsClient = get_client()
+        client: JQuantsClient = await get_client()
 
         # 署名付き URL は一時的なため、キャッシュしない
         try:
@@ -116,5 +116,5 @@ def register(
                 "url": url,
                 "hint": "URL の有効期限は約5分です。期限内にダウンロードしてください。",
             }
-        except APIError as e:
+        except (APIError, UserNotConfiguredError) as e:
             return format_api_error(e)
