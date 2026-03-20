@@ -106,11 +106,22 @@ ENDPOINT_TTL: dict[str, int] = {
 
 
 class CacheStore:
-    """SQLite-based two-tier cache store."""
+    """SQLite-based two-tier cache store.
 
-    def __init__(self, db_path: Path):
+    All cache operations are plan-scoped: Tier 1 rows include a ``plan``
+    column and Tier 2 response keys are suffixed with the plan name so that
+    data fetched under different subscription plans is stored separately.
+    """
+
+    def __init__(self, db_path: Path, default_plan: str = "free"):
         self._db_path = db_path
+        self._default_plan = default_plan
         self._conn: sqlite3.Connection | None = None
+
+    @property
+    def default_plan(self) -> str:
+        """Return the default plan used for cache operations."""
+        return self._default_plan
 
     def _ensure_connection(self) -> sqlite3.Connection:
         """Lazy initialization of SQLite connection."""
@@ -123,16 +134,17 @@ class CacheStore:
         return self._conn
 
     def _init_tables(self) -> None:
-        """Create cache tables if they don't exist."""
+        """Create cache tables if they don't exist, then migrate existing ones."""
         conn = self._conn
         assert conn is not None
 
-        # Tier 1 テーブル
+        # Tier 1 テーブル（plan カラム含む）
         for table_name, schema in _TIER1_TABLES.items():
             extra = f", {schema['extra_columns']}" if schema["extra_columns"] else ""
             ddl = f"""
                 CREATE TABLE IF NOT EXISTS {table_name} (
                     {schema["key_columns"]},
+                    plan TEXT NOT NULL DEFAULT 'free',
                     data TEXT NOT NULL,
                     fetched_at REAL NOT NULL
                     {extra},
@@ -145,6 +157,30 @@ class CacheStore:
         conn.execute(_RESPONSE_CACHE_DDL)
         conn.commit()
 
+        # 既存テーブルのマイグレーション: plan カラムを追加
+        self._migrate_plan_column()
+
+    def _migrate_plan_column(self) -> None:
+        """Add plan column to existing Tier 1 tables if not already present.
+
+        Existing rows are backfilled with ``DEFAULT 'free'`` via SQLite's
+        column default mechanism.
+        """
+        conn = self._conn
+        assert conn is not None
+        migrated = False
+        for table_name in _TIER1_TABLES:
+            try:
+                conn.execute(
+                    f"ALTER TABLE {table_name} ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'"
+                )
+                logger.info("Migration: added 'plan' column to %s", table_name)
+                migrated = True
+            except sqlite3.OperationalError:
+                pass  # カラムが既に存在する場合はスキップ
+        if migrated:
+            conn.commit()
+
     # ----------------------------------------------------------------
     # Tier 1: 行レベルキャッシュ
     # ----------------------------------------------------------------
@@ -156,6 +192,7 @@ class CacheStore:
         date_column: str = "date",
         date_from: str | None = None,
         date_to: str | None = None,
+        plan: str | None = None,
     ) -> list[dict[str, Any]]:
         """Retrieve cached rows matching filters.
 
@@ -165,6 +202,7 @@ class CacheStore:
             date_column: Name of the date column for range filtering
             date_from: Start date (inclusive)
             date_to: End date (inclusive)
+            plan: Subscription plan filter. Defaults to ``default_plan``.
 
         Returns:
             List of cached data dicts
@@ -172,6 +210,7 @@ class CacheStore:
         if table not in _TIER1_TABLES:
             return []
 
+        effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
         conditions = []
         params: list[str] = []
@@ -179,6 +218,9 @@ class CacheStore:
         for col, val in key_filter.items():
             conditions.append(f"{col} = ?")
             params.append(val)
+
+        conditions.append("plan = ?")
+        params.append(effective_plan)
 
         if date_from:
             conditions.append(f"{date_column} >= ?")
@@ -200,11 +242,17 @@ class CacheStore:
         date_column: str = "date",
         date_from: str | None = None,
         date_to: str | None = None,
+        plan: str | None = None,
     ) -> set[str]:
-        """Return the set of dates already cached for the given key."""
+        """Return the set of dates already cached for the given key.
+
+        Args:
+            plan: Subscription plan filter. Defaults to ``default_plan``.
+        """
         if table not in _TIER1_TABLES:
             return set()
 
+        effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
         conditions = []
         params: list[str] = []
@@ -212,6 +260,9 @@ class CacheStore:
         for col, val in key_filter.items():
             conditions.append(f"{col} = ?")
             params.append(val)
+
+        conditions.append("plan = ?")
+        params.append(effective_plan)
 
         if date_from:
             conditions.append(f"{date_column} >= ?")
@@ -232,6 +283,7 @@ class CacheStore:
         rows: list[dict[str, Any]],
         key_columns: list[str],
         adj_factor_key: str | None = None,
+        plan: str | None = None,
     ) -> int:
         """Insert or replace rows into a Tier 1 table.
 
@@ -240,6 +292,7 @@ class CacheStore:
             rows: List of data dicts from the API response
             key_columns: Column names to extract as key values (e.g. ["code", "date"])
             adj_factor_key: If set, extract this key from data as adj_factor column
+            plan: Subscription plan to tag each row. Defaults to ``default_plan``.
 
         Returns:
             Number of rows inserted
@@ -247,6 +300,7 @@ class CacheStore:
         if table not in _TIER1_TABLES or not rows:
             return 0
 
+        effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
         now = time.time()
         count = 0
@@ -261,13 +315,15 @@ class CacheStore:
 
             if has_adj:
                 adj = row.get(adj_factor_key)
-                col_names = ", ".join(_key_col_names(table)) + ", data, fetched_at, adj_factor"
-                placeholders = ", ".join(["?"] * (len(key_values) + 3))
-                values = key_values + [data_json, now, adj]
+                col_names = (
+                    ", ".join(_key_col_names(table)) + ", plan, data, fetched_at, adj_factor"
+                )
+                placeholders = ", ".join(["?"] * (len(key_values) + 4))
+                values = key_values + [effective_plan, data_json, now, adj]
             else:
-                col_names = ", ".join(_key_col_names(table)) + ", data, fetched_at"
-                placeholders = ", ".join(["?"] * (len(key_values) + 2))
-                values = key_values + [data_json, now]
+                col_names = ", ".join(_key_col_names(table)) + ", plan, data, fetched_at"
+                placeholders = ", ".join(["?"] * (len(key_values) + 3))
+                values = key_values + [effective_plan, data_json, now]
 
             sql = f"INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})"
             conn.execute(sql, values)
@@ -276,8 +332,17 @@ class CacheStore:
         conn.commit()
         return count
 
-    def invalidate_rows(self, table: str, key_filter: dict[str, str]) -> int:
+    def invalidate_rows(
+        self,
+        table: str,
+        key_filter: dict[str, str],
+        plan: str | None = None,
+    ) -> int:
         """Delete cached rows matching the filter (e.g. for stock split invalidation).
+
+        Args:
+            plan: If provided, restrict deletion to rows with this plan.
+                  Defaults to ``default_plan``.
 
         Returns:
             Number of rows deleted
@@ -285,17 +350,29 @@ class CacheStore:
         if table not in _TIER1_TABLES:
             return 0
 
+        effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
         conditions = [f"{col} = ?" for col in key_filter]
         params = list(key_filter.values())
+
+        conditions.append("plan = ?")
+        params.append(effective_plan)
 
         sql = f"DELETE FROM {table} WHERE {' AND '.join(conditions)}"
         cursor = conn.execute(sql, params)
         conn.commit()
         return cursor.rowcount
 
-    def check_adj_factor(self, code: str, new_adj_factor: float | None) -> bool:
+    def check_adj_factor(
+        self,
+        code: str,
+        new_adj_factor: float | None,
+        plan: str | None = None,
+    ) -> bool:
         """Check if AdjFactor has changed for a stock (split detection).
+
+        Args:
+            plan: Subscription plan to scope the check. Defaults to ``default_plan``.
 
         Returns:
             True if cache is valid (no split detected), False if invalidation needed
@@ -303,10 +380,12 @@ class CacheStore:
         if new_adj_factor is None:
             return True
 
+        effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
         row = conn.execute(
-            "SELECT adj_factor FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT 1",
-            (code,),
+            "SELECT adj_factor FROM equities_bars_daily "
+            "WHERE code = ? AND plan = ? ORDER BY date DESC LIMIT 1",
+            (code, effective_plan),
         ).fetchone()
 
         if row is None:
@@ -325,12 +404,22 @@ class CacheStore:
     # Tier 2: レスポンスレベルキャッシュ
     # ----------------------------------------------------------------
 
-    def get_response(self, cache_key: str) -> dict[str, Any] | None:
-        """Retrieve a cached response if it exists and hasn't expired."""
+    def _plan_cache_key(self, cache_key: str, plan: str | None = None) -> str:
+        """Append plan suffix to a Tier 2 cache key."""
+        effective_plan = plan if plan is not None else self._default_plan
+        return f"{cache_key}|plan={effective_plan}"
+
+    def get_response(self, cache_key: str, plan: str | None = None) -> dict[str, Any] | None:
+        """Retrieve a cached response if it exists and hasn't expired.
+
+        Args:
+            plan: Subscription plan scope. Defaults to ``default_plan``.
+        """
+        full_key = self._plan_cache_key(cache_key, plan)
         conn = self._ensure_connection()
         row = conn.execute(
             "SELECT data, fetched_at, ttl_seconds FROM response_cache WHERE cache_key = ?",
-            (cache_key,),
+            (full_key,),
         ).fetchone()
 
         if row is None:
@@ -339,22 +428,33 @@ class CacheStore:
         age = time.time() - row["fetched_at"]
         if row["ttl_seconds"] > 0 and age > row["ttl_seconds"]:
             # 期限切れ → 削除
-            conn.execute("DELETE FROM response_cache WHERE cache_key = ?", (cache_key,))
+            conn.execute("DELETE FROM response_cache WHERE cache_key = ?", (full_key,))
             conn.commit()
             return None
 
         return json.loads(row["data"])
 
-    def put_response(self, cache_key: str, data: Any, ttl_seconds: int) -> None:
-        """Store a response in the cache."""
+    def put_response(
+        self,
+        cache_key: str,
+        data: Any,
+        ttl_seconds: int,
+        plan: str | None = None,
+    ) -> None:
+        """Store a response in the cache.
+
+        Args:
+            plan: Subscription plan scope. Defaults to ``default_plan``.
+        """
         if ttl_seconds == TTL_NONE:
             return  # キャッシュしない設定
 
+        full_key = self._plan_cache_key(cache_key, plan)
         conn = self._ensure_connection()
         conn.execute(
             "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) "
             "VALUES (?, ?, ?, ?)",
-            (cache_key, json.dumps(data, ensure_ascii=False), time.time(), ttl_seconds),
+            (full_key, json.dumps(data, ensure_ascii=False), time.time(), ttl_seconds),
         )
         conn.commit()
 
@@ -365,7 +465,7 @@ class CacheStore:
     def status(self) -> dict[str, Any]:
         """Return cache statistics."""
         conn = self._ensure_connection()
-        stats: dict[str, Any] = {"db_path": str(self._db_path)}
+        stats: dict[str, Any] = {"db_path": str(self._db_path), "plan": self._default_plan}
 
         for table_name in _TIER1_TABLES:
             row = conn.execute(f"SELECT COUNT(*) as cnt FROM {table_name}").fetchone()
