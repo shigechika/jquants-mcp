@@ -66,14 +66,18 @@ class TestGetMarketsMarginInterest:
         mock_fn = AsyncMock(side_effect=[data_day1, data_day2])
         with patch.object(mock_env["client"], "get_all_pages", mock_fn):
             result1 = await _call(
-                "get_markets_margin_interest", code="72030",
-                date_from="2024-01-04", date_to="2024-01-05",
+                "get_markets_margin_interest",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-01-05",
             )
             assert result1["count"] == 1
 
             result2 = await _call(
-                "get_markets_margin_interest", code="72030",
-                date_from="2024-01-04", date_to="2024-01-05",
+                "get_markets_margin_interest",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-01-05",
             )
             # 2回目: キャッシュ + API マージ
             assert result2["count"] == 2
@@ -88,12 +92,16 @@ class TestGetMarketsMarginInterest:
         mock_fn = AsyncMock(return_value=mock_data)
         with patch.object(mock_env["client"], "get_all_pages", mock_fn):
             await _call(
-                "get_markets_margin_interest", code="72030",
-                date_from="2024-01-04", date_to="2024-01-05",
+                "get_markets_margin_interest",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-01-05",
             )
             result = await _call(
-                "get_markets_margin_interest", code="72030",
-                date_from="2024-01-04", date_to="2024-01-05",
+                "get_markets_margin_interest",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-01-05",
             )
             assert result["count"] == 2
             assert result["source"] == "cache"
@@ -128,12 +136,16 @@ class TestGetMarketsMarginAlert:
         mock_fn = AsyncMock(return_value=mock_data)
         with patch.object(mock_env["client"], "get_all_pages", mock_fn):
             await _call(
-                "get_markets_margin_alert", code="72030",
-                date_from="2024-01-04", date_to="2024-01-04",
+                "get_markets_margin_alert",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-01-04",
             )
             result = await _call(
-                "get_markets_margin_alert", code="72030",
-                date_from="2024-01-04", date_to="2024-01-04",
+                "get_markets_margin_alert",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-01-04",
             )
             assert result["count"] == 1
             assert result["source"] == "cache"
@@ -159,12 +171,16 @@ class TestGetMarketsShortRatio:
         mock_fn = AsyncMock(return_value=mock_data)
         with patch.object(mock_env["client"], "get_all_pages", mock_fn):
             await _call(
-                "get_markets_short_ratio", s33="0050",
-                date_from="2024-01-04", date_to="2024-01-04",
+                "get_markets_short_ratio",
+                s33="0050",
+                date_from="2024-01-04",
+                date_to="2024-01-04",
             )
             result = await _call(
-                "get_markets_short_ratio", s33="0050",
-                date_from="2024-01-04", date_to="2024-01-04",
+                "get_markets_short_ratio",
+                s33="0050",
+                date_from="2024-01-04",
+                date_to="2024-01-04",
             )
             assert result["count"] == 1
             assert result["source"] == "cache"
@@ -235,12 +251,16 @@ class TestGetMarketsBreakdown:
         mock_fn = AsyncMock(return_value=mock_data)
         with patch.object(mock_env["client"], "get_all_pages", mock_fn):
             await _call(
-                "get_markets_breakdown", code="72030",
-                date_from="2024-01-04", date_to="2024-01-04",
+                "get_markets_breakdown",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-01-04",
             )
             result = await _call(
-                "get_markets_breakdown", code="72030",
-                date_from="2024-01-04", date_to="2024-01-04",
+                "get_markets_breakdown",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-01-04",
             )
             assert result["count"] == 1
             assert result["source"] == "cache"

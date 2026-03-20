@@ -1,8 +1,9 @@
-"""BearerTokenVerifier のテスト。"""
+"""Tests for authentication providers."""
 
 import pytest
 
-from jquants_dat_mcp.auth import BearerTokenVerifier
+from jquants_dat_mcp.auth import BearerTokenVerifier, create_auth_provider
+from jquants_dat_mcp.config import Settings
 
 VALID_TOKEN = "abc123secret"
 
@@ -12,9 +13,14 @@ def verifier():
     return BearerTokenVerifier(VALID_TOKEN)
 
 
+# ---------------------------------------------------------------------------
+# BearerTokenVerifier tests
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_valid_token(verifier):
-    """正しいトークンで AccessToken が返ること。"""
+    """Valid token returns an AccessToken."""
     result = await verifier.verify_token(VALID_TOKEN)
     assert result is not None
     assert result.token == VALID_TOKEN
@@ -23,13 +29,107 @@ async def test_valid_token(verifier):
 
 @pytest.mark.asyncio
 async def test_invalid_token(verifier):
-    """不正なトークンで None が返ること。"""
+    """Invalid token returns None."""
     result = await verifier.verify_token("wrong-token")
     assert result is None
 
 
 @pytest.mark.asyncio
 async def test_empty_token(verifier):
-    """空文字トークンで None が返ること。"""
+    """Empty token returns None."""
     result = await verifier.verify_token("")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# create_auth_provider() factory tests
+# ---------------------------------------------------------------------------
+
+
+def test_create_auth_provider_no_auth():
+    """Returns None when no auth settings are configured."""
+    settings = Settings(
+        bearer_token="", github_client_id="", github_client_secret="", oauth_base_url=""
+    )
+    result = create_auth_provider(settings)
+    assert result is None
+
+
+def test_create_auth_provider_bearer_token():
+    """Returns BearerTokenVerifier when only bearer_token is set."""
+    settings = Settings(
+        bearer_token="mysecret", github_client_id="", github_client_secret="", oauth_base_url=""
+    )
+    result = create_auth_provider(settings)
+    assert isinstance(result, BearerTokenVerifier)
+
+
+def test_create_auth_provider_github_oauth():
+    """Returns GitHubProvider when GitHub OAuth settings are fully configured."""
+    from fastmcp.server.auth.providers.github import GitHubProvider
+
+    settings = Settings(
+        bearer_token="ignored",
+        github_client_id="Ov23liTEST",
+        github_client_secret="gh_secret_abc",
+        oauth_base_url="https://mcp.example.com",
+    )
+    result = create_auth_provider(settings)
+    assert isinstance(result, GitHubProvider)
+
+
+def test_create_auth_provider_github_oauth_incomplete():
+    """Returns BearerTokenVerifier (fallback) when GitHub OAuth is only partially configured."""
+    settings = Settings(
+        bearer_token="fallback",
+        github_client_id="Ov23liTEST",
+        github_client_secret="",  # missing secret → not a complete OAuth config
+        oauth_base_url="https://mcp.example.com",
+    )
+    result = create_auth_provider(settings)
+    # Falls back to bearer token because OAuth config is incomplete
+    assert isinstance(result, BearerTokenVerifier)
+
+
+def test_create_auth_provider_github_no_base_url():
+    """Returns BearerTokenVerifier (fallback) when oauth_base_url is missing."""
+    settings = Settings(
+        bearer_token="fallback",
+        github_client_id="Ov23liTEST",
+        github_client_secret="gh_secret_abc",
+        oauth_base_url="",  # missing base URL
+    )
+    result = create_auth_provider(settings)
+    assert isinstance(result, BearerTokenVerifier)
+
+
+# ---------------------------------------------------------------------------
+# OAuth settings in config.py
+# ---------------------------------------------------------------------------
+
+
+def test_oauth_require_consent_default():
+    """oauth_require_consent defaults to True."""
+    settings = Settings()
+    assert settings.oauth_require_consent is True
+
+
+def test_oauth_require_consent_false():
+    """oauth_require_consent can be set to False."""
+    settings = Settings(oauth_require_consent="false")
+    assert settings.oauth_require_consent is False
+
+
+def test_oauth_require_consent_zero():
+    """oauth_require_consent treats '0' as False."""
+    settings = Settings(oauth_require_consent="0")
+    assert settings.oauth_require_consent is False
+
+
+def test_oauth_settings_defaults():
+    """GitHub OAuth settings default to empty strings."""
+    settings = Settings()
+    assert settings.github_client_id == ""
+    assert settings.github_client_secret == ""
+    assert settings.oauth_base_url == ""
+    assert settings.oauth_jwt_signing_key == ""

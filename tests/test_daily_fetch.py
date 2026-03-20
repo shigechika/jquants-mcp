@@ -405,7 +405,9 @@ class TestStoreTier1:
             {"S33": "0050", "Date": "2026-03-11", "Ratio": 0.40},
         ]
         n = _store_tier1(
-            db_conn, "markets_short_ratio", rows,
+            db_conn,
+            "markets_short_ratio",
+            rows,
             key_mapping=[("S33", "s33"), ("Date", "date")],
         )
         assert n == 2
@@ -417,8 +419,12 @@ class TestStoreTier1:
         rows1 = [{"Code": "72030", "Date": "2026-03-10", "LoanBalance": 100}]
         rows2 = [{"Code": "72030", "Date": "2026-03-10", "LoanBalance": 999}]
 
-        _store_tier1(db_conn, "markets_margin_interest", rows1, [("Code", "code"), ("Date", "date")])
-        _store_tier1(db_conn, "markets_margin_interest", rows2, [("Code", "code"), ("Date", "date")])
+        _store_tier1(
+            db_conn, "markets_margin_interest", rows1, [("Code", "code"), ("Date", "date")]
+        )
+        _store_tier1(
+            db_conn, "markets_margin_interest", rows2, [("Code", "code"), ("Date", "date")]
+        )
 
         count = db_conn.execute("SELECT COUNT(*) FROM markets_margin_interest").fetchone()[0]
         assert count == 1
@@ -445,7 +451,8 @@ class TestFetchMarketsTier1:
         method = MagicMock(return_value=df)
 
         n = _fetch_markets_tier1(
-            method, db_conn,
+            method,
+            db_conn,
             table="markets_short_ratio",
             key_mapping=[("S33", "s33"), ("Date", "date")],
         )
@@ -457,7 +464,8 @@ class TestFetchMarketsTier1:
     def test_incremental_fetch(self, db_conn):
         """キャッシュあり → 差分取得。"""
         _store_tier1(
-            db_conn, "markets_short_ratio",
+            db_conn,
+            "markets_short_ratio",
             [{"S33": "0050", "Date": "2026-03-09", "Ratio": 0.30}],
             [("S33", "s33"), ("Date", "date")],
         )
@@ -466,7 +474,8 @@ class TestFetchMarketsTier1:
         method = MagicMock(return_value=df)
 
         n = _fetch_markets_tier1(
-            method, db_conn,
+            method,
+            db_conn,
             table="markets_short_ratio",
             key_mapping=[("S33", "s33"), ("Date", "date")],
         )
@@ -480,7 +489,8 @@ class TestFetchMarketsTier1:
         method = MagicMock(side_effect=Exception("403 Forbidden"))
 
         n = _fetch_markets_tier1(
-            method, db_conn,
+            method,
+            db_conn,
             table="markets_margin_interest",
             key_mapping=[("Code", "code"), ("Date", "date")],
         )
@@ -492,7 +502,8 @@ class TestFetchMarketsTier1:
         method = MagicMock(side_effect=[FakeDataFrame(), df])
 
         n = _fetch_markets_tier1(
-            method, db_conn,
+            method,
+            db_conn,
             table="markets_margin_interest",
             key_mapping=[("Code", "code"), ("Date", "date")],
         )
@@ -501,14 +512,17 @@ class TestFetchMarketsTier1:
 
     def test_backfill_with_date_range(self, db_conn):
         """バックフィル: from/to 指定で取得。"""
-        df = FakeDataFrame([
-            {"Code": "72030", "Date": "2026-03-01", "Val": 1},
-            {"Code": "72030", "Date": "2026-03-02", "Val": 2},
-        ])
+        df = FakeDataFrame(
+            [
+                {"Code": "72030", "Date": "2026-03-01", "Val": 1},
+                {"Code": "72030", "Date": "2026-03-02", "Val": 2},
+            ]
+        )
         method = MagicMock(return_value=df)
 
         n = _fetch_markets_tier1(
-            method, db_conn,
+            method,
+            db_conn,
             table="markets_breakdown",
             key_mapping=[("Code", "code"), ("Date", "date")],
             from_yyyymmdd="20260301",
@@ -522,11 +536,14 @@ class TestFetchMarketsTier1:
 
     def test_nan_sanitized(self, db_conn):
         """NaN が None に変換されて保存されること。"""
-        df = FakeDataFrame([{"Code": "72030", "Date": "2026-03-10", "val": float("nan"), "ok": 1.0}])
+        df = FakeDataFrame(
+            [{"Code": "72030", "Date": "2026-03-10", "val": float("nan"), "ok": 1.0}]
+        )
         method = MagicMock(return_value=df)
 
         _fetch_markets_tier1(
-            method, db_conn,
+            method,
+            db_conn,
             table="markets_margin_interest",
             key_mapping=[("Code", "code"), ("Date", "date")],
         )
