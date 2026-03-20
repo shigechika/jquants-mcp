@@ -41,7 +41,7 @@ def _get_cache() -> CacheStore:
     if _cache is None:
         settings = _get_settings()
         db_path = settings.get_cache_dir() / "cache.db"
-        _cache = CacheStore(db_path)
+        _cache = CacheStore(db_path, default_plan=settings.jquants_plan)
     return _cache
 
 

@@ -252,12 +252,19 @@ def register(
 
     def _search_earnings_by_code(cache: CacheStore, code: str) -> dict[str, Any]:
         """Search accumulated earnings calendar data for a specific stock code."""
-        conn = cache._ensure_connection()
-        rows = conn.execute(
-            "SELECT data FROM response_cache WHERE cache_key LIKE '/equities/earnings-calendar?date=%'"
-        ).fetchall()
-
         import json
+
+        conn = cache._ensure_connection()
+        # cache_key format: "/equities/earnings-calendar|date=YYYYMMDD|plan=<plan>"
+        plan = cache.default_plan
+        rows = conn.execute(
+            "SELECT data FROM response_cache "
+            "WHERE cache_key LIKE ? AND cache_key LIKE ?",
+            (
+                "/equities/earnings-calendar|date=%",
+                f"%|plan={plan}",
+            ),
+        ).fetchall()
 
         matches = []
         seen_dates = set()
