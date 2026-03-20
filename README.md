@@ -69,6 +69,14 @@ plan = premium
 # ssl_certfile = /path/to/fullchain.pem
 # ssl_keyfile = /path/to/privkey.pem
 # bearer_token = <secret>
+# encryption_key = <random-secret>   # enables per-user API key storage (multi-user mode)
+
+[oauth]
+# github_client_id = <your-github-client-id>
+# github_client_secret = <your-github-client-secret>
+# base_url = https://mcp.example.com
+# jwt_signing_key = <random-secret>  # optional: auto-generated if blank
+# require_consent = true
 ```
 
 ### Environment Variables
@@ -85,10 +93,147 @@ plan = premium
 | `SSL_CERTFILE` | No | — | Path to SSL certificate file (HTTP transport) |
 | `SSL_KEYFILE` | No | — | Path to SSL private key file (HTTP transport) |
 | `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication |
+| `GITHUB_CLIENT_ID` | No | — | GitHub OAuth App client ID (enables OAuth 2.1) |
+| `GITHUB_CLIENT_SECRET` | No | — | GitHub OAuth App client secret |
+| `OAUTH_BASE_URL` | No | — | Public base URL of the server (e.g. `https://mcp.example.com`) |
+| `OAUTH_JWT_SIGNING_KEY` | No | auto | Secret for JWT signing; auto-generated if blank |
+| `OAUTH_REQUIRE_CONSENT` | No | `true` | Show GitHub OAuth consent screen (`true`/`false`) |
+| `MCP_ENCRYPTION_KEY` | No | — | Passphrase for AES-256-GCM encryption of per-user API keys |
 
 \* API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `JQUANTS_API_KEY` only to override.
 
 Environment variables override both `config.ini` and `jquants-api.toml`. This allows MCP clients (Claude Desktop, Claude Code) to pass settings via their `env` block while keeping defaults elsewhere.
+
+## Authentication
+
+jquants-dat-mcp supports three authentication modes:
+
+| Mode | When to use |
+|---|---|
+| None | Local stdio or trusted LAN (single user) |
+| Bearer Token | Single-user remote access over HTTPS |
+| GitHub OAuth 2.1 | Multi-user access / Claude Desktop Connectors |
+
+The mode is selected automatically at startup:
+
+1. **GitHub OAuth 2.1** — when `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `OAUTH_BASE_URL` are all set
+2. **Bearer Token** — when `MCP_BEARER_TOKEN` (or `bearer_token` in `config.ini`) is set
+3. **None** — no authentication (stdio transport or trusted environment)
+
+### GitHub OAuth 2.1
+
+The server acts as an OAuth 2.1 authorization server using GitHub as the upstream identity provider (IdP). Clients are redirected to GitHub's login page; the server exchanges the authorization code for a signed JWT that identifies the user across requests.
+
+#### 1. Create a GitHub OAuth App
+
+1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
+2. Fill in:
+   - **Application name**: `jquants-dat-mcp` (or any name)
+   - **Homepage URL**: your server's public base URL (e.g. `https://mcp.example.com`)
+   - **Authorization callback URL**: `https://mcp.example.com/oauth/callback/github`
+3. Click **Register application**, then click **Generate a new client secret**
+4. Copy the **Client ID** and the generated **Client secret**
+
+#### 2. Configure the server
+
+**Via environment variables:**
+
+```bash
+export GITHUB_CLIENT_ID=Ov23liXXXXXXXXXXXXXX
+export GITHUB_CLIENT_SECRET=<your-client-secret>
+export OAUTH_BASE_URL=https://mcp.example.com      # must be publicly reachable
+export OAUTH_JWT_SIGNING_KEY=<random-secret>       # optional: auto-generated if blank
+export MCP_ENCRYPTION_KEY=<random-secret>          # required for per-user API key storage
+```
+
+**Via `config.ini`:**
+
+```ini
+[oauth]
+github_client_id = Ov23liXXXXXXXXXXXXXX
+github_client_secret = <your-client-secret>
+base_url = https://mcp.example.com
+# jwt_signing_key = <random-secret>   # optional: auto-generated if blank
+# require_consent = true              # default: true
+
+[server]
+encryption_key = <random-secret>      # required for per-user API key storage
+```
+
+#### 3. Start the server with OAuth
+
+```bash
+jquants-dat-mcp -t streamable-http --port 8080 \
+  --ssl-certfile /path/to/fullchain.pem \
+  --ssl-keyfile /path/to/privkey.pem \
+  --github-client-id <ID> \
+  --github-client-secret <SECRET> \
+  --oauth-base-url https://mcp.example.com
+```
+
+When all OAuth settings are configured via environment variables or `config.ini`, CLI flags are optional — OAuth is activated automatically on startup.
+
+| CLI Option | Description |
+|---|---|
+| `--github-client-id` | GitHub OAuth App client ID |
+| `--github-client-secret` | GitHub OAuth App client secret |
+| `--oauth-base-url` | Public base URL of the server (used to build redirect URIs) |
+
+## Multi-user Mode
+
+When GitHub OAuth 2.1 and `MCP_ENCRYPTION_KEY` are both configured, the server operates in **multi-user mode**: each authenticated user stores their own J-Quants API key on the server, and all data tools use that key automatically. All users share the read cache; each user gets an independent J-Quants client with isolated rate limiting.
+
+### User flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as Claude
+    participant S as jquants-dat-mcp
+    participant G as GitHub
+    participant J as J-Quants API
+    U->>C: Connect (Connectors UI / Claude Code)
+    C->>G: OAuth 2.1 Authorization
+    G-->>C: Access token (JWT)
+    U->>C: "Register my J-Quants API key: <key>"
+    C->>S: register_api_key(api_key="<key>", plan="light")
+    S->>S: Encrypt & store key (AES-256-GCM)
+    S-->>C: {"status": "ok"}
+    U->>C: "Get TOPIX daily prices"
+    C->>S: get_indices_bars_daily_topix(...)
+    S->>J: API call with user's key
+    J-->>S: Data
+    S-->>C: Result
+```
+
+### Tools for multi-user mode
+
+| Tool | Required | Description |
+|---|---|---|
+| `register_api_key` | OAuth 2.1 + `MCP_ENCRYPTION_KEY` | Encrypt and store your J-Quants API key |
+| `delete_api_key` | OAuth 2.1 + `MCP_ENCRYPTION_KEY` | Remove your stored key |
+
+**Registering a key** (tell Claude):
+
+> "Register my J-Quants API key: `<your-refresh-token>`, plan: light"
+
+Claude calls `register_api_key(api_key="...", plan="light")`. Valid plans: `free`, `light`, `standard`, `premium`. The plan controls per-user rate limiting.
+
+### Security
+
+- API keys are encrypted with **AES-256-GCM** (authenticated encryption — integrity-protected)
+- The encryption key is derived via **PBKDF2-HMAC-SHA256** (600,000 iterations) from `MCP_ENCRYPTION_KEY`
+- Each ciphertext uses a unique random 12-byte nonce — encrypting the same key twice produces different ciphertext
+- Tampered or truncated ciphertexts are rejected before decryption
+
+### Backward compatibility
+
+| Configuration | Behavior |
+|---|---|
+| No auth, no `MCP_ENCRYPTION_KEY` | Single-user: global `JQUANTS_API_KEY` for all connections |
+| Bearer token | Single-user: same as above, with HTTP authentication |
+| OAuth + no `MCP_ENCRYPTION_KEY` | OAuth authentication, but all users share the global `JQUANTS_API_KEY` |
+| OAuth + `MCP_ENCRYPTION_KEY` | Full multi-user: each user has an independent encrypted API key |
 
 ## Usage
 
@@ -253,6 +398,43 @@ To connect to a TLS-enabled server with Bearer token authentication:
 
 Restart Claude Desktop after editing.
 
+### Claude Desktop Connectors (OAuth 2.1)
+
+Claude Desktop's **Connectors** feature provides a native OAuth 2.1 authentication flow. Users click **Connect** in the Connectors panel and are redirected to GitHub's login page automatically — no manual token management required.
+
+> **Requirements:**
+> - Server accessible over **HTTPS** (TLS certificate required)
+> - GitHub OAuth 2.1 configured (see [GitHub OAuth 2.1](#github-oauth-21))
+> - `MCP_ENCRYPTION_KEY` set on the server (for per-user API key storage)
+
+**Server-side startup:**
+
+```bash
+jquants-dat-mcp -t streamable-http --port 8080 \
+  --ssl-certfile /path/to/fullchain.pem \
+  --ssl-keyfile /path/to/privkey.pem \
+  --github-client-id <ID> \
+  --github-client-secret <SECRET> \
+  --oauth-base-url https://mcp.example.com
+```
+
+**`claude_desktop_config.json` (Connectors UI):**
+
+```json
+{
+  "mcpServers": {
+    "jquants-dat-mcp": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp"
+    }
+  }
+}
+```
+
+On first use, Claude Desktop opens a browser window for GitHub OAuth. After authentication, the token is stored automatically and subsequent connections use it silently.
+
+> **Note:** Claude Desktop Connectors support (`"type": "http"` with OAuth) is rolling out gradually. If it is not yet available in your version, use the [stdio proxy method](#claude-desktop-remote-via-stdio-proxy) as a fallback.
+
 ## Available Tools
 
 ### Equities (6 tools)
@@ -307,13 +489,15 @@ Restart Claude Desktop after editing.
 | `get_bulk_list` | `/bulk/list` | Light+ | List downloadable CSV files |
 | `get_bulk_download_url` | `/bulk/get` | Light+ | Get signed download URL |
 
-### Utility (3 tools)
+### Utility (5 tools)
 
-| Tool | Description |
-|---|---|
-| `health_check` | Server health and API key status |
-| `cache_status` | Cache statistics |
-| `cache_clear` | Clear cached data |
+| Tool | Auth required | Description |
+|---|---|---|
+| `health_check` | — | Server health and API key status |
+| `cache_status` | — | Cache statistics |
+| `cache_clear` | — | Clear cached data |
+| `register_api_key` | OAuth 2.1 | Store your J-Quants API key (multi-user mode) |
+| `delete_api_key` | OAuth 2.1 | Remove your stored J-Quants API key |
 
 ## Caching
 
