@@ -36,7 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger("gcs_sync")
 
 # Files to synchronize
-_SYNC_FILES = ["cache.db", "users.db"]
+_SYNC_FILES = ["cache.db", "users.db", "oauth_state.db"]
 
 # Sync interval in seconds
 _SYNC_INTERVAL = int(os.environ.get("GCS_SYNC_INTERVAL", "300"))  # 5 minutes
