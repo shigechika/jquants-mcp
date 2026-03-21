@@ -42,5 +42,6 @@ tests/
 
 # Documentation
 *.md
+!README.md
 LICENSE
 CHANGELOG.md
