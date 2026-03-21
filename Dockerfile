@@ -12,6 +12,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --extra cloud-run
 
 # Install the project itself
+COPY README.md ./
 COPY src/ ./src/
 RUN uv sync --frozen --no-dev --extra cloud-run
 
