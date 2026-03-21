@@ -56,13 +56,22 @@ def create_auth_provider(settings: Settings) -> OAuthProvider | TokenVerifier | 
     if settings.github_client_id and settings.github_client_secret and settings.oauth_base_url:
         from fastmcp.server.auth.providers.github import GitHubProvider
 
-        logger.info("Initializing GitHub OAuth 2.1 provider (base_url=%s)", settings.oauth_base_url)
+        from .oauth_kv_store import SQLiteKeyValueStore
+
+        oauth_db_path = settings.get_cache_dir() / "oauth_state.db"
+        client_storage = SQLiteKeyValueStore(oauth_db_path)
+        logger.info(
+            "Initializing GitHub OAuth 2.1 provider (base_url=%s, storage=%s)",
+            settings.oauth_base_url,
+            oauth_db_path,
+        )
         return GitHubProvider(
             client_id=settings.github_client_id,
             client_secret=settings.github_client_secret,
             base_url=settings.oauth_base_url,
             jwt_signing_key=settings.oauth_jwt_signing_key or None,
             require_authorization_consent=settings.oauth_require_consent,
+            client_storage=client_storage,
         )
 
     if settings.bearer_token:
