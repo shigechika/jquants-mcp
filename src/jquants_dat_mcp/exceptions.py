@@ -40,12 +40,29 @@ class PlanRestrictionError(APIError):
     """プラン制限によるアクセス不可（403）"""
 
 
+class DecryptionError(JQuantsDatMCPError):
+    """Stored API key could not be decrypted (corrupted data or wrong encryption key)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "Failed to decrypt your stored API key. "
+            "Please re-register your key with the register_api_key tool."
+        )
+
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["hint"] = "Use the register_api_key tool to re-register your J-Quants API key."
+        return d
+
+
 class UserNotConfiguredError(JQuantsDatMCPError):
     """No J-Quants API key registered for the authenticated user."""
 
     def __init__(self, user_id: str) -> None:
+        # user_id is NOT included in the public message to avoid information disclosure.
+        # It is stored as an attribute for server-side logging only.
         super().__init__(
-            f"No J-Quants API key registered for user '{user_id}'. "
+            "No J-Quants API key registered for your account. "
             "Call the register_api_key tool to register your API key."
         )
         self.user_id = user_id
@@ -60,8 +77,10 @@ class InvalidAPIKeyError(JQuantsDatMCPError):
     """User's registered API key is no longer valid."""
 
     def __init__(self, user_id: str) -> None:
+        # user_id is NOT included in the public message to avoid information disclosure.
+        # It is stored as an attribute for server-side logging only.
         super().__init__(
-            f"The J-Quants API key for user '{user_id}' is no longer valid. "
+            "The registered J-Quants API key is no longer valid. "
             "Please call register_api_key with a new key."
         )
         self.user_id = user_id
@@ -69,6 +88,19 @@ class InvalidAPIKeyError(JQuantsDatMCPError):
     def to_dict(self) -> dict:
         d = super().to_dict()
         d["hint"] = "Use the register_api_key tool to register a new J-Quants API key."
+        return d
+
+
+class ValidationError(JQuantsDatMCPError):
+    """Invalid tool parameter value."""
+
+    def __init__(self, param: str, message: str) -> None:
+        super().__init__(f"Invalid parameter '{param}': {message}")
+        self.param = param
+
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["param"] = self.param
         return d
 
 

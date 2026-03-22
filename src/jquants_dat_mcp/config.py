@@ -153,6 +153,19 @@ class Settings:
 
             setattr(self, attr, value)
 
+        self.__post_init_validate()
+
+    def __post_init_validate(self) -> None:
+        """Validate numeric settings after construction (called from __init__)."""
+        if self.max_retries < 0:
+            raise ValueError(f"max_retries must be >= 0, got {self.max_retries}")
+        if self.max_retries > 20:
+            logger.warning("max_retries=%d is unusually high (>20)", self.max_retries)
+        if self.max_pages < 1:
+            raise ValueError(f"max_pages must be >= 1, got {self.max_pages}")
+        if self.retry_base_delay <= 0:
+            raise ValueError(f"retry_base_delay must be > 0, got {self.retry_base_delay}")
+
     def get_cache_dir(self) -> Path:
         """Return the cache directory path, creating it if needed."""
         d = Path(self.jquants_cache_dir) if self.jquants_cache_dir else _default_cache_dir()
