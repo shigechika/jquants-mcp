@@ -2,13 +2,13 @@
 
 import pytest
 
-from jquants_dat_mcp.crypto import decrypt, derive_key, encrypt
+from jquants_dat_mcp.crypto import decrypt, encrypt
 from jquants_dat_mcp.db.users import UserStore
 from jquants_dat_mcp.models.user import User
 
-_KEY = derive_key("test-encryption-key")
-_ENCRYPT = lambda pt: encrypt(pt, _KEY)  # noqa: E731
-_DECRYPT = lambda blob: decrypt(blob, _KEY)  # noqa: E731
+_PASSPHRASE = "test-encryption-key"
+_ENCRYPT = lambda pt: encrypt(pt, _PASSPHRASE)  # noqa: E731
+_DECRYPT = lambda blob: decrypt(blob, _PASSPHRASE)  # noqa: E731
 
 
 @pytest.fixture

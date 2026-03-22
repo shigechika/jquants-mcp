@@ -54,6 +54,21 @@ def create_auth_provider(settings: Settings) -> OAuthProvider | TokenVerifier | 
         An auth provider instance, or None if authentication is disabled.
     """
     if settings.github_client_id and settings.github_client_secret and settings.oauth_base_url:
+        # Enforce HTTPS for oauth_base_url to prevent token interception in production.
+        # Allow http:// only when JQUANTS_ENV=development (local testing).
+        import os
+
+        base_url = settings.oauth_base_url
+        if not base_url.startswith("https://"):
+            env = os.environ.get("JQUANTS_ENV", "production")
+            if env != "development":
+                raise ValueError(
+                    f"oauth_base_url must use HTTPS in production. "
+                    f"Got: '{base_url}'. "
+                    "Set JQUANTS_ENV=development to allow HTTP for local testing."
+                )
+            logger.warning("oauth_base_url uses HTTP (JQUANTS_ENV=development): %s", base_url)
+
         from fastmcp.server.auth.providers.github import GitHubProvider
 
         from .oauth_kv_store import SQLiteKeyValueStore

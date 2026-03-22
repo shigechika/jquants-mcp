@@ -76,15 +76,16 @@ def _get_user_db():
     if not settings.encryption_key:
         return None
 
-    from .crypto import decrypt, derive_key, encrypt
+    from .crypto import decrypt, encrypt
     from .db.users import UserStore
 
-    key = derive_key(settings.encryption_key)
+    # Pass passphrase directly — encrypt/decrypt now handle salt derivation internally
+    passphrase = settings.encryption_key
     db_path = settings.get_cache_dir() / "users.db"
     _user_db = UserStore(
         db_path,
-        encrypt_fn=lambda pt: encrypt(pt, key),
-        decrypt_fn=lambda blob: decrypt(blob, key),
+        encrypt_fn=lambda pt: encrypt(pt, passphrase),
+        decrypt_fn=lambda blob: decrypt(blob, passphrase),
     )
     return _user_db
 
@@ -143,8 +144,13 @@ async def _get_user_client() -> JQuantsClient:
         _last_cleanup = now_mono
 
     # Look up the user's API key from the encrypted store
+    from .exceptions import DecryptionError
+
     user = user_db.get_user(user_id)
     if user is None:
+        if user_db.has_corrupted_key(user_id):
+            # Key exists in DB but failed to decrypt — provide actionable error
+            raise DecryptionError()
         raise UserNotConfiguredError(user_id)
 
     # Build per-user client if not yet cached
@@ -273,6 +279,7 @@ async def register_api_key(
     _user_client_last_used.pop(user_id, None)
 
     # Probe plan-specific endpoints to verify / auto-detect the actual plan
+    from .audit import audit
     from .config import Settings as _Settings
     from .validation import detect_plan
 
@@ -290,6 +297,8 @@ async def register_api_key(
     except Exception as e:
         logger.warning("Plan detection failed during registration for user %s: %s", user_id, e)
         warnings.append(f"Plan detection skipped due to error: {e}")
+
+    audit("register_api_key", user_id=user_id, plan=plan)
 
     result: dict[str, Any] = {
         "status": "ok",
@@ -327,11 +336,14 @@ async def delete_api_key() -> dict[str, Any]:
             "message": "Multi-user mode is not enabled (MCP_ENCRYPTION_KEY not set).",
         }
 
+    from .audit import audit
+
     user_id = token.client_id
     deleted = user_db.delete_user(user_id)
     _user_clients.pop(user_id, None)
 
     if deleted:
+        audit("delete_api_key", user_id=user_id)
         return {"status": "ok", "message": "API key deleted."}
     return {"status": "not_found", "message": "No API key was registered for this user."}
 
