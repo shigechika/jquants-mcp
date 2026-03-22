@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 
 from ..cache.store import CacheStore, TTL_24H, make_cache_key
 from ..client import JQuantsClient
-from ..exceptions import APIError, UserNotConfiguredError, format_api_error
+from ..exceptions import APIError, InvalidAPIKeyError, UserNotConfiguredError, format_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except (APIError, UserNotConfiguredError) as e:
+        except (APIError, InvalidAPIKeyError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -147,5 +147,5 @@ async def _get_topix_with_cache(
         source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")
         return {"count": len(merged), "data": merged, "source": source}
 
-    except (APIError, UserNotConfiguredError) as e:
+    except (APIError, InvalidAPIKeyError, UserNotConfiguredError) as e:
         return format_api_error(e)
