@@ -66,7 +66,7 @@ def test_create_auth_provider_bearer_token():
 
 def test_create_auth_provider_github_oauth():
     """Returns GitHubProvider when GitHub OAuth settings are fully configured."""
-    from fastmcp.server.auth.providers.github import GitHubProvider
+    from unittest.mock import patch
 
     settings = Settings(
         bearer_token="ignored",
@@ -74,8 +74,12 @@ def test_create_auth_provider_github_oauth():
         github_client_secret="gh_secret_abc",
         oauth_base_url="https://mcp.example.com",
     )
-    result = create_auth_provider(settings)
-    assert isinstance(result, GitHubProvider)
+    # GitHubProvider is lazily imported inside create_auth_provider; patch at source
+    with patch("fastmcp.server.auth.providers.github.GitHubProvider") as MockProvider:
+        MockProvider.return_value = object()
+        create_auth_provider(settings)
+        _, kwargs = MockProvider.call_args
+        assert kwargs.get("redirect_path") == "/oauth/callback"
 
 
 def test_create_auth_provider_github_oauth_incomplete():

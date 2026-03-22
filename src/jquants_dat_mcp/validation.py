@@ -14,11 +14,16 @@ _VALIDATION_INTERVAL = 86400
 # Evict in-memory clients idle for more than 1 hour
 _STALE_CLIENT_TTL = 3600
 
-# Probe endpoints to detect the user's actual plan (ordered highest to lowest)
-_PLAN_PROBE_ENDPOINTS: list[tuple[str, str]] = [
-    ("premium", "/equities/bars/minute"),
-    ("standard", "/markets/short_selling"),
-    ("light", "/fins/details"),
+# Probe endpoints to detect the user's actual plan (ordered highest to lowest).
+# Each tuple: (plan_name, endpoint_path, probe_params)
+# Plans verified against J-Quants API v2 docs:
+#   /fins/details          → Premium only
+#   /markets/short-ratio   → Standard / Premium  (old path: /markets/short_selling)
+#   /equities/investor-types → Light / Standard / Premium  (old path: /markets/trades_spec)
+_PLAN_PROBE_ENDPOINTS: list[tuple[str, str, dict]] = [
+    ("premium", "/fins/details", {"date": "20240101"}),
+    ("standard", "/markets/short-ratio", {"date": "20240101"}),
+    ("light", "/equities/investor-types", {}),
 ]
 
 
@@ -78,9 +83,9 @@ async def detect_plan(client) -> str:
     Raises:
         AuthenticationError: If the API key itself is invalid.
     """
-    for plan, endpoint in _PLAN_PROBE_ENDPOINTS:
+    for plan, endpoint, params in _PLAN_PROBE_ENDPOINTS:
         try:
-            await client.get(endpoint, {"date": "20240101"})
+            await client.get(endpoint, params)
             logger.info("Plan detection: %s probe succeeded → plan=%s", endpoint, plan)
             return plan
         except PlanRestrictionError:
