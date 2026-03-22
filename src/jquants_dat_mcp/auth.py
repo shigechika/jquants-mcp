@@ -69,6 +69,7 @@ def create_auth_provider(settings: Settings) -> OAuthProvider | TokenVerifier | 
             client_id=settings.github_client_id,
             client_secret=settings.github_client_secret,
             base_url=settings.oauth_base_url,
+            redirect_path="/oauth/callback",
             jwt_signing_key=settings.oauth_jwt_signing_key or None,
             require_authorization_consent=settings.oauth_require_consent,
             client_storage=client_storage,
