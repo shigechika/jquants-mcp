@@ -77,7 +77,8 @@ class UserStore:
             user_id: The unique user identifier.
 
         Returns:
-            User with decrypted api_key, or None if not found.
+            User with decrypted api_key, or None if not found or decryption failed.
+            Call has_corrupted_key() to distinguish the two cases.
         """
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
@@ -85,8 +86,12 @@ class UserStore:
             return None
         try:
             api_key = self._decrypt(row["encrypted_api_key"])
-        except ValueError:
-            logger.error("Failed to decrypt API key for user %s", user_id)
+        except Exception:
+            logger.error(
+                "Failed to decrypt API key for user %s — "
+                "the encryption key may have changed or the data is corrupted",
+                user_id,
+            )
             return None
         return User(
             user_id=row["user_id"],
@@ -96,6 +101,30 @@ class UserStore:
             updated_at=row["updated_at"],
             last_validated_at=row["last_validated_at"],
         )
+
+    def has_corrupted_key(self, user_id: str) -> bool:
+        """Return True if the user exists in the DB but their key cannot be decrypted.
+
+        This is used to distinguish between "user not registered" and "key corrupted",
+        so callers can surface a more actionable error message.
+
+        Args:
+            user_id: The unique user identifier.
+
+        Returns:
+            True if a row exists for user_id but decryption fails; False otherwise.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT encrypted_api_key FROM users WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        if row is None:
+            return False
+        try:
+            self._decrypt(row["encrypted_api_key"])
+            return False  # Decryption succeeded — key is fine
+        except Exception:
+            return True
 
     def save_user(self, user: User) -> None:
         """Insert or update a user record with an encrypted API key.
