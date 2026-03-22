@@ -91,7 +91,7 @@ async def test_validate_api_key_network_error_is_lenient():
 async def test_detect_plan_premium():
     """When the premium endpoint returns 200, detected plan is 'premium'."""
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(return_value={"bars": []})
+    mock_client.get = AsyncMock(return_value={"data": []})
 
     result = await detect_plan(mock_client)
 
@@ -99,7 +99,7 @@ async def test_detect_plan_premium():
     # Only the premium probe should have been called
     mock_client.get.assert_awaited_once()
     call_args = mock_client.get.call_args[0]
-    assert "minute" in call_args[0]
+    assert "details" in call_args[0]
 
 
 @pytest.mark.asyncio
@@ -110,7 +110,7 @@ async def test_detect_plan_standard():
     async def side_effect(path, *args, **kwargs):
         nonlocal call_count
         call_count += 1
-        if "minute" in path:
+        if "details" in path:
             raise PlanRestrictionError("forbidden", status_code=403)
         return {"data": []}
 
@@ -127,7 +127,7 @@ async def test_detect_plan_standard():
 async def test_detect_plan_light():
     """When premium and standard return 403 but light returns 200, plan is 'light'."""
     async def side_effect(path, *args, **kwargs):
-        if "minute" in path or "short_selling" in path:
+        if "details" in path or "short-ratio" in path:
             raise PlanRestrictionError("forbidden", status_code=403)
         return {"data": []}
 
@@ -170,9 +170,9 @@ async def test_detect_plan_non_plan_error_continues():
     async def side_effect(path, *args, **kwargs):
         nonlocal call_count
         call_count += 1
-        if "minute" in path:
+        if "details" in path:
             raise OSError("network error")
-        if "short_selling" in path:
+        if "short-ratio" in path:
             raise PlanRestrictionError("forbidden", status_code=403)
         return {"data": []}
 
