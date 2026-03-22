@@ -7,6 +7,9 @@ import time
 from typing import Any
 
 from fastmcp import FastMCP
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 
 from . import __version__
 from .cache.store import CacheStore
@@ -14,6 +17,45 @@ from .client import JQuantsClient
 from .config import Settings
 
 logger = logging.getLogger(__name__)
+
+# Paths that trigger OAuth debug logging
+_OAUTH_DEBUG_PATHS = ("/oauth/", "/.well-known/")
+
+
+class OAuthDebugMiddleware(BaseHTTPMiddleware):
+    """Log OAuth-related HTTP requests to help diagnose auth flow issues."""
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        path = request.url.path
+        is_oauth = any(p in path for p in _OAUTH_DEBUG_PATHS)
+
+        if is_oauth:
+            query = dict(request.query_params)
+            # Log sanitized headers (omit Authorization value)
+            headers = {
+                k: (v if k.lower() != "authorization" else "[REDACTED]")
+                for k, v in request.headers.items()
+            }
+            logger.info(
+                "OAuth request: method=%s path=%s query=%r headers=%r",
+                request.method,
+                path,
+                query,
+                headers,
+            )
+
+        response = await call_next(request)
+
+        if is_oauth:
+            logger.info(
+                "OAuth response: method=%s path=%s status=%d",
+                request.method,
+                path,
+                response.status_code,
+            )
+
+        return response
+
 
 mcp = FastMCP("jquants-dat-mcp")
 
@@ -435,4 +477,11 @@ def run_server(
             scheme = "http"
 
         logger.info("%s server: %s://%s:%d/mcp", transport, scheme, host, port)
-        mcp.run(transport=transport, host=host, port=port, uvicorn_config=uvicorn_config)
+        debug_middleware = [Middleware(OAuthDebugMiddleware)]
+        mcp.run(
+            transport=transport,
+            host=host,
+            port=port,
+            uvicorn_config=uvicorn_config,
+            middleware=debug_middleware,
+        )
