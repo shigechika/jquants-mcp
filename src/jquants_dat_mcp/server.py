@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from fastmcp import FastMCP
@@ -25,6 +26,15 @@ _client: JQuantsClient | None = None
 
 # Multi-user client pool: user_id → JQuantsClient (one per authenticated user)
 _user_clients: dict[str, JQuantsClient] = {}
+
+# Last-used timestamps for stale client eviction: user_id → monotonic timestamp
+_user_client_last_used: dict[str, float] = {}
+
+# Timestamp of the last stale-client cleanup pass (monotonic)
+_last_cleanup: float = 0.0
+
+# Run cleanup at most once every 5 minutes
+_CLEANUP_INTERVAL = 300
 
 # UserStore — lazily initialized when encryption_key is configured
 _user_db = None  # UserStore | None
@@ -79,6 +89,18 @@ def _get_user_db():
     return _user_db
 
 
+def _evict_stale_clients() -> None:
+    """Evict in-memory client instances that have been idle for more than 1 hour."""
+    from .validation import _STALE_CLIENT_TTL
+
+    now = time.monotonic()
+    stale = [uid for uid, ts in _user_client_last_used.items() if now - ts > _STALE_CLIENT_TTL]
+    for uid in stale:
+        _user_clients.pop(uid, None)
+        _user_client_last_used.pop(uid, None)
+        logger.info("Evicted stale client for user %s (idle >%ds)", uid, _STALE_CLIENT_TTL)
+
+
 async def _get_user_client() -> JQuantsClient:
     """Return the J-Quants client for the currently authenticated user.
 
@@ -87,13 +109,19 @@ async def _get_user_client() -> JQuantsClient:
     2. OAuth user without encryption_key configured → global client (shared)
     3. OAuth user with encryption_key → per-user client from UserStore
 
+    Performs daily API key validation and stale client cleanup as side effects.
+
     Raises:
         UserNotConfiguredError: When multi-user mode is active and the current
             user has not yet registered their J-Quants API key.
+        InvalidAPIKeyError: When daily validation detects that the stored API key
+            has been revoked.
     """
+    global _last_cleanup
+
     from fastmcp.server.dependencies import get_access_token
 
-    from .exceptions import UserNotConfiguredError
+    from .exceptions import InvalidAPIKeyError, UserNotConfiguredError
 
     token = get_access_token()
 
@@ -108,16 +136,18 @@ async def _get_user_client() -> JQuantsClient:
     if user_db is None:
         return _get_client()
 
-    # Return cached per-user client if already created
-    if user_id in _user_clients:
-        return _user_clients[user_id]
+    # Periodically evict stale clients
+    now_mono = time.monotonic()
+    if now_mono - _last_cleanup > _CLEANUP_INTERVAL:
+        _evict_stale_clients()
+        _last_cleanup = now_mono
 
     # Look up the user's API key from the encrypted store
     user = user_db.get_user(user_id)
     if user is None:
         raise UserNotConfiguredError(user_id)
 
-    # Race-safe: another coroutine may have created the client while we worked
+    # Build per-user client if not yet cached
     if user_id not in _user_clients:
         user_settings = Settings(
             jquants_api_key=user.api_key,
@@ -125,7 +155,25 @@ async def _get_user_client() -> JQuantsClient:
         )
         _user_clients[user_id] = JQuantsClient(user_settings)
 
-    return _user_clients[user_id]
+    client = _user_clients[user_id]
+    _user_client_last_used[user_id] = now_mono
+
+    # Daily API key validation
+    from .validation import needs_validation, validate_api_key
+    from .exceptions import AuthenticationError
+
+    if needs_validation(user.last_validated_at):
+        try:
+            await validate_api_key(client)
+            user_db.update_last_validated(user_id)
+            logger.info("Daily validation passed for user %s", user_id)
+        except AuthenticationError:
+            # Key is no longer valid — evict cached client and surface error
+            _user_clients.pop(user_id, None)
+            _user_client_last_used.pop(user_id, None)
+            raise InvalidAPIKeyError(user_id)
+
+    return client
 
 
 # ------------------------------------------------------------------
@@ -222,13 +270,36 @@ async def register_api_key(
 
     # Invalidate the cached client so the next call picks up the new key
     _user_clients.pop(user_id, None)
+    _user_client_last_used.pop(user_id, None)
 
-    return {
+    # Probe plan-specific endpoints to verify / auto-detect the actual plan
+    from .config import Settings as _Settings
+    from .validation import detect_plan
+
+    probe_client = JQuantsClient(_Settings(jquants_api_key=api_key, jquants_plan=plan))
+    warnings: list[str] = []
+    try:
+        detected_plan = await detect_plan(probe_client)
+        if detected_plan != plan:
+            user_db.update_plan(user_id, detected_plan)
+            warnings.append(
+                f"Claimed plan '{plan}' differs from detected plan '{detected_plan}'. "
+                f"Stored plan updated to '{detected_plan}'."
+            )
+            plan = detected_plan
+    except Exception as e:
+        logger.warning("Plan detection failed during registration for user %s: %s", user_id, e)
+        warnings.append(f"Plan detection skipped due to error: {e}")
+
+    result: dict[str, Any] = {
         "status": "ok",
         "user_id": user_id,
         "plan": plan,
         "message": "API key registered successfully.",
     }
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
 @mcp.tool()

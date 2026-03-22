@@ -9,7 +9,7 @@ from fastmcp import FastMCP
 
 from ..cache.store import CacheStore, TTL_6H, make_cache_key
 from ..client import JQuantsClient
-from ..exceptions import APIError, UserNotConfiguredError, format_api_error
+from ..exceptions import APIError, InvalidAPIKeyError, UserNotConfiguredError, format_api_error
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_6H)
             return result
-        except (APIError, UserNotConfiguredError) as e:
+        except (APIError, InvalidAPIKeyError, UserNotConfiguredError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -116,5 +116,5 @@ def register(
                 "url": url,
                 "hint": "URL の有効期限は約5分です。期限内にダウンロードしてください。",
             }
-        except (APIError, UserNotConfiguredError) as e:
+        except (APIError, InvalidAPIKeyError, UserNotConfiguredError) as e:
             return format_api_error(e)
