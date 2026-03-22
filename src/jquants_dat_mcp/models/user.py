@@ -25,3 +25,6 @@ class User:
 
     created_at: int = field(default_factory=lambda: int(time()))
     updated_at: int = field(default_factory=lambda: int(time()))
+
+    last_validated_at: int | None = None
+    """Unix timestamp of the last successful API key validation. None if never validated."""

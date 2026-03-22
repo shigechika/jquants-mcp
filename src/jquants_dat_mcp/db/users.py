@@ -54,7 +54,17 @@ class UserStore:
         with self._connect() as conn:
             conn.execute(_DDL)
             conn.commit()
+        self._migrate_last_validated()
         logger.debug("UserStore initialized at %s", self._db_path)
+
+    def _migrate_last_validated(self) -> None:
+        """Add last_validated_at column if it does not exist (schema migration)."""
+        with self._connect() as conn:
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+            if "last_validated_at" not in cols:
+                conn.execute("ALTER TABLE users ADD COLUMN last_validated_at INTEGER")
+                conn.commit()
+                logger.info("Migrated users table: added last_validated_at column")
 
     # ------------------------------------------------------------------
     # Public API
@@ -84,6 +94,7 @@ class UserStore:
             plan=row["plan"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            last_validated_at=row["last_validated_at"],
         )
 
     def save_user(self, user: User) -> None:
@@ -125,6 +136,36 @@ class UserStore:
         if deleted:
             logger.info("Deleted user %s", user_id)
         return deleted
+
+    def update_last_validated(self, user_id: str) -> None:
+        """Update the last_validated_at timestamp for a user.
+
+        Args:
+            user_id: The unique user identifier.
+        """
+        now = int(time.time())
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET last_validated_at = ? WHERE user_id = ?",
+                (now, user_id),
+            )
+            conn.commit()
+
+    def update_plan(self, user_id: str, plan: str) -> None:
+        """Update the stored plan for a user.
+
+        Args:
+            user_id: The unique user identifier.
+            plan: New plan name to store.
+        """
+        now = int(time.time())
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE users SET plan = ?, updated_at = ? WHERE user_id = ?",
+                (plan, now, user_id),
+            )
+            conn.commit()
+        logger.info("Updated plan for user %s to %s", user_id, plan)
 
     def list_users(self) -> list[str]:
         """Return all registered user_ids (no API keys).

@@ -56,6 +56,22 @@ class UserNotConfiguredError(JQuantsDatMCPError):
         return d
 
 
+class InvalidAPIKeyError(JQuantsDatMCPError):
+    """User's registered API key is no longer valid."""
+
+    def __init__(self, user_id: str) -> None:
+        super().__init__(
+            f"The J-Quants API key for user '{user_id}' is no longer valid. "
+            "Please call register_api_key with a new key."
+        )
+        self.user_id = user_id
+
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["hint"] = "Use the register_api_key tool to register a new J-Quants API key."
+        return d
+
+
 def format_api_error(error: JQuantsDatMCPError) -> dict:
     """Format a JQuantsDatMCPError into an MCP-compatible response dict."""
     d = error.to_dict()
