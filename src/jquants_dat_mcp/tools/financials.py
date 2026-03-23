@@ -28,16 +28,16 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve financial summary data.
 
-        財務情報（四半期決算）を取得する。売上高・営業利益・当期純利益・EPS・BPS・
-        キャッシュフロー・配当金・業績予想など包括的な財務データを含む。
-        code または date のいずれかは必須。
+        Returns quarterly financial data including revenue, operating profit, net income,
+        EPS, BPS, cash flow, dividends, and earnings forecasts.
+        Either 'code' or 'date' must be specified.
 
-        [対応プラン] Free / Light / Standard / Premium
-        ※ Free プランはデータが12週間遅延
+        [Supported plans] Free / Light / Standard / Premium
+        Note: Free plan data is delayed by 12 weeks.
 
         Args:
-            code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
-            date: 日付（YYYYMMDD or YYYY-MM-DD）。指定日に開示された財務情報を取得。
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            date: Date (YYYYMMDD or YYYY-MM-DD). Returns financials disclosed on that date.
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -68,15 +68,15 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve detailed financial statements (BS/PL/CF).
 
-        財務諸表の詳細データを取得する。貸借対照表（BS）・損益計算書（PL）の
-        各項目を日本基準・IFRS に対応して取得できる。
-        code または date のいずれかは必須。
+        Returns detailed financial statement data including balance sheet (BS) and income
+        statement (PL) line items, supporting both Japanese GAAP and IFRS.
+        Either 'code' or 'date' must be specified.
 
-        [対応プラン] Premium
+        [Supported plans] Premium
 
         Args:
-            code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
-            date: 日付（YYYY-MM-DD）。指定日に開示された財務諸表を取得。
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            date: Date (YYYY-MM-DD). Returns financial statements disclosed on that date.
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -104,16 +104,16 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve cash dividend data.
 
-        配当金データを取得する。権利確定日・配当落ち日・配当金額（予想・実績）・
-        配当支払開始予定日・記念特別配当情報などを含む。
+        Returns dividend data including record date, ex-dividend date, dividend amount
+        (forecast and actual), expected payment start date, and commemorative/special dividends.
 
-        [対応プラン] Premium
+        [Supported plans] Premium
 
         Args:
-            code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
-            date: 日付（YYYYMMDD or YYYY-MM-DD）
-            date_from: 期間指定の開始日
-            date_to: 期間指定の終了日
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            date: Date (YYYYMMDD or YYYY-MM-DD)
+            date_from: Start date for range query
+            date_to: End date for range query
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()

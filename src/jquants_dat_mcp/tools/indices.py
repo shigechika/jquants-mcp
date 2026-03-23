@@ -30,16 +30,15 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve daily index bars (OHLC).
 
-        指数四本値（日足）を取得する。TOPIX・日経225・グロース250など各種指数の
-        始値・高値・安値・終値・出来高を日次で取得できる。
+        Returns daily OHLC and volume for indices including TOPIX, Nikkei 225, and Growth 250.
 
-        [対応プラン] Standard / Premium
+        [Supported plans] Standard / Premium
 
         Args:
-            code: 指数コード（例: 0000 = TOPIX, 0010 = 日経225）
-            date: 日付（YYYYMMDD or YYYY-MM-DD）
-            date_from: 期間指定の開始日
-            date_to: 期間指定の終了日
+            code: Index code (e.g. 0000 = TOPIX, 0010 = Nikkei 225)
+            date: Date (YYYYMMDD or YYYY-MM-DD)
+            date_from: Start date for range query
+            date_to: End date for range query
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -65,14 +64,14 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve daily TOPIX bars (OHLC) with Tier 1 cache.
 
-        TOPIX の日足四本値を取得する。TOPIX に特化したエンドポイントで、
-        Tier 1 キャッシュ（行レベル）による効率的な増分取得が可能。
+        Returns daily OHLC data for TOPIX using a dedicated endpoint.
+        Supports efficient incremental fetching via row-level (Tier 1) cache.
 
-        [対応プラン] Light / Standard / Premium
+        [Supported plans] Light / Standard / Premium
 
         Args:
-            date_from: 期間指定の開始日（YYYYMMDD or YYYY-MM-DD）
-            date_to: 期間指定の終了日（YYYYMMDD or YYYY-MM-DD）
+            date_from: Start date for range query (YYYYMMDD or YYYY-MM-DD)
+            date_to: End date for range query (YYYYMMDD or YYYY-MM-DD)
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()

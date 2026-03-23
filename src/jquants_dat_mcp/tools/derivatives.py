@@ -29,15 +29,15 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve daily futures bars (OHLC).
 
-        先物の日足四本値を取得する。日経225先物・TOPIX先物・マザーズ先物など
-        各種先物の始値・高値・安値・終値・出来高・建玉を日次で取得できる。
+        Returns daily OHLC, volume, and open interest for futures contracts
+        including Nikkei 225 futures, TOPIX futures, and Mothers futures.
 
-        [対応プラン] Premium
+        [Supported plans] Premium
 
         Args:
-            date: 日付（YYYYMMDD or YYYY-MM-DD）（必須）
-            category: 商品区分（例: Futures225, FuturesTOPIX）
-            contract_flag: 限月フラグ（例: 0 = 全限月, 1 = 期近, 2 = 期先）
+            date: Date (YYYYMMDD or YYYY-MM-DD) (required)
+            category: Product category (e.g. Futures225, FuturesTOPIX)
+            contract_flag: Contract month flag (e.g. 0 = all, 1 = front month, 2 = back month)
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -65,16 +65,16 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve daily options bars (OHLC).
 
-        オプションの日足四本値を取得する。日経225オプション・TOPIXオプションなど
-        各種オプションの始値・高値・安値・終値・出来高・建玉・IV を日次で取得できる。
+        Returns daily OHLC, volume, open interest, and implied volatility for options
+        including Nikkei 225 options and TOPIX options.
 
-        [対応プラン] Premium
+        [Supported plans] Premium
 
         Args:
-            date: 日付（YYYYMMDD or YYYY-MM-DD）（必須）
-            category: 商品区分（例: Options225, OptionsTOPIX）
-            code: 銘柄コード
-            contract_flag: 限月フラグ（例: 0 = 全限月, 1 = 期近, 2 = 期先）
+            date: Date (YYYYMMDD or YYYY-MM-DD) (required)
+            category: Product category (e.g. Options225, OptionsTOPIX)
+            code: Issue code
+            contract_flag: Contract month flag (e.g. 0 = all, 1 = front month, 2 = back month)
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -104,13 +104,13 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve daily Nikkei 225 options bars (OHLC).
 
-        日経225オプションの日足四本値を取得する。Standard プラン以上で利用可能な
-        簡易版エンドポイント。始値・高値・安値・終値・出来高・建玉を取得できる。
+        Returns daily OHLC, volume, and open interest for Nikkei 225 options.
+        This is a simplified endpoint available from the Standard plan.
 
-        [対応プラン] Standard / Premium
+        [Supported plans] Standard / Premium
 
         Args:
-            date: 日付（YYYYMMDD or YYYY-MM-DD）（必須）
+            date: Date (YYYYMMDD or YYYY-MM-DD) (required)
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()

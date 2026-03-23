@@ -28,14 +28,14 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve listed issue information.
 
-        上場銘柄一覧を取得する。銘柄コードや基準日を指定して、会社名・業種・市場区分等を取得できる。
-        パラメータ省略時は当日の全銘柄情報を返す。
+        Returns information on listed stocks including company name, industry, and market segment.
+        When parameters are omitted, returns all listed stocks for today.
 
-        [対応プラン] Free / Light / Standard / Premium
+        [Supported plans] Free / Light / Standard / Premium
 
         Args:
-            code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
-            date: 基準日（YYYYMMDD or YYYY-MM-DD）
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            date: Base date (YYYYMMDD or YYYY-MM-DD)
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -63,19 +63,21 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve daily stock prices (OHLC).
 
-        株価四本値（日足）を取得する。銘柄コードまたは日付を指定して株価データを取得できる。
-        code または date のいずれかは必須。
-        調整後株価（AdjO/AdjC等）や前場・後場の内訳も含む。
+        Returns daily OHLC data for stocks. Either 'code' or 'date' must be specified.
+        Includes adjusted prices (AdjO/AdjC, etc.) and morning/afternoon session breakdown.
 
-        [対応プラン] Free / Light / Standard / Premium
-        ※ Free プランはデータが12週間遅延
+        [Supported plans] Free / Light / Standard / Premium
+        Note: Free plan data is delayed by 12 weeks.
 
         Args:
-            code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
-            date: 日付（YYYYMMDD or YYYY-MM-DD）
-            date_from: 期間指定の開始日
-            date_to: 期間指定の終了日
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            date: Date (YYYYMMDD or YYYY-MM-DD)
+            date_from: Start date for range query
+            date_to: End date for range query
         """
+        if code is None and date is None and date_from is None and date_to is None:
+            return {"error": True, "message": "Either 'code' or 'date' must be specified."}
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -107,16 +109,16 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve minute-level stock prices (OHLC).
 
-        株価分足データを取得する。1分単位の四本値（OHLC）、出来高、売買代金を取得できる。
-        データ取得可能期間は過去2年間。
+        Returns 1-minute OHLC, volume, and trading value for stocks.
+        Data is available for up to 2 years in the past.
 
-        [対応プラン] Light / Standard / Premium（株価 分足・ティック アドオン契約が必要）
+        [Supported plans] Light / Standard / Premium (requires minute/tick data add-on)
 
         Args:
-            code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
-            date: 日付（YYYYMMDD or YYYY-MM-DD）
-            date_from: 期間指定の開始日
-            date_to: 期間指定の終了日
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            date: Date (YYYYMMDD or YYYY-MM-DD)
+            date_from: Start date for range query
+            date_to: End date for range query
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -141,14 +143,15 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve morning session stock prices (OHLC).
 
-        当日の前場四本値（始値・高値・安値・終値）と出来高を取得する。
-        当日12:00頃に更新され、翌日6:00頃まで取得可能。
-        過去データは get_equities_bars_daily の前場列（MO/MH/ML/MC）で取得できる。
+        Returns today's morning session OHLC and volume.
+        Updated around 12:00 JST and available until around 6:00 JST the next day.
+        Historical morning session data (MO/MH/ML/MC columns) is available via get_equities_bars_daily.
 
-        [対応プラン] Premium
+        [Supported plans] Premium
 
         Args:
-            code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）。省略時は全銘柄。
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only).
+                  Omit to retrieve all stocks.
         """
         client: JQuantsClient = await get_client()
 
@@ -167,15 +170,16 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve trading data by type of investors.
 
-        投資部門別の売買情報を取得する。自己・委託・海外投資家・個人・信託銀行など
-        の投資部門別に売買代金を取得できる。週次（通常木曜日）に更新。
+        Returns weekly trading value broken down by investor type
+        (proprietary, brokered, foreign investors, individuals, trust banks, etc.).
+        Updated weekly, typically on Thursdays.
 
-        [対応プラン] Light / Standard / Premium
+        [Supported plans] Light / Standard / Premium
 
         Args:
-            section: 市場区分（例: TSEPrime, TSEStandard, TSEGrowth）
-            date_from: 期間指定の開始日（YYYYMMDD or YYYY-MM-DD）
-            date_to: 期間指定の終了日（YYYYMMDD or YYYY-MM-DD）
+            section: Market section (e.g. TSEPrime, TSEStandard, TSEGrowth)
+            date_from: Start date for range query (YYYYMMDD or YYYY-MM-DD)
+            date_to: End date for range query (YYYYMMDD or YYYY-MM-DD)
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -202,16 +206,16 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve earnings announcement schedule.
 
-        決算発表予定を取得する。日次取得で約3ヶ月分を蓄積。
-        日付指定でその日の発表予定、銘柄コード指定で直近の決算日を検索できる。
-        対象は3月期・9月期決算企業（REIT除く）。
+        Returns up to ~3 months of accumulated earnings announcement schedule.
+        Specify date for announcements on that day, or code to search upcoming earnings dates.
+        Covers March and September fiscal year companies (REITs excluded).
 
-        [対応プラン] Free / Light / Standard / Premium
+        [Supported plans] Free / Light / Standard / Premium
 
         Args:
-            date: 発表予定日(YYYYMMDD or YYYY-MM-DD)。省略時は最新データ。
-            code: 銘柄コード(5桁 例: 72030、4桁指定時は末尾0を補完)。
-                  指定時は蓄積データから該当銘柄の決算予定を検索。
+            date: Announcement date (YYYYMMDD or YYYY-MM-DD). Returns latest data when omitted.
+            code: Stock code (5 digits, e.g. 72030; 4-digit codes are padded with trailing 0).
+                  When specified, searches accumulated data for the matching stock's earnings dates.
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()

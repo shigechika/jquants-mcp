@@ -37,16 +37,16 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve margin trading interest data.
 
-        信用取引の品貸料・融資/貸株残高データを取得する。
-        銘柄ごとの信用残（融資残・貸株残）、逆日歩等を取得できる。
+        Returns margin trading balance data including loan balance, short balance,
+        and lending rate (contango/backwardation) per issue.
 
-        [対応プラン] Standard / Premium
+        [Supported plans] Standard / Premium
 
         Args:
-            code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
-            date: 日付（YYYYMMDD or YYYY-MM-DD）
-            date_from: 期間指定の開始日
-            date_to: 期間指定の終了日
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            date: Date (YYYYMMDD or YYYY-MM-DD)
+            date_from: Start date for range query
+            date_to: End date for range query
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -78,16 +78,16 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve margin trading alert data.
 
-        信用取引の規制情報（増担保規制）を取得する。
-        規制銘柄の状態（規制開始・解除）や規制区分を確認できる。
+        Returns margin trading restriction information (additional collateral requirements),
+        including restriction status (started/lifted) and restriction category per issue.
 
-        [対応プラン] Standard / Premium
+        [Supported plans] Standard / Premium
 
         Args:
-            code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
-            date: 日付（YYYYMMDD or YYYY-MM-DD）
-            date_from: 期間指定の開始日
-            date_to: 期間指定の終了日
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            date: Date (YYYYMMDD or YYYY-MM-DD)
+            date_from: Start date for range query
+            date_to: End date for range query
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -118,16 +118,16 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve short selling ratio data.
 
-        空売り比率データを取得する。33業種区分別の空売り比率
-        （実売り比率・空売り比率・信用空売り比率）を取得できる。
+        Returns short selling ratio by TSE 33-sector classification,
+        including actual sell ratio, short sell ratio, and margin short sell ratio.
 
-        [対応プラン] Standard / Premium
+        [Supported plans] Standard / Premium
 
         Args:
-            s33: 33業種コード（例: 0050 = 水産・農林業）
-            date: 日付（YYYYMMDD or YYYY-MM-DD）
-            date_from: 期間指定の開始日
-            date_to: 期間指定の終了日
+            s33: TSE 33-sector code (e.g. 0050 = Fishery, Agriculture & Forestry)
+            date: Date (YYYYMMDD or YYYY-MM-DD)
+            date_from: Start date for range query
+            date_to: End date for range query
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -158,17 +158,17 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve short sale position report data.
 
-        空売り残高報告データを取得する。個別銘柄の空売り残高（報告義務発生分）を
-        取得できる。開示日・算定日・残高割合などを含む。
+        Returns reportable short sale position data per issue,
+        including disclosure date, calculation date, and position ratio.
 
-        [対応プラン] Standard / Premium
+        [Supported plans] Standard / Premium
 
         Args:
-            code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
-            disc_date: 開示日（YYYYMMDD or YYYY-MM-DD）
-            disc_date_from: 開示日の期間指定の開始日
-            disc_date_to: 開示日の期間指定の終了日
-            calc_date: 算定日（YYYYMMDD or YYYY-MM-DD）
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            disc_date: Disclosure date (YYYYMMDD or YYYY-MM-DD)
+            disc_date_from: Start disclosure date for range query
+            disc_date_to: End disclosure date for range query
+            calc_date: Calculation date (YYYYMMDD or YYYY-MM-DD)
         """
         # short_sale_report は Tier 2 のまま（同一銘柄+日付に複数報告者のレコードあり）
         client: JQuantsClient = await get_client()
@@ -203,16 +203,16 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve market breakdown data (sell/buy by investor type per issue).
 
-        売買内訳データを取得する。個別銘柄の投資部門別（自己・委託・海外等）の
-        売り買い内訳を日次で取得できる。
+        Returns daily buy/sell breakdown by investor type (proprietary, brokered, foreign, etc.)
+        per individual issue.
 
-        [対応プラン] Premium
+        [Supported plans] Premium
 
         Args:
-            code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
-            date: 日付（YYYYMMDD or YYYY-MM-DD）
-            date_from: 期間指定の開始日
-            date_to: 期間指定の終了日
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            date: Date (YYYYMMDD or YYYY-MM-DD)
+            date_from: Start date for range query
+            date_to: End date for range query
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -241,15 +241,15 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve market calendar (trading days and holidays).
 
-        取引カレンダーを取得する。営業日・祝日・半休日の区分を含む。
-        ページネーションなしで全データを一括返却する。
+        Returns trading calendar data including trading days, holidays, and half-day classifications.
+        All data is returned in a single response without pagination.
 
-        [対応プラン] Free / Light / Standard / Premium
+        [Supported plans] Free / Light / Standard / Premium
 
         Args:
-            hol_div: 休日区分フィルタ（例: 0 = 営業日, 1 = 祝日, 2 = 特別休日）
-            date_from: 期間指定の開始日（YYYYMMDD or YYYY-MM-DD）
-            date_to: 期間指定の終了日（YYYYMMDD or YYYY-MM-DD）
+            hol_div: Holiday type filter (e.g. 0 = trading day, 1 = holiday, 2 = special holiday)
+            date_from: Start date for range query (YYYYMMDD or YYYY-MM-DD)
+            date_to: End date for range query (YYYYMMDD or YYYY-MM-DD)
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()

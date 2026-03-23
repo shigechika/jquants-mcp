@@ -267,8 +267,23 @@ def cache_status() -> dict[str, Any]:
     """Show cache statistics.
 
     Returns per-table row counts and database file size.
+    In multi-user mode, returns the authenticated user's plan
+    instead of the global default.
     """
-    return _get_cache().status()
+    from fastmcp.server.dependencies import get_access_token
+
+    result = _get_cache().status()
+
+    # In multi-user mode, resolve the actual user's plan
+    token = get_access_token()
+    if token is not None and token.client_id != "bearer":
+        user_db = _get_user_db()
+        if user_db is not None:
+            user = user_db.get_user(token.client_id)
+            if user is not None:
+                result["plan"] = user.plan
+
+    return result
 
 
 @mcp.tool()
