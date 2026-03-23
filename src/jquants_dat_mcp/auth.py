@@ -81,8 +81,7 @@ def _create_github_provider(settings: Settings) -> OAuthProvider:
 
 def _create_google_provider(settings: Settings) -> OAuthProvider:
     """Google OAuth 2.0 プロバイダーを生成する。"""
-    from fastmcp.server.auth.providers.google import GoogleProvider
-
+    from .google_provider import GoogleProvider
     from .oauth_kv_store import SQLiteKeyValueStore
 
     _enforce_https(settings.oauth_base_url)
@@ -102,7 +101,6 @@ def _create_google_provider(settings: Settings) -> OAuthProvider:
         jwt_signing_key=settings.oauth_jwt_signing_key or None,
         require_authorization_consent=settings.oauth_require_consent,
         client_storage=client_storage,
-        required_scopes=["openid", "email", "profile"],
     )
 
 

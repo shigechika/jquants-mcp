@@ -276,7 +276,9 @@ class TestPlanIsolation:
 
         # 既存データに plan='free' が付与されていること
         conn2 = store._ensure_connection()
-        row = conn2.execute("SELECT plan FROM equities_bars_daily WHERE code = '72030'").fetchone()
+        row = conn2.execute(
+            "SELECT plan FROM equities_bars_daily WHERE code = '72030'"
+        ).fetchone()
         assert row["plan"] == "free"
 
         store.close()
