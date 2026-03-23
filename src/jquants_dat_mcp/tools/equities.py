@@ -258,8 +258,7 @@ def register(
         # cache_key format: "/equities/earnings-calendar|date=YYYYMMDD|plan=<plan>"
         plan = cache.default_plan
         rows = conn.execute(
-            "SELECT data FROM response_cache "
-            "WHERE cache_key LIKE ? AND cache_key LIKE ?",
+            "SELECT data FROM response_cache WHERE cache_key LIKE ? AND cache_key LIKE ?",
             (
                 "/equities/earnings-calendar|date=%",
                 f"%|plan={plan}",
