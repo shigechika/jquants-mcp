@@ -234,15 +234,31 @@ def health_check() -> dict[str, Any]:
     """Check server health and API key configuration.
 
     Returns server version, API key status, and active plan.
+    In multi-user mode, returns the authenticated user's plan
+    instead of the global default.
     """
+    from fastmcp.server.dependencies import get_access_token
+
     settings = _get_settings()
     has_key = bool(settings.jquants_api_key)
+    plan = settings.jquants_plan
+
+    # In multi-user mode, resolve the actual user's plan
+    token = get_access_token()
+    if token is not None and token.client_id != "bearer":
+        user_db = _get_user_db()
+        if user_db is not None:
+            user = user_db.get_user(token.client_id)
+            if user is not None:
+                plan = user.plan
+                has_key = True
+
     return {
         "status": "healthy",
         "service": "jquants-dat-mcp",
         "version": __version__,
         "api_key_configured": has_key,
-        "plan": settings.jquants_plan,
+        "plan": plan,
     }
 
 
