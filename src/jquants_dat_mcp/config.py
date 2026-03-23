@@ -49,9 +49,15 @@ _CONFIG_DEFS: list[tuple[str, str, str, str, str]] = [
     ("ssl_certfile", "server", "ssl_certfile", "SSL_CERTFILE", ""),
     ("ssl_keyfile", "server", "ssl_keyfile", "SSL_KEYFILE", ""),
     ("bearer_token", "server", "bearer_token", "MCP_BEARER_TOKEN", ""),
+    # OAuth プロバイダー選択（"github" or "google"）
+    ("oauth_provider", "oauth", "provider", "OAUTH_PROVIDER", "github"),
     # GitHub OAuth 2.1 settings
     ("github_client_id", "oauth", "github_client_id", "GITHUB_CLIENT_ID", ""),
     ("github_client_secret", "oauth", "github_client_secret", "GITHUB_CLIENT_SECRET", ""),
+    # Google OAuth 2.0 settings
+    ("google_client_id", "oauth", "google_client_id", "GOOGLE_CLIENT_ID", ""),
+    ("google_client_secret", "oauth", "google_client_secret", "GOOGLE_CLIENT_SECRET", ""),
+    # 共通 OAuth settings
     ("oauth_base_url", "oauth", "base_url", "OAUTH_BASE_URL", ""),
     ("oauth_jwt_signing_key", "oauth", "jwt_signing_key", "OAUTH_JWT_SIGNING_KEY", ""),
     ("oauth_require_consent", "oauth", "require_consent", "OAUTH_REQUIRE_CONSENT", "true"),
