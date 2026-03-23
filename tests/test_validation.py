@@ -126,6 +126,7 @@ async def test_detect_plan_standard():
 @pytest.mark.asyncio
 async def test_detect_plan_light():
     """When premium and standard return 403 but light returns 200, plan is 'light'."""
+
     async def side_effect(path, *args, **kwargs):
         if "details" in path or "short-ratio" in path:
             raise PlanRestrictionError("forbidden", status_code=403)
@@ -143,9 +144,7 @@ async def test_detect_plan_light():
 async def test_detect_plan_free():
     """When all probes return 403, detected plan is 'free'."""
     mock_client = AsyncMock()
-    mock_client.get = AsyncMock(
-        side_effect=PlanRestrictionError("forbidden", status_code=403)
-    )
+    mock_client.get = AsyncMock(side_effect=PlanRestrictionError("forbidden", status_code=403))
 
     result = await detect_plan(mock_client)
 

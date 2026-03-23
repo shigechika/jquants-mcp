@@ -1,4 +1,4 @@
-"""Tests for Google OAuth provider."""
+"""Tests for Google OAuth provider (FastMCP built-in)."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,17 +7,25 @@ import pytest
 
 from jquants_dat_mcp.auth import create_auth_provider
 from jquants_dat_mcp.config import Settings
-from jquants_dat_mcp.google_provider import GoogleProvider, GoogleTokenVerifier
+from fastmcp.server.auth.providers.google import GoogleProvider, GoogleTokenVerifier
 
 
 # ---------------------------------------------------------------------------
 # GoogleTokenVerifier tests
 # ---------------------------------------------------------------------------
 
+# FastMCP 内蔵版は /oauth2/v1/tokeninfo (クエリパラメータ) を使う
+GOOGLE_TOKENINFO_RESPONSE = {
+    "audience": "test-client-id.apps.googleusercontent.com",
+    "scope": "openid email profile",
+    "expires_in": 3600,
+    "user_id": "1234567890",
+}
+
+# 追加の userinfo 呼び出し（openid/profile スコープがあるとき）
 GOOGLE_USERINFO_RESPONSE = {
-    "sub": "1234567890",
+    "id": "1234567890",
     "email": "test@example.com",
-    "email_verified": True,
     "name": "Test User",
     "picture": "https://lh3.googleusercontent.com/photo.jpg",
     "locale": "ja",
@@ -33,21 +41,26 @@ def verifier():
 @pytest.mark.asyncio
 async def test_google_verify_token_success(verifier):
     """有効なトークンで AccessToken が返る。"""
-    # httpx の response.json() は同期メソッドなので MagicMock を使う
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = GOOGLE_USERINFO_RESPONSE
+    mock_tokeninfo = MagicMock()
+    mock_tokeninfo.status_code = 200
+    mock_tokeninfo.json.return_value = GOOGLE_TOKENINFO_RESPONSE
 
-    with patch("jquants_dat_mcp.google_provider.httpx.AsyncClient") as MockClient:
+    mock_userinfo = MagicMock()
+    mock_userinfo.status_code = 200
+    mock_userinfo.json.return_value = GOOGLE_USERINFO_RESPONSE
+
+    with patch("fastmcp.server.auth.providers.google.httpx.AsyncClient") as MockClient:
         mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
+        # tokeninfo → userinfo の順で2回呼ばれる
+        mock_client.get.side_effect = [mock_tokeninfo, mock_userinfo]
         MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
 
         result = await verifier.verify_token("valid-google-token")
 
     assert result is not None
-    assert result.client_id == "1234567890"
+    # client_id は tokeninfo の audience
+    assert result.client_id == "test-client-id.apps.googleusercontent.com"
     assert result.claims["email"] == "test@example.com"
     assert result.claims["name"] == "Test User"
     assert "openid" in result.scopes
@@ -58,11 +71,10 @@ async def test_google_verify_token_success(verifier):
 @pytest.mark.asyncio
 async def test_google_verify_token_invalid(verifier):
     """無効なトークンで None が返る。"""
-    mock_response = AsyncMock()
+    mock_response = MagicMock()
     mock_response.status_code = 401
-    mock_response.text = "Unauthorized"
 
-    with patch("jquants_dat_mcp.google_provider.httpx.AsyncClient") as MockClient:
+    with patch("fastmcp.server.auth.providers.google.httpx.AsyncClient") as MockClient:
         mock_client = AsyncMock()
         mock_client.get.return_value = mock_response
         MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -74,19 +86,25 @@ async def test_google_verify_token_invalid(verifier):
 
 
 @pytest.mark.asyncio
-async def test_google_verify_token_missing_sub(verifier):
-    """sub が欠けたレスポンスで None が返る。"""
-    mock_response = AsyncMock()
+async def test_google_verify_token_expired():
+    """期限切れトークン（expires_in <= 0）で None が返る。"""
+    verifier = GoogleTokenVerifier(required_scopes=["openid"])
+    mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {"email": "test@example.com"}  # sub なし
+    mock_response.json.return_value = {
+        "audience": "client-id",
+        "scope": "openid",
+        "expires_in": -1,  # 期限切れ（負の値。0 は falsy で条件をスキップするため -1 を使う）
+        "user_id": "123",
+    }
 
-    with patch("jquants_dat_mcp.google_provider.httpx.AsyncClient") as MockClient:
+    with patch("fastmcp.server.auth.providers.google.httpx.AsyncClient") as MockClient:
         mock_client = AsyncMock()
         mock_client.get.return_value = mock_response
         MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        result = await verifier.verify_token("token-without-sub")
+        result = await verifier.verify_token("expired-token")
 
     assert result is None
 
@@ -94,7 +112,7 @@ async def test_google_verify_token_missing_sub(verifier):
 @pytest.mark.asyncio
 async def test_google_verify_token_network_error(verifier):
     """ネットワークエラーで None が返る。"""
-    with patch("jquants_dat_mcp.google_provider.httpx.AsyncClient") as MockClient:
+    with patch("fastmcp.server.auth.providers.google.httpx.AsyncClient") as MockClient:
         mock_client = AsyncMock()
         mock_client.get.side_effect = httpx.ConnectError("Connection refused")
         MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -108,7 +126,7 @@ async def test_google_verify_token_network_error(verifier):
 @pytest.mark.asyncio
 async def test_google_verify_token_timeout(verifier):
     """タイムアウトで None が返る。"""
-    with patch("jquants_dat_mcp.google_provider.httpx.AsyncClient") as MockClient:
+    with patch("fastmcp.server.auth.providers.google.httpx.AsyncClient") as MockClient:
         mock_client = AsyncMock()
         mock_client.get.side_effect = httpx.ReadTimeout("Timeout")
         MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -122,17 +140,18 @@ async def test_google_verify_token_timeout(verifier):
 @pytest.mark.asyncio
 async def test_google_verify_token_insufficient_scopes():
     """必要なスコープが不足している場合 None が返る。"""
-    # email のみ返す（profile は返さない）
+    # profile スコープを要求するが tokeninfo には email までしかない
     verifier = GoogleTokenVerifier(required_scopes=["openid", "email", "profile"])
-    mock_response = AsyncMock()
+    mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
-        "sub": "123",
-        "email": "test@example.com",
-        # name/picture がないので profile スコープは推定されない
+        "audience": "client-id",
+        "scope": "openid email",  # profile がない
+        "expires_in": 3600,
+        "user_id": "123",
     }
 
-    with patch("jquants_dat_mcp.google_provider.httpx.AsyncClient") as MockClient:
+    with patch("fastmcp.server.auth.providers.google.httpx.AsyncClient") as MockClient:
         mock_client = AsyncMock()
         mock_client.get.return_value = mock_response
         MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -147,21 +166,30 @@ async def test_google_verify_token_insufficient_scopes():
 async def test_google_verify_token_no_required_scopes():
     """required_scopes なしではスコープチェックをスキップする。"""
     verifier = GoogleTokenVerifier()  # required_scopes=None
-    # httpx の response.json() は同期メソッドなので MagicMock を使う
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {"sub": "123"}
+    mock_tokeninfo = MagicMock()
+    mock_tokeninfo.status_code = 200
+    mock_tokeninfo.json.return_value = {
+        "audience": "client-id-123",
+        "scope": "openid",
+        "expires_in": 3600,
+        "user_id": "123",
+    }
+    # openid スコープがあるため userinfo も呼ばれる
+    mock_userinfo = MagicMock()
+    mock_userinfo.status_code = 200
+    mock_userinfo.json.return_value = {"id": "123"}
 
-    with patch("jquants_dat_mcp.google_provider.httpx.AsyncClient") as MockClient:
+    with patch("fastmcp.server.auth.providers.google.httpx.AsyncClient") as MockClient:
         mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
+        mock_client.get.side_effect = [mock_tokeninfo, mock_userinfo]
         MockClient.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         MockClient.return_value.__aexit__ = AsyncMock(return_value=False)
 
         result = await verifier.verify_token("token")
 
     assert result is not None
-    assert result.client_id == "123"
+    # client_id は tokeninfo の audience
+    assert result.client_id == "client-id-123"
 
 
 # ---------------------------------------------------------------------------
@@ -171,12 +199,6 @@ async def test_google_verify_token_no_required_scopes():
 
 def test_google_provider_init():
     """GoogleProvider が正しいエンドポイントで初期化される。"""
-    with patch.object(GoogleProvider, "__init__", return_value=None):
-        # OAuthProxy の super().__init__ が呼ばれることを確認するため
-        # 直接コンストラクタ引数を検証
-        pass
-
-    # 実際の初期化テスト（OAuthProxy の内部状態を確認）
     provider = GoogleProvider(
         client_id="test-client-id.apps.googleusercontent.com",
         client_secret="GOCSPX-test-secret",
@@ -190,14 +212,14 @@ def test_google_provider_init():
 
 
 def test_google_provider_default_scopes():
-    """GoogleProvider のデフォルトスコープが openid, email, profile。"""
+    """FastMCP 内蔵 GoogleProvider のデフォルトスコープは openid のみ。"""
     provider = GoogleProvider(
         client_id="test.apps.googleusercontent.com",
         client_secret="secret",
         base_url="https://mcp.example.com",
     )
-    # required_scopes は _token_validator に設定される（OAuthProxy の内部属性名）
-    assert provider._token_validator.required_scopes == ["openid", "email", "profile"]
+    # FastMCP 内蔵版のデフォルトは ["openid"] のみ
+    assert provider._token_validator.required_scopes == ["openid"]
 
 
 def test_google_provider_custom_scopes():
@@ -206,9 +228,9 @@ def test_google_provider_custom_scopes():
         client_id="test.apps.googleusercontent.com",
         client_secret="secret",
         base_url="https://mcp.example.com",
-        required_scopes=["openid", "email"],
+        required_scopes=["openid", "email", "profile"],
     )
-    assert provider._token_validator.required_scopes == ["openid", "email"]
+    assert provider._token_validator.required_scopes == ["openid", "email", "profile"]
 
 
 def test_google_provider_extra_authorize_params():
@@ -255,13 +277,14 @@ def test_create_auth_provider_google_oauth():
         oauth_base_url="https://mcp.example.com",
     )
     # auth.py は _create_google_provider() 内でローカルインポートするため
-    # インポート元モジュールをパッチする
-    with patch("jquants_dat_mcp.google_provider.GoogleProvider") as MockProvider:
+    # FastMCP 内蔵版モジュールをパッチする
+    with patch("fastmcp.server.auth.providers.google.GoogleProvider") as MockProvider:
         MockProvider.return_value = object()
         create_auth_provider(settings)
         _, kwargs = MockProvider.call_args
         assert kwargs["client_id"] == "test.apps.googleusercontent.com"
         assert kwargs["redirect_path"] == "/oauth/callback"
+        assert kwargs["required_scopes"] == ["openid", "email", "profile"]
 
 
 def test_create_auth_provider_google_incomplete_fallback_to_bearer():
@@ -303,8 +326,7 @@ def test_create_auth_provider_google_http_ok_in_development(monkeypatch):
         google_client_secret="GOCSPX-secret",
         oauth_base_url="http://localhost:8080",
     )
-    # auth.py は _create_google_provider() 内でローカルインポートするため
-    # インポート元モジュールをパッチする
-    with patch("jquants_dat_mcp.google_provider.GoogleProvider") as MockProvider:
+    # FastMCP 内蔵版モジュールをパッチする
+    with patch("fastmcp.server.auth.providers.google.GoogleProvider") as MockProvider:
         MockProvider.return_value = object()
         create_auth_provider(settings)  # エラーなし
