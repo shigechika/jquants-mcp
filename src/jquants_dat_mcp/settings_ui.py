@@ -11,6 +11,7 @@ import hmac
 import html
 import json
 import logging
+import os
 import time
 
 import httpx
@@ -395,11 +396,12 @@ async def handle_settings_verify(request: Request, settings=None) -> Response:
     # 署名付きセッション cookie を生成
     session_value = _sign_session(email, signing_key)
     response = Response("OK", status_code=200)
+    is_dev = os.environ.get("JQUANTS_ENV") == "development"
     response.set_cookie(
         key=_SESSION_COOKIE,
         value=session_value,
         httponly=True,
-        secure=True,
+        secure=not is_dev,
         samesite="lax",
         path="/settings",
         max_age=_SESSION_TTL,
