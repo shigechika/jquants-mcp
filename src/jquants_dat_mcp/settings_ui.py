@@ -1,14 +1,19 @@
 """Web UI for J-Quants API key registration via browser.
 
-Provides GET/POST /settings and POST /settings/delete routes
+Provides GET/POST /settings, POST /settings/delete, and POST /settings/verify routes
 registered as FastMCP custom routes.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import html
+import json
 import logging
+import time
 
+import httpx
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, Response
 
@@ -21,6 +26,69 @@ from .validation import detect_plan
 logger = logging.getLogger(__name__)
 
 _VALID_PLANS = ("free", "light", "standard", "premium")
+_SESSION_COOKIE = "jquants_session"
+_SESSION_TTL = 86400  # 24 hours
+_GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
+
+
+# ------------------------------------------------------------------
+# セッション cookie ユーティリティ
+# ------------------------------------------------------------------
+
+
+def _get_signing_key(settings) -> str:
+    """セッション cookie の署名キーを取得。"""
+    if settings and settings.oauth_jwt_signing_key:
+        return settings.oauth_jwt_signing_key
+    if settings and settings.encryption_key:
+        return hashlib.sha256(settings.encryption_key.encode()).hexdigest()
+    return ""
+
+
+def _sign_session(user_id: str, signing_key: str, ttl: int = _SESSION_TTL) -> str:
+    """署名付きセッションcookieを生成。"""
+    expires = int(time.time()) + ttl
+    payload = json.dumps({"sub": user_id, "exp": expires})
+    sig = hmac.new(signing_key.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}|{sig}"
+
+
+def _verify_session(cookie: str, signing_key: str) -> str | None:
+    """セッションcookieを検証。user_idを返す。"""
+    try:
+        payload_str, sig = cookie.rsplit("|", 1)
+        expected = hmac.new(signing_key.encode(), payload_str.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        payload = json.loads(payload_str)
+        if payload.get("exp", 0) < time.time():
+            return None
+        return payload.get("sub")
+    except Exception:
+        return None
+
+
+def _resolve_user_id(request: Request, signing_key: str) -> str | None:
+    """Cookie → OAuth token の順でユーザーIDを解決。"""
+    # セッション cookie を先に確認
+    if signing_key:
+        cookie = request.cookies.get(_SESSION_COOKIE)
+        if cookie:
+            user_id = _verify_session(cookie, signing_key)
+            if user_id:
+                return user_id
+    # MCP OAuth トークンを確認（MCPクライアント経由のアクセス）
+    from fastmcp.server.dependencies import get_access_token
+
+    token = get_access_token()
+    if token is not None and token.client_id != "bearer":
+        return token.client_id
+    return None
+
+
+# ------------------------------------------------------------------
+# HTML テンプレート
+# ------------------------------------------------------------------
 
 
 def _html_page(title: str, body: str) -> str:
@@ -50,6 +118,30 @@ def _html_page(title: str, body: str) -> str:
 {body}
 </body>
 </html>"""
+
+
+def _login_page_html(google_client_id: str) -> str:
+    """Google Sign-In ログインページの HTML を生成。"""
+    escaped_cid = html.escape(google_client_id)
+    body = f"""<h1>J-Quants API Key Settings</h1>
+<p>Please sign in with your Google account to manage your API key.</p>
+<div id="g_id_onload"
+     data-client_id="{escaped_cid}"
+     data-callback="onSignIn"
+     data-auto_prompt="false">
+</div>
+<div class="g_id_signin" data-type="standard" data-size="large"></div>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+function onSignIn(response) {{
+  fetch('/settings/verify', {{
+    method: 'POST',
+    headers: {{'Content-Type': 'application/json'}},
+    body: JSON.stringify({{credential: response.credential}})
+  }}).then(r => {{ if(r.ok) window.location.reload(); }});
+}}
+</script>"""
+    return _html_page("Sign In", body)
 
 
 def _form_html(registered_plan: str | None) -> str:
@@ -94,12 +186,21 @@ def _form_html(registered_plan: str | None) -> str:
     return _html_page("API Key Settings", body)
 
 
-async def handle_settings_get(request: Request, get_user_db_fn) -> Response:  # noqa: ARG001
-    """Handle GET /settings — show registration form."""
-    from fastmcp.server.dependencies import get_access_token
+# ------------------------------------------------------------------
+# ルートハンドラ
+# ------------------------------------------------------------------
 
-    token = get_access_token()
-    if token is None or token.client_id == "bearer":
+
+async def handle_settings_get(request: Request, get_user_db_fn, settings=None) -> Response:
+    """Handle GET /settings — show registration form."""
+    signing_key = _get_signing_key(settings)
+    user_id = _resolve_user_id(request, signing_key)
+
+    if user_id is None:
+        # Google Sign-In が設定されていればログインページを表示（200）
+        google_client_id = settings.google_client_id if settings else ""
+        if google_client_id:
+            return HTMLResponse(_login_page_html(google_client_id))
         return HTMLResponse(
             _html_page("Unauthorized", "<p>OAuth authentication is required.</p>"),
             status_code=401,
@@ -115,7 +216,7 @@ async def handle_settings_get(request: Request, get_user_db_fn) -> Response:  # 
             status_code=503,
         )
 
-    user = user_db.get_user(token.client_id)
+    user = user_db.get_user(user_id)
     registered_plan = user.plan if user is not None else None
     return HTMLResponse(_form_html(registered_plan))
 
@@ -125,12 +226,13 @@ async def handle_settings_post(
     get_user_db_fn,
     user_clients: dict,
     user_client_last_used: dict,
+    settings=None,
 ) -> Response:
     """Handle POST /settings — save API key."""
-    from fastmcp.server.dependencies import get_access_token
+    signing_key = _get_signing_key(settings)
+    user_id = _resolve_user_id(request, signing_key)
 
-    token = get_access_token()
-    if token is None or token.client_id == "bearer":
+    if user_id is None:
         return HTMLResponse(
             _html_page("Unauthorized", "<p>OAuth authentication is required.</p>"),
             status_code=401,
@@ -165,7 +267,6 @@ async def handle_settings_post(
         )
         return HTMLResponse(body, status_code=400)
 
-    user_id = token.client_id
     user_db.save_user(User(user_id=user_id, api_key=api_key, plan=plan))
 
     # キャッシュクリア（次回リクエストで新しいキーを使う）
@@ -201,16 +302,17 @@ async def handle_settings_post(
 
 
 async def handle_settings_delete(
-    request: Request,  # noqa: ARG001
+    request: Request,
     get_user_db_fn,
     user_clients: dict,
     user_client_last_used: dict,
+    settings=None,
 ) -> Response:
     """Handle POST /settings/delete — delete registered API key."""
-    from fastmcp.server.dependencies import get_access_token
+    signing_key = _get_signing_key(settings)
+    user_id = _resolve_user_id(request, signing_key)
 
-    token = get_access_token()
-    if token is None or token.client_id == "bearer":
+    if user_id is None:
         return HTMLResponse(
             _html_page("Unauthorized", "<p>OAuth authentication is required.</p>"),
             status_code=401,
@@ -226,7 +328,6 @@ async def handle_settings_delete(
             status_code=503,
         )
 
-    user_id = token.client_id
     deleted = user_db.delete_user(user_id)
     user_clients.pop(user_id, None)
     user_client_last_used.pop(user_id, None)
@@ -247,26 +348,99 @@ async def handle_settings_delete(
     return HTMLResponse(body)
 
 
+async def handle_settings_verify(request: Request, settings=None) -> Response:
+    """Handle POST /settings/verify — verify Google ID token and set session cookie."""
+    google_client_id = settings.google_client_id if settings else ""
+    signing_key = _get_signing_key(settings)
+
+    if not google_client_id or not signing_key:
+        return Response("Google Sign-In not configured", status_code=503)
+
+    try:
+        body = await request.json()
+        credential = body.get("credential", "")
+    except Exception:
+        return Response("Invalid request body", status_code=400)
+
+    if not credential:
+        return Response("Missing credential", status_code=400)
+
+    # Google tokeninfo API で ID token を検証
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                _GOOGLE_TOKENINFO_URL,
+                params={"id_token": credential},
+                timeout=10.0,
+            )
+            resp.raise_for_status()
+            token_data = resp.json()
+    except Exception as e:
+        logger.warning("Google tokeninfo verification failed: %s", e)
+        return Response("Token verification failed", status_code=401)
+
+    # aud（client_id）の検証
+    if token_data.get("aud") != google_client_id:
+        logger.warning(
+            "Token aud mismatch: expected=%s got=%s",
+            google_client_id,
+            token_data.get("aud"),
+        )
+        return Response("Token audience mismatch", status_code=401)
+
+    email = token_data.get("email", "")
+    if not email:
+        return Response("No email in token", status_code=401)
+
+    # 署名付きセッション cookie を生成
+    session_value = _sign_session(email, signing_key)
+    response = Response("OK", status_code=200)
+    response.set_cookie(
+        key=_SESSION_COOKIE,
+        value=session_value,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/settings",
+        max_age=_SESSION_TTL,
+    )
+    return response
+
+
+# ------------------------------------------------------------------
+# ルート登録
+# ------------------------------------------------------------------
+
+
 def register_settings_routes(
     mcp,
     get_user_db_fn,
     user_clients: dict,
     user_client_last_used: dict,
+    get_settings_fn=None,
 ) -> None:
     """Register /settings custom routes on the FastMCP instance."""
 
     @mcp.custom_route("/settings", methods=["GET"])
     async def settings_get(request: Request) -> Response:
-        return await handle_settings_get(request, get_user_db_fn)
+        settings = get_settings_fn() if get_settings_fn else None
+        return await handle_settings_get(request, get_user_db_fn, settings)
 
     @mcp.custom_route("/settings", methods=["POST"])
     async def settings_post(request: Request) -> Response:
+        settings = get_settings_fn() if get_settings_fn else None
         return await handle_settings_post(
-            request, get_user_db_fn, user_clients, user_client_last_used
+            request, get_user_db_fn, user_clients, user_client_last_used, settings
         )
 
     @mcp.custom_route("/settings/delete", methods=["POST"])
     async def settings_delete(request: Request) -> Response:
+        settings = get_settings_fn() if get_settings_fn else None
         return await handle_settings_delete(
-            request, get_user_db_fn, user_clients, user_client_last_used
+            request, get_user_db_fn, user_clients, user_client_last_used, settings
         )
+
+    @mcp.custom_route("/settings/verify", methods=["POST"])
+    async def settings_verify(request: Request) -> Response:
+        settings = get_settings_fn() if get_settings_fn else None
+        return await handle_settings_verify(request, settings)

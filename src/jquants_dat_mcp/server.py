@@ -414,7 +414,7 @@ _register_tools()
 
 from .settings_ui import register_settings_routes  # noqa: E402
 
-register_settings_routes(mcp, _get_user_db, _user_clients, _user_client_last_used)
+register_settings_routes(mcp, _get_user_db, _user_clients, _user_client_last_used, _get_settings)
 
 
 # ------------------------------------------------------------------

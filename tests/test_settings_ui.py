@@ -6,9 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from jquants_dat_mcp.models.user import User
 from jquants_dat_mcp.settings_ui import (
+    _sign_session,
+    _verify_session,
     handle_settings_delete,
     handle_settings_get,
     handle_settings_post,
+    handle_settings_verify,
 )
 
 
@@ -335,3 +338,179 @@ class TestHandleSettingsDelete:
             await handle_settings_delete(_mock_request(), lambda: user_db, {}, {})
 
         mock_audit.assert_not_called()
+
+
+# ---- セッション cookie ユーティリティ ----
+
+
+class TestSessionCookie:
+    def test_sign_and_verify(self):
+        """署名・検証の往復テスト。"""
+        key = "test-signing-key"
+        user_id = "user@example.com"
+        cookie = _sign_session(user_id, key)
+        assert _verify_session(cookie, key) == user_id
+
+    def test_wrong_key_returns_none(self):
+        """署名キーが違えば None を返す。"""
+        cookie = _sign_session("user@example.com", "key-a")
+        assert _verify_session(cookie, "key-b") is None
+
+    def test_expired_session_returns_none(self):
+        """期限切れのセッションは None を返す。"""
+        key = "test-key"
+        cookie = _sign_session("user@example.com", key, ttl=-1)
+        assert _verify_session(cookie, key) is None
+
+    def test_tampered_payload_returns_none(self):
+        """ペイロードが改ざんされたら None を返す。"""
+        import json
+
+        key = "test-key"
+        cookie = _sign_session("user@example.com", key)
+        payload_str, sig = cookie.rsplit("|", 1)
+        data = json.loads(payload_str)
+        data["sub"] = "attacker@example.com"
+        tampered = f"{json.dumps(data)}|{sig}"
+        assert _verify_session(tampered, key) is None
+
+
+# ---- GET /settings（Google Sign-In 統合）----
+
+
+class TestHandleSettingsGetWithGSI:
+    def _mock_settings(self, google_client_id="gsi-client-id", signing_key="test-key"):
+        """Google Sign-In が設定された settings モック。"""
+        s = MagicMock()
+        s.google_client_id = google_client_id
+        s.oauth_jwt_signing_key = signing_key
+        s.encryption_key = ""
+        return s
+
+    async def test_unauthenticated_shows_login_page_when_gsi_configured(self):
+        """Google Sign-In 設定済みなら未認証時に 200 のログインページを返す。"""
+        settings = self._mock_settings()
+        with patch("fastmcp.server.dependencies.get_access_token", return_value=None):
+            resp = await handle_settings_get(_mock_request(), lambda: None, settings)
+        assert resp.status_code == 200
+        body = resp.body.decode()
+        assert "gsi-client-id" in body
+        assert "g_id_signin" in body
+
+    async def test_unauthenticated_returns_401_when_gsi_not_configured(self):
+        """Google Sign-In 未設定の場合は従来通り 401。"""
+        settings = self._mock_settings(google_client_id="")
+        with patch("fastmcp.server.dependencies.get_access_token", return_value=None):
+            resp = await handle_settings_get(_mock_request(), lambda: None, settings)
+        assert resp.status_code == 401
+
+    async def test_valid_session_cookie_is_accepted(self):
+        """有効なセッション cookie でフォームを表示。"""
+        settings = self._mock_settings()
+        session = _sign_session("user@example.com", "test-key")
+
+        req = MagicMock()
+        req.cookies = {"jquants_session": session}
+
+        user_db = _mock_user_db(existing_user=None)
+        resp = await handle_settings_get(req, lambda: user_db, settings)
+        assert resp.status_code == 200
+        assert "No API key registered yet" in resp.body.decode()
+
+    async def test_invalid_session_cookie_shows_login_page(self):
+        """無効な cookie の場合はログインページを表示。"""
+        settings = self._mock_settings()
+        req = MagicMock()
+        req.cookies = {"jquants_session": "invalid|cookie"}
+
+        with patch("fastmcp.server.dependencies.get_access_token", return_value=None):
+            resp = await handle_settings_get(req, lambda: None, settings)
+        assert resp.status_code == 200
+        assert "g_id_signin" in resp.body.decode()
+
+
+# ---- POST /settings/verify ----
+
+
+class TestHandleSettingsVerify:
+    def _mock_settings(self, google_client_id="gsi-client-id", signing_key="test-key"):
+        s = MagicMock()
+        s.google_client_id = google_client_id
+        s.oauth_jwt_signing_key = signing_key
+        s.encryption_key = ""
+        return s
+
+    def _mock_json_request(self, body: dict):
+        req = MagicMock()
+        req.json = AsyncMock(return_value=body)
+        return req
+
+    async def test_returns_503_when_not_configured(self):
+        """google_client_id 未設定で 503。"""
+        settings = self._mock_settings(google_client_id="")
+        req = self._mock_json_request({"credential": "token"})
+        resp = await handle_settings_verify(req, settings)
+        assert resp.status_code == 503
+
+    async def test_returns_400_on_missing_credential(self):
+        """credential がなければ 400。"""
+        settings = self._mock_settings()
+        req = self._mock_json_request({})
+        resp = await handle_settings_verify(req, settings)
+        assert resp.status_code == 400
+
+    async def test_returns_401_on_google_api_error(self):
+        """Google tokeninfo がエラーを返したら 401。"""
+        import httpx
+
+        settings = self._mock_settings()
+        req = self._mock_json_request({"credential": "bad-token"})
+
+        with patch("jquants_dat_mcp.settings_ui.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client.get.side_effect = httpx.HTTPStatusError(
+                "401", request=MagicMock(), response=MagicMock()
+            )
+            resp = await handle_settings_verify(req, settings)
+
+        assert resp.status_code == 401
+
+    async def test_returns_401_on_aud_mismatch(self):
+        """aud が client_id と一致しなければ 401。"""
+        settings = self._mock_settings(google_client_id="expected-client-id")
+        req = self._mock_json_request({"credential": "token"})
+
+        tokeninfo = {"aud": "other-client-id", "email": "user@example.com"}
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = tokeninfo
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("jquants_dat_mcp.settings_ui.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client.get.return_value = mock_resp
+            resp = await handle_settings_verify(req, settings)
+
+        assert resp.status_code == 401
+
+    async def test_sets_session_cookie_on_success(self):
+        """正常検証でセッション cookie を設定して 200 を返す。"""
+        settings = self._mock_settings(google_client_id="gsi-client-id")
+        req = self._mock_json_request({"credential": "valid-token"})
+
+        tokeninfo = {"aud": "gsi-client-id", "email": "user@example.com"}
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = tokeninfo
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("jquants_dat_mcp.settings_ui.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client.get.return_value = mock_resp
+            resp = await handle_settings_verify(req, settings)
+
+        assert resp.status_code == 200
+        set_cookie = resp.headers.get("set-cookie", "")
+        assert "jquants_session" in set_cookie
+        assert "httponly" in set_cookie.lower()
