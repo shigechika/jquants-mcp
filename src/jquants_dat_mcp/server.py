@@ -277,6 +277,9 @@ async def register_api_key(
     associated with your OAuth identity. Subsequent tool calls will
     automatically use this key.
 
+    For security, registering via the browser at /settings is recommended
+    instead of passing the API key through this tool.
+
     This tool requires OAuth 2.1 authentication and server-side encryption
     (MCP_ENCRYPTION_KEY) to be configured.
 
@@ -408,6 +411,10 @@ def _register_tools() -> None:
 
 
 _register_tools()
+
+from .settings_ui import register_settings_routes  # noqa: E402
+
+register_settings_routes(mcp, _get_user_db, _user_clients, _user_client_last_used)
 
 
 # ------------------------------------------------------------------
