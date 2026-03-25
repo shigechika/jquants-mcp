@@ -5,6 +5,24 @@
 
 ---
 
+## 2026-03-26
+
+### `/settings` Web UI 改善
+- 「リフレッシュトークン」ラベルを削除し、J-Quants API キーダッシュボードへのリンクを追加
+- Google Sign-In（GSI）によるブラウザ認証を追加（`OAUTH_PROVIDER=google` 時に `/settings` でワンクリック認証が可能）
+
+### `cache_status` / `health_check` プラン修正（Issue #17）
+- 認証ユーザーの実プランではなく常に `"free"` を返していたバグを修正
+- `health_check`・`cache_status` の両ツールで認証ユーザーの実プランを返すように統一
+
+### ツール docstring の英語統一
+- 全ツールの description を英語に統一（MCP クライアントとの互換性向上）
+
+### `get_equities_bars_daily` パラメータ検証強化
+- `code` または `date` のどちらかが必須になるようバリデーションを追加（両方省略時はエラーを返す）
+
+---
+
 ## 2026-03-12
 ### Markets ツール Tier 1 キャッシュ移行
 - Markets 系 5 ツール（`margin_interest`, `margin_alert`, `short_ratio`, `breakdown`, `calendar`）を Tier 2（TTL 付きレスポンスキャッシュ）から Tier 1（行レベル永続キャッシュ）に移行
