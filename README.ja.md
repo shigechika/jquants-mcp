@@ -113,12 +113,14 @@ jquants-dat-mcp は 3 つの認証モードに対応しています:
 | なし | ローカル stdio または信頼済み LAN（シングルユーザー） |
 | Bearer Token | HTTPS 経由のシングルユーザーリモートアクセス |
 | GitHub OAuth 2.1 | マルチユーザー / Claude Desktop Connectors |
+| Google OAuth 2.1 | Google アカウントによるマルチユーザーアクセス |
 
 起動時に設定に基づいて自動的にモードが選択されます:
 
-1. **GitHub OAuth 2.1** — `GITHUB_CLIENT_ID`・`GITHUB_CLIENT_SECRET`・`OAUTH_BASE_URL` がすべて設定されている場合
-2. **Bearer Token** — `MCP_BEARER_TOKEN`（または `config.ini` の `bearer_token`）が設定されている場合
-3. **なし** — 認証なし（stdio トランスポートまたは信頼済み環境）
+1. **Google OAuth 2.1** — `GOOGLE_CLIENT_ID`・`GOOGLE_CLIENT_SECRET`・`OAUTH_BASE_URL` がすべて設定され、`OAUTH_PROVIDER=google` の場合
+2. **GitHub OAuth 2.1** — `GITHUB_CLIENT_ID`・`GITHUB_CLIENT_SECRET`・`OAUTH_BASE_URL` がすべて設定されている場合
+3. **Bearer Token** — `MCP_BEARER_TOKEN`（または `config.ini` の `bearer_token`）が設定されている場合
+4. **なし** — 認証なし（stdio トランスポートまたは信頼済み環境）
 
 ### GitHub OAuth 2.1
 
@@ -178,6 +180,53 @@ jquants-dat-mcp -t streamable-http --port 8080 \
 | `--github-client-id` | GitHub OAuth App のクライアント ID |
 | `--github-client-secret` | GitHub OAuth App のクライアントシークレット |
 | `--oauth-base-url` | サーバーの公開ベース URL（リダイレクト URI の構築に使用） |
+
+### Google OAuth 2.1
+
+GitHub の代わりに Google を OAuth 2.1 の IdP として使用できます。ユーザーは Google のサインインページにリダイレクトされ、サーバーが認可コードを署名済み JWT と交換してユーザーを識別します。
+
+#### 1. Google OAuth 2.0 クライアントを作成する
+
+1. [Google Cloud Console](https://console.cloud.google.com/) → **API とサービス → 認証情報 → 認証情報を作成 → OAuth 2.0 クライアント ID** へ移動
+2. **ウェブ アプリケーション** を選択し、以下を入力:
+   - **Authorized JavaScript origins**: `https://mcp.example.com`
+   - **Authorized redirect URIs**: `https://mcp.example.com/oauth/callback/google`
+3. **作成** をクリックし、**クライアント ID** と **クライアントシークレット** をコピーする
+
+#### 2. サーバーを設定する
+
+**環境変数で設定:**
+
+```bash
+export GOOGLE_CLIENT_ID=<クライアント ID>
+export GOOGLE_CLIENT_SECRET=<クライアントシークレット>
+export OAUTH_PROVIDER=google
+export OAUTH_BASE_URL=https://mcp.example.com
+export MCP_ENCRYPTION_KEY=<ランダムな秘密値>    # ユーザーごとの API キー保存に必要
+```
+
+**`config.ini` で設定:**
+
+```ini
+[oauth]
+google_client_id = <クライアント ID>
+google_client_secret = <クライアントシークレット>
+oauth_provider = google
+base_url = https://mcp.example.com
+
+[server]
+encryption_key = <ランダムな秘密値>
+```
+
+### /settings Web UI
+
+OAuth が有効な場合、`https://mcp.example.com/settings` でブラウザからAPIキーを登録できます。
+
+1. ブラウザで `https://mcp.example.com/settings` を開く
+2. **Sign in with GitHub**（`oauth_provider = google` の場合は **Sign in with Google**）をクリック
+3. 認証後、J-Quants API キーとプランを入力して **Save** をクリック
+
+MCP クライアントなしでブラウザから直接 `register_api_key` 相当の操作が可能です。
 
 ## マルチユーザーモード
 

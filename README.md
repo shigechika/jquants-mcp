@@ -113,12 +113,14 @@ jquants-dat-mcp supports three authentication modes:
 | None | Local stdio or trusted LAN (single user) |
 | Bearer Token | Single-user remote access over HTTPS |
 | GitHub OAuth 2.1 | Multi-user access / Claude Desktop Connectors |
+| Google OAuth 2.1 | Multi-user access via Google account |
 
 The mode is selected automatically at startup:
 
-1. **GitHub OAuth 2.1** — when `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `OAUTH_BASE_URL` are all set
-2. **Bearer Token** — when `MCP_BEARER_TOKEN` (or `bearer_token` in `config.ini`) is set
-3. **None** — no authentication (stdio transport or trusted environment)
+1. **Google OAuth 2.1** — when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `OAUTH_BASE_URL` are all set, and `OAUTH_PROVIDER=google`
+2. **GitHub OAuth 2.1** — when `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `OAUTH_BASE_URL` are all set
+3. **Bearer Token** — when `MCP_BEARER_TOKEN` (or `bearer_token` in `config.ini`) is set
+4. **None** — no authentication (stdio transport or trusted environment)
 
 ### GitHub OAuth 2.1
 
@@ -178,6 +180,53 @@ When all OAuth settings are configured via environment variables or `config.ini`
 | `--github-client-id` | GitHub OAuth App client ID |
 | `--github-client-secret` | GitHub OAuth App client secret |
 | `--oauth-base-url` | Public base URL of the server (used to build redirect URIs) |
+
+### Google OAuth 2.1
+
+The server supports Google as an alternative OAuth 2.1 identity provider. Users are redirected to Google's Sign-In page; the server exchanges the authorization code for a signed JWT.
+
+#### 1. Create a Google OAuth 2.0 Client
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/) → **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID**
+2. Select **Web application** and fill in:
+   - **Authorized JavaScript origins**: `https://mcp.example.com`
+   - **Authorized redirect URIs**: `https://mcp.example.com/oauth/callback/google`
+3. Click **Create**, then copy the **Client ID** and **Client secret**
+
+#### 2. Configure the server
+
+**Via environment variables:**
+
+```bash
+export GOOGLE_CLIENT_ID=<your-client-id>
+export GOOGLE_CLIENT_SECRET=<your-client-secret>
+export OAUTH_PROVIDER=google
+export OAUTH_BASE_URL=https://mcp.example.com
+export MCP_ENCRYPTION_KEY=<random-secret>          # required for per-user API key storage
+```
+
+**Via `config.ini`:**
+
+```ini
+[oauth]
+google_client_id = <your-client-id>
+google_client_secret = <your-client-secret>
+oauth_provider = google
+base_url = https://mcp.example.com
+
+[server]
+encryption_key = <random-secret>
+```
+
+### /settings Web UI
+
+When OAuth is enabled, the server provides a browser-based settings page at `https://mcp.example.com/settings`.
+
+1. Open `https://mcp.example.com/settings` in a browser
+2. Click **Sign in with GitHub** (or **Sign in with Google** when `oauth_provider = google`)
+3. After authentication, enter your J-Quants API key and plan, then click **Save**
+
+This is equivalent to calling `register_api_key` via Claude, but accessible directly from any browser without an MCP client.
 
 ## Multi-user Mode
 
