@@ -630,17 +630,26 @@ Permission errors (403) are handled gracefully — the script logs the error and
 
 This server can be deployed to [Google Cloud Run](https://cloud.google.com/run) using the "in-memory + GCS write-back" pattern:
 
-- On startup, `cache.db` is downloaded from GCS to `/tmp`
+- On startup, databases are downloaded from GCS to `/tmp`
 - SQLite runs entirely in `/tmp` (Cloud Run ephemeral filesystem)
-- Every 5 minutes (configurable) and on SIGTERM, the DB is uploaded back to GCS
+- Every 5 minutes (configurable) and on SIGTERM, the databases are uploaded back to GCS
+
+**Synced databases:** `cache.db`, `users.db`, `oauth_state.db`
 
 > **Note:** `maxScale: 1` is required to avoid concurrent SQLite writes from multiple instances.
 
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and [Google Cloud SDK](https://cloud.google.com/sdk/docs/install)
-- A GCS bucket for cache persistence
+- A GCS bucket for database persistence
 - A service account with `roles/storage.objectAdmin` on that bucket
+
+### Create a GCS bucket
+
+```bash
+gcloud storage buckets create gs://YOUR_BUCKET \
+  --location asia-northeast1
+```
 
 ### Build and push
 
@@ -667,11 +676,19 @@ gcloud run services replace cloud-run-service.yaml \
   --region "${REGION}"
 ```
 
+To update GCS settings on an existing service without redeploying the image:
+
+```bash
+gcloud run services update jquants-dat-mcp \
+  --region "${REGION}" \
+  --set-env-vars "GCS_BUCKET=YOUR_BUCKET,GCS_PREFIX=jquants-dat-mcp/,GCS_SYNC_INTERVAL=300"
+```
+
 ### Environment variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GCS_BUCKET` | Yes | — | GCS bucket name for cache persistence |
+| `GCS_BUCKET` | Yes | — | GCS bucket name for database persistence |
 | `GCS_PREFIX` | No | `jquants-dat-mcp/` | Object key prefix in the bucket |
 | `GCS_SYNC_INTERVAL` | No | `300` | Upload interval in seconds |
 | `PORT` | No | `8000` | HTTP port (set by Cloud Run) |
@@ -697,13 +714,19 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --role "roles/secretmanager.secretAccessor"
 ```
 
-### Initial cache upload
+### Initial database upload
 
-Before the first deployment, upload an existing `cache.db` to GCS:
+Before the first deployment, upload existing databases to GCS:
 
 ```bash
 gcloud storage cp ~/.cache/jquants-dat-mcp/cache.db \
   gs://YOUR_BUCKET/jquants-dat-mcp/cache.db
+
+# Optional: upload users.db and oauth_state.db if they exist
+gcloud storage cp ~/.local/share/jquants-dat-mcp/users.db \
+  gs://YOUR_BUCKET/jquants-dat-mcp/users.db
+gcloud storage cp ~/.local/share/jquants-dat-mcp/oauth_state.db \
+  gs://YOUR_BUCKET/jquants-dat-mcp/oauth_state.db
 ```
 
 ### Memory requirements

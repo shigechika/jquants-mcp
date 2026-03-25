@@ -626,6 +626,76 @@ python3 scripts/daily_fetch.py --db /path/to/cache.db
 
 権限エラー（403）は graceful にスキップし、次のエンドポイントに進みます。
 
+## Cloud Run デプロイ
+
+このサーバーは「インメモリ + GCS 書き戻し」パターンで [Google Cloud Run](https://cloud.google.com/run) にデプロイできます:
+
+- 起動時: GCS からデータベースを `/tmp` にダウンロード
+- 定期的（デフォルト 5 分）および SIGTERM 受信時: `/tmp` のデータベースを GCS にアップロード
+
+**同期対象:** `cache.db`、`users.db`、`oauth_state.db`
+
+> **Note:** 複数インスタンスによる同時 SQLite 書き込みを防ぐため `maxScale: 1` が必要です。
+
+### 前提条件
+
+- [Docker](https://docs.docker.com/get-docker/) と [Google Cloud SDK](https://cloud.google.com/sdk/docs/install)
+- データベース永続化用の GCS バケット
+- バケットへの `roles/storage.objectAdmin` を持つサービスアカウント
+
+### GCS バケットの作成
+
+```bash
+gcloud storage buckets create gs://YOUR_BUCKET \
+  --location asia-northeast1
+```
+
+### IAM の設定
+
+```bash
+# サービスアカウントの作成
+gcloud iam service-accounts create jquants-dat-mcp \
+  --display-name "jquants-dat-mcp Cloud Run SA"
+
+# GCS アクセス権の付与
+gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET \
+  --member "serviceAccount:jquants-dat-mcp@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role "roles/storage.objectAdmin"
+```
+
+### 環境変数
+
+| 変数 | 必須 | デフォルト | 説明 |
+|---|---|---|---|
+| `GCS_BUCKET` | はい | — | データベース永続化用の GCS バケット名 |
+| `GCS_PREFIX` | いいえ | `jquants-dat-mcp/` | バケット内のオブジェクトキープレフィックス |
+| `GCS_SYNC_INTERVAL` | いいえ | `300` | アップロード間隔（秒） |
+
+既存サービスの GCS 設定を更新する場合:
+
+```bash
+gcloud run services update jquants-dat-mcp \
+  --region "${REGION}" \
+  --set-env-vars "GCS_BUCKET=YOUR_BUCKET,GCS_PREFIX=jquants-dat-mcp/,GCS_SYNC_INTERVAL=300"
+```
+
+### 初回データベースアップロード
+
+初回デプロイ前に、既存のデータベースを GCS にアップロードします:
+
+```bash
+gcloud storage cp ~/.cache/jquants-dat-mcp/cache.db \
+  gs://YOUR_BUCKET/jquants-dat-mcp/cache.db
+
+# users.db・oauth_state.db が存在する場合はアップロード
+gcloud storage cp ~/.local/share/jquants-dat-mcp/users.db \
+  gs://YOUR_BUCKET/jquants-dat-mcp/users.db
+gcloud storage cp ~/.local/share/jquants-dat-mcp/oauth_state.db \
+  gs://YOUR_BUCKET/jquants-dat-mcp/oauth_state.db
+```
+
+詳細な設定（Dockerfile、`cloud-run-service.yaml` 例、Secret Manager 連携）は [README.md](README.md) を参照してください。
+
 ## 開発
 
 ```bash
