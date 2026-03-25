@@ -696,6 +696,65 @@ gcloud run services update jquants-dat-mcp \
 | `JQUANTS_PLAN` | No | `free` | Plan: `free` / `light` / `standard` / `premium` |
 | `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication |
 
+### GCS Sync Operations
+
+The server syncs three SQLite databases between Cloud Run's ephemeral `/tmp` filesystem and GCS:
+
+| File | Description |
+|---|---|
+| `cache.db` | Market data cache (price history, financial summaries, indices, etc.) |
+| `users.db` | Per-user encrypted J-Quants API keys (multi-user mode) |
+| `oauth_state.db` | OAuth session state and PKCE verifiers |
+
+#### How sync works
+
+```
+Startup            Periodic                  Shutdown
+   |                   |                         |
+   v                   v                         v
+GCS → /tmp       /tmp → GCS              /tmp → GCS
+(download)    (every GCS_SYNC_INTERVAL)  (SIGTERM handler)
+```
+
+1. **On startup** — `scripts/gcs_sync.py --init` downloads all three files from GCS to `/tmp`. Missing objects are silently skipped (first-run case).
+2. **Periodic upload** — the sync daemon uploads every `GCS_SYNC_INTERVAL` seconds (default: 300).
+3. **On SIGTERM** — Cloud Run sends SIGTERM before container shutdown; the daemon performs a final upload to avoid data loss.
+
+#### Scale-to-zero behavior
+
+With `minInstances: 0`, Cloud Run scales to zero when there are no requests. Because all data lives in GCS, scaling to zero causes no data loss:
+
+- When the last instance shuts down, SIGTERM triggers a final GCS upload.
+- When a new instance starts, it downloads the latest state from GCS before accepting requests.
+- During the cold-start download, the server is not yet accepting requests — no data loss window.
+
+> **Important:** `maxScale: 1` is required. Multiple concurrent instances would produce conflicting SQLite writes, corrupting the databases.
+
+#### Troubleshooting
+
+**Permission error on startup (`403 Forbidden` or `storage.objects.get denied`):**
+
+```bash
+# Verify the service account has objectAdmin on the bucket
+gcloud storage buckets get-iam-policy gs://YOUR_BUCKET \
+  --format="table(bindings.role, bindings.members)"
+```
+
+If the role is missing, grant it (see [IAM setup](#iam-setup) below).
+
+**Sync delay — changes not visible after restart:**
+
+If `GCS_SYNC_INTERVAL` is large (e.g. 3600), recently registered API keys may not be persisted to GCS yet. Reduce the interval or trigger a manual upload:
+
+```bash
+# Trigger immediate upload (from inside the running container)
+python scripts/gcs_sync.py --upload
+```
+
+**Databases not found on first deploy:**
+
+On the very first deployment there are no objects in GCS — the `--init` step silently skips missing files and starts with empty databases. This is expected. To pre-populate, upload an existing database (see [Initial database upload](#initial-database-upload) below).
+
 ### IAM setup
 
 ```bash
