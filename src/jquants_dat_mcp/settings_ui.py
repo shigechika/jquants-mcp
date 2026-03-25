@@ -174,9 +174,11 @@ def _form_html(registered_plan: str | None) -> str:
     body = f"""<h1>J-Quants API Key Settings</h1>
 {status_html}
 <form method="post" action="/settings">
-  <label for="api_key">J-Quants API Key (refresh token)</label>
+  <label for="api_key">J-Quants API Key
+    (<a href="https://jpx-jquants.com/dashboard/api-keys" target="_blank" rel="noopener">confirm your key here</a>)
+  </label>
   <input type="password" id="api_key" name="api_key" required autocomplete="off"
-         placeholder="Enter your J-Quants API key">
+         placeholder="Enter your J-Quants API Key">
   <label for="plan">Plan</label>
   <select id="plan" name="plan">
 {plan_options}
