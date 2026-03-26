@@ -6,7 +6,7 @@ This is a companion to [j-quants-doc-mcp](https://github.com/knishioka/j-quants-
 
 ## Features
 
-- **25 MCP tools** covering all J-Quants API v2 endpoints
+- **27 MCP tools** covering all J-Quants API v2 endpoints
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -93,11 +93,14 @@ plan = premium
 | `SSL_CERTFILE` | No | — | Path to SSL certificate file (HTTP transport) |
 | `SSL_KEYFILE` | No | — | Path to SSL private key file (HTTP transport) |
 | `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication |
-| `GITHUB_CLIENT_ID` | No | — | GitHub OAuth App client ID (enables OAuth 2.1) |
+| `GITHUB_CLIENT_ID` | No | — | GitHub OAuth App client ID (enables GitHub OAuth 2.1) |
 | `GITHUB_CLIENT_SECRET` | No | — | GitHub OAuth App client secret |
+| `GOOGLE_CLIENT_ID` | No | — | Google OAuth 2.0 client ID (enables Google OAuth 2.1) |
+| `GOOGLE_CLIENT_SECRET` | No | — | Google OAuth 2.0 client secret |
+| `OAUTH_PROVIDER` | No | `github` | OAuth provider: `github` or `google` |
 | `OAUTH_BASE_URL` | No | — | Public base URL of the server (e.g. `https://mcp.example.com`) |
 | `OAUTH_JWT_SIGNING_KEY` | No | auto | Secret for JWT signing; auto-generated if blank |
-| `OAUTH_REQUIRE_CONSENT` | No | `true` | Show GitHub OAuth consent screen (`true`/`false`) |
+| `OAUTH_REQUIRE_CONSENT` | No | `true` | Show OAuth consent screen on every login (`true`/`false`) |
 | `MCP_ENCRYPTION_KEY` | No | — | Passphrase for AES-256-GCM encryption of per-user API keys |
 
 \* API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `JQUANTS_API_KEY` only to override.
@@ -211,7 +214,7 @@ export MCP_ENCRYPTION_KEY=<random-secret>          # required for per-user API k
 [oauth]
 google_client_id = <your-client-id>
 google_client_secret = <your-client-secret>
-oauth_provider = google
+provider = google
 base_url = https://mcp.example.com
 
 [server]
@@ -223,7 +226,7 @@ encryption_key = <random-secret>
 When OAuth is enabled, the server provides a browser-based settings page at `https://mcp.example.com/settings`.
 
 1. Open `https://mcp.example.com/settings` in a browser
-2. Click **Sign in with GitHub** (or **Sign in with Google** when `oauth_provider = google`)
+2. Click **Sign in with GitHub** (or **Sign in with Google** when `provider = google` in `config.ini`)
 3. After authentication, enter your J-Quants API key and plan, then click **Save**
 
 This is equivalent to calling `register_api_key` via Claude, but accessible directly from any browser without an MCP client.
@@ -264,7 +267,7 @@ sequenceDiagram
 
 **Registering a key** (tell Claude):
 
-> "Register my J-Quants API key: `<your-refresh-token>`, plan: light"
+> "Register my J-Quants API key: `<your-api-key>`, plan: light"
 
 Claude calls `register_api_key(api_key="...", plan="light")`. Valid plans: `free`, `light`, `standard`, `premium`. The plan controls per-user rate limiting.
 
