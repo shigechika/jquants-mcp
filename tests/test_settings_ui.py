@@ -499,7 +499,7 @@ class TestHandleSettingsVerify:
         settings = self._mock_settings(google_client_id="gsi-client-id")
         req = self._mock_json_request({"credential": "valid-token"})
 
-        tokeninfo = {"aud": "gsi-client-id", "email": "user@example.com"}
+        tokeninfo = {"aud": "gsi-client-id", "sub": "google-sub-123", "email": "user@example.com"}
         mock_resp = MagicMock()
         mock_resp.json.return_value = tokeninfo
         mock_resp.raise_for_status.return_value = None
@@ -514,3 +514,54 @@ class TestHandleSettingsVerify:
         set_cookie = resp.headers.get("set-cookie", "")
         assert "jquants_session" in set_cookie
         assert "httponly" in set_cookie.lower()
+
+    async def test_session_cookie_uses_sub_not_email(self):
+        """セッション cookie は email ではなく sub をユーザーIDとして使う。"""
+        import http.cookies
+
+        from jquants_dat_mcp.settings_ui import _verify_session
+
+        settings = self._mock_settings(google_client_id="gsi-client-id", signing_key="test-key")
+        req = self._mock_json_request({"credential": "valid-token"})
+
+        tokeninfo = {"aud": "gsi-client-id", "sub": "google-sub-999", "email": "user@example.com"}
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = tokeninfo
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("jquants_dat_mcp.settings_ui.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client.get.return_value = mock_resp
+            resp = await handle_settings_verify(req, settings)
+
+        assert resp.status_code == 200
+        # http.cookies でヘッダーをパースして cookie 値を取り出す
+        raw_cookie = resp.headers.get("set-cookie", "")
+        sc = http.cookies.SimpleCookie()
+        sc.load(raw_cookie)
+        assert "jquants_session" in sc
+        cookie_value = sc["jquants_session"].value
+        # cookie の user_id が sub であることを確認（email ではない）
+        user_id = _verify_session(cookie_value, "test-key")
+        assert user_id == "google-sub-999"
+        assert user_id != "user@example.com"
+
+    async def test_returns_401_on_missing_sub(self):
+        """tokeninfo に sub がなければ 401。"""
+        settings = self._mock_settings(google_client_id="gsi-client-id")
+        req = self._mock_json_request({"credential": "valid-token"})
+
+        # sub なし、email だけのトークン
+        tokeninfo = {"aud": "gsi-client-id", "email": "user@example.com"}
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = tokeninfo
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("jquants_dat_mcp.settings_ui.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client.get.return_value = mock_resp
+            resp = await handle_settings_verify(req, settings)
+
+        assert resp.status_code == 401

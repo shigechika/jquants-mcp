@@ -46,16 +46,21 @@ def _get_signing_key(settings) -> str:
     return ""
 
 
-def _sign_session(user_id: str, signing_key: str, ttl: int = _SESSION_TTL) -> str:
+def _sign_session(
+    user_id: str, signing_key: str, ttl: int = _SESSION_TTL, *, email: str = ""
+) -> str:
     """署名付きセッションcookieを生成。"""
     expires = int(time.time()) + ttl
-    payload = json.dumps({"sub": user_id, "exp": expires})
-    sig = hmac.new(signing_key.encode(), payload.encode(), hashlib.sha256).hexdigest()
-    return f"{payload}|{sig}"
+    payload: dict = {"sub": user_id, "exp": expires}
+    if email:
+        payload["email"] = email
+    payload_str = json.dumps(payload)
+    sig = hmac.new(signing_key.encode(), payload_str.encode(), hashlib.sha256).hexdigest()
+    return f"{payload_str}|{sig}"
 
 
-def _verify_session(cookie: str, signing_key: str) -> str | None:
-    """セッションcookieを検証。user_idを返す。"""
+def _parse_session(cookie: str, signing_key: str) -> dict | None:
+    """セッションcookieを検証・パース。有効なペイロード dict を返す。"""
     try:
         payload_str, sig = cookie.rsplit("|", 1)
         expected = hmac.new(signing_key.encode(), payload_str.encode(), hashlib.sha256).hexdigest()
@@ -64,9 +69,15 @@ def _verify_session(cookie: str, signing_key: str) -> str | None:
         payload = json.loads(payload_str)
         if payload.get("exp", 0) < time.time():
             return None
-        return payload.get("sub")
+        return payload
     except Exception:
         return None
+
+
+def _verify_session(cookie: str, signing_key: str) -> str | None:
+    """セッションcookieを検証。user_idを返す。"""
+    payload = _parse_session(cookie, signing_key)
+    return payload.get("sub") if payload else None
 
 
 def _resolve_user_id(request: Request, signing_key: str) -> str | None:
@@ -145,8 +156,13 @@ function onSignIn(response) {{
     return _html_page("Sign In", body)
 
 
-def _form_html(registered_plan: str | None) -> str:
+def _form_html(registered_plan: str | None, user_email: str | None = None) -> str:
     """Generate the /settings form page body."""
+    user_info_html = (
+        f'<p style="color:#555;font-size:0.9rem">Logged in as: {html.escape(user_email)}</p>'
+        if user_email
+        else ""
+    )
     if registered_plan is not None:
         status_html = (
             f'<div class="status">Currently registered \u2014 Plan: '
@@ -172,6 +188,7 @@ def _form_html(registered_plan: str | None) -> str:
     )
 
     body = f"""<h1>J-Quants API Key Settings</h1>
+{user_info_html}
 {status_html}
 <form method="post" action="/settings">
   <label for="api_key">J-Quants API Key
@@ -219,9 +236,18 @@ async def handle_settings_get(request: Request, get_user_db_fn, settings=None) -
             status_code=503,
         )
 
+    # セッション cookie からメールアドレスを取得（表示用）
+    display_email: str | None = None
+    if signing_key:
+        cookie = request.cookies.get(_SESSION_COOKIE)
+        if cookie:
+            parsed = _parse_session(cookie, signing_key)
+            if parsed:
+                display_email = parsed.get("email")
+
     user = user_db.get_user(user_id)
     registered_plan = user.plan if user is not None else None
-    return HTMLResponse(_form_html(registered_plan))
+    return HTMLResponse(_form_html(registered_plan, user_email=display_email))
 
 
 async def handle_settings_post(
@@ -391,12 +417,17 @@ async def handle_settings_verify(request: Request, settings=None) -> Response:
         )
         return Response("Token audience mismatch", status_code=401)
 
+    # sub はGoogleの不変ユーザーID（OAuth flow と一致させるために必須）
+    sub = token_data.get("sub", "")
+    if not sub:
+        return Response("No sub in token", status_code=401)
+
     email = token_data.get("email", "")
     if not email:
         return Response("No email in token", status_code=401)
 
-    # 署名付きセッション cookie を生成
-    session_value = _sign_session(email, signing_key)
+    # 署名付きセッション cookie を生成（sub をユーザーID、email を表示用として保存）
+    session_value = _sign_session(sub, signing_key, email=email)
     response = Response("OK", status_code=200)
     is_dev = os.environ.get("JQUANTS_ENV") == "development"
     response.set_cookie(
