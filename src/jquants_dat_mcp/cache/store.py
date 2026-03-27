@@ -65,6 +65,17 @@ _TIER1_TABLES = {
     },
 }
 
+# テーブルごとの許可カラム名（SQL インジェクション対策ホワイトリスト）
+_TIER1_KEY_COLUMNS: dict[str, frozenset[str]] = {
+    table: frozenset(part.strip().split()[0] for part in schema["key_columns"].split(","))
+    for table, schema in _TIER1_TABLES.items()
+}
+
+# 有効なテーブル名セット（Tier 1 + Tier 2）
+_ALL_TABLE_NAMES: frozenset[str] = frozenset(_TIER1_TABLES.keys()) | frozenset(
+    ["response_cache"]
+)
+
 # Tier 2 テーブル: レスポンスレベルキャッシュ
 _RESPONSE_CACHE_DDL = """
 CREATE TABLE IF NOT EXISTS response_cache (
@@ -210,6 +221,10 @@ class CacheStore:
         if table not in _TIER1_TABLES:
             return []
 
+        _validate_column(date_column, table)
+        for col in key_filter:
+            _validate_column(col, table)
+
         effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
         conditions = []
@@ -251,6 +266,10 @@ class CacheStore:
         """
         if table not in _TIER1_TABLES:
             return set()
+
+        _validate_column(date_column, table)
+        for col in key_filter:
+            _validate_column(col, table)
 
         effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
@@ -349,6 +368,9 @@ class CacheStore:
         """
         if table not in _TIER1_TABLES:
             return 0
+
+        for col in key_filter:
+            _validate_column(col, table)
 
         effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
@@ -489,6 +511,9 @@ class CacheStore:
         Returns:
             Dict of table_name → rows_deleted
         """
+        if table is not None:
+            _validate_table(table)
+
         conn = self._ensure_connection()
         result: dict[str, int] = {}
 
@@ -505,6 +530,29 @@ class CacheStore:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+
+
+def _validate_column(name: str, table: str) -> None:
+    """Raise ValueError if *name* is not a known column for *table*.
+
+    Prevents SQL injection via untrusted column name interpolation.
+    """
+    allowed = _TIER1_KEY_COLUMNS.get(table, frozenset())
+    if name not in allowed:
+        raise ValueError(
+            f"Invalid column name {name!r} for table {table!r}. Allowed: {sorted(allowed)}"
+        )
+
+
+def _validate_table(name: str) -> None:
+    """Raise ValueError if *name* is not a known cache table.
+
+    Prevents SQL injection via untrusted table name interpolation.
+    """
+    if name not in _ALL_TABLE_NAMES:
+        raise ValueError(
+            f"Invalid table name {name!r}. Allowed: {sorted(_ALL_TABLE_NAMES)}"
+        )
 
 
 def _key_col_names(table: str) -> list[str]:
