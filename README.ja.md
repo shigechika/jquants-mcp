@@ -6,7 +6,7 @@
 
 ## 特徴
 
-- **25 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー
+- **27 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー
 - **2層 SQLite キャッシュ** — 時系列データは行レベル、その他はレスポンスレベル（TTL付き）
 - **株式分割検知** — AdjFactor 変化時にキャッシュを自動無効化
 - **レート制限** — プラン別スライディングウィンドウ（Free: 5回/分, Light: 60, Standard: 120, Premium: 500）
@@ -93,11 +93,14 @@ plan = premium
 | `SSL_CERTFILE` | いいえ | — | SSL 証明書ファイルのパス（HTTP トランスポート用） |
 | `SSL_KEYFILE` | いいえ | — | SSL 秘密鍵ファイルのパス（HTTP トランスポート用） |
 | `MCP_BEARER_TOKEN` | いいえ | — | HTTP 認証用の Bearer トークン |
-| `GITHUB_CLIENT_ID` | いいえ | — | GitHub OAuth App のクライアント ID（OAuth 2.1 を有効化） |
+| `GITHUB_CLIENT_ID` | いいえ | — | GitHub OAuth App のクライアント ID（GitHub OAuth 2.1 を有効化） |
 | `GITHUB_CLIENT_SECRET` | いいえ | — | GitHub OAuth App のクライアントシークレット |
+| `GOOGLE_CLIENT_ID` | いいえ | — | Google OAuth 2.0 クライアント ID（Google OAuth 2.1 を有効化） |
+| `GOOGLE_CLIENT_SECRET` | いいえ | — | Google OAuth 2.0 クライアントシークレット |
+| `OAUTH_PROVIDER` | いいえ | `github` | OAuth プロバイダー: `github` または `google` |
 | `OAUTH_BASE_URL` | いいえ | — | サーバーの公開ベース URL（例: `https://mcp.example.com`） |
 | `OAUTH_JWT_SIGNING_KEY` | いいえ | 自動 | JWT 署名用シークレット。省略時は起動ごとに自動生成 |
-| `OAUTH_REQUIRE_CONSENT` | いいえ | `true` | GitHub OAuth 同意画面の表示（`true`/`false`） |
+| `OAUTH_REQUIRE_CONSENT` | いいえ | `true` | ログインのたびに OAuth 同意画面を表示（`true`/`false`） |
 | `MCP_ENCRYPTION_KEY` | いいえ | — | ユーザー API キーの AES-256-GCM 暗号化に使うパスフレーズ |
 
 \* API キーは `~/.jquants-api/jquants-api.toml` から自動検出されます。上書きが必要な場合のみ `JQUANTS_API_KEY` を設定してください。
@@ -211,7 +214,7 @@ export MCP_ENCRYPTION_KEY=<ランダムな秘密値>    # ユーザーごとの 
 [oauth]
 google_client_id = <クライアント ID>
 google_client_secret = <クライアントシークレット>
-oauth_provider = google
+provider = google
 base_url = https://mcp.example.com
 
 [server]
@@ -223,7 +226,7 @@ encryption_key = <ランダムな秘密値>
 OAuth が有効な場合、`https://mcp.example.com/settings` でブラウザからAPIキーを登録できます。
 
 1. ブラウザで `https://mcp.example.com/settings` を開く
-2. **Sign in with GitHub**（`oauth_provider = google` の場合は **Sign in with Google**）をクリック
+2. **Sign in with GitHub**（`config.ini` で `provider = google` の場合は **Sign in with Google**）をクリック
 3. 認証後、J-Quants API キーとプランを入力して **Save** をクリック
 
 MCP クライアントなしでブラウザから直接 `register_api_key` 相当の操作が可能です。
@@ -264,7 +267,7 @@ sequenceDiagram
 
 **キーの登録**（Claude に伝える）:
 
-> 「J-Quants の API キー `<リフレッシュトークン>` を light プランで登録して」
+> 「J-Quants の API キー `<APIキー>` を light プランで登録して」
 
 Claude が `register_api_key(api_key="...", plan="light")` を呼び出します。有効なプラン: `free`・`light`・`standard`・`premium`（ユーザーごとのレート制限に影響）。
 
