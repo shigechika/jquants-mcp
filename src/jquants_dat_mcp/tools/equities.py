@@ -86,6 +86,10 @@ def register(
             date_from: Start date for range query
             date_to: End date for range query
         """
+        if code is None and date is None and date_from is None and date_to is None:
+            return make_validation_error_response(
+                ["Either 'code' or 'date' (or date_from/date_to) must be specified."]
+            )
         errors = collect_errors(
             validate_code(code),
             validate_date(date),
