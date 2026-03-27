@@ -132,15 +132,17 @@ def _get_user_db():
     return _user_db
 
 
-def _evict_stale_clients() -> None:
+async def _evict_stale_clients() -> None:
     """Evict in-memory client instances that have been idle for more than 1 hour."""
     from .validation import _STALE_CLIENT_TTL
 
     now = time.monotonic()
     stale = [uid for uid, ts in _user_client_last_used.items() if now - ts > _STALE_CLIENT_TTL]
     for uid in stale:
-        _user_clients.pop(uid, None)
+        client = _user_clients.pop(uid, None)
         _user_client_last_used.pop(uid, None)
+        if client is not None:
+            await client.close()
         logger.info("Evicted stale client for user %s (idle >%ds)", uid, _STALE_CLIENT_TTL)
 
 
@@ -182,7 +184,7 @@ async def _get_user_client() -> JQuantsClient:
     # Periodically evict stale clients
     now_mono = time.monotonic()
     if now_mono - _last_cleanup > _CLEANUP_INTERVAL:
-        _evict_stale_clients()
+        await _evict_stale_clients()
         _last_cleanup = now_mono
 
     # Look up the user's API key from the encrypted store
