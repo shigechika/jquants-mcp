@@ -356,8 +356,8 @@ async def register_api_key(
             )
             plan = detected_plan
     except Exception as e:
-        logger.warning("Plan detection failed during registration for user %s: %s", user_id, e)
-        warnings.append(f"Plan detection skipped due to error: {e}")
+        logger.debug("Plan detection failed during registration for user %s: %s", user_id, e)
+        warnings.append("Plan detection skipped due to internal error")
 
     audit("register_api_key", user_id=user_id, plan=plan)
 
@@ -440,7 +440,7 @@ register_settings_routes(mcp, _get_user_db, _user_clients, _user_client_last_use
 
 def run_server(
     transport: str = "stdio",
-    host: str = "0.0.0.0",
+    host: str = "127.0.0.1",
     port: int = 8080,
     ssl_certfile: str = "",
     ssl_keyfile: str = "",
@@ -489,6 +489,11 @@ def run_server(
         auth_provider = create_auth_provider(settings)
         if auth_provider is not None:
             mcp.auth = auth_provider
+        else:
+            logger.warning(
+                "HTTP transport running without authentication. "
+                "Set bearer_token or OAuth provider for security."
+            )
 
         # TLS configuration
         uvicorn_config: dict[str, Any] = {}
