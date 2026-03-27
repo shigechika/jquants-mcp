@@ -5,14 +5,23 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from jquants_dat_mcp.models.user import User
-from jquants_dat_mcp.settings_ui import (
-    _sign_session,
-    _verify_session,
+from jquants_dat_mcp.settings.routes import (
     handle_settings_delete,
     handle_settings_get,
     handle_settings_post,
     handle_settings_verify,
 )
+from jquants_dat_mcp.settings.session import sign_session as _sign_session
+from jquants_dat_mcp.settings.session import verify_session as _verify_session
+
+# CSRF test token — 64 hex chars (same format as os.urandom(32).hex())
+_CSRF_TOKEN = "a" * 64
+
+# Patch targets (after refactor to settings/routes.py)
+_PATCH_DETECT_PLAN = "jquants_dat_mcp.settings.routes.detect_plan"
+_PATCH_JQUANTS_CLIENT = "jquants_dat_mcp.settings.routes.JQuantsClient"
+_PATCH_AUDIT = "jquants_dat_mcp.settings.routes.audit"
+_PATCH_HTTPX = "jquants_dat_mcp.settings.routes.httpx.AsyncClient"
 
 
 # ---- ヘルパー ----
@@ -25,11 +34,20 @@ def _mock_token(client_id: str = "gh-test-user"):
     return token
 
 
-def _mock_request(form_data: dict | None = None):
-    """モック Starlette Request。"""
+def _mock_request(form_data: dict | None = None, csrf: bool = False):
+    """モック Starlette Request。
+
+    csrf=True のとき、CSRF cookie とフォームトークンを一致させる。
+    """
     req = MagicMock()
-    if form_data is not None:
-        req.form = AsyncMock(return_value=form_data)
+    if csrf:
+        req.cookies = {"jquants_csrf": _CSRF_TOKEN}
+        merged = dict(form_data or {})
+        merged.setdefault("csrf_token", _CSRF_TOKEN)
+        req.form = AsyncMock(return_value=merged)
+    else:
+        req.cookies = {}
+        req.form = AsyncMock(return_value=form_data or {})
     return req
 
 
@@ -112,13 +130,29 @@ class TestHandleSettingsPost:
             )
         assert resp.status_code == 503
 
+    async def test_missing_csrf_token_returns_403(self):
+        """CSRF トークンなしで POST すると 403。"""
+        token = _mock_token()
+        user_db = _mock_user_db()
+        with patch("fastmcp.server.dependencies.get_access_token", return_value=token):
+            resp = await handle_settings_post(
+                _mock_request({"api_key": "k", "plan": "free"}, csrf=False),
+                lambda: user_db,
+                {},
+                {},
+            )
+        assert resp.status_code == 403
+
     async def test_empty_api_key_returns_400(self):
         """空の API キーで 400。"""
         token = _mock_token()
         user_db = _mock_user_db()
         with patch("fastmcp.server.dependencies.get_access_token", return_value=token):
             resp = await handle_settings_post(
-                _mock_request({"api_key": "", "plan": "free"}), lambda: user_db, {}, {}
+                _mock_request({"api_key": "", "plan": "free"}, csrf=True),
+                lambda: user_db,
+                {},
+                {},
             )
         assert resp.status_code == 400
         assert "required" in resp.body.decode()
@@ -129,7 +163,7 @@ class TestHandleSettingsPost:
         user_db = _mock_user_db()
         with patch("fastmcp.server.dependencies.get_access_token", return_value=token):
             resp = await handle_settings_post(
-                _mock_request({"api_key": "my-key", "plan": "ultra"}),
+                _mock_request({"api_key": "my-key", "plan": "ultra"}, csrf=True),
                 lambda: user_db,
                 {},
                 {},
@@ -145,15 +179,15 @@ class TestHandleSettingsPost:
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
             patch(
-                "jquants_dat_mcp.settings_ui.detect_plan",
+                _PATCH_DETECT_PLAN,
                 new_callable=AsyncMock,
                 return_value="light",
             ),
-            patch("jquants_dat_mcp.settings_ui.JQuantsClient"),
-            patch("jquants_dat_mcp.settings_ui.audit"),
+            patch(_PATCH_JQUANTS_CLIENT),
+            patch(_PATCH_AUDIT),
         ):
             resp = await handle_settings_post(
-                _mock_request({"api_key": "my-api-key", "plan": "light"}),
+                _mock_request({"api_key": "my-api-key", "plan": "light"}, csrf=True),
                 lambda: user_db,
                 {},
                 {},
@@ -172,15 +206,15 @@ class TestHandleSettingsPost:
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
             patch(
-                "jquants_dat_mcp.settings_ui.detect_plan",
+                _PATCH_DETECT_PLAN,
                 new_callable=AsyncMock,
                 return_value="free",  # 入力は "light" だが検出は "free"
             ),
-            patch("jquants_dat_mcp.settings_ui.JQuantsClient"),
-            patch("jquants_dat_mcp.settings_ui.audit"),
+            patch(_PATCH_JQUANTS_CLIENT),
+            patch(_PATCH_AUDIT),
         ):
             resp = await handle_settings_post(
-                _mock_request({"api_key": "my-api-key", "plan": "light"}),
+                _mock_request({"api_key": "my-api-key", "plan": "light"}, csrf=True),
                 lambda: user_db,
                 {},
                 {},
@@ -201,15 +235,15 @@ class TestHandleSettingsPost:
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
             patch(
-                "jquants_dat_mcp.settings_ui.detect_plan",
+                _PATCH_DETECT_PLAN,
                 new_callable=AsyncMock,
                 return_value="free",
             ),
-            patch("jquants_dat_mcp.settings_ui.JQuantsClient"),
-            patch("jquants_dat_mcp.settings_ui.audit"),
+            patch(_PATCH_JQUANTS_CLIENT),
+            patch(_PATCH_AUDIT),
         ):
             await handle_settings_post(
-                _mock_request({"api_key": "new-key", "plan": "free"}),
+                _mock_request({"api_key": "new-key", "plan": "free"}, csrf=True),
                 lambda: user_db,
                 user_clients,
                 user_client_last_used,
@@ -226,15 +260,15 @@ class TestHandleSettingsPost:
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
             patch(
-                "jquants_dat_mcp.settings_ui.detect_plan",
+                _PATCH_DETECT_PLAN,
                 new_callable=AsyncMock,
                 side_effect=Exception("network error"),
             ),
-            patch("jquants_dat_mcp.settings_ui.JQuantsClient"),
-            patch("jquants_dat_mcp.settings_ui.audit"),
+            patch(_PATCH_JQUANTS_CLIENT),
+            patch(_PATCH_AUDIT),
         ):
             resp = await handle_settings_post(
-                _mock_request({"api_key": "my-key", "plan": "free"}),
+                _mock_request({"api_key": "my-key", "plan": "free"}, csrf=True),
                 lambda: user_db,
                 {},
                 {},
@@ -257,11 +291,21 @@ class TestHandleSettingsDelete:
             resp = await handle_settings_delete(_mock_request(), lambda: None, {}, {})
         assert resp.status_code == 401
 
+    async def test_missing_csrf_returns_403(self):
+        """CSRF トークンなしで 403。"""
+        token = _mock_token()
+        user_db = _mock_user_db(delete_result=True)
+        with patch("fastmcp.server.dependencies.get_access_token", return_value=token):
+            resp = await handle_settings_delete(
+                _mock_request(csrf=False), lambda: user_db, {}, {}
+            )
+        assert resp.status_code == 403
+
     async def test_no_user_db_returns_503(self):
         """マルチユーザーモード無効で 503。"""
         token = _mock_token()
         with patch("fastmcp.server.dependencies.get_access_token", return_value=token):
-            resp = await handle_settings_delete(_mock_request(), lambda: None, {}, {})
+            resp = await handle_settings_delete(_mock_request(csrf=True), lambda: None, {}, {})
         assert resp.status_code == 503
 
     async def test_delete_existing_user(self):
@@ -271,9 +315,11 @@ class TestHandleSettingsDelete:
 
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
-            patch("jquants_dat_mcp.settings_ui.audit"),
+            patch(_PATCH_AUDIT),
         ):
-            resp = await handle_settings_delete(_mock_request(), lambda: user_db, {}, {})
+            resp = await handle_settings_delete(
+                _mock_request(csrf=True), lambda: user_db, {}, {}
+            )
 
         assert resp.status_code == 200
         assert "deleted" in resp.body.decode()
@@ -286,9 +332,11 @@ class TestHandleSettingsDelete:
 
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
-            patch("jquants_dat_mcp.settings_ui.audit"),
+            patch(_PATCH_AUDIT),
         ):
-            resp = await handle_settings_delete(_mock_request(), lambda: user_db, {}, {})
+            resp = await handle_settings_delete(
+                _mock_request(csrf=True), lambda: user_db, {}, {}
+            )
 
         assert resp.status_code == 200
         assert "No API key" in resp.body.decode()
@@ -302,10 +350,10 @@ class TestHandleSettingsDelete:
 
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
-            patch("jquants_dat_mcp.settings_ui.audit"),
+            patch(_PATCH_AUDIT),
         ):
             await handle_settings_delete(
-                _mock_request(), lambda: user_db, user_clients, user_client_last_used
+                _mock_request(csrf=True), lambda: user_db, user_clients, user_client_last_used
             )
 
         assert "gh-del-user" not in user_clients
@@ -318,9 +366,9 @@ class TestHandleSettingsDelete:
 
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
-            patch("jquants_dat_mcp.settings_ui.audit") as mock_audit,
+            patch(_PATCH_AUDIT) as mock_audit,
         ):
-            await handle_settings_delete(_mock_request(), lambda: user_db, {}, {})
+            await handle_settings_delete(_mock_request(csrf=True), lambda: user_db, {}, {})
 
         mock_audit.assert_called_once_with(
             "delete_api_key", user_id="gh-audit-user", source="settings_ui"
@@ -333,9 +381,9 @@ class TestHandleSettingsDelete:
 
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
-            patch("jquants_dat_mcp.settings_ui.audit") as mock_audit,
+            patch(_PATCH_AUDIT) as mock_audit,
         ):
-            await handle_settings_delete(_mock_request(), lambda: user_db, {}, {})
+            await handle_settings_delete(_mock_request(csrf=True), lambda: user_db, {}, {})
 
         mock_audit.assert_not_called()
 
@@ -466,7 +514,7 @@ class TestHandleSettingsVerify:
         settings = self._mock_settings()
         req = self._mock_json_request({"credential": "bad-token"})
 
-        with patch("jquants_dat_mcp.settings_ui.httpx.AsyncClient") as mock_client_cls:
+        with patch(_PATCH_HTTPX) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client_cls.return_value.__aenter__.return_value = mock_client
             mock_client.get.side_effect = httpx.HTTPStatusError(
@@ -486,7 +534,7 @@ class TestHandleSettingsVerify:
         mock_resp.json.return_value = tokeninfo
         mock_resp.raise_for_status.return_value = None
 
-        with patch("jquants_dat_mcp.settings_ui.httpx.AsyncClient") as mock_client_cls:
+        with patch(_PATCH_HTTPX) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client_cls.return_value.__aenter__.return_value = mock_client
             mock_client.get.return_value = mock_resp
@@ -504,7 +552,7 @@ class TestHandleSettingsVerify:
         mock_resp.json.return_value = tokeninfo
         mock_resp.raise_for_status.return_value = None
 
-        with patch("jquants_dat_mcp.settings_ui.httpx.AsyncClient") as mock_client_cls:
+        with patch(_PATCH_HTTPX) as mock_client_cls:
             mock_client = AsyncMock()
             mock_client_cls.return_value.__aenter__.return_value = mock_client
             mock_client.get.return_value = mock_resp

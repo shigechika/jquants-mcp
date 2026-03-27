@@ -14,6 +14,7 @@ import configparser
 import logging
 import os
 from pathlib import Path
+from typing import NamedTuple
 
 try:
     import tomllib
@@ -30,39 +31,43 @@ RATE_LIMITS: dict[str, int] = {
     "premium": 500,
 }
 
+class _ConfigDef(NamedTuple):
+    """Definition of a single configuration entry."""
+
+    attr: str
+    section: str
+    key: str
+    env_var: str
+    default: str
+
+
 # config.ini のキー → (セクション, キー名, 環境変数名, デフォルト値)
-_CONFIG_DEFS: list[tuple[str, str, str, str, str]] = [
+_CONFIG_DEFS: list[_ConfigDef] = [
     # (attr_name, section, key, env_var, default)
-    ("jquants_api_key", "jquants", "api_key", "JQUANTS_API_KEY", ""),
-    (
-        "jquants_base_url",
-        "jquants",
-        "base_url",
-        "JQUANTS_BASE_URL",
-        "https://api.jquants.com/v2",
-    ),
-    ("jquants_plan", "jquants", "plan", "JQUANTS_PLAN", "free"),
-    ("jquants_cache_dir", "jquants", "cache_dir", "JQUANTS_CACHE_DIR", ""),
-    ("max_retries", "client", "max_retries", "MAX_RETRIES", "5"),
-    ("retry_base_delay", "client", "retry_base_delay", "RETRY_BASE_DELAY", "1.0"),
-    ("max_pages", "client", "max_pages", "MAX_PAGES", "10"),
-    ("ssl_certfile", "server", "ssl_certfile", "SSL_CERTFILE", ""),
-    ("ssl_keyfile", "server", "ssl_keyfile", "SSL_KEYFILE", ""),
-    ("bearer_token", "server", "bearer_token", "MCP_BEARER_TOKEN", ""),
+    _ConfigDef("jquants_api_key", "jquants", "api_key", "JQUANTS_API_KEY", ""),
+    _ConfigDef("jquants_base_url", "jquants", "base_url", "JQUANTS_BASE_URL", "https://api.jquants.com/v2"),
+    _ConfigDef("jquants_plan", "jquants", "plan", "JQUANTS_PLAN", "free"),
+    _ConfigDef("jquants_cache_dir", "jquants", "cache_dir", "JQUANTS_CACHE_DIR", ""),
+    _ConfigDef("max_retries", "client", "max_retries", "MAX_RETRIES", "5"),
+    _ConfigDef("retry_base_delay", "client", "retry_base_delay", "RETRY_BASE_DELAY", "1.0"),
+    _ConfigDef("max_pages", "client", "max_pages", "MAX_PAGES", "10"),
+    _ConfigDef("ssl_certfile", "server", "ssl_certfile", "SSL_CERTFILE", ""),
+    _ConfigDef("ssl_keyfile", "server", "ssl_keyfile", "SSL_KEYFILE", ""),
+    _ConfigDef("bearer_token", "server", "bearer_token", "MCP_BEARER_TOKEN", ""),
     # OAuth プロバイダー選択（"github" or "google"）
-    ("oauth_provider", "oauth", "provider", "OAUTH_PROVIDER", "github"),
+    _ConfigDef("oauth_provider", "oauth", "provider", "OAUTH_PROVIDER", "github"),
     # GitHub OAuth 2.1 settings
-    ("github_client_id", "oauth", "github_client_id", "GITHUB_CLIENT_ID", ""),
-    ("github_client_secret", "oauth", "github_client_secret", "GITHUB_CLIENT_SECRET", ""),
+    _ConfigDef("github_client_id", "oauth", "github_client_id", "GITHUB_CLIENT_ID", ""),
+    _ConfigDef("github_client_secret", "oauth", "github_client_secret", "GITHUB_CLIENT_SECRET", ""),
     # Google OAuth 2.0 settings
-    ("google_client_id", "oauth", "google_client_id", "GOOGLE_CLIENT_ID", ""),
-    ("google_client_secret", "oauth", "google_client_secret", "GOOGLE_CLIENT_SECRET", ""),
+    _ConfigDef("google_client_id", "oauth", "google_client_id", "GOOGLE_CLIENT_ID", ""),
+    _ConfigDef("google_client_secret", "oauth", "google_client_secret", "GOOGLE_CLIENT_SECRET", ""),
     # 共通 OAuth settings
-    ("oauth_base_url", "oauth", "base_url", "OAUTH_BASE_URL", ""),
-    ("oauth_jwt_signing_key", "oauth", "jwt_signing_key", "OAUTH_JWT_SIGNING_KEY", ""),
-    ("oauth_require_consent", "oauth", "require_consent", "OAUTH_REQUIRE_CONSENT", "true"),
+    _ConfigDef("oauth_base_url", "oauth", "base_url", "OAUTH_BASE_URL", ""),
+    _ConfigDef("oauth_jwt_signing_key", "oauth", "jwt_signing_key", "OAUTH_JWT_SIGNING_KEY", ""),
+    _ConfigDef("oauth_require_consent", "oauth", "require_consent", "OAUTH_REQUIRE_CONSENT", "true"),
     # Multi-user: encryption key for per-user API key storage
-    ("encryption_key", "server", "encryption_key", "MCP_ENCRYPTION_KEY", ""),
+    _ConfigDef("encryption_key", "server", "encryption_key", "MCP_ENCRYPTION_KEY", ""),
 ]
 
 # 型変換テーブル
@@ -134,7 +139,8 @@ class Settings:
         # jquants-api.toml から API キーを読み取り（最低優先のフォールバック）
         toml_api_key = _read_jquants_toml()
 
-        for attr, section, key, env_var, default in _CONFIG_DEFS:
+        for defn in _CONFIG_DEFS:
+            attr, section, key, env_var, default = defn
             # 優先順位: overrides > env > config.ini > jquants-api.toml > default
             if attr in overrides:
                 value = overrides[attr]

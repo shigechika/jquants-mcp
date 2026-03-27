@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from .exceptions import AuthenticationError, PlanRestrictionError
+
+if TYPE_CHECKING:
+    from .client import JQuantsClient
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +47,7 @@ def needs_validation(last_validated_at: int | None) -> bool:
     return (int(time.time()) - last_validated_at) >= _VALIDATION_INTERVAL
 
 
-async def validate_api_key(client) -> bool:
+async def validate_api_key(client: JQuantsClient) -> bool:
     """Verify that the API key is still valid by calling a lightweight endpoint.
 
     Uses /markets/calendar which is available on all plans.
@@ -68,7 +72,7 @@ async def validate_api_key(client) -> bool:
         return True
 
 
-async def detect_plan(client) -> str:
+async def detect_plan(client: JQuantsClient) -> str:
     """Detect the user's actual J-Quants plan by probing plan-restricted endpoints.
 
     Tests endpoints from highest plan to lowest. Returns the first plan whose

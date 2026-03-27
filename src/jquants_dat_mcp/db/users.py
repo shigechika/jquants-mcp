@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from ..models.user import User
@@ -32,13 +33,18 @@ class UserStore:
     individual operations are fast and non-blocking in practice.
     """
 
-    def __init__(self, db_path: Path, encrypt_fn, decrypt_fn) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        encrypt_fn: Callable[[str], str],
+        decrypt_fn: Callable[[str], str],
+    ) -> None:
         """Initialize the user store.
 
         Args:
             db_path: Path to the SQLite database file.
-            encrypt_fn: Callable[str, str] — encrypts a plaintext API key.
-            decrypt_fn: Callable[str, str] — decrypts a stored blob.
+            encrypt_fn: Encrypts a plaintext API key and returns the encrypted blob.
+            decrypt_fn: Decrypts a stored blob and returns the plaintext API key.
         """
         self._db_path = db_path
         self._encrypt = encrypt_fn

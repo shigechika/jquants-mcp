@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .db.users import UserStore
 
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
@@ -79,7 +82,7 @@ _last_cleanup: float = 0.0
 _CLEANUP_INTERVAL = 300
 
 # UserStore — lazily initialized when encryption_key is configured
-_user_db = None  # UserStore | None
+_user_db: UserStore | None = None
 
 
 def _get_settings() -> Settings:
@@ -428,7 +431,7 @@ def _register_tools() -> None:
 
 _register_tools()
 
-from .settings_ui import register_settings_routes  # noqa: E402
+from .settings import register_settings_routes  # noqa: E402
 
 register_settings_routes(mcp, _get_user_db, _user_clients, _user_client_last_used, _get_settings)
 

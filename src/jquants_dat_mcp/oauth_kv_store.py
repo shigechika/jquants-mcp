@@ -18,6 +18,14 @@ from typing import Any
 _DEFAULT_COLLECTION = "__default__"
 
 
+def _safe_table_name(name: str) -> str:
+    """Sanitize a collection name to a safe SQLite table name.
+
+    Replaces any character that is not alphanumeric or underscore with ``_``.
+    """
+    return "".join(c if c.isalnum() or c == "_" else "_" for c in name)
+
+
 class SQLiteKeyValueStore:
     """SQLite-backed asynchronous key-value store implementing AsyncKeyValue protocol.
 
@@ -51,7 +59,7 @@ class SQLiteKeyValueStore:
 
     def _ensure_table(self, conn: sqlite3.Connection, table: str) -> None:
         # テーブル名はコレクション名から安全に生成する（英数字とアンダースコアのみ許可）
-        safe = "".join(c if c.isalnum() or c == "_" else "_" for c in table)
+        safe = _safe_table_name(table)
         conn.execute(
             f"""
             CREATE TABLE IF NOT EXISTS "{safe}" (
@@ -67,7 +75,7 @@ class SQLiteKeyValueStore:
         self, conn: sqlite3.Connection, table: str, key: str
     ) -> tuple[dict[str, Any] | None, float | None]:
         """Return (value_dict, expires_at) for key, deleting expired rows."""
-        safe = "".join(c if c.isalnum() or c == "_" else "_" for c in table)
+        safe = _safe_table_name(table)
         row = conn.execute(
             f'SELECT value, expires_at FROM "{safe}" WHERE key = ?', (key,)
         ).fetchone()
@@ -108,7 +116,7 @@ class SQLiteKeyValueStore:
         table = self._collection_name(collection)
         conn = self._ensure_connection()
         self._ensure_table(conn, table)
-        safe = "".join(c if c.isalnum() or c == "_" else "_" for c in table)
+        safe = _safe_table_name(table)
         expires_at = (time.time() + float(ttl)) if ttl is not None else None
         conn.execute(
             f'INSERT OR REPLACE INTO "{safe}" (key, value, expires_at) VALUES (?, ?, ?)',
@@ -121,7 +129,7 @@ class SQLiteKeyValueStore:
         table = self._collection_name(collection)
         conn = self._ensure_connection()
         self._ensure_table(conn, table)
-        safe = "".join(c if c.isalnum() or c == "_" else "_" for c in table)
+        safe = _safe_table_name(table)
         cursor = conn.execute(f'DELETE FROM "{safe}" WHERE key = ?', (key,))
         conn.commit()
         return cursor.rowcount > 0
