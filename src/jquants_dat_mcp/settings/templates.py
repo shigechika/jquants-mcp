@@ -60,9 +60,16 @@ function onSignIn(response) {{
     return html_page("Sign In", body)
 
 
-def form_html(registered_plan: str | None, csrf_token: str = "") -> str:
+def form_html(
+    registered_plan: str | None, csrf_token: str = "", *, user_email: str | None = None
+) -> str:
     """Generate the /settings API key registration form page."""
     csrf_field = f'<input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">'
+    user_info_html = (
+        f'<p style="color:#555;font-size:0.9rem">Logged in as: {html.escape(user_email)}</p>'
+        if user_email
+        else ""
+    )
     if registered_plan is not None:
         status_html = (
             f'<div class="status">Currently registered \u2014 Plan: '
@@ -89,6 +96,7 @@ def form_html(registered_plan: str | None, csrf_token: str = "") -> str:
     )
 
     body = f"""<h1>J-Quants API Key Settings</h1>
+{user_info_html}
 {status_html}
 <form method="post" action="/settings">
   {csrf_field}

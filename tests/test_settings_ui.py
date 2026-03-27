@@ -547,7 +547,7 @@ class TestHandleSettingsVerify:
         settings = self._mock_settings(google_client_id="gsi-client-id")
         req = self._mock_json_request({"credential": "valid-token"})
 
-        tokeninfo = {"aud": "gsi-client-id", "email": "user@example.com"}
+        tokeninfo = {"aud": "gsi-client-id", "email": "user@example.com", "sub": "uid-123", "email_verified": True}
         mock_resp = MagicMock()
         mock_resp.json.return_value = tokeninfo
         mock_resp.raise_for_status.return_value = None

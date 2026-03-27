@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import time
 
 from starlette.requests import Request
+
+logger = logging.getLogger(__name__)
 
 _SESSION_COOKIE = "jquants_session"
 _CSRF_COOKIE = "jquants_csrf"
@@ -16,24 +19,39 @@ _SESSION_TTL = 86400  # 24 hours
 
 
 def get_signing_key(settings) -> str:
-    """Return the session cookie signing key derived from settings."""
+    """Return the session cookie signing key.
+
+    Prefers ``oauth_jwt_signing_key`` when set.  Falls back to a SHA-256 hash
+    of ``encryption_key``, but logs a warning because sharing a secret between
+    encryption and signing means a single compromised key breaks both.
+    """
     if settings and settings.oauth_jwt_signing_key:
         return settings.oauth_jwt_signing_key
     if settings and settings.encryption_key:
+        logger.warning(
+            "Session signing key is derived from encryption_key via SHA-256. "
+            "Set OAUTH_JWT_SIGNING_KEY (or [oauth] jwt_signing_key) to an "
+            "independent secret to isolate session signing from encryption."
+        )
         return hashlib.sha256(settings.encryption_key.encode()).hexdigest()
     return ""
 
 
-def sign_session(user_id: str, signing_key: str, ttl: int = _SESSION_TTL) -> str:
+def sign_session(
+    user_id: str, signing_key: str, ttl: int = _SESSION_TTL, *, email: str = ""
+) -> str:
     """Create a signed session cookie value."""
     expires = int(time.time()) + ttl
-    payload = json.dumps({"sub": user_id, "exp": expires})
-    sig = hmac.new(signing_key.encode(), payload.encode(), hashlib.sha256).hexdigest()
-    return f"{payload}|{sig}"
+    payload: dict = {"sub": user_id, "exp": expires}
+    if email:
+        payload["email"] = email
+    payload_str = json.dumps(payload)
+    sig = hmac.new(signing_key.encode(), payload_str.encode(), hashlib.sha256).hexdigest()
+    return f"{payload_str}|{sig}"
 
 
-def verify_session(cookie: str, signing_key: str) -> str | None:
-    """Verify a signed session cookie and return user_id, or None if invalid."""
+def parse_session(cookie: str, signing_key: str) -> dict | None:
+    """Verify a signed session cookie and return the payload dict, or None if invalid."""
     try:
         payload_str, sig = cookie.rsplit("|", 1)
         expected = hmac.new(signing_key.encode(), payload_str.encode(), hashlib.sha256).hexdigest()
@@ -42,9 +60,15 @@ def verify_session(cookie: str, signing_key: str) -> str | None:
         payload = json.loads(payload_str)
         if payload.get("exp", 0) < time.time():
             return None
-        return payload.get("sub")
+        return payload
     except Exception:
         return None
+
+
+def verify_session(cookie: str, signing_key: str) -> str | None:
+    """Verify a signed session cookie and return user_id, or None if invalid."""
+    payload = parse_session(cookie, signing_key)
+    return payload.get("sub") if payload else None
 
 
 def get_or_create_csrf_token(request: Request) -> str:

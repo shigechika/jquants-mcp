@@ -21,6 +21,7 @@ from .session import (
     _SESSION_TTL,
     get_or_create_csrf_token,
     get_signing_key,
+    parse_session,
     resolve_user_id,
     sign_session,
     validate_csrf,
@@ -53,11 +54,20 @@ async def handle_settings_get(request: Request, get_user_db_fn, settings=None) -
             status_code=503,
         )
 
+    # セッション cookie からメールアドレスを取得（表示用）
+    display_email: str | None = None
+    if signing_key:
+        cookie = request.cookies.get(_SESSION_COOKIE)
+        if cookie:
+            parsed = parse_session(cookie, signing_key)
+            if parsed:
+                display_email = parsed.get("email")
+
     user = user_db.get_user(user_id)
     registered_plan = user.plan if user is not None else None
     csrf_token = get_or_create_csrf_token(request)
     is_dev = os.environ.get("JQUANTS_ENV") == "development"
-    response = HTMLResponse(form_html(registered_plan, csrf_token))
+    response = HTMLResponse(form_html(registered_plan, csrf_token, user_email=display_email))
     response.set_cookie(
         key=_CSRF_COOKIE,
         value=csrf_token,
@@ -251,11 +261,25 @@ async def handle_settings_verify(request: Request, settings=None) -> Response:
         )
         return Response("Token audience mismatch", status_code=401)
 
+    # email_verified チェック — 未検証メールアドレスからのログインを拒否
+    # TODO: tokeninfo エンドポイントは deprecated。google-auth または PyJWT を用いた
+    #       JWKS ベースの検証に移行することで、ネットワーク往復を排除しセキュリティを向上できる。
+    email_verified = token_data.get("email_verified")
+    if email_verified is not True and email_verified != "true":
+        logger.warning("Token email_verified is not True: %s", email_verified)
+        return Response("Email not verified", status_code=401)
+
+    # sub はGoogleの不変ユーザーID（email はアカウント移行で変わる可能性がある）
+    sub = token_data.get("sub", "")
+    if not sub:
+        return Response("No sub in token", status_code=401)
+
     email = token_data.get("email", "")
     if not email:
         return Response("No email in token", status_code=401)
 
-    session_value = sign_session(email, signing_key)
+    # 署名付きセッション cookie を生成（sub をユーザーID、email を表示用として保存）
+    session_value = sign_session(sub, signing_key, email=email)
     response = Response("OK", status_code=200)
     is_dev = os.environ.get("JQUANTS_ENV") == "development"
     response.set_cookie(
