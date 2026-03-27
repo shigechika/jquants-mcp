@@ -10,6 +10,13 @@ from fastmcp import FastMCP
 from ..cache.store import ENDPOINT_TTL, CacheStore, TTL_24H, TTL_90D, make_cache_key
 from ..client import JQuantsClient
 from ..exceptions import APIError, InvalidAPIKeyError, UserNotConfiguredError, format_api_error
+from ..validators import (
+    collect_errors,
+    make_validation_error_response,
+    validate_code,
+    validate_date,
+    validate_section,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +44,10 @@ def register(
             code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）
             date: 基準日（YYYYMMDD or YYYY-MM-DD）
         """
+        errors = collect_errors(validate_code(code), validate_date(date))
+        if errors:
+            return make_validation_error_response(errors)
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -76,6 +87,15 @@ def register(
             date_from: 期間指定の開始日
             date_to: 期間指定の終了日
         """
+        errors = collect_errors(
+            validate_code(code),
+            validate_date(date),
+            validate_date(date_from, "date_from"),
+            validate_date(date_to, "date_to"),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -118,6 +138,15 @@ def register(
             date_from: 期間指定の開始日
             date_to: 期間指定の終了日
         """
+        errors = collect_errors(
+            validate_code(code),
+            validate_date(date),
+            validate_date(date_from, "date_from"),
+            validate_date(date_to, "date_to"),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -150,6 +179,10 @@ def register(
         Args:
             code: 銘柄コード（5桁 例: 27800、4桁指定時は普通株式のみ）。省略時は全銘柄。
         """
+        errors = collect_errors(validate_code(code))
+        if errors:
+            return make_validation_error_response(errors)
+
         client: JQuantsClient = await get_client()
 
         # リアルタイムデータのためキャッシュしない
@@ -177,6 +210,14 @@ def register(
             date_from: 期間指定の開始日（YYYYMMDD or YYYY-MM-DD）
             date_to: 期間指定の終了日（YYYYMMDD or YYYY-MM-DD）
         """
+        errors = collect_errors(
+            validate_section(section),
+            validate_date(date_from, "date_from"),
+            validate_date(date_to, "date_to"),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -213,6 +254,10 @@ def register(
             code: 銘柄コード(5桁 例: 72030、4桁指定時は末尾0を補完)。
                   指定時は蓄積データから該当銘柄の決算予定を検索。
         """
+        errors = collect_errors(validate_code(code), validate_date(date))
+        if errors:
+            return make_validation_error_response(errors)
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 

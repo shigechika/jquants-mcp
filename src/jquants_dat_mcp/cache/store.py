@@ -212,26 +212,10 @@ class CacheStore:
 
         effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
-        conditions = []
-        params: list[str] = []
-
-        for col, val in key_filter.items():
-            conditions.append(f"{col} = ?")
-            params.append(val)
-
-        conditions.append("plan = ?")
-        params.append(effective_plan)
-
-        if date_from:
-            conditions.append(f"{date_column} >= ?")
-            params.append(date_from)
-        if date_to:
-            conditions.append(f"{date_column} <= ?")
-            params.append(date_to)
-
-        where = " AND ".join(conditions) if conditions else "1=1"
+        where, params = _build_where_clause(
+            key_filter, effective_plan, date_column, date_from, date_to
+        )
         sql = f"SELECT data FROM {table} WHERE {where} ORDER BY {date_column}"
-
         rows = conn.execute(sql, params).fetchall()
         return [json.loads(row["data"]) for row in rows]
 
@@ -254,26 +238,10 @@ class CacheStore:
 
         effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
-        conditions = []
-        params: list[str] = []
-
-        for col, val in key_filter.items():
-            conditions.append(f"{col} = ?")
-            params.append(val)
-
-        conditions.append("plan = ?")
-        params.append(effective_plan)
-
-        if date_from:
-            conditions.append(f"{date_column} >= ?")
-            params.append(date_from)
-        if date_to:
-            conditions.append(f"{date_column} <= ?")
-            params.append(date_to)
-
-        where = " AND ".join(conditions) if conditions else "1=1"
+        where, params = _build_where_clause(
+            key_filter, effective_plan, date_column, date_from, date_to
+        )
         sql = f"SELECT {date_column} FROM {table} WHERE {where}"
-
         rows = conn.execute(sql, params).fetchall()
         return {row[0] for row in rows}
 
@@ -505,6 +473,46 @@ class CacheStore:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+
+
+def _build_where_clause(
+    key_filter: dict[str, str],
+    effective_plan: str,
+    date_column: str = "date",
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> tuple[str, list[str]]:
+    """Build a WHERE clause and parameter list for Tier 1 cache queries.
+
+    Args:
+        key_filter: Column name → value pairs (e.g. {"code": "72030"})
+        effective_plan: Subscription plan to filter on.
+        date_column: Name of the date column for range filtering.
+        date_from: Start date (inclusive).
+        date_to: End date (inclusive).
+
+    Returns:
+        (where_clause, params) tuple ready to be used in a SQL query.
+    """
+    conditions: list[str] = []
+    params: list[str] = []
+
+    for col, val in key_filter.items():
+        conditions.append(f"{col} = ?")
+        params.append(val)
+
+    conditions.append("plan = ?")
+    params.append(effective_plan)
+
+    if date_from:
+        conditions.append(f"{date_column} >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append(f"{date_column} <= ?")
+        params.append(date_to)
+
+    where = " AND ".join(conditions) if conditions else "1=1"
+    return where, params
 
 
 def _key_col_names(table: str) -> list[str]:

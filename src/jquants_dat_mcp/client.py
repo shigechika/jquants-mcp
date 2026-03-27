@@ -14,6 +14,17 @@ from .exceptions import APIError, AuthenticationError, PlanRestrictionError, Rat
 
 logger = logging.getLogger(__name__)
 
+# J-Quants API requires YYYYMMDD format — these params have hyphens stripped before sending
+_DATE_KEYS: tuple[str, ...] = (
+    "date",
+    "from",
+    "to",
+    "disc_date",
+    "disc_date_from",
+    "disc_date_to",
+    "calc_date",
+)
+
 
 class RateLimiter:
     """Sliding window rate limiter based on asyncio."""
@@ -85,16 +96,6 @@ class JQuantsClient:
         """
         client = await self._ensure_client()
         params = {k: v for k, v in (params or {}).items() if v is not None}
-        # J-Quants API requires YYYYMMDD format — strip hyphens from date params
-        _DATE_KEYS = (
-            "date",
-            "from",
-            "to",
-            "disc_date",
-            "disc_date_from",
-            "disc_date_to",
-            "calc_date",
-        )
         for key in _DATE_KEYS:
             if key in params and isinstance(params[key], str):
                 params[key] = params[key].replace("-", "")
