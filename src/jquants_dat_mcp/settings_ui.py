@@ -38,10 +38,20 @@ _GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 
 
 def _get_signing_key(settings) -> str:
-    """セッション cookie の署名キーを取得。"""
+    """Return the session cookie signing key.
+
+    Prefers ``oauth_jwt_signing_key`` when set.  Falls back to a SHA-256 hash
+    of ``encryption_key``, but logs a warning because sharing a secret between
+    encryption and signing means a single compromised key breaks both.
+    """
     if settings and settings.oauth_jwt_signing_key:
         return settings.oauth_jwt_signing_key
     if settings and settings.encryption_key:
+        logger.warning(
+            "Session signing key is derived from encryption_key via SHA-256. "
+            "Set OAUTH_JWT_SIGNING_KEY (or [oauth] jwt_signing_key) to an "
+            "independent secret to isolate session signing from encryption."
+        )
         return hashlib.sha256(settings.encryption_key.encode()).hexdigest()
     return ""
 
