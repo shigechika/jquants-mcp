@@ -1,4 +1,4 @@
-"""Tests for health_check tool — Issue #17 fix."""
+"""Tests for health_check and cache_status tools."""
 
 from __future__ import annotations
 
@@ -104,3 +104,56 @@ class TestHealthCheck:
             result = await _call("health_check")
 
         assert result["plan"] == "premium"
+
+
+class TestCacheStatus:
+    async def test_single_user_returns_settings_plan(self, mock_env):
+        """Single-user mode returns the plan from global settings (default_plan on cache)."""
+        with patch("fastmcp.server.dependencies.get_access_token", return_value=None):
+            result = await _call("cache_status")
+        assert result["plan"] == "free"  # CacheStore is created with default plan="free"
+        assert "db_path" in result
+
+    async def test_multi_user_returns_user_plan(self, mock_env):
+        """Multi-user mode returns the authenticated user's actual plan."""
+        token = MagicMock()
+        token.client_id = "user-123"
+        user = User(user_id="user-123", api_key="key", plan="standard")
+        mock_db = MagicMock()
+        mock_db.get_user.return_value = user
+
+        with (
+            patch("fastmcp.server.dependencies.get_access_token", return_value=token),
+            patch.object(server_module, "_user_db", mock_db),
+        ):
+            result = await _call("cache_status")
+
+        assert result["plan"] == "standard"
+
+    async def test_multi_user_unregistered_returns_default(self, mock_env):
+        """Unregistered OAuth user gets the cache's default plan."""
+        token = MagicMock()
+        token.client_id = "new-user"
+        mock_db = MagicMock()
+        mock_db.get_user.return_value = None
+
+        with (
+            patch("fastmcp.server.dependencies.get_access_token", return_value=token),
+            patch.object(server_module, "_user_db", mock_db),
+        ):
+            result = await _call("cache_status")
+
+        assert result["plan"] == "free"  # falls back to cache default_plan
+
+    async def test_no_user_db_returns_cache_default_plan(self, mock_env):
+        """OAuth user without encryption_key returns cache default plan."""
+        token = MagicMock()
+        token.client_id = "user-456"
+
+        with (
+            patch("fastmcp.server.dependencies.get_access_token", return_value=token),
+            patch.object(server_module, "_user_db", None),
+        ):
+            result = await _call("cache_status")
+
+        assert result["plan"] == "free"

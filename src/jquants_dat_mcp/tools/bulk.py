@@ -49,17 +49,16 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve list of downloadable CSV files.
 
-        CSV 形式でダウンロード可能なファイルの一覧を取得する。
-        endpoint パラメータでデータセットを指定し、ダウンロード用キー（Key）・
-        最終更新日時・ファイルサイズの一覧を返す。
+        Returns a list of downloadable CSV files for the specified dataset endpoint,
+        including the download key (Key), last modified time, and file size.
 
-        取得した Key は get_bulk_download_url で署名付き URL に変換してダウンロードできる。
+        Use the returned Key with get_bulk_download_url to obtain a signed download URL.
 
-        [対応プラン] Light / Standard / Premium
+        [Supported plans] Light / Standard / Premium
 
         Args:
-            endpoint: データセットのエンドポイント名（例: /equities/bars/daily）。
-                指定可能な値:
+            endpoint: Dataset endpoint name (e.g. /equities/bars/daily).
+                Accepted values:
                 /equities/master, /equities/bars/daily, /equities/bars/minute,
                 /equities/investor-types, /fins/summary, /fins/details,
                 /fins/dividend, /indices/bars/daily, /indices/bars/daily/topix,
@@ -71,8 +70,8 @@ def register(
         if endpoint not in VALID_BULK_ENDPOINTS:
             return {
                 "error": True,
-                "message": f"無効な endpoint: {endpoint}",
-                "hint": f"指定可能な値: {', '.join(VALID_BULK_ENDPOINTS)}",
+                "message": f"Invalid endpoint: {endpoint}",
+                "hint": f"Accepted values: {', '.join(VALID_BULK_ENDPOINTS)}",
             }
 
         client: JQuantsClient = await get_client()
@@ -98,13 +97,13 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve a signed URL for downloading a CSV file.
 
-        get_bulk_list で取得した Key を指定し、CSV ファイルダウンロード用の
-        署名付き URL を取得する。URL の有効期限は約5分。
+        Specify a Key obtained from get_bulk_list to get a signed URL for CSV download.
+        The URL expires in approximately 5 minutes.
 
-        [対応プラン] Light / Standard / Premium
+        [Supported plans] Light / Standard / Premium
 
         Args:
-            key: ファイルのキー（get_bulk_list で取得した Key 値）
+            key: File key obtained from get_bulk_list
         """
         client: JQuantsClient = await get_client()
 
@@ -114,7 +113,7 @@ def register(
             url = response.get("url", "")
             return {
                 "url": url,
-                "hint": "URL の有効期限は約5分です。期限内にダウンロードしてください。",
+                "hint": "The URL expires in approximately 5 minutes. Download within the expiry time.",
             }
         except (APIError, InvalidAPIKeyError, UserNotConfiguredError) as e:
             return format_api_error(e)

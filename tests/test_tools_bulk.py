@@ -85,7 +85,7 @@ class TestGetBulkList:
     async def test_invalid_endpoint_returns_error(self, mock_env):
         result = await _call("get_bulk_list", endpoint="/invalid/endpoint")
         assert result["error"] is True
-        assert "無効な endpoint" in result["message"]
+        assert "Invalid endpoint" in result["message"]
         assert "hint" in result
 
     async def test_plan_restriction(self, mock_env):
@@ -122,7 +122,7 @@ class TestGetBulkDownloadUrl:
                 key="equities/bars/daily/2024/01/04.csv.gz",
             )
             assert result["url"] == "https://example.com/download/signed-url?token=abc123"
-            assert "有効期限" in result["hint"]
+            assert "expires" in result["hint"]
 
     async def test_not_cached(self, mock_env):
         """署名付き URL はキャッシュされないことを確認。"""

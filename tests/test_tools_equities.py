@@ -138,6 +138,21 @@ class TestGetEquitiesBarsDaily:
             assert result["error"] is True
             assert "hint" in result
 
+    async def test_no_params_returns_validation_error(self, mock_env):
+        result = await _call("get_equities_bars_daily")
+        assert result["error"] is True
+        assert "code" in result["message"] or "date" in result["message"]
+
+    async def test_date_from_only_returns_validation_error(self, mock_env):
+        """date_from/date_to without code requires no validation bypass."""
+        # date_from alone (no code, no date) should pass through (valid API usage)
+        mock_data = [{"Code": "72030", "Date": "2024-01-04", "O": 2800, "AdjFactor": 1.0}]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_equities_bars_daily", date_from="2024-01-04")
+            assert result["count"] == 1
+
 
 class TestGetEquitiesBarsMinute:
     async def test_returns_data(self, mock_env):
