@@ -296,9 +296,7 @@ class TestHandleSettingsDelete:
         token = _mock_token()
         user_db = _mock_user_db(delete_result=True)
         with patch("fastmcp.server.dependencies.get_access_token", return_value=token):
-            resp = await handle_settings_delete(
-                _mock_request(csrf=False), lambda: user_db, {}, {}
-            )
+            resp = await handle_settings_delete(_mock_request(csrf=False), lambda: user_db, {}, {})
         assert resp.status_code == 403
 
     async def test_no_user_db_returns_503(self):
@@ -317,9 +315,7 @@ class TestHandleSettingsDelete:
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
             patch(_PATCH_AUDIT),
         ):
-            resp = await handle_settings_delete(
-                _mock_request(csrf=True), lambda: user_db, {}, {}
-            )
+            resp = await handle_settings_delete(_mock_request(csrf=True), lambda: user_db, {}, {})
 
         assert resp.status_code == 200
         assert "deleted" in resp.body.decode()
@@ -334,9 +330,7 @@ class TestHandleSettingsDelete:
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
             patch(_PATCH_AUDIT),
         ):
-            resp = await handle_settings_delete(
-                _mock_request(csrf=True), lambda: user_db, {}, {}
-            )
+            resp = await handle_settings_delete(_mock_request(csrf=True), lambda: user_db, {}, {})
 
         assert resp.status_code == 200
         assert "No API key" in resp.body.decode()
@@ -547,7 +541,12 @@ class TestHandleSettingsVerify:
         settings = self._mock_settings(google_client_id="gsi-client-id")
         req = self._mock_json_request({"credential": "valid-token"})
 
-        tokeninfo = {"aud": "gsi-client-id", "email": "user@example.com", "sub": "uid-123", "email_verified": True}
+        tokeninfo = {
+            "aud": "gsi-client-id",
+            "email": "user@example.com",
+            "sub": "uid-123",
+            "email_verified": True,
+        }
         mock_resp = MagicMock()
         mock_resp.json.return_value = tokeninfo
         mock_resp.raise_for_status.return_value = None

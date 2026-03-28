@@ -10,7 +10,12 @@ from fastmcp import FastMCP
 from ..cache.store import CacheStore, TTL_24H, make_cache_key
 from ..client import JQuantsClient
 from ..exceptions import APIError, InvalidAPIKeyError, UserNotConfiguredError, format_api_error
-from ..validators import collect_errors, make_validation_error_response, validate_code, validate_date
+from ..validators import (
+    collect_errors,
+    make_validation_error_response,
+    validate_code,
+    validate_date,
+)
 
 logger = logging.getLogger(__name__)
 

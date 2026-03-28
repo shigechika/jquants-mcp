@@ -72,9 +72,7 @@ _TIER1_KEY_COLUMNS: dict[str, frozenset[str]] = {
 }
 
 # 有効なテーブル名セット（Tier 1 + Tier 2）
-_ALL_TABLE_NAMES: frozenset[str] = frozenset(_TIER1_TABLES.keys()) | frozenset(
-    ["response_cache"]
-)
+_ALL_TABLE_NAMES: frozenset[str] = frozenset(_TIER1_TABLES.keys()) | frozenset(["response_cache"])
 
 # Tier 2 テーブル: レスポンスレベルキャッシュ
 _RESPONSE_CACHE_DDL = """
@@ -558,9 +556,7 @@ def _validate_table(name: str) -> None:
     Prevents SQL injection via untrusted table name interpolation.
     """
     if name not in _ALL_TABLE_NAMES:
-        raise ValueError(
-            f"Invalid table name {name!r}. Allowed: {sorted(_ALL_TABLE_NAMES)}"
-        )
+        raise ValueError(f"Invalid table name {name!r}. Allowed: {sorted(_ALL_TABLE_NAMES)}")
 
 
 def _key_col_names(table: str) -> list[str]:

@@ -31,6 +31,7 @@ RATE_LIMITS: dict[str, int] = {
     "premium": 500,
 }
 
+
 class _ConfigDef(NamedTuple):
     """Definition of a single configuration entry."""
 
@@ -45,7 +46,9 @@ class _ConfigDef(NamedTuple):
 _CONFIG_DEFS: list[_ConfigDef] = [
     # (attr_name, section, key, env_var, default)
     _ConfigDef("jquants_api_key", "jquants", "api_key", "JQUANTS_API_KEY", ""),
-    _ConfigDef("jquants_base_url", "jquants", "base_url", "JQUANTS_BASE_URL", "https://api.jquants.com/v2"),
+    _ConfigDef(
+        "jquants_base_url", "jquants", "base_url", "JQUANTS_BASE_URL", "https://api.jquants.com/v2"
+    ),
     _ConfigDef("jquants_plan", "jquants", "plan", "JQUANTS_PLAN", "free"),
     _ConfigDef("jquants_cache_dir", "jquants", "cache_dir", "JQUANTS_CACHE_DIR", ""),
     _ConfigDef("max_retries", "client", "max_retries", "MAX_RETRIES", "5"),
@@ -65,7 +68,9 @@ _CONFIG_DEFS: list[_ConfigDef] = [
     # 共通 OAuth settings
     _ConfigDef("oauth_base_url", "oauth", "base_url", "OAUTH_BASE_URL", ""),
     _ConfigDef("oauth_jwt_signing_key", "oauth", "jwt_signing_key", "OAUTH_JWT_SIGNING_KEY", ""),
-    _ConfigDef("oauth_require_consent", "oauth", "require_consent", "OAUTH_REQUIRE_CONSENT", "true"),
+    _ConfigDef(
+        "oauth_require_consent", "oauth", "require_consent", "OAUTH_REQUIRE_CONSENT", "true"
+    ),
     # Multi-user: encryption key for per-user API key storage
     _ConfigDef("encryption_key", "server", "encryption_key", "MCP_ENCRYPTION_KEY", ""),
 ]
