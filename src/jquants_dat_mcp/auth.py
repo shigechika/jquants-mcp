@@ -101,6 +101,13 @@ def _create_google_provider(settings: Settings) -> OAuthProvider:
         jwt_signing_key=settings.oauth_jwt_signing_key or None,
         require_authorization_consent=settings.oauth_require_consent,
         client_storage=client_storage,
+        # RFC 8252: ローカルホストの redirect_uri はポートを動的に割り当て可能
+        # Claude Desktop は claude.ai 経由、Claude Code CLI は localhost を使用
+        allowed_client_redirect_uris=[
+            "https://claude.ai/api/mcp/auth_callback",
+            "http://localhost:*/callback",
+            "http://127.0.0.1:*/callback",
+        ],
     )
 
 
