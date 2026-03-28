@@ -357,13 +357,6 @@ async def _get_bars_daily_with_cache(
     cache_code = code + "0" if len(code) == 4 else code
 
     try:
-        # まず最新1件をAPIから取得して分割チェック
-        probe_params: dict[str, Any] = {"code": code}
-        if date:
-            probe_params["date"] = date
-        elif date_to:
-            probe_params["date"] = date_to
-
         # キャッシュから既存データを取得（5桁コードで検索）
         effective_date = date or date_from
         cached_data = cache.get_rows(

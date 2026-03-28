@@ -9,7 +9,6 @@ _CODE_RE = re.compile(r"^\d{4,5}$")
 
 # 日付: YYYYMMDD または YYYY-MM-DD
 _DATE_RE = re.compile(r"^\d{4}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$")
-_DATE_WITH_HYPHENS_RE = re.compile(r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$")
 
 # 有効な33業種コード（東証33業種分類、4桁ゼロ埋め）
 _VALID_SECTOR33_CODES = frozenset(

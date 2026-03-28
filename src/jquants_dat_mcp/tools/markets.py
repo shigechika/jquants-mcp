@@ -73,7 +73,7 @@ def register(
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
-        # code 指定 + 期間指定の場合は Tier 1 キャッシュで増分取得
+        # いずれかのパラメータ指定ありの場合は Tier 1 キャッシュで増分取得
         if code or date or date_from or date_to:
             return await _get_with_tier1_cache(
                 client,
