@@ -12,18 +12,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Re-validate API keys once per day
+# API キーの再検証は1日1回
 _VALIDATION_INTERVAL = 86400
 
-# Evict in-memory clients idle for more than 1 hour
+# 1時間以上アイドル状態のインメモリクライアントを削除
 _STALE_CLIENT_TTL = 3600
 
-# Probe endpoints to detect the user's actual plan (ordered highest to lowest).
-# Each tuple: (plan_name, endpoint_path, probe_params)
-# Plans verified against J-Quants API v2 docs:
-#   /fins/details          → Premium only
-#   /markets/short-ratio   → Standard / Premium  (old path: /markets/short_selling)
-#   /equities/investor-types → Light / Standard / Premium  (old path: /markets/trades_spec)
+# ユーザーの実際のプランを検出するプローブエンドポイント（上位プランから順）
+# 各タプル: (プラン名, エンドポイントパス, プローブパラメータ)
+# J-Quants API v2 ドキュメントで検証済み:
+#   /fins/details          → Premium のみ
+#   /markets/short-ratio   → Standard / Premium（旧パス: /markets/short_selling）
+#   /equities/investor-types → Light / Standard / Premium（旧パス: /markets/trades_spec）
 _PLAN_PROBE_ENDPOINTS: list[tuple[str, str, dict]] = [
     ("premium", "/fins/details", {"date": "20240101"}),
     ("standard", "/markets/short-ratio", {"date": "20240101"}),
@@ -67,7 +67,7 @@ async def validate_api_key(client: JQuantsClient) -> bool:
     except AuthenticationError:
         raise
     except Exception as e:
-        # Be lenient on network errors — do not invalidate the key
+        # ネットワークエラーには寛容に対応 — キーを無効化しない
         logger.warning("API key validation encountered a non-auth error: %s", e)
         return True
 

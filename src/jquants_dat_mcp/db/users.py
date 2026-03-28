@@ -73,7 +73,7 @@ class UserStore:
                 logger.info("Migrated users table: added last_validated_at column")
 
     # ------------------------------------------------------------------
-    # Public API
+    # 公開 API
     # ------------------------------------------------------------------
 
     def get_user(self, user_id: str) -> User | None:
@@ -128,7 +128,7 @@ class UserStore:
             return False
         try:
             self._decrypt(row["encrypted_api_key"])
-            return False  # Decryption succeeded — key is fine
+            return False  # 復号成功 — キーは正常
         except Exception:
             return True
 

@@ -4,18 +4,18 @@ from __future__ import annotations
 
 
 class JQuantsDatMCPError(Exception):
-    """jquants-dat-mcp の基底例外クラス"""
+    """Base exception class for jquants-dat-mcp."""
 
     def to_dict(self) -> dict:
         return {"error": True, "error_type": type(self).__name__, "message": str(self)}
 
 
 class AuthenticationError(JQuantsDatMCPError):
-    """API キーが未設定または無効"""
+    """API key is not configured or invalid."""
 
 
 class RateLimitError(JQuantsDatMCPError):
-    """レート制限超過（リトライ上限到達後）"""
+    """Rate limit exceeded (after exhausting retries)."""
 
     def __init__(self, message: str = "レート制限に達しました", retry_after: float | None = None):
         super().__init__(message)
@@ -23,7 +23,7 @@ class RateLimitError(JQuantsDatMCPError):
 
 
 class APIError(JQuantsDatMCPError):
-    """J-Quants API からのエラーレスポンス"""
+    """Error response from J-Quants API."""
 
     def __init__(self, message: str, status_code: int, body: str | None = None):
         super().__init__(message)
@@ -37,7 +37,7 @@ class APIError(JQuantsDatMCPError):
 
 
 class PlanRestrictionError(APIError):
-    """プラン制限によるアクセス不可（403）"""
+    """Access denied due to plan restriction (HTTP 403)."""
 
 
 class DecryptionError(JQuantsDatMCPError):

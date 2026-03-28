@@ -71,7 +71,7 @@ async def handle_settings_get(request: Request, get_user_db_fn, settings=None) -
     response.set_cookie(
         key=_CSRF_COOKIE,
         value=csrf_token,
-        httponly=False,  # Readable by form (same-site is the protection)
+        httponly=False,  # フォームから読み取り可能（same-site が保護機構）
         secure=not is_dev,
         samesite="strict",
         path="/settings",

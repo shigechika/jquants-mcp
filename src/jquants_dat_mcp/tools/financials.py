@@ -173,7 +173,7 @@ async def _get_fins_summary_with_cache(
     code: str,
     date: str | None,
 ) -> dict[str, Any]:
-    """財務情報を Tier 1 キャッシュ付きで取得する。"""
+    """Retrieve financial summary data with Tier 1 cache."""
     try:
         # キャッシュ確認
         key_filter = {"code": code}

@@ -42,7 +42,7 @@ class SQLiteKeyValueStore:
         self._conn: sqlite3.Connection | None = None
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # 内部ヘルパー
     # ------------------------------------------------------------------
 
     def _ensure_connection(self) -> sqlite3.Connection:
@@ -93,7 +93,7 @@ class SQLiteKeyValueStore:
         return value, expires_at
 
     # ------------------------------------------------------------------
-    # AsyncKeyValue protocol implementation
+    # AsyncKeyValue プロトコル実装
     # ------------------------------------------------------------------
 
     async def get(self, key: str, *, collection: str | None = None) -> dict[str, Any] | None:

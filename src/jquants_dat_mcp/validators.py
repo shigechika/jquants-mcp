@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import re
 
-# Stock codes: 4- or 5-digit numeric strings (J-Quants uses 5-digit, 4-digit is also accepted)
+# 銘柄コード: 4桁または5桁の数字文字列（J-Quants は5桁を使用、4桁も受け付け可）
 _CODE_RE = re.compile(r"^\d{4,5}$")
 
-# Dates: YYYYMMDD or YYYY-MM-DD
+# 日付: YYYYMMDD または YYYY-MM-DD
 _DATE_RE = re.compile(r"^\d{4}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$")
 _DATE_WITH_HYPHENS_RE = re.compile(r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$")
 
-# Valid sector-33 codes (TSE 33-industry classification, padded to 4 digits)
+# 有効な33業種コード（東証33業種分類、4桁ゼロ埋め）
 _VALID_SECTOR33_CODES = frozenset(
     [
         "0050",
@@ -50,7 +50,7 @@ _VALID_SECTOR33_CODES = frozenset(
     ]
 )
 
-# Valid market section identifiers
+# 有効な市場区分識別子
 _VALID_SECTIONS = frozenset({"TSEPrime", "TSEStandard", "TSEGrowth"})
 
 

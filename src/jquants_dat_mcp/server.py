@@ -21,7 +21,7 @@ from .config import Settings
 
 logger = logging.getLogger(__name__)
 
-# Paths that trigger OAuth debug logging
+# OAuth デバッグログを出力するパス
 _OAUTH_DEBUG_PATHS = ("/oauth/", "/.well-known/")
 
 
@@ -34,7 +34,7 @@ class OAuthDebugMiddleware(BaseHTTPMiddleware):
 
         if is_oauth:
             query = dict(request.query_params)
-            # Log sanitized headers (omit Authorization value)
+            # ヘッダーをサニタイズしてログ出力（Authorization の値は伏せる）
             headers = {
                 k: (v if k.lower() != "authorization" else "[REDACTED]")
                 for k, v in request.headers.items()
@@ -62,26 +62,26 @@ class OAuthDebugMiddleware(BaseHTTPMiddleware):
 
 mcp = FastMCP("jquants-dat-mcp")
 
-# Shared globals — initialized lazily at first request
+# 共有グローバル変数 — 初回リクエスト時に遅延初期化
 _settings: Settings | None = None
 _cache: CacheStore | None = None
 
-# Single-user global client (bearer-token / no-auth mode)
+# シングルユーザー用グローバルクライアント（Bearer トークン / 認証なしモード）
 _client: JQuantsClient | None = None
 
-# Multi-user client pool: user_id → JQuantsClient (one per authenticated user)
+# マルチユーザー用クライアントプール: user_id → JQuantsClient（認証済みユーザーごとに1つ）
 _user_clients: dict[str, JQuantsClient] = {}
 
-# Last-used timestamps for stale client eviction: user_id → monotonic timestamp
+# 古いクライアント削除用の最終使用タイムスタンプ: user_id → monotonic タイムスタンプ
 _user_client_last_used: dict[str, float] = {}
 
-# Timestamp of the last stale-client cleanup pass (monotonic)
+# 前回の古いクライアントクリーンアップ実行時のタイムスタンプ（monotonic）
 _last_cleanup: float = 0.0
 
-# Run cleanup at most once every 5 minutes
+# クリーンアップは最大5分に1回実行
 _CLEANUP_INTERVAL = 300
 
-# UserStore — lazily initialized when encryption_key is configured
+# UserStore — encryption_key が設定されている場合に遅延初期化
 _user_db: UserStore | None = None
 
 
@@ -124,7 +124,7 @@ def _get_user_db():
     from .crypto import decrypt, encrypt
     from .db.users import UserStore
 
-    # Pass passphrase directly — encrypt/decrypt now handle salt derivation internally
+    # パスフレーズを直接渡す — encrypt/decrypt は内部でソルト導出を処理する
     passphrase = settings.encryption_key
     db_path = settings.get_cache_dir() / "users.db"
     _user_db = UserStore(
@@ -173,34 +173,34 @@ async def _get_user_client() -> JQuantsClient:
 
     token = get_access_token()
 
-    # No auth or static bearer token → use global client
+    # 認証なしまたは静的 Bearer トークン → グローバルクライアントを使用
     if token is None or token.client_id == "bearer":
         return _get_client()
 
     user_id = token.client_id
     user_db = _get_user_db()
 
-    # encryption_key not configured → share the global client for all OAuth users
+    # encryption_key 未設定 → 全 OAuth ユーザーでグローバルクライアントを共有
     if user_db is None:
         return _get_client()
 
-    # Periodically evict stale clients
+    # 定期的に古いクライアントを削除
     now_mono = time.monotonic()
     if now_mono - _last_cleanup > _CLEANUP_INTERVAL:
         await _evict_stale_clients()
         _last_cleanup = now_mono
 
-    # Look up the user's API key from the encrypted store
+    # 暗号化ストアからユーザーの API キーを検索
     from .exceptions import DecryptionError
 
     user = user_db.get_user(user_id)
     if user is None:
         if user_db.has_corrupted_key(user_id):
-            # Key exists in DB but failed to decrypt — provide actionable error
+            # DB にキーは存在するが復号に失敗 — 対処方法を提示するエラーを返す
             raise DecryptionError()
         raise UserNotConfiguredError(user_id)
 
-    # Build per-user client if not yet cached
+    # ユーザー別クライアントが未キャッシュなら作成
     if user_id not in _user_clients:
         user_settings = Settings(
             jquants_api_key=user.api_key,
@@ -211,7 +211,7 @@ async def _get_user_client() -> JQuantsClient:
     client = _user_clients[user_id]
     _user_client_last_used[user_id] = now_mono
 
-    # Daily API key validation
+    # 日次 API キー検証
     from .validation import needs_validation, validate_api_key
     from .exceptions import AuthenticationError
 
@@ -221,7 +221,7 @@ async def _get_user_client() -> JQuantsClient:
             user_db.update_last_validated(user_id)
             logger.info("Daily validation passed for user %s", user_id)
         except AuthenticationError:
-            # Key is no longer valid — evict cached client and surface error
+            # キーが無効化された — キャッシュされたクライアントを削除してエラーを返す
             _user_clients.pop(user_id, None)
             _user_client_last_used.pop(user_id, None)
             raise InvalidAPIKeyError(user_id)
@@ -230,7 +230,7 @@ async def _get_user_client() -> JQuantsClient:
 
 
 # ------------------------------------------------------------------
-# Utility tools
+# ユーティリティツール
 # ------------------------------------------------------------------
 
 
@@ -248,7 +248,7 @@ def health_check() -> dict[str, Any]:
     has_key = bool(settings.jquants_api_key)
     plan = settings.jquants_plan
 
-    # In multi-user mode, resolve the actual user's plan
+    # マルチユーザーモードでは実際のユーザーのプランを解決
     token = get_access_token()
     if token is not None and token.client_id != "bearer":
         user_db = _get_user_db()
@@ -279,7 +279,7 @@ def cache_status() -> dict[str, Any]:
 
     result = _get_cache().status()
 
-    # In multi-user mode, resolve the actual user's plan
+    # マルチユーザーモードでは実際のユーザーのプランを解決
     token = get_access_token()
     if token is not None and token.client_id != "bearer":
         user_db = _get_user_db()
@@ -355,11 +355,11 @@ async def register_api_key(
     user = User(user_id=user_id, api_key=api_key, plan=plan)
     user_db.save_user(user)
 
-    # Invalidate the cached client so the next call picks up the new key
+    # キャッシュされたクライアントを無効化して次回呼び出しで新しいキーを使用
     _user_clients.pop(user_id, None)
     _user_client_last_used.pop(user_id, None)
 
-    # Probe plan-specific endpoints to verify / auto-detect the actual plan
+    # プラン固有のエンドポイントをプローブして実際のプランを検証・自動検出
     from .audit import audit
     from .config import Settings as _Settings
     from .validation import detect_plan
@@ -433,7 +433,7 @@ async def delete_api_key() -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------
-# Tool registration
+# ツール登録
 # ------------------------------------------------------------------
 
 
@@ -457,7 +457,7 @@ register_settings_routes(mcp, _get_user_db, _user_clients, _user_client_last_use
 
 
 # ------------------------------------------------------------------
-# Server startup
+# サーバー起動
 # ------------------------------------------------------------------
 
 
@@ -491,12 +491,12 @@ def run_server(
     if transport == "stdio":
         mcp.run(transport="stdio")
     else:
-        # Apply CLI overrides to settings before creating auth provider
+        # 認証プロバイダー作成前に CLI オーバーライドを設定に適用
         settings = _get_settings()
         ssl_certfile = ssl_certfile or settings.ssl_certfile
         ssl_keyfile = ssl_keyfile or settings.ssl_keyfile
 
-        # CLI overrides take precedence over config for OAuth/Bearer settings
+        # OAuth/Bearer 設定は CLI オーバーライドが設定ファイルより優先
         if bearer_token:
             settings.bearer_token = bearer_token
         if github_client_id:
@@ -506,7 +506,7 @@ def run_server(
         if oauth_base_url:
             settings.oauth_base_url = oauth_base_url
 
-        # Configure authentication
+        # 認証の設定
         from .auth import create_auth_provider
 
         auth_provider = create_auth_provider(settings)
@@ -518,7 +518,7 @@ def run_server(
                 "Set bearer_token or OAuth provider for security."
             )
 
-        # TLS configuration
+        # TLS 設定
         uvicorn_config: dict[str, Any] = {}
         if ssl_certfile and ssl_keyfile:
             uvicorn_config["ssl_certfile"] = ssl_certfile

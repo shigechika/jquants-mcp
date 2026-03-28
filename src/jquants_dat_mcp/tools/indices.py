@@ -91,7 +91,7 @@ async def _get_topix_with_cache(
     date_from: str | None,
     date_to: str | None,
 ) -> dict[str, Any]:
-    """TOPIX 日足を Tier 1 キャッシュ付きで取得する。"""
+    """Retrieve TOPIX daily bars with Tier 1 cache."""
     try:
         # キャッシュから既存データを取得
         cached_data = cache.get_rows(

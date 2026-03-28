@@ -352,7 +352,7 @@ async def _get_bars_daily_with_cache(
     date_from: str | None,
     date_to: str | None,
 ) -> dict[str, Any]:
-    """株価四本値を Tier 1 キャッシュ付きで取得する。"""
+    """Retrieve daily stock bars (OHLC) with Tier 1 cache."""
     # 4桁コードを5桁に正規化（普通株式: 末尾0）
     cache_code = code + "0" if len(code) == 4 else code
 

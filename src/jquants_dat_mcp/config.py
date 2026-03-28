@@ -1,11 +1,11 @@
 """Configuration management for jquants-dat-mcp.
 
-設定の優先順位（後勝ち）:
-1. ~/.jquants-api/jquants-api.toml  （J-Quants 公式設定: api_key のみ）
-2. ~/.config/jquants-dat-mcp/config.ini  （ユーザーグローバル）
-3. ./config.ini                            （カレントディレクトリ）
-4. 環境変数                                 （MCP クライアント / CLI）
-5. コンストラクタ引数                        （テスト用）
+Configuration priority (last wins):
+1. ~/.jquants-api/jquants-api.toml  (J-Quants official config: api_key only)
+2. ~/.config/jquants-dat-mcp/config.ini  (user global)
+3. ./config.ini                            (current directory)
+4. Environment variables                   (MCP client / CLI)
+5. Constructor arguments                   (for testing)
 """
 
 from __future__ import annotations
@@ -59,10 +59,10 @@ _CONFIG_DEFS: list[_ConfigDef] = [
     _ConfigDef("bearer_token", "server", "bearer_token", "MCP_BEARER_TOKEN", ""),
     # OAuth プロバイダー選択（"github" or "google"）
     _ConfigDef("oauth_provider", "oauth", "provider", "OAUTH_PROVIDER", "github"),
-    # GitHub OAuth 2.1 settings
+    # GitHub OAuth 2.1 設定
     _ConfigDef("github_client_id", "oauth", "github_client_id", "GITHUB_CLIENT_ID", ""),
     _ConfigDef("github_client_secret", "oauth", "github_client_secret", "GITHUB_CLIENT_SECRET", ""),
-    # Google OAuth 2.0 settings
+    # Google OAuth 2.0 設定
     _ConfigDef("google_client_id", "oauth", "google_client_id", "GOOGLE_CLIENT_ID", ""),
     _ConfigDef("google_client_secret", "oauth", "google_client_secret", "GOOGLE_CLIENT_SECRET", ""),
     # 共通 OAuth settings
@@ -71,7 +71,7 @@ _CONFIG_DEFS: list[_ConfigDef] = [
     _ConfigDef(
         "oauth_require_consent", "oauth", "require_consent", "OAUTH_REQUIRE_CONSENT", "true"
     ),
-    # Multi-user: encryption key for per-user API key storage
+    # マルチユーザー: ユーザーごとの API キー保存用暗号化キー
     _ConfigDef("encryption_key", "server", "encryption_key", "MCP_ENCRYPTION_KEY", ""),
 ]
 
@@ -82,7 +82,7 @@ _TYPE_MAP: dict[str, type] = {
     "max_pages": int,
 }
 
-# Boolean settings — treated as bool after string conversion
+# 真偽値設定 — 文字列変換後に bool として扱う
 _BOOL_SETTINGS: frozenset[str] = frozenset({"oauth_require_consent"})
 
 # J-Quants 公式設定ファイルのデフォルトパス
@@ -90,7 +90,7 @@ _JQUANTS_TOML_PATH = Path.home() / ".jquants-api" / "jquants-api.toml"
 
 
 def _xdg_config_dir() -> Path:
-    """XDG 準拠のグローバル設定ディレクトリを返す。"""
+    """Return the XDG-compliant global configuration directory."""
     xdg = os.environ.get("XDG_CONFIG_HOME")
     if xdg:
         return Path(xdg) / "jquants-dat-mcp"
@@ -98,7 +98,7 @@ def _xdg_config_dir() -> Path:
 
 
 def _default_cache_dir() -> Path:
-    """XDG 準拠のデフォルトキャッシュディレクトリを返す。"""
+    """Return the XDG-compliant default cache directory."""
     xdg = os.environ.get("XDG_CACHE_HOME")
     if xdg:
         return Path(xdg) / "jquants-dat-mcp"
@@ -106,7 +106,7 @@ def _default_cache_dir() -> Path:
 
 
 def _read_jquants_toml(path: Path | None = None) -> str:
-    """~/.jquants-api/jquants-api.toml から api_key を読み取る。"""
+    """Read api_key from ~/.jquants-api/jquants-api.toml."""
     toml_path = path or _JQUANTS_TOML_PATH
     if not toml_path.exists():
         return ""
@@ -123,7 +123,7 @@ def _read_jquants_toml(path: Path | None = None) -> str:
 
 
 def _load_config_files(extra_paths: list[str] | None = None) -> configparser.ConfigParser:
-    """config.ini ファイルを優先順位に従って読み込む。"""
+    """Load config.ini files according to priority order."""
     config = configparser.ConfigParser()
     search_paths = [
         str(_xdg_config_dir() / "config.ini"),

@@ -1,8 +1,8 @@
 """Google OAuth provider for jquants-dat-mcp.
 
-Google OAuth 2.0 を使用した認証プロバイダー。
-FastMCP の GitHubProvider と同じ OAuthProxy パターンで実装。
-将来的に FastMCP v3 本体への PR も想定している。
+Authentication provider using Google OAuth 2.0.
+Implemented with the same OAuthProxy pattern as FastMCP's GitHubProvider.
+A future PR to FastMCP v3 upstream is planned.
 """
 
 from __future__ import annotations

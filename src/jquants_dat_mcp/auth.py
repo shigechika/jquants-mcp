@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class BearerTokenVerifier(TokenVerifier):
     """Verify bearer tokens using constant-time comparison.
 
-    タイミング攻撃を防止するため hmac.compare_digest を使用する。
+    Uses hmac.compare_digest to prevent timing attacks.
     """
 
     def __init__(self, expected_token: str) -> None:
@@ -41,7 +41,7 @@ class BearerTokenVerifier(TokenVerifier):
 
 
 def _enforce_https(base_url: str) -> None:
-    """HTTPS 必須チェック。開発環境では HTTP を許可する。"""
+    """Enforce HTTPS requirement. HTTP is allowed in development environment."""
     if not base_url.startswith("https://"):
         env = os.environ.get("JQUANTS_ENV", "production")
         if env != "development":
@@ -54,7 +54,7 @@ def _enforce_https(base_url: str) -> None:
 
 
 def _create_github_provider(settings: Settings) -> OAuthProvider:
-    """GitHub OAuth 2.1 プロバイダーを生成する。"""
+    """Create a GitHub OAuth 2.1 provider."""
     from fastmcp.server.auth.providers.github import GitHubProvider
 
     from .oauth_kv_store import SQLiteKeyValueStore
@@ -80,7 +80,7 @@ def _create_github_provider(settings: Settings) -> OAuthProvider:
 
 
 def _create_google_provider(settings: Settings) -> OAuthProvider:
-    """Google OAuth 2.0 プロバイダーを生成する。"""
+    """Create a Google OAuth 2.0 provider."""
     from .google_provider import GoogleProvider
     from .oauth_kv_store import SQLiteKeyValueStore
 
@@ -120,7 +120,7 @@ def create_auth_provider(settings: Settings) -> OAuthProvider | TokenVerifier | 
     """
     provider_type = getattr(settings, "oauth_provider", "github").lower()
 
-    # Google OAuth
+    # Google OAuth 認証
     if provider_type == "google":
         if settings.google_client_id and settings.google_client_secret and settings.oauth_base_url:
             return _create_google_provider(settings)

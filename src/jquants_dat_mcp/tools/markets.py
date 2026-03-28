@@ -322,10 +322,10 @@ async def _get_with_tier1_cache(
     date_to: str | None,
     date_field: str = "Date",
 ) -> dict[str, Any]:
-    """Markets ツール用の汎用 Tier 1 キャッシュ取得。
+    """Generic Tier 1 cache retrieval for market tools.
 
     Args:
-        date_field: API レスポンスの日付フィールド名（例: "Date", "PubDate"）
+        date_field: Date field name in the API response (e.g. "Date", "PubDate").
     """
     try:
         # キーフィルタの構築
@@ -416,7 +416,7 @@ async def _tier2_fallback(
     endpoint: str,
     params: dict[str, Any],
 ) -> dict[str, Any]:
-    """パラメータなし呼び出し時の Tier 2 フォールバック。"""
+    """Tier 2 fallback for calls without parameters."""
     cache_key = make_cache_key(endpoint, params)
     cached = cache.get_response(cache_key)
     if cached is not None:
@@ -443,7 +443,7 @@ async def _get_calendar_with_cache(
     date_from: str | None,
     date_to: str | None,
 ) -> dict[str, Any]:
-    """取引カレンダーを Tier 1 キャッシュ付きで取得する。"""
+    """Retrieve market calendar with Tier 1 cache."""
     try:
         # キャッシュから既存データを取得
         cached_data = cache.get_rows(
@@ -516,7 +516,7 @@ async def _get_calendar_with_cache(
 
 
 def _filter_hol_div(data: list[dict[str, Any]], hol_div: str | None) -> list[dict[str, Any]]:
-    """hol_div でフィルタ（キャッシュには全件保存するため後フィルタ）。"""
+    """Filter by hol_div (post-filter since cache stores all records)."""
     if hol_div is None:
         return data
     return [r for r in data if str(r.get("HolDiv", "")) == hol_div]
