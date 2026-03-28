@@ -176,6 +176,9 @@ class TestHandleSettingsPost:
         token = _mock_token()
         user_db = _mock_user_db()
 
+        mock_probe = MagicMock()
+        mock_probe.close = AsyncMock()
+
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
             patch(
@@ -183,7 +186,7 @@ class TestHandleSettingsPost:
                 new_callable=AsyncMock,
                 return_value="light",
             ),
-            patch(_PATCH_JQUANTS_CLIENT),
+            patch(_PATCH_JQUANTS_CLIENT, return_value=mock_probe),
             patch(_PATCH_AUDIT),
         ):
             resp = await handle_settings_post(
@@ -197,11 +200,14 @@ class TestHandleSettingsPost:
         body = resp.body.decode()
         assert "registered" in body
         user_db.save_user.assert_called_once()
+        mock_probe.close.assert_awaited_once()
 
     async def test_plan_mismatch_shows_warning(self):
         """プラン不一致時に警告を表示し DB を更新。"""
         token = _mock_token()
         user_db = _mock_user_db()
+        mock_probe = MagicMock()
+        mock_probe.close = AsyncMock()
 
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
@@ -210,7 +216,7 @@ class TestHandleSettingsPost:
                 new_callable=AsyncMock,
                 return_value="free",  # 入力は "light" だが検出は "free"
             ),
-            patch(_PATCH_JQUANTS_CLIENT),
+            patch(_PATCH_JQUANTS_CLIENT, return_value=mock_probe),
             patch(_PATCH_AUDIT),
         ):
             resp = await handle_settings_post(
@@ -224,6 +230,7 @@ class TestHandleSettingsPost:
         body = resp.body.decode()
         assert "differs" in body
         user_db.update_plan.assert_called_once_with("gh-test-user", "free")
+        mock_probe.close.assert_awaited_once()
 
     async def test_old_client_evicted_from_cache(self):
         """登録時にユーザーのキャッシュクライアントが削除される。"""
@@ -231,6 +238,8 @@ class TestHandleSettingsPost:
         user_db = _mock_user_db()
         user_clients = {"gh-evict-me": MagicMock()}
         user_client_last_used = {"gh-evict-me": 12345.0}
+        mock_probe = MagicMock()
+        mock_probe.close = AsyncMock()
 
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
@@ -239,7 +248,7 @@ class TestHandleSettingsPost:
                 new_callable=AsyncMock,
                 return_value="free",
             ),
-            patch(_PATCH_JQUANTS_CLIENT),
+            patch(_PATCH_JQUANTS_CLIENT, return_value=mock_probe),
             patch(_PATCH_AUDIT),
         ):
             await handle_settings_post(
@@ -251,11 +260,14 @@ class TestHandleSettingsPost:
 
         assert "gh-evict-me" not in user_clients
         assert "gh-evict-me" not in user_client_last_used
+        mock_probe.close.assert_awaited_once()
 
     async def test_detect_plan_failure_adds_warning(self):
         """プラン検出失敗時は警告を追加して登録は完了。"""
         token = _mock_token()
         user_db = _mock_user_db()
+        mock_probe = MagicMock()
+        mock_probe.close = AsyncMock()
 
         with (
             patch("fastmcp.server.dependencies.get_access_token", return_value=token),
@@ -264,7 +276,7 @@ class TestHandleSettingsPost:
                 new_callable=AsyncMock,
                 side_effect=Exception("network error"),
             ),
-            patch(_PATCH_JQUANTS_CLIENT),
+            patch(_PATCH_JQUANTS_CLIENT, return_value=mock_probe),
             patch(_PATCH_AUDIT),
         ):
             resp = await handle_settings_post(

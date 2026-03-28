@@ -155,6 +155,8 @@ async def handle_settings_post(
     except Exception as e:
         logger.warning("Plan detection failed for user %s: %s", user_id, e)
         warnings.append(f"Plan detection skipped: {html.escape(str(e))}")
+    finally:
+        await probe_client.close()
 
     audit("register_api_key", user_id=user_id, plan=plan, source="settings_ui")
 

@@ -9,7 +9,13 @@ from fastmcp import FastMCP
 
 from ..cache.store import CacheStore, TTL_6H, make_cache_key
 from ..client import JQuantsClient
-from ..exceptions import APIError, InvalidAPIKeyError, UserNotConfiguredError, format_api_error
+from ..exceptions import (
+    APIError,
+    DecryptionError,
+    InvalidAPIKeyError,
+    UserNotConfiguredError,
+    format_api_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +94,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_6H)
             return result
-        except (APIError, InvalidAPIKeyError, UserNotConfiguredError) as e:
+        except (APIError, InvalidAPIKeyError, UserNotConfiguredError, DecryptionError) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -115,5 +121,5 @@ def register(
                 "url": url,
                 "hint": "The URL expires in approximately 5 minutes. Download within the expiry time.",
             }
-        except (APIError, InvalidAPIKeyError, UserNotConfiguredError) as e:
+        except (APIError, InvalidAPIKeyError, UserNotConfiguredError, DecryptionError) as e:
             return format_api_error(e)

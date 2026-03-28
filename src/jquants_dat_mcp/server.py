@@ -378,6 +378,8 @@ async def register_api_key(
     except Exception as e:
         logger.debug("Plan detection failed during registration for user %s: %s", user_id, e)
         warnings.append("Plan detection skipped due to internal error")
+    finally:
+        await probe_client.close()
 
     audit("register_api_key", user_id=user_id, plan=plan)
 
@@ -422,6 +424,7 @@ async def delete_api_key() -> dict[str, Any]:
     user_id = token.client_id
     deleted = user_db.delete_user(user_id)
     _user_clients.pop(user_id, None)
+    _user_client_last_used.pop(user_id, None)
 
     if deleted:
         audit("delete_api_key", user_id=user_id)

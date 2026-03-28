@@ -36,8 +36,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="Bind address for HTTP transport (default: 0.0.0.0)",
+        default="127.0.0.1",
+        help="Bind address for HTTP transport (default: 127.0.0.1)",
     )
     parser.add_argument(
         "--port",

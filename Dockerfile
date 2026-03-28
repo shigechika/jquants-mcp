@@ -32,6 +32,10 @@ COPY scripts/ ./scripts/
 # Make entrypoint executable
 RUN chmod +x /app/scripts/entrypoint.sh
 
+# Run as non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
 # Add venv to PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
