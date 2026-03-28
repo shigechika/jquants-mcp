@@ -49,6 +49,14 @@ uv run ruff format src/ tests/  # Format
 - README.md は英語、README.ja.md は日本語
 - Commit messages in English (Public repository)
 
+## Security
+
+- Cloud Run secrets must use Secret Manager, not plain env vars
+- User API keys encrypted with AES-256-GCM (crypto.py)
+- All tool exception handlers must catch DecryptionError
+- CLI default --host is 127.0.0.1 (not 0.0.0.0)
+- Dockerfile runs as non-root user (appuser)
+
 ## CI/CD
 
 - **CI**: GitHub Actions — ruff lint/format + pytest on Python 3.10–3.13
