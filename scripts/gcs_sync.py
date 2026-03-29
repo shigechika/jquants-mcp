@@ -35,8 +35,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gcs_sync")
 
-# Files to synchronize
-_SYNC_FILES = ["cache.db", "users.db", "oauth_state.db"]
+# Files to download from GCS at startup
+_DOWNLOAD_FILES = ["cache.db", "users.db", "oauth_state.db"]
+
+# Files to upload to GCS (daemon / --upload)
+# cache.db is excluded: it is owned by m1.local (jpx-short-report daily.sh)
+# and uploaded from there. Cloud Run should not overwrite it.
+_UPLOAD_FILES = ["users.db", "oauth_state.db"]
 
 # Sync interval in seconds
 _SYNC_INTERVAL = int(os.environ.get("GCS_SYNC_INTERVAL", "300"))  # 5 minutes
@@ -73,7 +78,7 @@ def download_files() -> None:
     client = storage.Client()
     gcs_bucket = client.bucket(bucket)
 
-    for filename in _SYNC_FILES:
+    for filename in _DOWNLOAD_FILES:
         blob_name = f"{prefix}{filename}"
         local_path = cache_dir / filename
         blob = gcs_bucket.blob(blob_name)
@@ -98,7 +103,7 @@ def upload_files() -> None:
     client = storage.Client()
     gcs_bucket = client.bucket(bucket)
 
-    for filename in _SYNC_FILES:
+    for filename in _UPLOAD_FILES:
         local_path = cache_dir / filename
         if not local_path.exists():
             logger.debug("Local file %s not found, skipping upload", local_path)
