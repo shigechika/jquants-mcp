@@ -104,7 +104,7 @@ def form_html(
     (<a href="https://jpx-jquants.com/dashboard/api-keys" target="_blank" rel="noopener">confirm your key here</a>)
   </label>
   <input type="password" id="api_key" name="api_key" required autocomplete="off"
-         placeholder="Enter your J-Quants API Key">
+         placeholder="{"••••••••（registered — enter new key to update）" if registered_plan is not None else "Enter your J-Quants API Key"}">
   <label for="plan">Plan</label>
   <select id="plan" name="plan">
 {plan_options}
