@@ -66,14 +66,14 @@ uv run ruff format src/ tests/  # Format
 ## Deployment Targets
 
 - **Local (stdio)**: `jquants-dat-mcp` — single user, env/config API key
-- **Remote (m1.local)**: Streamable HTTP + TLS + Bearer token via `mcp.aikawa.jp:8080`
+- **Remote (self-hosted)**: Streamable HTTP + TLS + Bearer token
 - **Cloud Run**: `us-west1`, Google OAuth, multi-user, GCS cache persistence
 
 ## CI/CD Notes
 
 - CD workflow declares ALL env vars and secrets — never use manual `gcloud run services update --set-secrets` (it overwrites existing secrets)
 - `gcloud storage cp` with parallel composite upload corrupts SQLite files — use `parallel_composite_upload_enabled=False`
-- Cloud Run GCS daemon uploads only users.db and oauth_state.db (not cache.db — owned by m1.local)
+- Cloud Run GCS daemon uploads only users.db and oauth_state.db (not cache.db — owned by self-hosted server)
 
 ## Cache Plan Scoping
 
