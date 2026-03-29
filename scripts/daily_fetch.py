@@ -93,12 +93,14 @@ def _available_endpoints(plan: str) -> list[str]:
 
 
 def _ensure_tables(conn: sqlite3.Connection) -> None:
-    """必要なテーブルを作成する。"""
+    """Create required tables if they do not exist."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS indices_bars_daily_topix (
-            date TEXT NOT NULL PRIMARY KEY,
+            date TEXT NOT NULL,
             data TEXT NOT NULL,
-            fetched_at REAL NOT NULL
+            fetched_at REAL NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
+            PRIMARY KEY (date, plan)
         )
     """)
     conn.execute("""
@@ -107,7 +109,8 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             disc_date TEXT NOT NULL,
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, disc_date)
+            plan TEXT NOT NULL DEFAULT 'free',
+            PRIMARY KEY (code, disc_date, plan)
         )
     """)
     conn.execute("""
@@ -116,7 +119,8 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             section TEXT NOT NULL,
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
-            PRIMARY KEY (pub_date, section)
+            plan TEXT NOT NULL DEFAULT 'free',
+            PRIMARY KEY (pub_date, section, plan)
         )
     """)
     conn.execute("""
@@ -134,7 +138,8 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             date TEXT NOT NULL,
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, date)
+            plan TEXT NOT NULL DEFAULT 'free',
+            PRIMARY KEY (code, date, plan)
         )
     """)
     conn.execute("""
@@ -143,7 +148,8 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             date TEXT NOT NULL,
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, date)
+            plan TEXT NOT NULL DEFAULT 'free',
+            PRIMARY KEY (code, date, plan)
         )
     """)
     conn.execute("""
@@ -152,7 +158,8 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             date TEXT NOT NULL,
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
-            PRIMARY KEY (s33, date)
+            plan TEXT NOT NULL DEFAULT 'free',
+            PRIMARY KEY (s33, date, plan)
         )
     """)
     conn.execute("""
@@ -161,16 +168,35 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             date TEXT NOT NULL,
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, date)
+            plan TEXT NOT NULL DEFAULT 'free',
+            PRIMARY KEY (code, date, plan)
         )
     """)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS markets_calendar (
-            date TEXT NOT NULL PRIMARY KEY,
+            date TEXT NOT NULL,
             data TEXT NOT NULL,
-            fetched_at REAL NOT NULL
+            fetched_at REAL NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
+            PRIMARY KEY (date, plan)
         )
     """)
+    # 既存テーブルのマイグレーション: plan カラムを追加
+    _TIER1_TABLES_MIGRATE = [
+        "indices_bars_daily_topix",
+        "fins_summary",
+        "investor_types",
+        "markets_margin_interest",
+        "markets_margin_alert",
+        "markets_short_ratio",
+        "markets_breakdown",
+        "markets_calendar",
+    ]
+    for table in _TIER1_TABLES_MIGRATE:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'")
+        except sqlite3.OperationalError:
+            pass  # カラムが既に存在する場合
     conn.commit()
 
 
@@ -184,51 +210,61 @@ def _store_tier1(
     table: str,
     rows: list[dict],
     key_mapping: list[tuple[str, str]],
+    plan: str,
 ) -> int:
-    """Tier 1 テーブルにレコードを投入する汎用ヘルパー。
+    """Insert records into a Tier 1 table.
 
     Args:
         conn: SQLite connection
-        table: テーブル名
-        rows: APIレスポンスの行データ
-        key_mapping: (APIカラム名, DBカラム名) のリスト
+        table: Table name
+        rows: API response row data
+        key_mapping: List of (API column name, DB column name)
+        plan: Subscription plan tag
 
     Returns:
-        投入行数
+        Number of inserted rows
     """
     if not rows:
         return 0
 
     now = time.time()
     db_col_names = ", ".join([db_col for _, db_col in key_mapping])
-    placeholders = ", ".join(["?"] * (len(key_mapping) + 2))
+    placeholders = ", ".join(["?"] * (len(key_mapping) + 3))
     sql = (
-        f"INSERT OR REPLACE INTO {table} ({db_col_names}, data, fetched_at) VALUES ({placeholders})"
+        f"INSERT OR REPLACE INTO {table} "
+        f"({db_col_names}, data, fetched_at, plan) VALUES ({placeholders})"
     )
 
     count = 0
     for row in rows:
         key_values = [str(row.get(api_col, "")) for api_col, _ in key_mapping]
         data_json = json.dumps(row, ensure_ascii=False, default=str)
-        conn.execute(sql, key_values + [data_json, now])
+        conn.execute(sql, key_values + [data_json, now, plan])
         count += 1
 
     conn.commit()
     return count
 
 
-def _get_max_date(conn: sqlite3.Connection, table: str, date_column: str = "date") -> str | None:
-    """Tier 1 テーブルのキャッシュ最新日を取得する。"""
+def _get_max_date(
+    conn: sqlite3.Connection,
+    table: str,
+    date_column: str = "date",
+    plan: str = "free",
+) -> str | None:
+    """Get the latest date from a Tier 1 table, scoped by plan."""
     try:
-        row = conn.execute(f"SELECT MAX({date_column}) FROM {table}").fetchone()
+        row = conn.execute(
+            f"SELECT MAX({date_column}) FROM {table} WHERE plan = ?", (plan,)
+        ).fetchone()
         return row[0][:10] if row and row[0] else None
     except sqlite3.OperationalError:
         return None
 
 
-def fetch_topix(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """TOPIX 日足を差分取得してキャッシュに投入する。"""
-    max_date = _get_max_date(conn, "indices_bars_daily_topix")
+def fetch_topix(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan: str) -> int:
+    """Fetch TOPIX daily bars incrementally and insert into cache."""
+    max_date = _get_max_date(conn, "indices_bars_daily_topix", plan=plan)
 
     if max_date:
         from_date = (datetime.strptime(max_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y%m%d")
@@ -247,8 +283,9 @@ def fetch_topix(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
     for _, r in df.iterrows():
         data_json = json.dumps(_sanitize_row(r.to_dict()), ensure_ascii=False, default=str)
         conn.execute(
-            "INSERT OR REPLACE INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
-            (str(r["Date"]), data_json, now),
+            "INSERT OR REPLACE INTO indices_bars_daily_topix "
+            "(date, data, fetched_at, plan) VALUES (?, ?, ?, ?)",
+            (str(r["Date"]), data_json, now, plan),
         )
         count += 1
 
@@ -256,8 +293,8 @@ def fetch_topix(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
     return count
 
 
-def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """決算サマリーを直近日付分取得してキャッシュに投入する。"""
+def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan: str) -> int:
+    """Fetch recent financial summaries and insert into cache."""
     today = datetime.today()
     count = 0
     now = time.time()
@@ -281,8 +318,9 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> in
             code = str(r.get("Code", ""))
             disc_date = str(r.get("DiscDate", date_iso))
             conn.execute(
-                "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
-                (code, disc_date, data_json, now),
+                "INSERT OR REPLACE INTO fins_summary "
+                "(code, disc_date, data, fetched_at, plan) VALUES (?, ?, ?, ?, ?)",
+                (code, disc_date, data_json, now, plan),
             )
             count += 1
 
@@ -292,11 +330,15 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> in
     return count
 
 
-def fetch_earnings_calendar(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """決算発表予定を取得して Tier 2 レスポンスキャッシュに日付別で蓄積する。
+def fetch_earnings_calendar(
+    cli: jquantsapi.ClientV2,
+    conn: sqlite3.Connection,
+    plan: str,
+) -> int:
+    """Fetch earnings calendar and store in Tier 2 response cache by date.
 
-    APIは翌営業日の発表予定を返す。日付付きキーで保存することで
-    約3ヶ月分（TTL 90日）の決算カレンダーを蓄積できる。
+    The API returns earnings announcements for the next business day.
+    Stored with date-keyed entries to accumulate ~3 months of data (TTL 90 days).
     """
     df = cli.get_eq_earnings_cal()
 
@@ -316,8 +358,11 @@ def fetch_earnings_calendar(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) 
     now = time.time()
     response_data = json.dumps(records, ensure_ascii=False, default=str)
 
+    # Tier 2 キーに plan サフィックスを付与（MCP サーバーの _plan_cache_key と同じ形式）
+    plan_suffix = f"|plan={plan}"
+
     # 日付別キーで蓄積（TTL 90日）
-    cache_key = f"/equities/earnings-calendar?date={date_key}"
+    cache_key = f"/equities/earnings-calendar?date={date_key}{plan_suffix}"
     conn.execute(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
         (cache_key, response_data, now, TTL_90D),
@@ -326,7 +371,7 @@ def fetch_earnings_calendar(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) 
     # パラメータなしキーも更新（最新データ用）
     conn.execute(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
-        ("/equities/earnings-calendar", response_data, now, TTL_90D),
+        (f"/equities/earnings-calendar{plan_suffix}", response_data, now, TTL_90D),
     )
 
     conn.commit()
@@ -334,10 +379,14 @@ def fetch_earnings_calendar(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) 
     return len(records)
 
 
-def fetch_investor_types(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """投資部門別売買動向を取得して Tier 1 キャッシュに投入する (Light+)。
+def fetch_investor_types(
+    cli: jquantsapi.ClientV2,
+    conn: sqlite3.Connection,
+    plan: str,
+) -> int:
+    """Fetch investor type data and insert into Tier 1 cache (Light+).
 
-    週次データ（毎週木曜公表）。直近2週間分を取得して差分投入する。
+    Weekly data (published every Thursday). Fetches the last 2 weeks.
     """
     today = datetime.today()
     from_date = (today - timedelta(days=14)).strftime("%Y%m%d")
@@ -356,8 +405,9 @@ def fetch_investor_types(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> 
         pub_date = str(r.get("PublishedDate", r.get("PubDate", "")))
         section = str(r.get("Section", ""))
         conn.execute(
-            "INSERT OR REPLACE INTO investor_types (pub_date, section, data, fetched_at) VALUES (?, ?, ?, ?)",
-            (pub_date, section, data_json, now),
+            "INSERT OR REPLACE INTO investor_types "
+            "(pub_date, section, data, fetched_at, plan) VALUES (?, ?, ?, ?, ?)",
+            (pub_date, section, data_json, now, plan),
         )
         count += 1
 
@@ -370,17 +420,20 @@ def _store_response_cache(
     cache_key: str,
     records: list[dict],
     ttl: int,
+    plan: str,
 ) -> int:
-    """レコード群を Tier 2 レスポンスキャッシュに投入する汎用ヘルパー。"""
+    """Store records in Tier 2 response cache with plan-scoped key."""
     if not records:
         print("  データなし")
         return 0
 
     response_data = json.dumps(records, ensure_ascii=False, default=str)
     now = time.time()
+    # Tier 2 キーに plan サフィックスを付与（MCP サーバーの _plan_cache_key と同じ形式）
+    full_key = f"{cache_key}|plan={plan}"
     conn.execute(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
-        (cache_key, response_data, now, ttl),
+        (full_key, response_data, now, ttl),
     )
     conn.commit()
     return len(records)
@@ -397,6 +450,7 @@ def _fetch_markets_tier1(
     table: str,
     key_mapping: list[tuple[str, str]],
     *,
+    plan: str = "free",
     from_yyyymmdd: str = "",
     to_yyyymmdd: str = "",
     date_yyyymmdd: str = "",
@@ -404,23 +458,24 @@ def _fetch_markets_tier1(
     incremental: bool = True,
     **extra_params,
 ) -> int:
-    """Markets 系データを Tier 1 キャッシュに投入する汎用関数。
+    """Insert Markets data into a Tier 1 cache table.
 
     Args:
-        cli_method: jquantsapi のメソッド
+        cli_method: jquantsapi method
         conn: SQLite connection
-        table: Tier 1 テーブル名
-        key_mapping: (APIカラム名, DBカラム名) のリスト
-        from_yyyymmdd: 期間開始日
-        to_yyyymmdd: 期間終了日
-        date_yyyymmdd: 特定日付
-        date_column: DB の日付カラム名
-        incremental: True なら差分取得
-        **extra_params: cli_method に渡す追加パラメータ
+        table: Tier 1 table name
+        key_mapping: List of (API column name, DB column name)
+        plan: Subscription plan tag
+        from_yyyymmdd: Start date
+        to_yyyymmdd: End date
+        date_yyyymmdd: Specific date
+        date_column: DB date column name
+        incremental: If True, fetch only new data
+        **extra_params: Extra params passed to cli_method
     """
     # 差分取得: キャッシュ最新日の翌日から
     if incremental and not from_yyyymmdd and not date_yyyymmdd:
-        max_date = _get_max_date(conn, table, date_column)
+        max_date = _get_max_date(conn, table, date_column, plan=plan)
         if max_date:
             from_yyyymmdd = (
                 datetime.strptime(max_date[:10], "%Y-%m-%d") + timedelta(days=1)
@@ -460,44 +515,63 @@ def _fetch_markets_tier1(
         return 0
 
     rows = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
-    return _store_tier1(conn, table, rows, key_mapping)
+    return _store_tier1(conn, table, rows, key_mapping, plan)
 
 
-def fetch_short_ratio(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """業種別空売り比率を取得して Tier 1 キャッシュに投入する (Standard+)。"""
+def fetch_short_ratio(
+    cli: jquantsapi.ClientV2,
+    conn: sqlite3.Connection,
+    plan: str,
+) -> int:
+    """Fetch sector short-selling ratios into Tier 1 cache (Standard+)."""
     return _fetch_markets_tier1(
         cli.get_mkt_short_ratio,
         conn,
         table="markets_short_ratio",
         key_mapping=[("S33", "s33"), ("Date", "date")],
+        plan=plan,
     )
 
 
-def fetch_margin_interest(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """信用取引残高を取得して Tier 1 キャッシュに投入する (Standard+)。"""
+def fetch_margin_interest(
+    cli: jquantsapi.ClientV2,
+    conn: sqlite3.Connection,
+    plan: str,
+) -> int:
+    """Fetch margin interest data into Tier 1 cache (Standard+)."""
     return _fetch_markets_tier1(
         cli.get_mkt_margin_interest,
         conn,
         table="markets_margin_interest",
         key_mapping=[("Code", "code"), ("Date", "date")],
+        plan=plan,
     )
 
 
-def fetch_margin_alert(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """増担保規制情報を取得して Tier 1 キャッシュに投入する (Standard+)。"""
+def fetch_margin_alert(
+    cli: jquantsapi.ClientV2,
+    conn: sqlite3.Connection,
+    plan: str,
+) -> int:
+    """Fetch margin alert data into Tier 1 cache (Standard+)."""
     return _fetch_markets_tier1(
         cli.get_mkt_margin_alert,
         conn,
         table="markets_margin_alert",
         key_mapping=[("Code", "code"), ("PubDate", "date")],
         date_column="date",
+        plan=plan,
     )
 
 
-def fetch_short_sale_report(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """空売り残高報告を取得して Tier 2 キャッシュに投入する (Standard+)。
+def fetch_short_sale_report(
+    cli: jquantsapi.ClientV2,
+    conn: sqlite3.Connection,
+    plan: str,
+) -> int:
+    """Fetch short sale report into Tier 2 cache (Standard+).
 
-    同一銘柄+日付に複数報告者のレコードがあるため Tier 2 のまま。
+    Multiple reporters per code+date, so Tier 2 is used.
     """
     today = datetime.today().strftime("%Y%m%d")
     try:
@@ -519,21 +593,30 @@ def fetch_short_sale_report(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) 
         return 0
 
     records = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
-    return _store_response_cache(conn, "/markets/short-sale-report", records, TTL_24H)
+    return _store_response_cache(conn, "/markets/short-sale-report", records, TTL_24H, plan)
 
 
-def fetch_breakdown(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """売買内訳データを取得して Tier 1 キャッシュに投入する (Premium)。"""
+def fetch_breakdown(
+    cli: jquantsapi.ClientV2,
+    conn: sqlite3.Connection,
+    plan: str,
+) -> int:
+    """Fetch trade breakdown data into Tier 1 cache (Premium)."""
     return _fetch_markets_tier1(
         cli.get_mkt_breakdown,
         conn,
         table="markets_breakdown",
         key_mapping=[("Code", "code"), ("Date", "date")],
+        plan=plan,
     )
 
 
-def fetch_calendar(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
-    """取引カレンダーを取得して Tier 1 キャッシュに投入する (Free+)。"""
+def fetch_calendar(
+    cli: jquantsapi.ClientV2,
+    conn: sqlite3.Connection,
+    plan: str,
+) -> int:
+    """Fetch trading calendar into Tier 1 cache (Free+)."""
     try:
         df = cli.get_mkt_calendar()
     except Exception as e:
@@ -545,7 +628,7 @@ def fetch_calendar(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
         return 0
 
     rows = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
-    return _store_tier1(conn, "markets_calendar", rows, [("Date", "date")])
+    return _store_tier1(conn, "markets_calendar", rows, [("Date", "date")], plan)
 
 
 # ------------------------------------------------------------------
@@ -560,14 +643,16 @@ def _backfill_markets_tier1(
     key_mapping: list[tuple[str, str]],
     from_yyyymmdd: str,
     to_yyyymmdd: str,
+    plan: str,
     **extra_params,
 ) -> int:
-    """Markets 系の過去データを一括取得して Tier 1 に投入する。"""
+    """Bulk-fetch historical Markets data into Tier 1."""
     return _fetch_markets_tier1(
         cli_method,
         conn,
         table=table,
         key_mapping=key_mapping,
+        plan=plan,
         from_yyyymmdd=from_yyyymmdd,
         to_yyyymmdd=to_yyyymmdd,
         incremental=False,
@@ -624,8 +709,9 @@ def _run_backfill(
     conn: sqlite3.Connection,
     targets: list[str],
     days: int,
+    plan: str,
 ) -> None:
-    """指定日数分のバックフィルを実行する。"""
+    """Run backfill for the specified number of days."""
     today = datetime.today()
     from_date = (today - timedelta(days=days)).strftime("%Y%m%d")
     to_date = today.strftime("%Y%m%d")
@@ -649,6 +735,7 @@ def _run_backfill(
                 key_mapping,
                 from_yyyymmdd=from_date,
                 to_yyyymmdd=to_date,
+                plan=plan,
             )
         except Exception as e:
             print(f"  エラー: {e}")
@@ -660,7 +747,7 @@ def _run_backfill(
         print("取引カレンダーを取得中...")
         t0 = time.time()
         try:
-            n = fetch_calendar(cli, conn)
+            n = fetch_calendar(cli, conn, plan)
         except Exception as e:
             print(f"  エラー: {e}")
             n = 0
@@ -760,7 +847,7 @@ def main() -> None:
 
     # バックフィルモード
     if args.backfill:
-        _run_backfill(cli, conn, targets, args.backfill)
+        _run_backfill(cli, conn, targets, args.backfill, plan)
     else:
         # 通常の日次取得
         for ep in targets:
@@ -768,7 +855,7 @@ def main() -> None:
             print(f"{label}を取得中...")
             t0 = time.time()
             try:
-                n = func(cli, conn)
+                n = func(cli, conn, plan)
             except Exception as e:
                 print(f"  エラー: {e}")
                 n = 0

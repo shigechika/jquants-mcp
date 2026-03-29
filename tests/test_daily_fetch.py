@@ -174,29 +174,29 @@ class TestStoreResponseCache:
 
     def test_basic_store(self, db_conn):
         records = [{"a": 1}, {"a": 2}]
-        n = _store_response_cache(db_conn, "/test/endpoint", records, TTL_24H)
+        n = _store_response_cache(db_conn, "/test/endpoint", records, TTL_24H, "light")
         assert n == 2
 
         row = db_conn.execute(
             "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
-            ("/test/endpoint",),
+            ("/test/endpoint|plan=light",),
         ).fetchone()
         assert row is not None
         assert json.loads(row[0]) == records
         assert row[1] == TTL_24H
 
     def test_empty_records(self, db_conn):
-        n = _store_response_cache(db_conn, "/test/empty", [], TTL_6H)
+        n = _store_response_cache(db_conn, "/test/empty", [], TTL_6H, "light")
         assert n == 0
 
     def test_upsert(self, db_conn):
         """同じキーで上書きされること。"""
-        _store_response_cache(db_conn, "/test/key", [{"v": 1}], TTL_6H)
-        _store_response_cache(db_conn, "/test/key", [{"v": 2}], TTL_24H)
+        _store_response_cache(db_conn, "/test/key", [{"v": 1}], TTL_6H, "light")
+        _store_response_cache(db_conn, "/test/key", [{"v": 2}], TTL_24H, "light")
 
         row = db_conn.execute(
             "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
-            ("/test/key",),
+            ("/test/key|plan=light",),
         ).fetchone()
         assert json.loads(row[0]) == [{"v": 2}]
         assert row[1] == TTL_24H
@@ -220,7 +220,7 @@ class TestFetchTopix:
         )
         cli = _mock_cli(get_idx_bars_daily_topix=df)
 
-        n = fetch_topix(cli, db_conn)
+        n = fetch_topix(cli, db_conn, "light")
         assert n == 2
         cli.get_idx_bars_daily_topix.assert_called_once_with()
 
@@ -230,34 +230,34 @@ class TestFetchTopix:
     def test_incremental_fetch(self, db_conn):
         """キャッシュあり → from_date 指定で差分取得。"""
         db_conn.execute(
-            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
-            ("2026-02-24", '{"Date":"2026-02-24"}', 1.0),
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at, plan) VALUES (?, ?, ?, ?)",
+            ("2026-02-24", '{"Date":"2026-02-24"}', 1.0, "light"),
         )
         db_conn.commit()
 
         df = FakeDataFrame([{"Date": "2026-02-25", "O": 2750, "C": 2800}])
         cli = _mock_cli(get_idx_bars_daily_topix=df)
 
-        n = fetch_topix(cli, db_conn)
+        n = fetch_topix(cli, db_conn, "light")
         assert n == 1
         cli.get_idx_bars_daily_topix.assert_called_once_with(from_yyyymmdd="20260225")
 
     def test_timestamp_in_date(self, db_conn):
         """日付に時刻部分が含まれる場合でも正常動作すること。"""
         db_conn.execute(
-            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
-            ("2026-02-24 00:00:00", '{"Date":"2026-02-24 00:00:00"}', 1.0),
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at, plan) VALUES (?, ?, ?, ?)",
+            ("2026-02-24 00:00:00", '{"Date":"2026-02-24 00:00:00"}', 1.0, "light"),
         )
         db_conn.commit()
 
         cli = _mock_cli(get_idx_bars_daily_topix=FakeDataFrame())
-        n = fetch_topix(cli, db_conn)
+        n = fetch_topix(cli, db_conn, "light")
         assert n == 0
         cli.get_idx_bars_daily_topix.assert_called_once_with(from_yyyymmdd="20260225")
 
     def test_empty_response(self, db_conn):
         cli = _mock_cli(get_idx_bars_daily_topix=FakeDataFrame())
-        n = fetch_topix(cli, db_conn)
+        n = fetch_topix(cli, db_conn, "light")
         assert n == 0
 
 
@@ -279,7 +279,7 @@ class TestFetchFinsSummary:
         cli = MagicMock()
         cli.get_fin_summary.side_effect = [df] + [FakeDataFrame()] * 6
 
-        n = fetch_fins_summary(cli, db_conn)
+        n = fetch_fins_summary(cli, db_conn, "light")
         assert n == 2
 
         count = db_conn.execute("SELECT COUNT(*) FROM fins_summary").fetchone()[0]
@@ -290,7 +290,7 @@ class TestFetchFinsSummary:
         cli = MagicMock()
         cli.get_fin_summary.side_effect = Exception("API Error")
 
-        n = fetch_fins_summary(cli, db_conn)
+        n = fetch_fins_summary(cli, db_conn, "light")
         assert n == 0
 
 
@@ -311,28 +311,28 @@ class TestFetchEarningsCalendar:
         )
         cli = _mock_cli(get_eq_earnings_cal=df)
 
-        n = fetch_earnings_calendar(cli, db_conn)
+        n = fetch_earnings_calendar(cli, db_conn, "light")
         assert n == 2
 
-        # パラメータなしキー（最新データ用）
+        # パラメータなしキー（最新データ用、plan サフィックス付き）
         row = db_conn.execute(
             "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
-            ("/equities/earnings-calendar",),
+            ("/equities/earnings-calendar|plan=light",),
         ).fetchone()
         assert row is not None
         assert row[1] == TTL_90D
 
-        # 日付別キー（蓄積用）
+        # 日付別キー（蓄積用、plan サフィックス付き）
         row_dated = db_conn.execute(
             "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
-            ("/equities/earnings-calendar?date=20260301",),
+            ("/equities/earnings-calendar?date=20260301|plan=light",),
         ).fetchone()
         assert row_dated is not None
         assert row_dated[1] == TTL_90D
 
     def test_empty_response(self, db_conn):
         cli = _mock_cli(get_eq_earnings_cal=FakeDataFrame())
-        n = fetch_earnings_calendar(cli, db_conn)
+        n = fetch_earnings_calendar(cli, db_conn, "light")
         assert n == 0
 
 
@@ -353,14 +353,14 @@ class TestFetchInvestorTypes:
         )
         cli = _mock_cli(get_eq_investor_types=df)
 
-        n = fetch_investor_types(cli, db_conn)
+        n = fetch_investor_types(cli, db_conn, "light")
         assert n == 2
 
         count = db_conn.execute("SELECT COUNT(*) FROM investor_types").fetchone()[0]
         assert count == 2
 
     def test_upsert(self, db_conn):
-        """同じ pub_date+section で上書きされること。"""
+        """同じ pub_date+section+plan で上書きされること。"""
         df1 = FakeDataFrame(
             [
                 {"PubDate": "2026-02-20", "Section": "TSEPrime", "FrgnBuy": 100},
@@ -373,10 +373,10 @@ class TestFetchInvestorTypes:
         )
 
         cli = _mock_cli(get_eq_investor_types=df1)
-        fetch_investor_types(cli, db_conn)
+        fetch_investor_types(cli, db_conn, "light")
 
         cli = _mock_cli(get_eq_investor_types=df2)
-        fetch_investor_types(cli, db_conn)
+        fetch_investor_types(cli, db_conn, "light")
 
         count = db_conn.execute("SELECT COUNT(*) FROM investor_types").fetchone()[0]
         assert count == 1
@@ -387,7 +387,7 @@ class TestFetchInvestorTypes:
 
     def test_empty_response(self, db_conn):
         cli = _mock_cli(get_eq_investor_types=FakeDataFrame())
-        n = fetch_investor_types(cli, db_conn)
+        n = fetch_investor_types(cli, db_conn, "light")
         assert n == 0
 
 
@@ -409,6 +409,7 @@ class TestStoreTier1:
             "markets_short_ratio",
             rows,
             key_mapping=[("S33", "s33"), ("Date", "date")],
+            plan="standard",
         )
         assert n == 2
 
@@ -420,10 +421,18 @@ class TestStoreTier1:
         rows2 = [{"Code": "72030", "Date": "2026-03-10", "LoanBalance": 999}]
 
         _store_tier1(
-            db_conn, "markets_margin_interest", rows1, [("Code", "code"), ("Date", "date")]
+            db_conn,
+            "markets_margin_interest",
+            rows1,
+            [("Code", "code"), ("Date", "date")],
+            "standard",
         )
         _store_tier1(
-            db_conn, "markets_margin_interest", rows2, [("Code", "code"), ("Date", "date")]
+            db_conn,
+            "markets_margin_interest",
+            rows2,
+            [("Code", "code"), ("Date", "date")],
+            "standard",
         )
 
         count = db_conn.execute("SELECT COUNT(*) FROM markets_margin_interest").fetchone()[0]
@@ -434,7 +443,7 @@ class TestStoreTier1:
         assert data["LoanBalance"] == 999
 
     def test_empty_rows(self, db_conn):
-        n = _store_tier1(db_conn, "markets_calendar", [], [("Date", "date")])
+        n = _store_tier1(db_conn, "markets_calendar", [], [("Date", "date")], "free")
         assert n == 0
 
 
@@ -455,6 +464,7 @@ class TestFetchMarketsTier1:
             db_conn,
             table="markets_short_ratio",
             key_mapping=[("S33", "s33"), ("Date", "date")],
+            plan="standard",
         )
         assert n == 1
 
@@ -468,6 +478,7 @@ class TestFetchMarketsTier1:
             "markets_short_ratio",
             [{"S33": "0050", "Date": "2026-03-09", "Ratio": 0.30}],
             [("S33", "s33"), ("Date", "date")],
+            "standard",
         )
 
         df = FakeDataFrame([{"S33": "0050", "Date": "2026-03-10", "Ratio": 0.35}])
@@ -478,6 +489,7 @@ class TestFetchMarketsTier1:
             db_conn,
             table="markets_short_ratio",
             key_mapping=[("S33", "s33"), ("Date", "date")],
+            plan="standard",
         )
         assert n == 1
         # 差分取得で from_yyyymmdd が指定されていること
@@ -493,6 +505,7 @@ class TestFetchMarketsTier1:
             db_conn,
             table="markets_margin_interest",
             key_mapping=[("Code", "code"), ("Date", "date")],
+            plan="standard",
         )
         assert n == 0
 
@@ -506,6 +519,7 @@ class TestFetchMarketsTier1:
             db_conn,
             table="markets_margin_interest",
             key_mapping=[("Code", "code"), ("Date", "date")],
+            plan="standard",
         )
         assert n == 1
         assert method.call_count == 2
@@ -525,6 +539,7 @@ class TestFetchMarketsTier1:
             db_conn,
             table="markets_breakdown",
             key_mapping=[("Code", "code"), ("Date", "date")],
+            plan="premium",
             from_yyyymmdd="20260301",
             to_yyyymmdd="20260302",
             incremental=False,
@@ -546,6 +561,7 @@ class TestFetchMarketsTier1:
             db_conn,
             table="markets_margin_interest",
             key_mapping=[("Code", "code"), ("Date", "date")],
+            plan="standard",
         )
 
         row = db_conn.execute("SELECT data FROM markets_margin_interest").fetchone()

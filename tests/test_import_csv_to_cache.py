@@ -100,7 +100,7 @@ class TestImportMarketHistory:
                 },
             ],
         )
-        n = import_market_history(db_conn, csv)
+        n = import_market_history(db_conn, csv, "light")
         assert n == 2
         assert _count_rows(db_conn, "equities_bars_daily") == 2
 
@@ -123,7 +123,7 @@ class TestImportMarketHistory:
                 },
             ],
         )
-        import_market_history(db_conn, csv1)
+        import_market_history(db_conn, csv1, "light")
 
         # 終値が変わった CSV で再インポート
         csv2 = _write_market_csv(
@@ -143,7 +143,7 @@ class TestImportMarketHistory:
                 },
             ],
         )
-        import_market_history(db_conn, csv2)
+        import_market_history(db_conn, csv2, "light")
 
         assert _count_rows(db_conn, "equities_bars_daily") == 1
         import json
@@ -176,7 +176,7 @@ class TestImportTickers:
                 },
             ],
         )
-        n = import_tickers(db_conn, csv)
+        n = import_tickers(db_conn, csv, "light")
         assert n == 2
         assert _count_rows(db_conn, "equities_master") == 2
 
@@ -220,7 +220,7 @@ class TestIncrementalImport:
                 },
             ],
         )
-        n, splits = import_market_history_incremental(db_conn, csv)
+        n, splits = import_market_history_incremental(db_conn, csv, "light")
         assert n == 2
         assert splits == []
         assert _count_rows(db_conn, "equities_bars_daily") == 2
@@ -245,11 +245,11 @@ class TestIncrementalImport:
             ],
         )
         # まず全件インポート
-        import_market_history(db_conn, csv)
+        import_market_history(db_conn, csv, "light")
         assert _count_rows(db_conn, "equities_bars_daily") == 1
 
         # 同じ CSV で差分インポート → 0行
-        n, splits = import_market_history_incremental(db_conn, csv)
+        n, splits = import_market_history_incremental(db_conn, csv, "light")
         assert n == 0
         assert splits == []
 
@@ -285,7 +285,7 @@ class TestIncrementalImport:
                 },
             ],
         )
-        import_market_history(db_conn, csv1)
+        import_market_history(db_conn, csv1, "light")
         assert _count_rows(db_conn, "equities_bars_daily") == 2
 
         # 翌日分を追加した CSV
@@ -342,7 +342,7 @@ class TestIncrementalImport:
                 },
             ],
         )
-        n, splits = import_market_history_incremental(db_conn, csv2)
+        n, splits = import_market_history_incremental(db_conn, csv2, "light")
         assert n == 2  # 2/25 の2行だけ
         assert splits == []
         assert _count_rows(db_conn, "equities_bars_daily") == 4
@@ -379,7 +379,7 @@ class TestIncrementalImport:
                 },
             ],
         )
-        import_market_history(db_conn, csv1)
+        import_market_history(db_conn, csv1, "light")
         assert _count_rows(db_conn, "equities_bars_daily") == 2
 
         # 72030 が 10:1 株式分割。過去の AdjC も更新される。
@@ -436,7 +436,7 @@ class TestIncrementalImport:
                 },
             ],
         )
-        n, splits = import_market_history_incremental(db_conn, csv2)
+        n, splits = import_market_history_incremental(db_conn, csv2, "light")
 
         # 72030 が分割検知される
         assert splits == ["72030"]
@@ -484,7 +484,7 @@ class TestIncrementalImport:
                 },
             ],
         )
-        import_market_history(db_conn, csv1)
+        import_market_history(db_conn, csv1, "light")
 
         # 99830 の AdjC を確認用に取得
         import json
@@ -548,7 +548,7 @@ class TestIncrementalImport:
                 },
             ],
         )
-        import_market_history_incremental(db_conn, csv2)
+        import_market_history_incremental(db_conn, csv2, "light")
 
         # 99830 の過去データは fetched_at が変わっていない（再インポートされていない）
         row_after = db_conn.execute(
@@ -601,7 +601,7 @@ class TestIncrementalImport:
                 },
             ],
         )
-        import_market_history(db_conn, csv1)
+        import_market_history(db_conn, csv1, "light")
 
         # 11110: 5:1 分割、22220: 2:1 分割、33330: 分割なし
         csv2 = _write_market_csv(
@@ -681,7 +681,7 @@ class TestIncrementalImport:
                 },
             ],
         )
-        n, splits = import_market_history_incremental(db_conn, csv2)
+        n, splits = import_market_history_incremental(db_conn, csv2, "light")
 
         assert sorted(splits) == ["11110", "22220"]
         assert _count_rows(db_conn, "equities_bars_daily") == 6
@@ -705,7 +705,7 @@ class TestIncrementalImport:
                 },
             ],
         )
-        import_market_history(db_conn, csv1)
+        import_market_history(db_conn, csv1, "light")
 
         # 1:10 併合 → AdjFactor = 10.0
         csv2 = _write_market_csv(
@@ -737,6 +737,6 @@ class TestIncrementalImport:
                 },
             ],
         )
-        n, splits = import_market_history_incremental(db_conn, csv2)
+        n, splits = import_market_history_incremental(db_conn, csv2, "light")
         assert splits == ["44440"]
         assert _count_rows(db_conn, "equities_bars_daily") == 2

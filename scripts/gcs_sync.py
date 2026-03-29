@@ -85,7 +85,9 @@ def download_files() -> None:
         try:
             blob.download_to_filename(str(local_path))
             size_mb = local_path.stat().st_size / 1024 / 1024
-            logger.info("Downloaded gs://%s/%s -> %s (%.1f MB)", bucket, blob_name, local_path, size_mb)
+            logger.info(
+                "Downloaded gs://%s/%s -> %s (%.1f MB)", bucket, blob_name, local_path, size_mb
+            )
         except NotFound:
             logger.info("gs://%s/%s not found, skipping (first run?)", bucket, blob_name)
         except Exception as e:
@@ -114,7 +116,9 @@ def upload_files() -> None:
         try:
             blob.upload_from_filename(str(local_path))
             size_mb = local_path.stat().st_size / 1024 / 1024
-            logger.info("Uploaded %s -> gs://%s/%s (%.1f MB)", local_path, bucket, blob_name, size_mb)
+            logger.info(
+                "Uploaded %s -> gs://%s/%s (%.1f MB)", local_path, bucket, blob_name, size_mb
+            )
         except Exception as e:
             logger.warning("Failed to upload %s: %s", blob_name, e)
 

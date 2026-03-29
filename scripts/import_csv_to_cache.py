@@ -19,8 +19,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import configparser
 import csv
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -32,8 +34,29 @@ DEFAULT_DB_PATH = Path.home() / ".cache" / "jquants-dat-mcp" / "cache.db"
 BATCH_SIZE = 10_000
 
 
+def _load_plan() -> str:
+    """Load subscription plan from env var / config.ini."""
+    # 環境変数が最優先
+    plan = os.environ.get("JQUANTS_PLAN")
+    if plan:
+        return plan.lower()
+
+    # config.ini を探索
+    config = configparser.ConfigParser()
+    search_paths = [
+        str(Path.home() / ".config" / "jquants-dat-mcp" / "config.ini"),
+        "config.ini",
+    ]
+    config.read(search_paths, encoding="utf-8")
+
+    try:
+        return config.get("jquants", "plan").lower()
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        return "free"
+
+
 def _ensure_tables(conn: sqlite3.Connection) -> None:
-    """キャッシュテーブルが存在しない場合は作成する。"""
+    """Create cache tables if they do not exist."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS equities_bars_daily (
             code TEXT NOT NULL,
@@ -41,7 +64,8 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
             adj_factor REAL,
-            PRIMARY KEY (code, date)
+            plan TEXT NOT NULL DEFAULT 'free',
+            PRIMARY KEY (code, date, plan)
         )
     """)
     conn.execute("""
@@ -50,9 +74,16 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
             date TEXT NOT NULL,
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, date)
+            plan TEXT NOT NULL DEFAULT 'free',
+            PRIMARY KEY (code, date, plan)
         )
     """)
+    # 既存テーブルのマイグレーション: plan カラムを追加
+    for table in ["equities_bars_daily", "equities_master"]:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'")
+        except sqlite3.OperationalError:
+            pass  # カラムが既に存在する場合
     conn.commit()
 
 
@@ -72,34 +103,38 @@ def _convert_numeric(value: str) -> int | float | str:
         return value
 
 
-def _make_row_tuple(row: dict, now: float) -> tuple[str, str, str, float, float | None]:
-    """CSV 行をインサート用タプルに変換する。"""
+def _make_row_tuple(
+    row: dict,
+    now: float,
+    plan: str,
+) -> tuple[str, str, str, float, float | None, str]:
+    """Convert a CSV row to an insert tuple including plan."""
     data = {k: _convert_numeric(v) for k, v in row.items()}
     data_json = json.dumps(data, ensure_ascii=False)
     adj_factor = float(row["AdjFactor"]) if row.get("AdjFactor") else None
-    return (row["Code"], row["Date"], data_json, now, adj_factor)
+    return (row["Code"], row["Date"], data_json, now, adj_factor, plan)
 
 
 def _insert_batch(conn: sqlite3.Connection, batch: list) -> None:
-    """バッチを equities_bars_daily にインサートする。"""
+    """Insert a batch of rows into equities_bars_daily."""
     conn.executemany(
         "INSERT OR REPLACE INTO equities_bars_daily "
-        "(code, date, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?)",
+        "(code, date, data, fetched_at, adj_factor, plan) VALUES (?, ?, ?, ?, ?, ?)",
         batch,
     )
     conn.commit()
 
 
-def import_market_history(conn: sqlite3.Connection, csv_path: Path) -> int:
-    """株価四本値 CSV を全件インポートする。"""
+def import_market_history(conn: sqlite3.Connection, csv_path: Path, plan: str) -> int:
+    """Import all rows from a market-history CSV."""
     now = time.time()
     count = 0
-    batch: list[tuple[str, str, str, float, float | None]] = []
+    batch: list[tuple[str, str, str, float, float | None, str]] = []
 
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            batch.append(_make_row_tuple(row, now))
+            batch.append(_make_row_tuple(row, now, plan))
             count += 1
 
             if len(batch) >= BATCH_SIZE:
@@ -114,31 +149,35 @@ def import_market_history(conn: sqlite3.Connection, csv_path: Path) -> int:
 
 
 def import_market_history_incremental(
-    conn: sqlite3.Connection, csv_path: Path
+    conn: sqlite3.Connection,
+    csv_path: Path,
+    plan: str,
 ) -> tuple[int, list[str]]:
-    """株価四本値 CSV を差分インポートする。
+    """Incrementally import a market-history CSV.
 
-    通常日: キャッシュ最新日より新しい行だけ INSERT（~4,000行）。
-    分割日: AdjFactor != 1.0 の銘柄を検知し、該当コードの全行を
-            DELETE → 再 INSERT する（調整済み値が全期間更新されるため）。
+    Normal day: INSERT only rows newer than the latest cached date (~4,000 rows).
+    Split day: detect codes with AdjFactor != 1.0, DELETE + re-INSERT all rows
+    for those codes (adjusted values change for the entire history).
 
     Returns:
-        (インポート行数, 分割検知コードのリスト)
+        (number of imported rows, list of split-detected codes)
     """
     # キャッシュの最新日を取得
-    row = conn.execute("SELECT MAX(date) FROM equities_bars_daily").fetchone()
+    row = conn.execute(
+        "SELECT MAX(date) FROM equities_bars_daily WHERE plan = ?", (plan,)
+    ).fetchone()
     max_date = row[0] if row and row[0] else None
 
     if max_date is None:
         print("  キャッシュが空のため全件インポートに切り替え")
-        count = import_market_history(conn, csv_path)
+        count = import_market_history(conn, csv_path, plan)
         return count, []
 
     print(f"  キャッシュ最新日: {max_date}")
     now = time.time()
 
     # Phase 1: CSV を1パスで読み、新しい行を収集 + 分割検知
-    new_rows: list[tuple[str, str, str, float, float | None]] = []
+    new_rows: list[tuple[str, str, str, float, float | None, str]] = []
     split_codes: set[str] = set()
 
     with open(csv_path, newline="", encoding="utf-8") as f:
@@ -147,7 +186,7 @@ def import_market_history_incremental(
             if row_data["Date"] <= max_date:
                 continue
 
-            tup = _make_row_tuple(row_data, now)
+            tup = _make_row_tuple(row_data, now, plan)
             new_rows.append(tup)
 
             # AdjFactor != 1.0 → 株式分割・併合
@@ -167,10 +206,11 @@ def import_market_history_incremental(
         codes_str = ", ".join(sorted(split_codes))
         print(f"  株式分割検知: {codes_str}")
 
-        # キャッシュから該当コードを削除
+        # キャッシュから該当コードを削除（plan でスコープ）
         for code in split_codes:
             deleted = conn.execute(
-                "DELETE FROM equities_bars_daily WHERE code = ?", (code,)
+                "DELETE FROM equities_bars_daily WHERE code = ? AND plan = ?",
+                (code, plan),
             ).rowcount
             print(f"    {code}: キャッシュ {deleted:,} 行削除")
         conn.commit()
@@ -178,14 +218,14 @@ def import_market_history_incremental(
         # CSV を再度読み、該当コードの過去データを収集
         with open(csv_path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
-            split_batch: list[tuple[str, str, str, float, float | None]] = []
+            split_batch: list[tuple[str, str, str, float, float | None, str]] = []
             for row_data in reader:
                 if row_data["Code"] not in split_codes:
                     continue
                 # 新規行は既に new_rows に含まれているのでスキップ
                 if row_data["Date"] > max_date:
                     continue
-                split_batch.append(_make_row_tuple(row_data, now))
+                split_batch.append(_make_row_tuple(row_data, now, plan))
 
             if split_batch:
                 _insert_batch(conn, split_batch)
@@ -200,11 +240,11 @@ def import_market_history_incremental(
     return total, sorted(split_codes)
 
 
-def import_tickers(conn: sqlite3.Connection, csv_path: Path) -> int:
-    """銘柄マスタ CSV をインポートする。"""
+def import_tickers(conn: sqlite3.Connection, csv_path: Path, plan: str) -> int:
+    """Import ticker-master CSV."""
     now = time.time()
     count = 0
-    batch: list[tuple[str, str, str, float]] = []
+    batch: list[tuple[str, str, str, float, str]] = []
 
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
@@ -215,13 +255,13 @@ def import_tickers(conn: sqlite3.Connection, csv_path: Path) -> int:
             data = {k: _convert_numeric(v) for k, v in row.items()}
             data_json = json.dumps(data, ensure_ascii=False)
 
-            batch.append((code, date, data_json, now))
+            batch.append((code, date, data_json, now, plan))
             count += 1
 
     if batch:
         conn.executemany(
             "INSERT OR REPLACE INTO equities_master "
-            "(code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            "(code, date, data, fetched_at, plan) VALUES (?, ?, ?, ?, ?)",
             batch,
         )
         conn.commit()
@@ -230,6 +270,8 @@ def import_tickers(conn: sqlite3.Connection, csv_path: Path) -> int:
 
 
 def main() -> None:
+    default_plan = _load_plan()
+
     parser = argparse.ArgumentParser(description="CSV データをキャッシュ DB にインポート")
     parser.add_argument("--market-history", type=Path, help="株価四本値 CSV ファイルパス")
     parser.add_argument("--tickers", type=Path, help="銘柄マスタ CSV ファイルパス")
@@ -244,13 +286,19 @@ def main() -> None:
         action="store_true",
         help="差分インポート（新しい日付のみ。株式分割検知時は該当コードを全件再取得）",
     )
+    parser.add_argument(
+        "--plan",
+        default=default_plan,
+        help=f"J-Quants プラン (default: {default_plan})",
+    )
     args = parser.parse_args()
 
     if not args.market_history and not args.tickers:
         parser.error("--market-history または --tickers のいずれかを指定してください")
 
+    plan = args.plan.lower()
     mode = "差分" if args.incremental else "全件"
-    print(f"キャッシュ DB: {args.db} ({mode}インポート)")
+    print(f"キャッシュ DB: {args.db} ({mode}インポート, plan={plan})")
     conn = sqlite3.connect(str(args.db))
     conn.execute("PRAGMA journal_mode=WAL")
     _ensure_tables(conn)
@@ -259,11 +307,11 @@ def main() -> None:
         print(f"株価四本値をインポート中: {args.market_history}")
         t0 = time.time()
         if args.incremental:
-            n, splits = import_market_history_incremental(conn, args.market_history)
+            n, splits = import_market_history_incremental(conn, args.market_history, plan)
             if splits:
                 print(f"  株式分割対応済み: {', '.join(splits)}")
         else:
-            n = import_market_history(conn, args.market_history)
+            n = import_market_history(conn, args.market_history, plan)
         elapsed = time.time() - t0
         print(f"  完了: {n:,} 行 ({elapsed:.1f}秒)")
 
@@ -271,7 +319,7 @@ def main() -> None:
         # 銘柄マスタは少量（~4,000行）なので常に全件インポート
         print(f"銘柄マスタをインポート中: {args.tickers}")
         t0 = time.time()
-        n = import_tickers(conn, args.tickers)
+        n = import_tickers(conn, args.tickers, plan)
         elapsed = time.time() - t0
         print(f"  完了: {n:,} 行 ({elapsed:.1f}秒)")
 
