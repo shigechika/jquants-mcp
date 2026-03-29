@@ -35,11 +35,17 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gcs_sync")
 
-# Files to download from GCS at startup
+# Files to download from GCS at startup (all)
 _DOWNLOAD_FILES = ["cache.db", "users.db", "oauth_state.db"]
 
+# Small files needed for auth — downloaded first for fast startup
+_DOWNLOAD_FAST = ["users.db", "oauth_state.db"]
+
+# Large cache file — downloaded in background after server starts
+_DOWNLOAD_CACHE = ["cache.db"]
+
 # Files to upload to GCS (daemon / --upload)
-# cache.db is excluded: it is owned by m1.local (jpx-short-report daily.sh)
+# cache.db is excluded: it is owned by self-hosted server (jpx-short-report daily.sh)
 # and uploaded from there. Cloud Run should not overwrite it.
 _UPLOAD_FILES = ["users.db", "oauth_state.db"]
 
@@ -66,19 +72,23 @@ def _get_config() -> tuple[str, str, Path]:
     return bucket, prefix, cache_dir
 
 
-def download_files() -> None:
-    """Download cache files from GCS to local cache dir.
+def download_files(file_list: list[str] | None = None) -> None:
+    """Download files from GCS to local cache dir.
+
+    Args:
+        file_list: List of filenames to download. Defaults to _DOWNLOAD_FILES.
 
     Missing objects are silently skipped (first-run case).
     """
     from google.cloud import storage  # type: ignore[import-untyped]
     from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
 
+    files = file_list if file_list is not None else _DOWNLOAD_FILES
     bucket, prefix, cache_dir = _get_config()
     client = storage.Client()
     gcs_bucket = client.bucket(bucket)
 
-    for filename in _DOWNLOAD_FILES:
+    for filename in files:
         blob_name = f"{prefix}{filename}"
         local_path = cache_dir / filename
         blob = gcs_bucket.blob(blob_name)
@@ -163,13 +173,23 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="GCS cache sync utility for jquants-dat-mcp")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--init", action="store_true", help="Download from GCS to local cache dir")
+    group.add_argument("--init", action="store_true", help="Download all files from GCS")
+    group.add_argument(
+        "--init-fast", action="store_true", help="Download auth DBs only (fast startup)"
+    )
+    group.add_argument(
+        "--init-cache", action="store_true", help="Download cache.db only (background)"
+    )
     group.add_argument("--daemon", action="store_true", help="Run background sync daemon")
     group.add_argument("--upload", action="store_true", help="Upload local cache to GCS and exit")
     args = parser.parse_args()
 
     if args.init:
         download_files()
+    elif args.init_fast:
+        download_files(_DOWNLOAD_FAST)
+    elif args.init_cache:
+        download_files(_DOWNLOAD_CACHE)
     elif args.daemon:
         run_daemon()
     elif args.upload:
