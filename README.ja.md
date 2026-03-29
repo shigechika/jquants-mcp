@@ -403,27 +403,25 @@ bearer_token = <TOKEN>
 
 **Claude Code（TLS 付きリモート接続）:**
 
-> **注意:** `claude mcp add --transport http --header "Authorization: Bearer ..."` はヘルスチェック時にヘッダーを送信しません（[claude-code#29562](https://github.com/anthropics/claude-code/issues/29562)）。ワークアラウンドとして stdio プロキシ経由で接続してください:
+> **注意:** `claude mcp add --transport http --header "Authorization: Bearer ..."` はヘルスチェック時にヘッダーを送信しません（[claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)）。ワークアラウンドとして [mcp-stdio](https://github.com/shigechika/mcp-stdio) 経由で接続してください:
 
 ```bash
+pip install mcp-stdio  # または: uvx mcp-stdio
+
 claude mcp add jquants-dat-mcp -- \
-  /path/to/jquants-dat-mcp/.venv/bin/python \
-  /path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py \
-  https://[2001:db8::1]:8080/mcp \
-  --bearer-token <TOKEN>
+  mcp-stdio https://192.0.2.1:8080/mcp --bearer-token <TOKEN>
 ```
 
-### Claude Desktop（stdio プロキシ経由のリモート接続）
+### Claude Desktop（mcp-stdio 経由のリモート接続）
 
-Claude Desktop は Streamable HTTP トランスポートに直接対応していません。`scripts/mcp-stdio-proxy.py` を使って stdio とリモート MCP サーバーを中継できます:
+Claude Desktop は Streamable HTTP トランスポートに直接対応していません。[mcp-stdio](https://pypi.org/project/mcp-stdio/) を使って stdio とリモート MCP サーバーを中継できます:
 
 ```json
 {
   "mcpServers": {
     "jquants-dat-mcp": {
-      "command": "/path/to/jquants-dat-mcp/.venv/bin/python",
+      "command": "mcp-stdio",
       "args": [
-        "/path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py",
         "http://192.0.2.1:8080/mcp"
       ]
     }
@@ -437,10 +435,9 @@ TLS + Bearer token 認証付きサーバーに接続する場合:
 {
   "mcpServers": {
     "jquants-dat-mcp": {
-      "command": "/path/to/jquants-dat-mcp/.venv/bin/python",
+      "command": "mcp-stdio",
       "args": [
-        "/path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py",
-        "https://[2001:db8::1]:8080/mcp",
+        "https://192.0.2.1:8080/mcp",
         "--bearer-token", "<TOKEN>"
       ]
     }

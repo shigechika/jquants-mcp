@@ -403,27 +403,25 @@ bearer_token = <TOKEN>
 
 **Claude Code (remote with TLS):**
 
-> **Note:** `claude mcp add --transport http --header "Authorization: Bearer ..."` does not send the header during health checks ([claude-code#29562](https://github.com/anthropics/claude-code/issues/29562)). Use the stdio proxy as a workaround:
+> **Note:** `claude mcp add --transport http --header "Authorization: Bearer ..."` does not send the header during health checks ([claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)). Use [mcp-stdio](https://github.com/shigechika/mcp-stdio) as a workaround:
 
 ```bash
+pip install mcp-stdio  # or: uvx mcp-stdio
+
 claude mcp add jquants-dat-mcp -- \
-  /path/to/jquants-dat-mcp/.venv/bin/python \
-  /path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py \
-  https://[2001:db8::1]:8080/mcp \
-  --bearer-token <TOKEN>
+  mcp-stdio https://192.0.2.1:8080/mcp --bearer-token <TOKEN>
 ```
 
-### Claude Desktop (remote via stdio proxy)
+### Claude Desktop (remote via mcp-stdio)
 
-Claude Desktop does not support Streamable HTTP transport directly. Use `scripts/mcp-stdio-proxy.py` to bridge stdio to a remote MCP server:
+Claude Desktop does not support Streamable HTTP transport directly. Use [mcp-stdio](https://pypi.org/project/mcp-stdio/) to bridge stdio to a remote MCP server:
 
 ```json
 {
   "mcpServers": {
     "jquants-dat-mcp": {
-      "command": "/path/to/jquants-dat-mcp/.venv/bin/python",
+      "command": "mcp-stdio",
       "args": [
-        "/path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py",
         "http://192.0.2.1:8080/mcp"
       ]
     }
@@ -437,10 +435,9 @@ To connect to a TLS-enabled server with Bearer token authentication:
 {
   "mcpServers": {
     "jquants-dat-mcp": {
-      "command": "/path/to/jquants-dat-mcp/.venv/bin/python",
+      "command": "mcp-stdio",
       "args": [
-        "/path/to/jquants-dat-mcp/scripts/mcp-stdio-proxy.py",
-        "https://[2001:db8::1]:8080/mcp",
+        "https://192.0.2.1:8080/mcp",
         "--bearer-token", "<TOKEN>"
       ]
     }

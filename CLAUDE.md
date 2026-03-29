@@ -34,7 +34,7 @@ uv run ruff format src/ tests/  # Format
   - `import_csv_to_cache.py` — CSV bulk import to cache
   - `bulk_fetch_all.py` — Historical data bulk fetch
   - `gcs_sync.py` — GCS cache sync for Cloud Run
-  - `mcp-stdio-proxy.py` — stdio-to-HTTP proxy for Claude Desktop/Code
+  - `mcp-stdio-proxy.py` — stdio-to-HTTP proxy (legacy; use [mcp-stdio](https://pypi.org/project/mcp-stdio/) instead)
   - `entrypoint.sh` — Docker/Cloud Run entrypoint
 - `tests/` — pytest + pytest-asyncio tests (306 tests)
 
