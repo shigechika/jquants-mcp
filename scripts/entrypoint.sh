@@ -17,14 +17,23 @@ echo "JQUANTS_CACHE_DIR=${JQUANTS_CACHE_DIR:-/tmp}"
 echo "JQUANTS_CACHE_DB_PATH=${JQUANTS_CACHE_DB_PATH:-<not set>}"
 echo "JQUANTS_CACHE_DB_READONLY=${JQUANTS_CACHE_DB_READONLY:-false}"
 
-# gcsfuse マウント確認
+# gcsfuse マウント完了を待機
 if [ -n "${JQUANTS_CACHE_DB_PATH:-}" ]; then
-    echo "Checking gcsfuse mount..."
-    ls -la "$(dirname "${JQUANTS_CACHE_DB_PATH}")" 2>&1 || echo "WARNING: gcsfuse mount not accessible"
+    MAX_WAIT=60
+    WAITED=0
+    until [ -f "${JQUANTS_CACHE_DB_PATH}" ] && [ -r "${JQUANTS_CACHE_DB_PATH}" ]; do
+        echo "Waiting for gcsfuse mount... (${WAITED}s)"
+        sleep 2
+        WAITED=$((WAITED + 2))
+        if [ $WAITED -ge $MAX_WAIT ]; then
+            echo "ERROR: ${JQUANTS_CACHE_DB_PATH} not available after ${MAX_WAIT}s"
+            break
+        fi
+    done
     if [ -f "${JQUANTS_CACHE_DB_PATH}" ]; then
-        echo "cache.db found: $(du -h "${JQUANTS_CACHE_DB_PATH}" | cut -f1)"
+        echo "cache.db ready: $(du -h "${JQUANTS_CACHE_DB_PATH}" | cut -f1)"
     else
-        echo "WARNING: ${JQUANTS_CACHE_DB_PATH} not found"
+        echo "WARNING: cache.db not found, server will start without cache"
     fi
 fi
 
