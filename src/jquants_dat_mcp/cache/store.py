@@ -201,7 +201,10 @@ class CacheStore:
                 size = os.path.getsize(db_str) if exists else 0
                 logger.info(
                     "gcsfuse DB診断: path=%s exists=%s readable=%s size=%d",
-                    db_str, exists, readable, size,
+                    db_str,
+                    exists,
+                    readable,
+                    size,
                 )
                 conn = sqlite3.connect(db_str, check_same_thread=False)
                 conn.row_factory = sqlite3.Row
