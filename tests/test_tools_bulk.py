@@ -25,7 +25,7 @@ def mock_env(tmp_path):
         retry_base_delay=0.01,
     )
     client = JQuantsClient(settings)
-    cache = CacheStore(tmp_path / "test.db")
+    cache = CacheStore(tmp_path / "test.db", default_plan=settings.jquants_plan)
 
     with (
         patch.object(server_module, "_settings", settings),

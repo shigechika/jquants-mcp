@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -105,13 +104,7 @@ def _get_cache() -> CacheStore:
     if _cache is None:
         settings = _get_settings()
         db_path = settings.get_cache_db_path()
-        # JQUANTS_CACHE_DB_READONLY=true の場合、読み取り専用 + オーバーレイモード
-        readonly = os.environ.get("JQUANTS_CACHE_DB_READONLY", "").lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-        _cache = CacheStore(db_path, default_plan=settings.jquants_plan, readonly=readonly)
+        _cache = CacheStore(db_path, default_plan=settings.jquants_plan)
     return _cache
 
 

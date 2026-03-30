@@ -51,7 +51,6 @@ _CONFIG_DEFS: list[_ConfigDef] = [
     ),
     _ConfigDef("jquants_plan", "jquants", "plan", "JQUANTS_PLAN", "free"),
     _ConfigDef("jquants_cache_dir", "jquants", "cache_dir", "JQUANTS_CACHE_DIR", ""),
-    _ConfigDef("jquants_cache_db_path", "jquants", "cache_db_path", "JQUANTS_CACHE_DB_PATH", ""),
     _ConfigDef("max_retries", "client", "max_retries", "MAX_RETRIES", "5"),
     _ConfigDef("retry_base_delay", "client", "retry_base_delay", "RETRY_BASE_DELAY", "1.0"),
     _ConfigDef("max_pages", "client", "max_pages", "MAX_PAGES", "10"),
@@ -191,13 +190,7 @@ class Settings:
         return d
 
     def get_cache_db_path(self) -> Path:
-        """Return the cache database file path.
-
-        If ``jquants_cache_db_path`` is set, return that path directly.
-        Otherwise fall back to ``get_cache_dir() / "cache.db"``.
-        """
-        if self.jquants_cache_db_path:
-            return Path(self.jquants_cache_db_path)
+        """Return the cache database file path."""
         return self.get_cache_dir() / "cache.db"
 
     def get_rate_limit(self) -> int:

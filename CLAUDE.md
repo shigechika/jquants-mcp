@@ -33,10 +33,10 @@ uv run ruff format src/ tests/  # Format
   - `daily_fetch.py` — Daily data fetch (called from jpx-short-report)
   - `import_csv_to_cache.py` — CSV bulk import to cache
   - `bulk_fetch_all.py` — Historical data bulk fetch
-  - `gcs_sync.py` — GCS cache sync for Cloud Run
+  - `gcs_sync.py` — GCS auth DB sync for Cloud Run (users.db + oauth_state.db)
   - `mcp-stdio-proxy.py` — stdio-to-HTTP proxy (legacy; use [mcp-stdio](https://pypi.org/project/mcp-stdio/) instead)
   - `entrypoint.sh` — Docker/Cloud Run entrypoint
-- `tests/` — pytest + pytest-asyncio tests (306 tests)
+- `tests/` — pytest + pytest-asyncio tests (327 tests)
 
 ## Key Patterns
 
@@ -67,18 +67,22 @@ uv run ruff format src/ tests/  # Format
 
 - **Local (stdio)**: `jquants-dat-mcp` — single user, env/config API key
 - **Remote (self-hosted)**: Streamable HTTP + TLS + Bearer token
-- **Cloud Run**: `us-west1`, Google OAuth, multi-user, GCS cache persistence
+- **Cloud Run**: `us-west1`, Google OAuth, multi-user, GCS startup copy (cache.db)
 
 ## CI/CD Notes
 
 - CD workflow declares ALL env vars and secrets — never use manual `gcloud run services update` (it gets overwritten by next CD deploy)
 - `gcloud storage cp` with parallel composite upload corrupts SQLite files — use `parallel_composite_upload_enabled=False`
+- Cloud Run: cache.db is downloaded from GCS at startup (`entrypoint.sh`), not gcsfuse-mounted
 - Cloud Run GCS daemon uploads only users.db and oauth_state.db (not cache.db — owned by self-hosted server)
 - gcsfuse is NOT viable for large SQLite DBs (>100 MB) due to random read latency — see `docs/gcsfuse-postmortem.md`
+- Cloud Run memory is 8Gi (to hold cache.db in tmpfs)
 - Always research technology compatibility BEFORE implementing (e.g., "gcsfuse sqlite" would have revealed issues immediately)
 
 ## Cache Plan Scoping
 
-- All Tier 1 cache tables have `plan` in PRIMARY KEY: `(code, date, plan)` etc.
+- All Tier 1 cache tables have `plan` column (data stored as `plan='standard'`)
 - `daily_fetch.py` and `import_csv_to_cache.py` must include `plan` in all INSERTs
+- `_build_where_clause` enforces plan-based date restrictions at query time
 - Plan data retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all
+- `sync_plans.py` is removed — no longer copy data between plans

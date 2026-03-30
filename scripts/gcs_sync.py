@@ -2,8 +2,8 @@
 """GCS sync utility for Cloud Run deployment of jquants-dat-mcp.
 
 Manages auth database synchronization between Cloud Run's ephemeral /tmp
-filesystem and Google Cloud Storage. cache.db is gcsfuse-mounted read-only
-and does not need download/upload via this script.
+filesystem and Google Cloud Storage. cache.db is downloaded at startup by
+entrypoint.sh and does not need upload via this script.
 
 Usage:
     # Download auth DBs from GCS (run at startup)
@@ -36,12 +36,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gcs_sync")
 
-# Files to download from GCS at startup (auth DBs only; cache.db is gcsfuse-mounted)
+# Files to download from GCS at startup (auth DBs only; cache.db is handled by entrypoint.sh)
 _DOWNLOAD_FILES = ["users.db", "oauth_state.db"]
 
 # Files to upload to GCS (daemon / --upload)
-# cache.db is excluded: it is gcsfuse-mounted read-only from GCS,
-# and owned by self-hosted server (jpx-short-report daily.sh).
+# cache.db is excluded: it is owned by self-hosted server (jpx-short-report daily.sh).
 _UPLOAD_FILES = ["users.db", "oauth_state.db"]
 
 # Sync interval in seconds

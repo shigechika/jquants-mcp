@@ -29,6 +29,6 @@ def settings(tmp_cache_dir: Path) -> Settings:
 @pytest.fixture()
 def cache_store(tmp_cache_dir: Path) -> CacheStore:
     """Provide a CacheStore with a temporary database."""
-    store = CacheStore(tmp_cache_dir / "test_cache.db")
+    store = CacheStore(tmp_cache_dir / "test_cache.db", default_plan="standard")
     yield store
     store.close()

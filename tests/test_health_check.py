@@ -25,7 +25,7 @@ def mock_env(tmp_path):
         retry_base_delay=0.01,
     )
     client = JQuantsClient(settings)
-    cache = CacheStore(tmp_path / "test.db")
+    cache = CacheStore(tmp_path / "test.db", default_plan=settings.jquants_plan)
 
     with (
         patch.object(server_module, "_settings", settings),
@@ -111,7 +111,7 @@ class TestCacheStatus:
         """Single-user mode returns the plan from global settings (default_plan on cache)."""
         with patch("fastmcp.server.dependencies.get_access_token", return_value=None):
             result = await _call("cache_status")
-        assert result["plan"] == "free"  # CacheStore is created with default plan="free"
+        assert result["plan"] == "premium"  # CacheStore uses settings.jquants_plan
         assert "db_path" in result
 
     async def test_multi_user_returns_user_plan(self, mock_env):
@@ -143,7 +143,7 @@ class TestCacheStatus:
         ):
             result = await _call("cache_status")
 
-        assert result["plan"] == "free"  # falls back to cache default_plan
+        assert result["plan"] == "premium"  # falls back to cache default_plan
 
     async def test_no_user_db_returns_cache_default_plan(self, mock_env):
         """OAuth user without encryption_key returns cache default plan."""
@@ -156,4 +156,4 @@ class TestCacheStatus:
         ):
             result = await _call("cache_status")
 
-        assert result["plan"] == "free"
+        assert result["plan"] == "premium"

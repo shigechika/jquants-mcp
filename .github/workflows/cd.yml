@@ -36,13 +36,12 @@ jobs:
             --region us-west1 \
             --source . \
             --execution-environment gen2 \
-            --memory 2Gi \
+            --memory 8Gi \
             --cpu 1 \
             --set-env-vars "\
               GCS_BUCKET=aikawa-dx-jquants-dat-mcp,\
               JQUANTS_CACHE_DIR=/tmp,\
-              JQUANTS_CACHE_DB_PATH=/mnt/gcs/jquants-dat-mcp/cache.db,\
-              JQUANTS_CACHE_DB_READONLY=true,\
+              JQUANTS_PLAN=standard,\
               OAUTH_PROVIDER=google,\
               OAUTH_BASE_URL=https://jquants-dat-mcp-29004083822.us-west1.run.app,\
               OAUTH_REQUIRE_CONSENT=false,\
@@ -52,6 +51,4 @@ jobs:
               GOOGLE_CLIENT_SECRET=google-oauth-client-secret:latest,\
               MCP_ENCRYPTION_KEY=mcp-encryption-key:latest,\
               JQUANTS_API_KEY=jquants-api-key:latest,\
-              GITHUB_CLIENT_SECRET=github-oauth-client-secret:latest" \
-            --add-volume name=gcs-cache,type=cloud-storage,bucket=aikawa-dx-jquants-dat-mcp,readonly=true,mount-options="implicit-dirs;file-cache-max-size-mb=10240;file-cache-cache-file-for-range-read" \
-            --add-volume-mount volume=gcs-cache,mount-path=/mnt/gcs
+              GITHUB_CLIENT_SECRET=github-oauth-client-secret:latest"

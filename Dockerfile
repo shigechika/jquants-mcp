@@ -39,7 +39,7 @@ USER appuser
 # Add venv to PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
-# Store SQLite cache in /tmp (Cloud Run ephemeral filesystem)
+# Store SQLite cache in /tmp (Cloud Run: cache.db downloaded at startup)
 ENV JQUANTS_CACHE_DIR=/tmp
 
 # Unbuffered Python output for Cloud Run logging

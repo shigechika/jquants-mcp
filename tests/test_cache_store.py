@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from datetime import date, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
-from jquants_dat_mcp.cache.store import CacheStore, make_cache_key
+from jquants_dat_mcp.cache.store import (
+    CacheStore,
+    _plan_date_bounds,
+    make_cache_key,
+)
 
 
 class TestMakeCacheKey:
@@ -409,153 +415,131 @@ class TestCorruptDatabase:
         cache_store._ensure_connection()
         assert cache_store.ready is True
 
-    def test_status_excludes_cache_ready(self, cache_store: CacheStore):
-        """status() does not include cache_ready (removed after gcsfuse migration)."""
+    def test_status_excludes_readonly(self, cache_store: CacheStore):
+        """status() does not include readonly (removed after gcsfuse removal)."""
         status = cache_store.status()
-        assert "cache_ready" not in status
+        assert "readonly" not in status
 
 
-class TestReadonlyOverlayMode:
-    """readonly + overlay モードのテスト。"""
+class TestPlanDateBounds:
+    """_plan_date_bounds のテスト。"""
 
-    def _make_readonly_store(self, tmp_path: Path) -> CacheStore:
-        """Create a writable store, populate it, then open as readonly."""
-        db_path = tmp_path / "main_cache.db"
-        # 通常モードでデータを作成
-        writer = CacheStore(db_path, default_plan="free")
-        writer.put_rows(
+    def test_premium_no_limits(self):
+        min_d, max_d = _plan_date_bounds("premium")
+        assert min_d is None
+        assert max_d is None
+
+    def test_standard_10_years(self):
+        min_d, max_d = _plan_date_bounds("standard")
+        assert min_d is not None
+        assert max_d is None
+        expected_year = date.today().year - 10
+        assert min_d.startswith(str(expected_year))
+
+    def test_light_5_years(self):
+        min_d, max_d = _plan_date_bounds("light")
+        assert min_d is not None
+        assert max_d is None
+        expected_year = date.today().year - 5
+        assert min_d.startswith(str(expected_year))
+
+    def test_free_2_years_with_delay(self):
+        min_d, max_d = _plan_date_bounds("free")
+        assert min_d is not None
+        assert max_d is not None
+        expected_year = date.today().year - 2
+        assert min_d.startswith(str(expected_year))
+        expected_max = (date.today() - timedelta(weeks=12)).isoformat()
+        assert max_d == expected_max
+
+    def test_unknown_plan_defaults_to_no_retention(self):
+        """Unknown plan returns no limits (same as premium)."""
+        min_d, max_d = _plan_date_bounds("unknown")
+        assert min_d is None
+        assert max_d is None
+
+    def test_leap_year_boundary(self):
+        """Feb 29 minus N years should not raise."""
+        with patch("jquants_dat_mcp.cache.store.date") as mock_date:
+            mock_date.today.return_value = date(2024, 2, 29)
+            mock_date.side_effect = lambda *args, **kw: date(*args, **kw)
+            min_d, _ = _plan_date_bounds("free")
+            assert min_d is not None
+
+
+class TestPlanDateRestrictionIntegration:
+    """プラン別日付制限の統合テスト。"""
+
+    def test_free_plan_restricts_old_data(self, tmp_path: Path):
+        """Free plan cannot access data older than 2 years."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="free")
+        old_date = (date.today() - timedelta(days=365 * 3)).isoformat()
+        rows = [{"Code": "72030", "Date": old_date, "O": 100, "AdjFactor": 1.0}]
+        store.put_rows("equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor")
+
+        result = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert len(result) == 0, "Free plan should not see data older than 2 years"
+        store.close()
+
+    def test_free_plan_restricts_recent_data(self, tmp_path: Path):
+        """Free plan cannot access data within the 12-week delay window."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="free")
+        recent_date = (date.today() - timedelta(weeks=4)).isoformat()
+        rows = [{"Code": "72030", "Date": recent_date, "O": 100, "AdjFactor": 1.0}]
+        store.put_rows("equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor")
+
+        result = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert len(result) == 0, "Free plan should not see data within 12-week delay"
+        store.close()
+
+    def test_free_plan_can_access_valid_window(self, tmp_path: Path):
+        """Free plan can access data within its valid window."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="free")
+        valid_date = (date.today() - timedelta(days=365)).isoformat()
+        rows = [{"Code": "72030", "Date": valid_date, "O": 100, "AdjFactor": 1.0}]
+        store.put_rows("equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor")
+
+        result = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert len(result) == 1, "Free plan should see data within valid window"
+        store.close()
+
+    def test_standard_plan_no_delay(self, tmp_path: Path):
+        """Standard plan has no delay restriction."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        recent_date = (date.today() - timedelta(days=1)).isoformat()
+        rows = [{"Code": "72030", "Date": recent_date, "O": 100, "AdjFactor": 1.0}]
+        store.put_rows("equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor")
+
+        result = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert len(result) == 1
+        store.close()
+
+    def test_premium_plan_no_limits(self, tmp_path: Path):
+        """Premium plan can access all data."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="premium")
+        old_date = "2000-01-04"
+        rows = [{"Code": "72030", "Date": old_date, "O": 100, "AdjFactor": 1.0}]
+        store.put_rows("equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor")
+
+        result = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert len(result) == 1
+        store.close()
+
+    def test_caller_date_range_respected(self, tmp_path: Path):
+        """Caller's date_from/date_to still work alongside plan restriction."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        rows = [
+            {"Code": "72030", "Date": "2025-01-01", "O": 100, "AdjFactor": 1.0},
+            {"Code": "72030", "Date": "2025-06-01", "O": 200, "AdjFactor": 1.0},
+        ]
+        store.put_rows("equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor")
+
+        result = store.get_rows(
             "equities_bars_daily",
-            [{"Code": "72030", "Date": "2024-01-04", "O": 100, "AdjFactor": 1.0}],
-            ["Code", "Date"],
-            adj_factor_key="AdjFactor",
+            {"code": "72030"},
+            date_from="2025-03-01",
+            date_to="2025-12-31",
         )
-        writer.put_response("resp|key", {"data": "main"}, ttl_seconds=3600)
-        writer.close()
-
-        # readonly モードで開く
-        overlay_path = tmp_path / "overlay.db"
-        return CacheStore(db_path, default_plan="free", readonly=True, overlay_path=overlay_path)
-
-    def test_read_from_main_db(self, tmp_path: Path):
-        """readonly モードでメインDBからデータを読み取れること。"""
-        store = self._make_readonly_store(tmp_path)
-        rows = store.get_rows("equities_bars_daily", {"code": "72030"})
-        assert len(rows) == 1
-        assert rows[0]["O"] == 100
-        store.close()
-
-    def test_read_response_from_main_db(self, tmp_path: Path):
-        """readonly モードでメインDBからレスポンスキャッシュを読み取れること。"""
-        store = self._make_readonly_store(tmp_path)
-        resp = store.get_response("resp|key")
-        assert resp is not None
-        assert resp["data"] == "main"
-        store.close()
-
-    def test_write_goes_to_overlay(self, tmp_path: Path):
-        """readonly モードで書き込みがオーバーレイDBに行くこと。"""
-        store = self._make_readonly_store(tmp_path)
-        # 新しいデータをオーバーレイに書き込み
-        store.put_rows(
-            "equities_bars_daily",
-            [{"Code": "99990", "Date": "2024-02-01", "O": 999, "AdjFactor": 1.0}],
-            ["Code", "Date"],
-            adj_factor_key="AdjFactor",
-        )
-        # オーバーレイのデータが読める
-        rows = store.get_rows("equities_bars_daily", {"code": "99990"})
-        assert len(rows) == 1
-        assert rows[0]["O"] == 999
-
-        # メインDBのデータもまだ読める
-        main_rows = store.get_rows("equities_bars_daily", {"code": "72030"})
-        assert len(main_rows) == 1
-        store.close()
-
-    def test_overlay_overrides_main(self, tmp_path: Path):
-        """オーバーレイのデータがメインDBのデータを上書きすること。"""
-        store = self._make_readonly_store(tmp_path)
-        # メインDBと同じキーでオーバーレイに書き込み
-        store.put_rows(
-            "equities_bars_daily",
-            [{"Code": "72030", "Date": "2024-01-04", "O": 9999, "AdjFactor": 2.0}],
-            ["Code", "Date"],
-            adj_factor_key="AdjFactor",
-        )
-        rows = store.get_rows("equities_bars_daily", {"code": "72030"})
-        assert len(rows) == 1
-        assert rows[0]["O"] == 9999
-        store.close()
-
-    def test_get_cached_dates_union(self, tmp_path: Path):
-        """get_cached_dates がメインDBとオーバーレイの union を返すこと。"""
-        store = self._make_readonly_store(tmp_path)
-        # オーバーレイに別日付を追加
-        store.put_rows(
-            "equities_bars_daily",
-            [{"Code": "72030", "Date": "2024-01-05", "O": 200, "AdjFactor": 1.0}],
-            ["Code", "Date"],
-            adj_factor_key="AdjFactor",
-        )
-        dates = store.get_cached_dates("equities_bars_daily", {"code": "72030"})
-        assert dates == {"2024-01-04", "2024-01-05"}
-        store.close()
-
-    def test_response_write_to_overlay(self, tmp_path: Path):
-        """レスポンスキャッシュの書き込みがオーバーレイに行くこと。"""
-        store = self._make_readonly_store(tmp_path)
-        store.put_response("new|resp", {"data": "overlay"}, ttl_seconds=3600)
-        resp = store.get_response("new|resp")
-        assert resp is not None
-        assert resp["data"] == "overlay"
-        store.close()
-
-    def test_response_overlay_takes_precedence(self, tmp_path: Path):
-        """オーバーレイのレスポンスがメインDBより優先されること。"""
-        store = self._make_readonly_store(tmp_path)
-        # 同じキーでオーバーレイに書き込み
-        store.put_response("resp|key", {"data": "overlay_wins"}, ttl_seconds=3600)
-        resp = store.get_response("resp|key")
-        assert resp is not None
-        assert resp["data"] == "overlay_wins"
-        store.close()
-
-    def test_status_includes_readonly(self, tmp_path: Path):
-        """status にreadonly フラグが含まれること。"""
-        store = self._make_readonly_store(tmp_path)
-        status = store.status()
-        assert status["readonly"] is True
-        store.close()
-
-    def test_clear_only_affects_overlay(self, tmp_path: Path):
-        """clear がオーバーレイDBのみクリアすること。"""
-        store = self._make_readonly_store(tmp_path)
-        # オーバーレイにデータ追加
-        store.put_rows(
-            "equities_bars_daily",
-            [{"Code": "99990", "Date": "2024-02-01", "O": 999, "AdjFactor": 1.0}],
-            ["Code", "Date"],
-            adj_factor_key="AdjFactor",
-        )
-        store.clear("equities_bars_daily")
-        # メインDBのデータはまだ読める
-        rows = store.get_rows("equities_bars_daily", {"code": "72030"})
-        assert len(rows) == 1
-        store.close()
-
-    def test_invalidate_only_affects_overlay(self, tmp_path: Path):
-        """invalidate_rows がオーバーレイDBのみ削除すること。"""
-        store = self._make_readonly_store(tmp_path)
-        # オーバーレイにデータ追加
-        store.put_rows(
-            "equities_bars_daily",
-            [{"Code": "99990", "Date": "2024-02-01", "O": 999, "AdjFactor": 1.0}],
-            ["Code", "Date"],
-            adj_factor_key="AdjFactor",
-        )
-        deleted = store.invalidate_rows("equities_bars_daily", {"code": "99990"})
-        assert deleted == 1
-        # メインDBのデータは影響を受けない
-        rows = store.get_rows("equities_bars_daily", {"code": "72030"})
-        assert len(rows) == 1
+        assert len(result) == 1
+        assert result[0]["O"] == 200
         store.close()
