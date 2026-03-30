@@ -37,7 +37,7 @@ jobs:
             --source . \
             --execution-environment gen2 \
             --memory 8Gi \
-            --cpu 1 \
+            --cpu 2 \
             --set-env-vars "\
               GCS_BUCKET=aikawa-dx-jquants-dat-mcp,\
               JQUANTS_CACHE_DIR=/tmp,\
