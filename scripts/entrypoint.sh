@@ -17,6 +17,17 @@ echo "JQUANTS_CACHE_DIR=${JQUANTS_CACHE_DIR:-/tmp}"
 echo "JQUANTS_CACHE_DB_PATH=${JQUANTS_CACHE_DB_PATH:-<not set>}"
 echo "JQUANTS_CACHE_DB_READONLY=${JQUANTS_CACHE_DB_READONLY:-false}"
 
+# gcsfuse マウント確認
+if [ -n "${JQUANTS_CACHE_DB_PATH:-}" ]; then
+    echo "Checking gcsfuse mount..."
+    ls -la "$(dirname "${JQUANTS_CACHE_DB_PATH}")" 2>&1 || echo "WARNING: gcsfuse mount not accessible"
+    if [ -f "${JQUANTS_CACHE_DB_PATH}" ]; then
+        echo "cache.db found: $(du -h "${JQUANTS_CACHE_DB_PATH}" | cut -f1)"
+    else
+        echo "WARNING: ${JQUANTS_CACHE_DB_PATH} not found"
+    fi
+fi
+
 # Step 1: Download small auth files from GCS (fast, needed for auth)
 if [ -n "${GCS_BUCKET:-}" ]; then
     echo "Downloading auth databases from GCS..."
