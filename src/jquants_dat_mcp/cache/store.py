@@ -193,11 +193,11 @@ class CacheStore:
         try:
             if self._readonly:
                 # gcsfuse マウント: 読み取り専用で開く
-                uri = f"file:{self._db_path}?mode=ro"
-                conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+                # URI モード（file:...?mode=ro）は gcsfuse で失敗する場合があるため
+                # 通常パスで開く。書き込みはオーバーレイDBに振り分けるので安全。
+                conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
                 conn.row_factory = sqlite3.Row
-                # gcsfuse では PRAGMA quick_check をスキップ（POSIX 非準拠のため失敗する場合がある）
-                # 代わりに簡易クエリで接続を検証
+                # 接続検証
                 conn.execute("SELECT 1")
                 # WAL / テーブル作成はスキップ（読み取り専用ファイルシステム）
                 self._conn = conn
