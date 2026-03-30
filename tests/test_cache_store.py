@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import time
 from pathlib import Path
 
@@ -314,3 +315,102 @@ class TestCacheUtility:
 
         # response_cache はクリアされていない
         assert cache_store.get_response("key") is not None
+
+
+class TestCorruptDatabase:
+    """DB が壊れている場合（GCS コピー途中等）の graceful degradation テスト。"""
+
+    def test_corrupt_db_returns_not_ready(self, tmp_path: Path):
+        """Corrupt DB file causes store to enter not-ready state."""
+        db_path = tmp_path / "corrupt.db"
+        db_path.write_bytes(b"this is not a valid sqlite database")
+
+        store = CacheStore(db_path)
+        assert store.ready is False
+        assert store._ensure_connection() is None
+        assert store.ready is False
+
+    def test_corrupt_db_read_returns_empty(self, tmp_path: Path):
+        """All read operations return empty results when DB is corrupt."""
+        db_path = tmp_path / "corrupt.db"
+        db_path.write_bytes(b"corrupt data here")
+
+        store = CacheStore(db_path)
+        assert store.get_rows("equities_bars_daily", {"code": "72030"}) == []
+        assert store.get_cached_dates("equities_bars_daily", {"code": "72030"}) == set()
+        assert store.get_response("some_key") is None
+        assert store.check_adj_factor("72030", 1.0) is True
+
+    def test_corrupt_db_write_is_noop(self, tmp_path: Path):
+        """All write operations silently skip when DB is corrupt."""
+        db_path = tmp_path / "corrupt.db"
+        db_path.write_bytes(b"corrupt data here")
+
+        store = CacheStore(db_path)
+        assert (
+            store.put_rows(
+                "equities_bars_daily", [{"Code": "72030", "Date": "2024-01-04"}], ["Code", "Date"]
+            )
+            == 0
+        )
+        store.put_response("key", {"data": 1}, ttl_seconds=3600)  # no error
+        assert store.invalidate_rows("equities_bars_daily", {"code": "72030"}) == 0
+
+    def test_corrupt_db_status_shows_not_ready(self, tmp_path: Path):
+        """status() returns cache_ready=False when DB is corrupt."""
+        db_path = tmp_path / "corrupt.db"
+        db_path.write_bytes(b"corrupt data here")
+
+        store = CacheStore(db_path)
+        status = store.status()
+        assert status["cache_ready"] is False
+        assert "db_path" in status
+
+    def test_corrupt_db_clear_returns_empty(self, tmp_path: Path):
+        """clear() returns empty dict when DB is corrupt."""
+        db_path = tmp_path / "corrupt.db"
+        db_path.write_bytes(b"corrupt data here")
+
+        store = CacheStore(db_path)
+        assert store.clear() == {}
+
+    def test_recovery_after_db_becomes_valid(self, tmp_path: Path):
+        """Store recovers when corrupt DB is replaced with valid one."""
+        db_path = tmp_path / "cache.db"
+        db_path.write_bytes(b"corrupt data here")
+
+        store = CacheStore(db_path)
+        # リトライ間隔をバイパスするため _last_retry をリセット
+        store._RETRY_INTERVAL = 0
+        assert store.ready is False
+
+        # 正常な DB に差し替え
+        db_path.unlink()
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE test (id INTEGER PRIMARY KEY)")
+        conn.close()
+
+        # 再試行で復帰
+        assert store._ensure_connection() is not None
+        assert store.ready is True
+
+    def test_retry_interval_prevents_frequent_retries(self, tmp_path: Path):
+        """Retry interval prevents hammering a corrupt DB."""
+        db_path = tmp_path / "corrupt.db"
+        db_path.write_bytes(b"corrupt data here")
+
+        store = CacheStore(db_path)
+        assert store._ensure_connection() is None  # 初回リトライ
+
+        # リトライ間隔内 — 再試行しない
+        assert store._ensure_connection() is None  # スキップされる
+
+    def test_healthy_db_reports_ready(self, cache_store: CacheStore):
+        """Normal DB is reported as ready after first access."""
+        cache_store._ensure_connection()
+        assert cache_store.ready is True
+
+    def test_status_includes_cache_ready(self, cache_store: CacheStore):
+        """status() includes cache_ready field for healthy DB."""
+        status = cache_store.status()
+        assert status["cache_ready"] is True

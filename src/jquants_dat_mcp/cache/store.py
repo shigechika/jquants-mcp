@@ -120,27 +120,79 @@ class CacheStore:
     All cache operations are plan-scoped: Tier 1 rows include a ``plan``
     column and Tier 2 response keys are suffixed with the plan name so that
     data fetched under different subscription plans is stored separately.
+
+    When the database file is missing or corrupt (e.g. GCS copy still in
+    progress on Cloud Run), the store enters a *not-ready* state where all
+    reads return cache-miss results and all writes are silently skipped.
+    The store periodically retries the connection so it recovers
+    automatically once the file becomes valid.
     """
+
+    # DB が使えない場合のリトライ間隔（秒）
+    _RETRY_INTERVAL = 30
 
     def __init__(self, db_path: Path, default_plan: str = "free"):
         self._db_path = db_path
         self._default_plan = default_plan
         self._conn: sqlite3.Connection | None = None
+        self._ready: bool = False
+        self._last_retry: float = 0.0
 
     @property
     def default_plan(self) -> str:
         """Return the default plan used for cache operations."""
         return self._default_plan
 
-    def _ensure_connection(self) -> sqlite3.Connection:
-        """Lazy initialization of SQLite connection."""
-        if self._conn is None:
-            self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA journal_mode=WAL")
+    @property
+    def ready(self) -> bool:
+        """Return whether the cache database is usable."""
+        return self._ready
+
+    def _ensure_connection(self) -> sqlite3.Connection | None:
+        """Lazy initialization of SQLite connection with integrity check.
+
+        Returns the connection if the database is ready, or ``None`` if
+        the database file is missing, corrupt, or still being copied.
+        When not ready, retries at most once every ``_RETRY_INTERVAL``
+        seconds.
+        """
+        if self._conn is not None and self._ready:
+            return self._conn
+
+        # リトライ間隔の制御
+        now = time.time()
+        if not self._ready and (now - self._last_retry) < self._RETRY_INTERVAL:
+            return None
+        self._last_retry = now
+
+        # 既存の壊れた接続を閉じる
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+            self._ready = False
+
+        try:
+            conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            # integrity check — コピー途中のファイルを検出
+            result = conn.execute("PRAGMA quick_check").fetchone()
+            if result is None or result[0] != "ok":
+                msg = result[0] if result else "no result"
+                logger.warning("キャッシュDB整合性エラー（コピー中?）: %s", msg)
+                conn.close()
+                return None
+            conn.execute("PRAGMA journal_mode=WAL")
+            self._conn = conn
             self._init_tables()
+            self._ready = True
             logger.info("キャッシュDB接続: %s", self._db_path)
-        return self._conn
+            return self._conn
+        except sqlite3.DatabaseError as e:
+            logger.warning("キャッシュDB接続失敗（コピー中?）: %s", e)
+            return None
 
     def _init_tables(self) -> None:
         """Create cache tables if they don't exist, then migrate existing ones."""
@@ -225,6 +277,8 @@ class CacheStore:
 
         effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
+        if conn is None:
+            return []
         where, params = _build_where_clause(
             key_filter, effective_plan, date_column, date_from, date_to
         )
@@ -255,6 +309,8 @@ class CacheStore:
 
         effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
+        if conn is None:
+            return set()
         where, params = _build_where_clause(
             key_filter, effective_plan, date_column, date_from, date_to
         )
@@ -287,6 +343,8 @@ class CacheStore:
 
         effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
+        if conn is None:
+            return 0
         now = time.time()
         count = 0
 
@@ -340,6 +398,8 @@ class CacheStore:
 
         effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
+        if conn is None:
+            return 0
         conditions = [f"{col} = ?" for col in key_filter]
         params = list(key_filter.values())
 
@@ -370,6 +430,8 @@ class CacheStore:
 
         effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
+        if conn is None:
+            return True  # DB 未準備 → 分割チェック不可、キャッシュなしとして扱う
         row = conn.execute(
             "SELECT adj_factor FROM equities_bars_daily "
             "WHERE code = ? AND plan = ? ORDER BY date DESC LIMIT 1",
@@ -405,6 +467,8 @@ class CacheStore:
         """
         full_key = self._plan_cache_key(cache_key, plan)
         conn = self._ensure_connection()
+        if conn is None:
+            return None
         row = conn.execute(
             "SELECT data, fetched_at, ttl_seconds FROM response_cache WHERE cache_key = ?",
             (full_key,),
@@ -439,6 +503,8 @@ class CacheStore:
 
         full_key = self._plan_cache_key(cache_key, plan)
         conn = self._ensure_connection()
+        if conn is None:
+            return
         conn.execute(
             "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) "
             "VALUES (?, ?, ?, ?)",
@@ -453,7 +519,18 @@ class CacheStore:
     def status(self) -> dict[str, Any]:
         """Return cache statistics."""
         conn = self._ensure_connection()
-        stats: dict[str, Any] = {"db_path": str(self._db_path), "plan": self._default_plan}
+
+        stats: dict[str, Any] = {
+            "db_path": str(self._db_path),
+            "plan": self._default_plan,
+            "cache_ready": self._ready,
+        }
+
+        if conn is None:
+            # DB 未準備 — ファイルサイズだけ返す
+            if self._db_path.exists():
+                stats["db_size_mb"] = round(self._db_path.stat().st_size / (1024 * 1024), 2)
+            return stats
 
         for table_name in _TIER1_TABLES:
             row = conn.execute(f"SELECT COUNT(*) as cnt FROM {table_name}").fetchone()
@@ -481,6 +558,9 @@ class CacheStore:
             _validate_table(table)
 
         conn = self._ensure_connection()
+        if conn is None:
+            return {}
+
         result: dict[str, int] = {}
 
         tables = [table] if table else list(_TIER1_TABLES.keys()) + ["response_cache"]
@@ -496,6 +576,7 @@ class CacheStore:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+        self._ready = False
 
 
 def _build_where_clause(

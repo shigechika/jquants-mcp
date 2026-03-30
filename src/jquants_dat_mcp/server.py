@@ -258,12 +258,14 @@ def health_check() -> dict[str, Any]:
                 plan = user.plan
                 has_key = True
 
+    cache = _get_cache()
     return {
         "status": "healthy",
         "service": "jquants-dat-mcp",
         "version": __version__,
         "api_key_configured": has_key,
         "plan": plan,
+        "cache_ready": cache.ready,
     }
 
 
