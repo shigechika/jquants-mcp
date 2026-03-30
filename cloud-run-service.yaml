@@ -14,7 +14,7 @@ spec:
         # Single instance to avoid concurrent SQLite writes
         autoscaling.knative.dev/minScale: "0"
         autoscaling.knative.dev/maxScale: "1"
-        # Increase startup timeout for large GCS downloads (4 GB cache)
+        # Faster startup with CPU boost
         run.googleapis.com/startup-cpu-boost: "true"
     spec:
       # Service account with GCS read/write permissions
@@ -31,8 +31,8 @@ spec:
 
           resources:
             limits:
-              # 8 Gi recommended: cache.db up to 4 GB + OS overhead
-              memory: 8Gi
+              # 2 Gi: cache.db is gcsfuse-mounted (not in memory)
+              memory: 2Gi
               cpu: "2"
 
           env:
@@ -52,6 +52,12 @@ spec:
             - name: JQUANTS_PLAN
               value: "premium"
 
+            # ---- gcsfuse cache.db settings ----
+            - name: JQUANTS_CACHE_DB_PATH
+              value: "/mnt/gcs/cache.db"
+            - name: JQUANTS_CACHE_DB_READONLY
+              value: "true"
+
             # ---- Secrets (use Secret Manager in production) ----
             # Uncomment and replace with your Secret Manager secret names.
             #
@@ -67,6 +73,11 @@ spec:
             #       name: mcp-bearer-token
             #       key: latest
 
+          volumeMounts:
+            - name: gcs-cache
+              mountPath: /mnt/gcs
+              readOnly: true
+
           # Liveness probe: check /mcp endpoint
           livenessProbe:
             httpGet:
@@ -76,11 +87,20 @@ spec:
             periodSeconds: 30
             failureThreshold: 3
 
-          # Startup probe: wait for GCS download + server startup
+          # Startup probe: fast startup (no large download needed)
           startupProbe:
             httpGet:
               path: /mcp
               port: 8000
-            initialDelaySeconds: 30
-            periodSeconds: 10
-            failureThreshold: 30  # up to 5 minutes for large cache download
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 12  # up to 1 minute
+
+      volumes:
+        - name: gcs-cache
+          csi:
+            driver: gcsfuse.run.googleapis.com
+            readOnly: true
+            volumeAttributes:
+              bucketName: aikawa-dx-jquants-dat-mcp
+              mountOptions: "only-dir=jquants-dat-mcp,implicit-dirs"

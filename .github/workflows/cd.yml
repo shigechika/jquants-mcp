@@ -38,6 +38,8 @@ jobs:
             --set-env-vars "\
               GCS_BUCKET=aikawa-dx-jquants-dat-mcp,\
               JQUANTS_CACHE_DIR=/tmp,\
+              JQUANTS_CACHE_DB_PATH=/mnt/gcs/cache.db,\
+              JQUANTS_CACHE_DB_READONLY=true,\
               OAUTH_PROVIDER=google,\
               OAUTH_BASE_URL=https://jquants-dat-mcp-29004083822.us-west1.run.app,\
               OAUTH_REQUIRE_CONSENT=false,\

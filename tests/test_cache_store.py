@@ -414,3 +414,149 @@ class TestCorruptDatabase:
         """status() includes cache_ready field for healthy DB."""
         status = cache_store.status()
         assert status["cache_ready"] is True
+
+
+class TestReadonlyOverlayMode:
+    """readonly + overlay モードのテスト。"""
+
+    def _make_readonly_store(self, tmp_path: Path) -> CacheStore:
+        """Create a writable store, populate it, then open as readonly."""
+        db_path = tmp_path / "main_cache.db"
+        # 通常モードでデータを作成
+        writer = CacheStore(db_path, default_plan="free")
+        writer.put_rows(
+            "equities_bars_daily",
+            [{"Code": "72030", "Date": "2024-01-04", "O": 100, "AdjFactor": 1.0}],
+            ["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        writer.put_response("resp|key", {"data": "main"}, ttl_seconds=3600)
+        writer.close()
+
+        # readonly モードで開く
+        overlay_path = tmp_path / "overlay.db"
+        return CacheStore(db_path, default_plan="free", readonly=True, overlay_path=overlay_path)
+
+    def test_read_from_main_db(self, tmp_path: Path):
+        """readonly モードでメインDBからデータを読み取れること。"""
+        store = self._make_readonly_store(tmp_path)
+        rows = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert len(rows) == 1
+        assert rows[0]["O"] == 100
+        store.close()
+
+    def test_read_response_from_main_db(self, tmp_path: Path):
+        """readonly モードでメインDBからレスポンスキャッシュを読み取れること。"""
+        store = self._make_readonly_store(tmp_path)
+        resp = store.get_response("resp|key")
+        assert resp is not None
+        assert resp["data"] == "main"
+        store.close()
+
+    def test_write_goes_to_overlay(self, tmp_path: Path):
+        """readonly モードで書き込みがオーバーレイDBに行くこと。"""
+        store = self._make_readonly_store(tmp_path)
+        # 新しいデータをオーバーレイに書き込み
+        store.put_rows(
+            "equities_bars_daily",
+            [{"Code": "99990", "Date": "2024-02-01", "O": 999, "AdjFactor": 1.0}],
+            ["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        # オーバーレイのデータが読める
+        rows = store.get_rows("equities_bars_daily", {"code": "99990"})
+        assert len(rows) == 1
+        assert rows[0]["O"] == 999
+
+        # メインDBのデータもまだ読める
+        main_rows = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert len(main_rows) == 1
+        store.close()
+
+    def test_overlay_overrides_main(self, tmp_path: Path):
+        """オーバーレイのデータがメインDBのデータを上書きすること。"""
+        store = self._make_readonly_store(tmp_path)
+        # メインDBと同じキーでオーバーレイに書き込み
+        store.put_rows(
+            "equities_bars_daily",
+            [{"Code": "72030", "Date": "2024-01-04", "O": 9999, "AdjFactor": 2.0}],
+            ["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        rows = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert len(rows) == 1
+        assert rows[0]["O"] == 9999
+        store.close()
+
+    def test_get_cached_dates_union(self, tmp_path: Path):
+        """get_cached_dates がメインDBとオーバーレイの union を返すこと。"""
+        store = self._make_readonly_store(tmp_path)
+        # オーバーレイに別日付を追加
+        store.put_rows(
+            "equities_bars_daily",
+            [{"Code": "72030", "Date": "2024-01-05", "O": 200, "AdjFactor": 1.0}],
+            ["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        dates = store.get_cached_dates("equities_bars_daily", {"code": "72030"})
+        assert dates == {"2024-01-04", "2024-01-05"}
+        store.close()
+
+    def test_response_write_to_overlay(self, tmp_path: Path):
+        """レスポンスキャッシュの書き込みがオーバーレイに行くこと。"""
+        store = self._make_readonly_store(tmp_path)
+        store.put_response("new|resp", {"data": "overlay"}, ttl_seconds=3600)
+        resp = store.get_response("new|resp")
+        assert resp is not None
+        assert resp["data"] == "overlay"
+        store.close()
+
+    def test_response_overlay_takes_precedence(self, tmp_path: Path):
+        """オーバーレイのレスポンスがメインDBより優先されること。"""
+        store = self._make_readonly_store(tmp_path)
+        # 同じキーでオーバーレイに書き込み
+        store.put_response("resp|key", {"data": "overlay_wins"}, ttl_seconds=3600)
+        resp = store.get_response("resp|key")
+        assert resp is not None
+        assert resp["data"] == "overlay_wins"
+        store.close()
+
+    def test_status_includes_readonly(self, tmp_path: Path):
+        """status にreadonly フラグが含まれること。"""
+        store = self._make_readonly_store(tmp_path)
+        status = store.status()
+        assert status["readonly"] is True
+        store.close()
+
+    def test_clear_only_affects_overlay(self, tmp_path: Path):
+        """clear がオーバーレイDBのみクリアすること。"""
+        store = self._make_readonly_store(tmp_path)
+        # オーバーレイにデータ追加
+        store.put_rows(
+            "equities_bars_daily",
+            [{"Code": "99990", "Date": "2024-02-01", "O": 999, "AdjFactor": 1.0}],
+            ["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        store.clear("equities_bars_daily")
+        # メインDBのデータはまだ読める
+        rows = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert len(rows) == 1
+        store.close()
+
+    def test_invalidate_only_affects_overlay(self, tmp_path: Path):
+        """invalidate_rows がオーバーレイDBのみ削除すること。"""
+        store = self._make_readonly_store(tmp_path)
+        # オーバーレイにデータ追加
+        store.put_rows(
+            "equities_bars_daily",
+            [{"Code": "99990", "Date": "2024-02-01", "O": 999, "AdjFactor": 1.0}],
+            ["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        deleted = store.invalidate_rows("equities_bars_daily", {"code": "99990"})
+        assert deleted == 1
+        # メインDBのデータは影響を受けない
+        rows = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert len(rows) == 1
+        store.close()

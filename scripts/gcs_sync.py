@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """GCS sync utility for Cloud Run deployment of jquants-dat-mcp.
 
-Manages SQLite cache synchronization between Cloud Run's ephemeral /tmp
-filesystem and Google Cloud Storage.
+Manages auth database synchronization between Cloud Run's ephemeral /tmp
+filesystem and Google Cloud Storage. cache.db is gcsfuse-mounted read-only
+and does not need download/upload via this script.
 
 Usage:
-    # Download from GCS to local cache dir (run at startup)
+    # Download auth DBs from GCS (run at startup)
     python gcs_sync.py --init
 
     # Run background daemon: upload every 5 minutes, final upload on SIGTERM
@@ -35,18 +36,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gcs_sync")
 
-# Files to download from GCS at startup (all)
-_DOWNLOAD_FILES = ["cache.db", "users.db", "oauth_state.db"]
-
-# Small files needed for auth — downloaded first for fast startup
-_DOWNLOAD_FAST = ["users.db", "oauth_state.db"]
-
-# Large cache file — downloaded in background after server starts
-_DOWNLOAD_CACHE = ["cache.db"]
+# Files to download from GCS at startup (auth DBs only; cache.db is gcsfuse-mounted)
+_DOWNLOAD_FILES = ["users.db", "oauth_state.db"]
 
 # Files to upload to GCS (daemon / --upload)
-# cache.db is excluded: it is owned by self-hosted server (jpx-short-report daily.sh)
-# and uploaded from there. Cloud Run should not overwrite it.
+# cache.db is excluded: it is gcsfuse-mounted read-only from GCS,
+# and owned by self-hosted server (jpx-short-report daily.sh).
 _UPLOAD_FILES = ["users.db", "oauth_state.db"]
 
 # Sync interval in seconds
@@ -173,12 +168,8 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="GCS cache sync utility for jquants-dat-mcp")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--init", action="store_true", help="Download all files from GCS")
     group.add_argument(
-        "--init-fast", action="store_true", help="Download auth DBs only (fast startup)"
-    )
-    group.add_argument(
-        "--init-cache", action="store_true", help="Download cache.db only (background)"
+        "--init", action="store_true", help="Download auth DBs from GCS (users.db, oauth_state.db)"
     )
     group.add_argument("--daemon", action="store_true", help="Run background sync daemon")
     group.add_argument("--upload", action="store_true", help="Upload local cache to GCS and exit")
@@ -186,10 +177,6 @@ def main() -> None:
 
     if args.init:
         download_files()
-    elif args.init_fast:
-        download_files(_DOWNLOAD_FAST)
-    elif args.init_cache:
-        download_files(_DOWNLOAD_CACHE)
     elif args.daemon:
         run_daemon()
     elif args.upload:

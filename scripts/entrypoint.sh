@@ -3,10 +3,9 @@
 #
 # Workflow:
 #   1. Download small DB files from GCS (users.db, oauth_state.db)
-#   2. Start MCP server (streamable-http) — responds to health checks immediately
-#   3. Download large cache.db from GCS in background
-#   4. Start background GCS sync daemon
-#   5. On SIGTERM: stop MCP server, stop daemon (triggers final GCS upload)
+#   2. Start MCP server (streamable-http) — cache.db is gcsfuse-mounted
+#   3. Start background GCS sync daemon (users.db + oauth_state.db upload only)
+#   4. On SIGTERM: stop MCP server, stop daemon (triggers final GCS upload)
 set -euo pipefail
 
 PORT="${PORT:-8000}"
@@ -15,11 +14,13 @@ echo "=== jquants-dat-mcp startup ==="
 echo "PORT=${PORT}"
 echo "GCS_BUCKET=${GCS_BUCKET:-<not set>}"
 echo "JQUANTS_CACHE_DIR=${JQUANTS_CACHE_DIR:-/tmp}"
+echo "JQUANTS_CACHE_DB_PATH=${JQUANTS_CACHE_DB_PATH:-<not set>}"
+echo "JQUANTS_CACHE_DB_READONLY=${JQUANTS_CACHE_DB_READONLY:-false}"
 
-# Step 1: Download small files first (fast, needed for auth)
+# Step 1: Download small auth files from GCS (fast, needed for auth)
 if [ -n "${GCS_BUCKET:-}" ]; then
     echo "Downloading auth databases from GCS..."
-    python /app/scripts/gcs_sync.py --init-fast
+    python /app/scripts/gcs_sync.py --init
 else
     echo "GCS_BUCKET not set, skipping GCS download"
 fi
@@ -51,26 +52,18 @@ _shutdown() {
 
 trap _shutdown SIGTERM SIGINT
 
-# Step 3: Start MCP server immediately (cache.db loads in background)
+# Step 3: Start MCP server (cache.db is gcsfuse-mounted, no download needed)
 echo "Starting MCP server on port ${PORT}..."
 jquants-dat-mcp --transport streamable-http --host 0.0.0.0 --port "${PORT}" &
 MCP_PID=$!
 echo "MCP server started (PID=${MCP_PID})"
 
-# Step 4: Download cache.db in background (large file, takes minutes)
+# Step 4: Start GCS sync daemon (uploads users.db + oauth_state.db only)
 if [ -n "${GCS_BUCKET:-}" ]; then
-    echo "Downloading cache.db from GCS in background..."
-    python /app/scripts/gcs_sync.py --init-cache &
-    GCS_INIT_PID=$!
-
-    # Start GCS sync daemon after cache download completes
-    (
-        wait "${GCS_INIT_PID}" 2>/dev/null
-        echo "Cache download complete, starting GCS sync daemon..."
-        python /app/scripts/gcs_sync.py --daemon &
-        GCS_DAEMON_PID=$!
-        echo "GCS sync daemon started (PID=${GCS_DAEMON_PID})"
-    ) &
+    echo "Starting GCS sync daemon..."
+    python /app/scripts/gcs_sync.py --daemon &
+    GCS_DAEMON_PID=$!
+    echo "GCS sync daemon started (PID=${GCS_DAEMON_PID})"
 fi
 
 # Wait for MCP server to exit

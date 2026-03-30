@@ -126,17 +126,30 @@ class CacheStore:
     reads return cache-miss results and all writes are silently skipped.
     The store periodically retries the connection so it recovers
     automatically once the file becomes valid.
+
+    In *readonly* mode (e.g. gcsfuse mount), the main database is opened
+    read-only and writes go to an overlay database in /tmp.
     """
 
     # DB が使えない場合のリトライ間隔（秒）
     _RETRY_INTERVAL = 30
 
-    def __init__(self, db_path: Path, default_plan: str = "free"):
+    def __init__(
+        self,
+        db_path: Path,
+        default_plan: str = "free",
+        readonly: bool = False,
+        overlay_path: Path | None = None,
+    ):
         self._db_path = db_path
         self._default_plan = default_plan
+        self._readonly = readonly
+        self._overlay_path = overlay_path or Path("/tmp/cache_overlay.db")
         self._conn: sqlite3.Connection | None = None
         self._ready: bool = False
         self._last_retry: float = 0.0
+        # オーバーレイDB: readonly モードで書き込み用
+        self._overlay_conn: sqlite3.Connection | None = None
 
     @property
     def default_plan(self) -> str:
@@ -155,6 +168,9 @@ class CacheStore:
         the database file is missing, corrupt, or still being copied.
         When not ready, retries at most once every ``_RETRY_INTERVAL``
         seconds.
+
+        In readonly mode, the database is opened with ``?mode=ro`` and
+        WAL / table creation is skipped (read-only filesystem).
         """
         if self._conn is not None and self._ready:
             return self._conn
@@ -175,24 +191,61 @@ class CacheStore:
             self._ready = False
 
         try:
-            conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            # integrity check — コピー途中のファイルを検出
-            result = conn.execute("PRAGMA quick_check").fetchone()
-            if result is None or result[0] != "ok":
-                msg = result[0] if result else "no result"
-                logger.warning("キャッシュDB整合性エラー（コピー中?）: %s", msg)
-                conn.close()
-                return None
-            conn.execute("PRAGMA journal_mode=WAL")
-            self._conn = conn
-            self._init_tables()
-            self._ready = True
-            logger.info("キャッシュDB接続: %s", self._db_path)
-            return self._conn
+            if self._readonly:
+                # gcsfuse マウント: 読み取り専用で開く
+                uri = f"file:{self._db_path}?mode=ro"
+                conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                # integrity check — コピー途中 / 破損ファイルを検出
+                result = conn.execute("PRAGMA quick_check").fetchone()
+                if result is None or result[0] != "ok":
+                    msg = result[0] if result else "no result"
+                    logger.warning("キャッシュDB整合性エラー（readonly）: %s", msg)
+                    conn.close()
+                    return None
+                # WAL / テーブル作成はスキップ（読み取り専用ファイルシステム）
+                self._conn = conn
+                self._ready = True
+                logger.info("キャッシュDB接続（読み取り専用）: %s", self._db_path)
+                return self._conn
+            else:
+                conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                # integrity check — コピー途中のファイルを検出
+                result = conn.execute("PRAGMA quick_check").fetchone()
+                if result is None or result[0] != "ok":
+                    msg = result[0] if result else "no result"
+                    logger.warning("キャッシュDB整合性エラー（コピー中?）: %s", msg)
+                    conn.close()
+                    return None
+                conn.execute("PRAGMA journal_mode=WAL")
+                self._conn = conn
+                self._init_tables()
+                self._ready = True
+                logger.info("キャッシュDB接続: %s", self._db_path)
+                return self._conn
         except sqlite3.DatabaseError as e:
             logger.warning("キャッシュDB接続失敗（コピー中?）: %s", e)
             return None
+
+    def _ensure_overlay(self) -> sqlite3.Connection:
+        """Lazy initialization of the overlay SQLite connection for readonly mode.
+
+        The overlay database lives in /tmp and stores writes that cannot go to
+        the read-only main database (e.g. gcsfuse-mounted cache.db).
+        """
+        if self._overlay_conn is None:
+            overlay_path = self._overlay_path
+            self._overlay_conn = sqlite3.connect(str(overlay_path), check_same_thread=False)
+            self._overlay_conn.row_factory = sqlite3.Row
+            self._overlay_conn.execute("PRAGMA journal_mode=WAL")
+            # オーバーレイにテーブルを作成
+            old_conn = self._conn
+            self._conn = self._overlay_conn
+            self._init_tables()
+            self._conn = old_conn
+            logger.info("オーバーレイDB接続: %s", overlay_path)
+        return self._overlay_conn
 
     def _init_tables(self) -> None:
         """Create cache tables if they don't exist, then migrate existing ones."""
@@ -259,7 +312,7 @@ class CacheStore:
 
         Args:
             table: Tier 1 table name
-            key_filter: Column name → value pairs (e.g. {"code": "72030"})
+            key_filter: Column name -> value pairs (e.g. {"code": "72030"})
             date_column: Name of the date column for range filtering
             date_from: Start date (inclusive)
             date_to: End date (inclusive)
@@ -284,7 +337,17 @@ class CacheStore:
         )
         sql = f"SELECT data FROM {table} WHERE {where} ORDER BY {date_column}"
         rows = conn.execute(sql, params).fetchall()
-        return [json.loads(row["data"]) for row in rows]
+        result = [json.loads(row["data"]) for row in rows]
+
+        # readonly モード: オーバーレイの結果を union（オーバーレイ優先）
+        if self._readonly and self._overlay_conn is not None:
+            overlay_rows = self._overlay_conn.execute(sql, params).fetchall()
+            if overlay_rows:
+                # オーバーレイのデータでメインDBの結果を上書き
+                overlay_data = [json.loads(r["data"]) for r in overlay_rows]
+                result = _merge_rows(result, overlay_data, table)
+
+        return result
 
     def get_cached_dates(
         self,
@@ -316,7 +379,14 @@ class CacheStore:
         )
         sql = f"SELECT {date_column} FROM {table} WHERE {where}"
         rows = conn.execute(sql, params).fetchall()
-        return {row[0] for row in rows}
+        result = {row[0] for row in rows}
+
+        # readonly モード: オーバーレイの日付も union
+        if self._readonly and self._overlay_conn is not None:
+            overlay_rows = self._overlay_conn.execute(sql, params).fetchall()
+            result |= {row[0] for row in overlay_rows}
+
+        return result
 
     def put_rows(
         self,
@@ -342,9 +412,13 @@ class CacheStore:
             return 0
 
         effective_plan = plan if plan is not None else self._default_plan
-        conn = self._ensure_connection()
-        if conn is None:
-            return 0
+        # readonly モード: オーバーレイDBに書き込み
+        if self._readonly:
+            conn = self._ensure_overlay()
+        else:
+            conn = self._ensure_connection()
+            if conn is None:
+                return 0
         now = time.time()
         count = 0
 
@@ -397,9 +471,13 @@ class CacheStore:
             _validate_column(col, table)
 
         effective_plan = plan if plan is not None else self._default_plan
-        conn = self._ensure_connection()
-        if conn is None:
-            return 0
+        # readonly モード: オーバーレイDBのみ削除（メインDBは読み取り専用）
+        if self._readonly:
+            conn = self._ensure_overlay()
+        else:
+            conn = self._ensure_connection()
+            if conn is None:
+                return 0
         conditions = [f"{col} = ?" for col in key_filter]
         params = list(key_filter.values())
 
@@ -432,11 +510,19 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return True  # DB 未準備 → 分割チェック不可、キャッシュなしとして扱う
-        row = conn.execute(
+
+        _adj_sql = (
             "SELECT adj_factor FROM equities_bars_daily "
-            "WHERE code = ? AND plan = ? ORDER BY date DESC LIMIT 1",
-            (code, effective_plan),
-        ).fetchone()
+            "WHERE code = ? AND plan = ? ORDER BY date DESC LIMIT 1"
+        )
+        _adj_params = (code, effective_plan)
+
+        # readonly モード: オーバーレイを優先して検索
+        row = None
+        if self._readonly and self._overlay_conn is not None:
+            row = self._overlay_conn.execute(_adj_sql, _adj_params).fetchone()
+        if row is None:
+            row = conn.execute(_adj_sql, _adj_params).fetchone()
 
         if row is None:
             return True  # キャッシュなし → 問題なし
@@ -466,22 +552,35 @@ class CacheStore:
             plan: Subscription plan scope. Defaults to ``default_plan``.
         """
         full_key = self._plan_cache_key(cache_key, plan)
+        _resp_sql = "SELECT data, fetched_at, ttl_seconds FROM response_cache WHERE cache_key = ?"
+
+        # readonly モード: オーバーレイを優先して検索
+        if self._readonly and self._overlay_conn is not None:
+            row = self._overlay_conn.execute(_resp_sql, (full_key,)).fetchone()
+            if row is not None:
+                age = time.time() - row["fetched_at"]
+                if row["ttl_seconds"] > 0 and age > row["ttl_seconds"]:
+                    self._overlay_conn.execute(
+                        "DELETE FROM response_cache WHERE cache_key = ?", (full_key,)
+                    )
+                    self._overlay_conn.commit()
+                else:
+                    return json.loads(row["data"])
+
         conn = self._ensure_connection()
         if conn is None:
             return None
-        row = conn.execute(
-            "SELECT data, fetched_at, ttl_seconds FROM response_cache WHERE cache_key = ?",
-            (full_key,),
-        ).fetchone()
+        row = conn.execute(_resp_sql, (full_key,)).fetchone()
 
         if row is None:
             return None
 
         age = time.time() - row["fetched_at"]
         if row["ttl_seconds"] > 0 and age > row["ttl_seconds"]:
-            # 期限切れ → 削除
-            conn.execute("DELETE FROM response_cache WHERE cache_key = ?", (full_key,))
-            conn.commit()
+            # 期限切れ → readonly では削除できない、None を返すだけ
+            if not self._readonly:
+                conn.execute("DELETE FROM response_cache WHERE cache_key = ?", (full_key,))
+                conn.commit()
             return None
 
         return json.loads(row["data"])
@@ -502,9 +601,13 @@ class CacheStore:
             return  # キャッシュしない設定
 
         full_key = self._plan_cache_key(cache_key, plan)
-        conn = self._ensure_connection()
-        if conn is None:
-            return
+        # readonly モード: オーバーレイDBに書き込み
+        if self._readonly:
+            conn = self._ensure_overlay()
+        else:
+            conn = self._ensure_connection()
+            if conn is None:
+                return
         conn.execute(
             "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) "
             "VALUES (?, ?, ?, ?)",
@@ -524,6 +627,7 @@ class CacheStore:
             "db_path": str(self._db_path),
             "plan": self._default_plan,
             "cache_ready": self._ready,
+            "readonly": self._readonly,
         }
 
         if conn is None:
@@ -534,10 +638,23 @@ class CacheStore:
 
         for table_name in _TIER1_TABLES:
             row = conn.execute(f"SELECT COUNT(*) as cnt FROM {table_name}").fetchone()
-            stats[table_name] = row["cnt"] if row else 0
+            count = row["cnt"] if row else 0
+            # readonly モード: オーバーレイの行数も加算
+            if self._readonly and self._overlay_conn is not None:
+                overlay_row = self._overlay_conn.execute(
+                    f"SELECT COUNT(*) as cnt FROM {table_name}"
+                ).fetchone()
+                count += overlay_row["cnt"] if overlay_row else 0
+            stats[table_name] = count
 
         row = conn.execute("SELECT COUNT(*) as cnt FROM response_cache").fetchone()
-        stats["response_cache"] = row["cnt"] if row else 0
+        resp_count = row["cnt"] if row else 0
+        if self._readonly and self._overlay_conn is not None:
+            overlay_row = self._overlay_conn.execute(
+                "SELECT COUNT(*) as cnt FROM response_cache"
+            ).fetchone()
+            resp_count += overlay_row["cnt"] if overlay_row else 0
+        stats["response_cache"] = resp_count
 
         # DB ファイルサイズ
         if self._db_path.exists():
@@ -552,14 +669,18 @@ class CacheStore:
             table: If specified, clear only this table. Otherwise clear all.
 
         Returns:
-            Dict of table_name → rows_deleted
+            Dict of table_name -> rows_deleted
         """
         if table is not None:
             _validate_table(table)
 
-        conn = self._ensure_connection()
-        if conn is None:
-            return {}
+        # readonly モード: オーバーレイDBのみクリア
+        if self._readonly:
+            conn = self._ensure_overlay()
+        else:
+            conn = self._ensure_connection()
+            if conn is None:
+                return {}
 
         result: dict[str, int] = {}
 
@@ -572,7 +693,10 @@ class CacheStore:
         return result
 
     def close(self) -> None:
-        """Close the database connection."""
+        """Close the database connection(s)."""
+        if self._overlay_conn is not None:
+            self._overlay_conn.close()
+            self._overlay_conn = None
         if self._conn is not None:
             self._conn.close()
             self._conn = None
@@ -589,7 +713,7 @@ def _build_where_clause(
     """Build a WHERE clause and parameter list for Tier 1 cache queries.
 
     Args:
-        key_filter: Column name → value pairs (e.g. {"code": "72030"})
+        key_filter: Column name -> value pairs (e.g. {"code": "72030"})
         effective_plan: Subscription plan to filter on.
         date_column: Name of the date column for range filtering.
         date_from: Start date (inclusive).
@@ -643,7 +767,7 @@ def _validate_table(name: str) -> None:
 def _key_col_names(table: str) -> list[str]:
     """Extract key column names from table schema definition."""
     schema = _TIER1_TABLES[table]
-    # "code TEXT NOT NULL, date TEXT NOT NULL" → ["code", "date"]
+    # "code TEXT NOT NULL, date TEXT NOT NULL" -> ["code", "date"]
     return [part.strip().split()[0] for part in schema["key_columns"].split(",")]
 
 
@@ -658,6 +782,29 @@ def _normalize_date_value(value: str) -> str:
     elif "T" in value:
         value = value.split("T")[0]
     return value
+
+
+def _merge_rows(
+    main_rows: list[dict[str, Any]],
+    overlay_rows: list[dict[str, Any]],
+    table: str,
+) -> list[dict[str, Any]]:
+    """Merge overlay rows into main rows, with overlay taking precedence.
+
+    Uses the table's key columns to determine row identity. Overlay rows
+    replace main rows with the same key; new overlay rows are appended.
+    """
+    key_cols = _key_col_names(table)
+
+    def _row_key(row: dict[str, Any]) -> tuple[str, ...]:
+        return tuple(str(row.get(k, "")) for k in key_cols)
+
+    # オーバーレイのキーセットを構築
+    overlay_keys = {_row_key(r) for r in overlay_rows}
+    # メインDBから重複しない行のみ残す
+    merged = [r for r in main_rows if _row_key(r) not in overlay_keys]
+    merged.extend(overlay_rows)
+    return merged
 
 
 def make_cache_key(endpoint: str, params: dict[str, Any] | None = None) -> str:
