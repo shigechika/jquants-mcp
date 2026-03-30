@@ -53,5 +53,5 @@ jobs:
               MCP_ENCRYPTION_KEY=mcp-encryption-key:latest,\
               JQUANTS_API_KEY=jquants-api-key:latest,\
               GITHUB_CLIENT_SECRET=github-oauth-client-secret:latest" \
-            --add-volume name=gcs-cache,type=cloud-storage,bucket=aikawa-dx-jquants-dat-mcp,readonly=true,mount-options="implicit-dirs;file-cache:max-size-mb:10240;file-cache:cache-file-for-range-read:true" \
+            --add-volume name=gcs-cache,type=cloud-storage,bucket=aikawa-dx-jquants-dat-mcp,readonly=true,mount-options="implicit-dirs;file-cache-max-size-mb=10240;file-cache-cache-file-for-range-read" \
             --add-volume-mount volume=gcs-cache,mount-path=/mnt/gcs
