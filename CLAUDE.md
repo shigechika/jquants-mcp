@@ -71,9 +71,11 @@ uv run ruff format src/ tests/  # Format
 
 ## CI/CD Notes
 
-- CD workflow declares ALL env vars and secrets — never use manual `gcloud run services update --set-secrets` (it overwrites existing secrets)
+- CD workflow declares ALL env vars and secrets — never use manual `gcloud run services update` (it gets overwritten by next CD deploy)
 - `gcloud storage cp` with parallel composite upload corrupts SQLite files — use `parallel_composite_upload_enabled=False`
 - Cloud Run GCS daemon uploads only users.db and oauth_state.db (not cache.db — owned by self-hosted server)
+- gcsfuse is NOT viable for large SQLite DBs (>100 MB) due to random read latency — see `docs/gcsfuse-postmortem.md`
+- Always research technology compatibility BEFORE implementing (e.g., "gcsfuse sqlite" would have revealed issues immediately)
 
 ## Cache Plan Scoping
 
