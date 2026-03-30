@@ -193,9 +193,17 @@ class CacheStore:
         try:
             if self._readonly:
                 # gcsfuse マウント: 読み取り専用で開く
-                # URI モード（file:...?mode=ro）は gcsfuse で失敗する場合があるため
-                # 通常パスで開く。書き込みはオーバーレイDBに振り分けるので安全。
-                conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
+                import os
+
+                db_str = str(self._db_path)
+                exists = os.path.exists(db_str)
+                readable = os.access(db_str, os.R_OK) if exists else False
+                size = os.path.getsize(db_str) if exists else 0
+                logger.info(
+                    "gcsfuse DB診断: path=%s exists=%s readable=%s size=%d",
+                    db_str, exists, readable, size,
+                )
+                conn = sqlite3.connect(db_str, check_same_thread=False)
                 conn.row_factory = sqlite3.Row
                 # 接続検証
                 conn.execute("SELECT 1")
