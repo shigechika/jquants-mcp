@@ -622,7 +622,6 @@ class CacheStore:
         stats: dict[str, Any] = {
             "db_path": str(self._db_path),
             "plan": self._default_plan,
-            "cache_ready": self._ready,
             "readonly": self._readonly,
         }
 

@@ -272,7 +272,6 @@ def health_check() -> dict[str, Any]:
         "version": __version__,
         "api_key_configured": has_key,
         "plan": plan,
-        "cache_ready": cache.ready,
     }
 
 

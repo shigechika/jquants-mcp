@@ -356,14 +356,13 @@ class TestCorruptDatabase:
         store.put_response("key", {"data": 1}, ttl_seconds=3600)  # no error
         assert store.invalidate_rows("equities_bars_daily", {"code": "72030"}) == 0
 
-    def test_corrupt_db_status_shows_not_ready(self, tmp_path: Path):
-        """status() returns cache_ready=False when DB is corrupt."""
+    def test_corrupt_db_status_shows_db_path(self, tmp_path: Path):
+        """status() returns db_path even when DB is corrupt."""
         db_path = tmp_path / "corrupt.db"
         db_path.write_bytes(b"corrupt data here")
 
         store = CacheStore(db_path)
         status = store.status()
-        assert status["cache_ready"] is False
         assert "db_path" in status
 
     def test_corrupt_db_clear_returns_empty(self, tmp_path: Path):
@@ -410,10 +409,10 @@ class TestCorruptDatabase:
         cache_store._ensure_connection()
         assert cache_store.ready is True
 
-    def test_status_includes_cache_ready(self, cache_store: CacheStore):
-        """status() includes cache_ready field for healthy DB."""
+    def test_status_excludes_cache_ready(self, cache_store: CacheStore):
+        """status() does not include cache_ready (removed after gcsfuse migration)."""
         status = cache_store.status()
-        assert status["cache_ready"] is True
+        assert "cache_ready" not in status
 
 
 class TestReadonlyOverlayMode:
