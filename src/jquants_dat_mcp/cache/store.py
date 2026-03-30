@@ -196,13 +196,9 @@ class CacheStore:
                 uri = f"file:{self._db_path}?mode=ro"
                 conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
                 conn.row_factory = sqlite3.Row
-                # integrity check — コピー途中 / 破損ファイルを検出
-                result = conn.execute("PRAGMA quick_check").fetchone()
-                if result is None or result[0] != "ok":
-                    msg = result[0] if result else "no result"
-                    logger.warning("キャッシュDB整合性エラー（readonly）: %s", msg)
-                    conn.close()
-                    return None
+                # gcsfuse では PRAGMA quick_check をスキップ（POSIX 非準拠のため失敗する場合がある）
+                # 代わりに簡易クエリで接続を検証
+                conn.execute("SELECT 1")
                 # WAL / テーブル作成はスキップ（読み取り専用ファイルシステム）
                 self._conn = conn
                 self._ready = True
