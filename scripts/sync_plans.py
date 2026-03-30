@@ -84,6 +84,12 @@ def _get_all_columns(conn: sqlite3.Connection, table: str) -> list[str]:
     return [row[1] for row in cursor.fetchall()]
 
 
+def _get_max_date(conn: sqlite3.Connection, table: str, plan: str, date_col: str) -> str | None:
+    """Return the latest date in the table for the given plan."""
+    row = conn.execute(f"SELECT MAX({date_col}) FROM {table} WHERE plan = ?", [plan]).fetchone()
+    return row[0] if row and row[0] else None
+
+
 def _copy_rows(
     conn: sqlite3.Connection,
     table: str,
@@ -92,8 +98,13 @@ def _copy_rows(
     date_col: str | None,
     date_from: str | None = None,
     date_to: str | None = None,
+    incremental: bool = True,
 ) -> int:
     """Copy rows from src_plan to dst_plan using INSERT OR REPLACE.
+
+    When incremental=True (default), only copies rows newer than the
+    latest existing row in dst_plan. Falls back to full copy if the
+    destination is empty.
 
     Returns the number of rows copied.
     """
@@ -110,6 +121,23 @@ def _copy_rows(
     if date_col is not None and date_to is not None:
         conditions.append(f"{date_col} < ?")
         params.append(date_to)
+
+    # 差分コピー: dst_plan の最新日付以降のみコピー
+    if incremental:
+        if date_col is not None:
+            max_date = _get_max_date(conn, table, dst_plan, date_col)
+            if max_date is not None:
+                conditions.append(f"{date_col} > ?")
+                params.append(max_date)
+        else:
+            # 日付カラムなし: fetched_at で差分判定
+            row = conn.execute(
+                f"SELECT MAX(fetched_at) FROM {table} WHERE plan = ?", [dst_plan]
+            ).fetchone()
+            max_fetched = row[0] if row and row[0] else None
+            if max_fetched is not None:
+                conditions.append("fetched_at > ?")
+                params.append(str(max_fetched))
 
     where = " AND ".join(conditions)
     col_list = ", ".join(columns)
