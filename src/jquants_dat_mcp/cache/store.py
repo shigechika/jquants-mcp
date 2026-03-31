@@ -438,8 +438,7 @@ class CacheStore:
             return True  # DB 未準備 → 分割チェック不可、キャッシュなしとして扱う
 
         _adj_sql = (
-            "SELECT adj_factor FROM equities_bars_daily "
-            "WHERE code = ? ORDER BY date DESC LIMIT 1"
+            "SELECT adj_factor FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT 1"
         )
         row = conn.execute(_adj_sql, (code,)).fetchone()
 
