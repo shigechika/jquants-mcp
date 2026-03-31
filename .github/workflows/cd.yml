@@ -39,7 +39,7 @@ jobs:
             --memory 8Gi \
             --cpu 2 \
             --clear-volumes \
-            --startup-cpu-boost \
+            --cpu-boost \
             --set-env-vars "\
               GCS_BUCKET=aikawa-dx-jquants-dat-mcp,\
               JQUANTS_CACHE_DIR=/tmp,\
