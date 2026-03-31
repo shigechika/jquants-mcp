@@ -38,7 +38,7 @@ jobs:
             --execution-environment gen2 \
             --memory 8Gi \
             --cpu 2 \
-            --clear-volumes \
+            --clear-volumes --clear-volume-mounts \
             --cpu-boost \
             --set-env-vars "\
               GCS_BUCKET=aikawa-dx-jquants-dat-mcp,\
