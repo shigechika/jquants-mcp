@@ -95,14 +95,26 @@ ENDPOINTS: dict[str, dict] = {
         "table": "markets_calendar",
         "csv_key_map": [("Date", "date")],
     },
+    "indices_bars_daily": {
+        "api_path": "/indices/bars/daily",
+        "table": "indices_bars_daily",
+        "csv_key_map": [("Code", "code"), ("Date", "date")],
+    },
+    "options_225": {
+        "api_path": "/derivatives/bars/daily/options/225",
+        "table": "derivatives_bars_daily_options_225",
+        "csv_key_map": [("Code", "code"), ("Date", "date")],
+    },
 }
 
-# テーブル DDL（store.py の定義と同じ構造）
+# テーブル DDL（store.py の定義と同じ構造 + plan カラム）
+# PRIMARY KEY に plan は含めない（store.py と一致させる）
 TABLE_DDL: dict[str, str] = {
     "fins_summary": """
         CREATE TABLE IF NOT EXISTS fins_summary (
             code TEXT NOT NULL,
             disc_date TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
             PRIMARY KEY (code, disc_date)
@@ -112,6 +124,7 @@ TABLE_DDL: dict[str, str] = {
         CREATE TABLE IF NOT EXISTS investor_types (
             pub_date TEXT NOT NULL,
             section TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
             PRIMARY KEY (pub_date, section)
@@ -120,6 +133,7 @@ TABLE_DDL: dict[str, str] = {
     "indices_bars_daily_topix": """
         CREATE TABLE IF NOT EXISTS indices_bars_daily_topix (
             date TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
             PRIMARY KEY (date)
@@ -129,6 +143,7 @@ TABLE_DDL: dict[str, str] = {
         CREATE TABLE IF NOT EXISTS equities_master (
             code TEXT NOT NULL,
             date TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
             PRIMARY KEY (code, date)
@@ -138,6 +153,7 @@ TABLE_DDL: dict[str, str] = {
         CREATE TABLE IF NOT EXISTS markets_margin_interest (
             code TEXT NOT NULL,
             date TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
             PRIMARY KEY (code, date)
@@ -147,6 +163,7 @@ TABLE_DDL: dict[str, str] = {
         CREATE TABLE IF NOT EXISTS markets_margin_alert (
             code TEXT NOT NULL,
             date TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
             PRIMARY KEY (code, date)
@@ -156,6 +173,7 @@ TABLE_DDL: dict[str, str] = {
         CREATE TABLE IF NOT EXISTS markets_short_ratio (
             s33 TEXT NOT NULL,
             date TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
             PRIMARY KEY (s33, date)
@@ -166,6 +184,7 @@ TABLE_DDL: dict[str, str] = {
             code TEXT NOT NULL,
             disc_date TEXT NOT NULL,
             reporter_name TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
             PRIMARY KEY (code, disc_date, reporter_name)
@@ -175,6 +194,7 @@ TABLE_DDL: dict[str, str] = {
         CREATE TABLE IF NOT EXISTS markets_breakdown (
             code TEXT NOT NULL,
             date TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
             data TEXT NOT NULL,
             fetched_at REAL NOT NULL,
             PRIMARY KEY (code, date)
@@ -182,9 +202,31 @@ TABLE_DDL: dict[str, str] = {
     """,
     "markets_calendar": """
         CREATE TABLE IF NOT EXISTS markets_calendar (
-            date TEXT NOT NULL PRIMARY KEY,
+            date TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
             data TEXT NOT NULL,
-            fetched_at REAL NOT NULL
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (date)
+        )
+    """,
+    "indices_bars_daily": """
+        CREATE TABLE IF NOT EXISTS indices_bars_daily (
+            code TEXT NOT NULL,
+            date TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (code, date)
+        )
+    """,
+    "derivatives_bars_daily_options_225": """
+        CREATE TABLE IF NOT EXISTS derivatives_bars_daily_options_225 (
+            code TEXT NOT NULL,
+            date TEXT NOT NULL,
+            plan TEXT NOT NULL DEFAULT 'free',
+            data TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            PRIMARY KEY (code, date)
         )
     """,
 }
@@ -207,10 +249,13 @@ def _convert_numeric(value: str) -> int | float | str:
 class BulkFetcher:
     """J-Quants Bulk API からデータを取得してSQLiteにインポートする。"""
 
-    def __init__(self, settings: Settings, db_path: Path, dry_run: bool = False):
+    def __init__(
+        self, settings: Settings, db_path: Path, dry_run: bool = False, plan: str | None = None
+    ):
         self._settings = settings
         self._db_path = db_path
         self._dry_run = dry_run
+        self._plan = plan or settings.jquants_plan
         self._base_url = settings.jquants_base_url
         self._api_headers = {"x-api-key": settings.jquants_api_key}
         self._request_count = 0
@@ -277,15 +322,15 @@ class BulkFetcher:
         count = 0
 
         db_cols = [db_col for _, db_col in csv_key_map]
-        col_names = ", ".join(db_cols) + ", data, fetched_at"
-        placeholders = ", ".join(["?"] * (len(db_cols) + 2))
+        col_names = ", ".join(db_cols) + ", plan, data, fetched_at"
+        placeholders = ", ".join(["?"] * (len(db_cols) + 3))
         sql = f"INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})"
 
         for row in reader:
             key_values = [str(row.get(csv_col, "")) for csv_col, _ in csv_key_map]
             data = {k: _convert_numeric(v) for k, v in row.items()}
             data_json = json.dumps(data, ensure_ascii=False)
-            batch.append((*key_values, data_json, now))
+            batch.append((*key_values, self._plan, data_json, now))
             count += 1
 
             if len(batch) >= BATCH_SIZE:
@@ -365,6 +410,7 @@ class BulkFetcher:
         logger.info("J-Quants バルクデータ取得")
         logger.info("対象: %s", ", ".join(targets))
         logger.info("キャッシュ DB: %s", self._db_path)
+        logger.info("保存プラン: %s", self._plan)
         logger.info(
             "レート制限: %d req/min (%s プラン)",
             self._rate_limit,
@@ -440,6 +486,12 @@ def main() -> None:
         default=DEFAULT_DB_PATH,
         help=f"キャッシュ DB パス (default: {DEFAULT_DB_PATH})",
     )
+    parser.add_argument(
+        "--plan",
+        choices=["free", "light", "standard", "premium"],
+        default=None,
+        help="保存するプラン名（省略時は設定ファイルの値）",
+    )
     parser.add_argument("--dry-run", action="store_true", help="ファイル一覧のみ表示")
     args = parser.parse_args()
 
@@ -448,7 +500,7 @@ def main() -> None:
         logger.error("JQUANTS_API_KEY が設定されていません")
         sys.exit(1)
 
-    fetcher = BulkFetcher(settings, args.db, dry_run=args.dry_run)
+    fetcher = BulkFetcher(settings, args.db, dry_run=args.dry_run, plan=args.plan)
     fetcher.run(args.endpoints)
 
 
