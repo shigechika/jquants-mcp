@@ -397,13 +397,8 @@ class CacheStore:
         self,
         table: str,
         key_filter: dict[str, str],
-        plan: str | None = None,
     ) -> int:
         """Delete cached rows matching the filter (e.g. for stock split invalidation).
-
-        Args:
-            plan: If provided, restrict deletion to rows with this plan.
-                  Defaults to ``default_plan``.
 
         Returns:
             Number of rows deleted
@@ -414,15 +409,11 @@ class CacheStore:
         for col in key_filter:
             _validate_column(col, table)
 
-        effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
         if conn is None:
             return 0
         conditions = [f"{col} = ?" for col in key_filter]
         params = list(key_filter.values())
-
-        conditions.append("plan = ?")
-        params.append(effective_plan)
 
         sql = f"DELETE FROM {table} WHERE {' AND '.join(conditions)}"
         cursor = conn.execute(sql, params)
@@ -433,12 +424,8 @@ class CacheStore:
         self,
         code: str,
         new_adj_factor: float | None,
-        plan: str | None = None,
     ) -> bool:
         """Check if AdjFactor has changed for a stock (split detection).
-
-        Args:
-            plan: Subscription plan to scope the check. Defaults to ``default_plan``.
 
         Returns:
             True if cache is valid (no split detected), False if invalidation needed
@@ -446,16 +433,15 @@ class CacheStore:
         if new_adj_factor is None:
             return True
 
-        effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
         if conn is None:
             return True  # DB 未準備 → 分割チェック不可、キャッシュなしとして扱う
 
         _adj_sql = (
             "SELECT adj_factor FROM equities_bars_daily "
-            "WHERE code = ? AND plan = ? ORDER BY date DESC LIMIT 1"
+            "WHERE code = ? ORDER BY date DESC LIMIT 1"
         )
-        row = conn.execute(_adj_sql, (code, effective_plan)).fetchone()
+        row = conn.execute(_adj_sql, (code,)).fetchone()
 
         if row is None:
             return True  # キャッシュなし → 問題なし
@@ -639,8 +625,7 @@ def _build_where_clause(
 
     Args:
         key_filter: Column name -> value pairs (e.g. {"code": "72030"})
-        effective_plan: Subscription plan (for plan column filter and
-            date restriction).
+        effective_plan: Subscription plan (for date restriction only).
         date_column: Name of the date column for range filtering.
         date_from: Start date (inclusive).
         date_to: End date (inclusive).
@@ -655,9 +640,7 @@ def _build_where_clause(
         conditions.append(f"{col} = ?")
         params.append(val)
 
-    conditions.append("plan = ?")
-    params.append(effective_plan)
-
+    # plan カラムではフィルタしない（DB に複数プランのデータが混在しても OK）
     # プラン別日付範囲制限を適用
     plan_min, plan_max = _plan_date_bounds(effective_plan)
     if plan_min and (not date_from or date_from < plan_min):

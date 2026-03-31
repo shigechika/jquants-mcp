@@ -160,51 +160,40 @@ class TestTier2ResponseCache:
 
 
 class TestPlanIsolation:
-    """Plan-scoped cache isolation tests."""
+    """Plan-based access control tests.
 
-    def test_tier1_free_cannot_read_premium_cache(self, tmp_path: Path):
-        """Free plan must not see data written by a premium plan instance.
+    Tier 1 reads do NOT filter by plan column — date restrictions
+    from _plan_date_bounds are the sole access control mechanism.
+    Tier 2 response cache keys still include plan suffix for isolation.
+    """
 
-        This simulates the security scenario: a premium user's cached rows
-        must not be returned when the server is reconfigured to free plan.
-        Tier 1 uses PK=(code, date) so the cache is effectively plan-scoped
-        via the plan column filter: a free-plan GET finds nothing until the
-        free plan writes its own row (overwriting the premium row).
-        """
-        premium_cache = CacheStore(tmp_path / "cache.db", default_plan="premium")
-        free_cache = CacheStore(tmp_path / "cache.db", default_plan="free")
-
-        premium_rows = [{"Code": "72030", "Date": "2024-01-04", "O": 999, "AdjFactor": 1.0}]
-
-        # premium ユーザーがデータを保存
-        premium_cache.put_rows(
-            "equities_bars_daily",
-            premium_rows,
-            ["Code", "Date"],
-            adj_factor_key="AdjFactor",
-        )
-
-        # free ユーザーには premium のキャッシュが見えない（plan フィルタで除外）
-        result = free_cache.get_rows("equities_bars_daily", {"code": "72030"})
-        assert len(result) == 0, "Free plan must not see premium cached rows"
-
-        premium_cache.close()
-        free_cache.close()
-
-    def test_tier1_default_plan_used(self, tmp_path: Path):
-        """CacheStore default_plan is applied when no explicit plan is passed."""
+    def test_tier1_free_restricted_by_date(self, tmp_path: Path):
+        """Free plan cannot see data outside its date window, even if cached."""
         store = CacheStore(tmp_path / "cache.db", default_plan="standard")
-        rows = [{"Code": "72030", "Date": "2024-01-04", "O": 500, "AdjFactor": 1.0}]
+        old_date = (date.today() - timedelta(days=365 * 3)).isoformat()
+        rows = [{"Code": "72030", "Date": old_date, "O": 999, "AdjFactor": 1.0}]
         store.put_rows("equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor")
 
-        # default_plan で取得できる
-        result = store.get_rows("equities_bars_daily", {"code": "72030"})
-        assert len(result) == 1
-        assert result[0]["O"] == 500
+        # Standard can see it (10-year window)
+        assert len(store.get_rows("equities_bars_daily", {"code": "72030"})) == 1
 
-        # 異なるプランでは取得できない
-        result_free = store.get_rows("equities_bars_daily", {"code": "72030"}, plan="free")
-        assert len(result_free) == 0
+        # Free cannot see it (2-year window)
+        result = store.get_rows("equities_bars_daily", {"code": "72030"}, plan="free")
+        assert len(result) == 0, "Free plan must not see data outside 2-year window"
+        store.close()
+
+    def test_tier1_different_plans_share_cache(self, tmp_path: Path):
+        """All plans can read the same cached data within their date window."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        recent_date = (date.today() - timedelta(days=365)).isoformat()
+        rows = [{"Code": "72030", "Date": recent_date, "O": 500, "AdjFactor": 1.0}]
+        store.put_rows("equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor")
+
+        # All plans can see recent data
+        assert len(store.get_rows("equities_bars_daily", {"code": "72030"}, plan="free")) == 1
+        assert len(store.get_rows("equities_bars_daily", {"code": "72030"}, plan="light")) == 1
+        assert len(store.get_rows("equities_bars_daily", {"code": "72030"}, plan="standard")) == 1
+        assert len(store.get_rows("equities_bars_daily", {"code": "72030"}, plan="premium")) == 1
         store.close()
 
     def test_tier2_different_plans_isolated(self, tmp_path: Path):
@@ -222,40 +211,20 @@ class TestPlanIsolation:
         free_cache.close()
         premium_cache.close()
 
-    def test_tier1_invalidate_scoped_to_plan(self, tmp_path: Path):
-        """invalidate_rows removes only rows for the active plan.
-
-        Two different code values are used (different PKs) so that both
-        free and premium rows can coexist in the same table.
-        """
-        free_cache = CacheStore(tmp_path / "cache.db", default_plan="free")
-        premium_cache = CacheStore(tmp_path / "cache.db", default_plan="premium")
-
-        # 異なるコード（PK）でそれぞれのプランのデータを保存
-        free_cache.put_rows(
+    def test_tier1_invalidate_removes_all_plans(self, tmp_path: Path):
+        """invalidate_rows removes rows regardless of plan tag."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        store.put_rows(
             "equities_bars_daily",
-            [{"Code": "10010", "Date": "2024-01-04", "O": 1, "AdjFactor": 1.0}],
-            ["Code", "Date"],
-            adj_factor_key="AdjFactor",
-        )
-        premium_cache.put_rows(
-            "equities_bars_daily",
-            [{"Code": "20020", "Date": "2024-01-04", "O": 2, "AdjFactor": 1.0}],
+            [{"Code": "72030", "Date": "2025-01-04", "O": 1, "AdjFactor": 1.0}],
             ["Code", "Date"],
             adj_factor_key="AdjFactor",
         )
 
-        # free のみ無効化
-        deleted = free_cache.invalidate_rows("equities_bars_daily", {"code": "10010"})
+        deleted = store.invalidate_rows("equities_bars_daily", {"code": "72030"})
         assert deleted == 1
-
-        # premium のデータは残る
-        assert len(premium_cache.get_rows("equities_bars_daily", {"code": "20020"})) == 1
-        # free のデータは消える
-        assert len(free_cache.get_rows("equities_bars_daily", {"code": "10010"})) == 0
-
-        free_cache.close()
-        premium_cache.close()
+        assert len(store.get_rows("equities_bars_daily", {"code": "72030"})) == 0
+        store.close()
 
     def test_migration_adds_plan_column_to_existing_table(self, tmp_path: Path):
         """Tables created without plan column are migrated transparently."""
