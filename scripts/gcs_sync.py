@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """GCS sync utility for Cloud Run deployment of jquants-dat-mcp.
 
-Manages auth database synchronization between Cloud Run's ephemeral /tmp
-filesystem and Google Cloud Storage. cache.db is downloaded at startup by
-entrypoint.sh and does not need upload via this script.
+Manages database synchronization between Cloud Run's ephemeral /tmp
+filesystem and Google Cloud Storage.
 
 Usage:
-    # Download auth DBs from GCS (run at startup)
+    # Download cache.db from GCS (background, large)
+    python gcs_sync.py --init-cache
+
+    # Download auth DBs from GCS (fast)
     python gcs_sync.py --init
 
     # Run background daemon: upload every 5 minutes, final upload on SIGTERM
@@ -36,8 +38,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("gcs_sync")
 
-# Files to download from GCS at startup (auth DBs only; cache.db is handled by entrypoint.sh)
+# Files to download from GCS at startup (auth DBs)
 _DOWNLOAD_FILES = ["users.db", "oauth_state.db"]
+
+# Cache file to download in background at startup
+_CACHE_FILES = ["cache.db"]
 
 # Files to upload to GCS (daemon / --upload)
 # cache.db is excluded: it is owned by self-hosted server (jpx-short-report daily.sh).
@@ -168,13 +173,20 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="GCS cache sync utility for jquants-dat-mcp")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
+        "--init-cache",
+        action="store_true",
+        help="Download cache.db from GCS (background startup)",
+    )
+    group.add_argument(
         "--init", action="store_true", help="Download auth DBs from GCS (users.db, oauth_state.db)"
     )
     group.add_argument("--daemon", action="store_true", help="Run background sync daemon")
     group.add_argument("--upload", action="store_true", help="Upload local cache to GCS and exit")
     args = parser.parse_args()
 
-    if args.init:
+    if args.init_cache:
+        download_files(_CACHE_FILES)
+    elif args.init:
         download_files()
     elif args.daemon:
         run_daemon()
