@@ -92,6 +92,31 @@ TTL_24H = 24 * 3600
 TTL_7D = 7 * 24 * 3600
 TTL_90D = 90 * 24 * 3600
 
+# 旧 J-Quants API フィールド名 → 現行短縮名のマッピング
+# キャッシュに旧形式で保存されたデータを読み出し時に正規化する
+_LEGACY_FIELD_MAP: dict[str, str] = {
+    "Open": "O",
+    "High": "H",
+    "Low": "L",
+    "Close": "C",
+    "Volume": "Vo",
+    "TurnoverValue": "Va",
+    "AdjustmentOpen": "AdjO",
+    "AdjustmentHigh": "AdjH",
+    "AdjustmentLow": "AdjL",
+    "AdjustmentClose": "AdjC",
+    "AdjustmentVolume": "AdjVo",
+    "AdjustmentFactor": "AdjFactor",
+    "UpperLimit": "UL",
+    "LowerLimit": "LL",
+}
+
+
+def _normalize_fields(row: dict[str, Any]) -> dict[str, Any]:
+    """Rename legacy J-Quants field names to current short names."""
+    return {_LEGACY_FIELD_MAP.get(k, k): v for k, v in row.items()}
+
+
 # エンドポイントパス → TTL のマッピング
 ENDPOINT_TTL: dict[str, int] = {
     "/markets/calendar": TTL_7D,
@@ -306,7 +331,7 @@ class CacheStore:
         )
         sql = f"SELECT data FROM {table} WHERE {where} ORDER BY {date_column}"
         rows = conn.execute(sql, params).fetchall()
-        return [json.loads(row["data"]) for row in rows]
+        return [_normalize_fields(json.loads(row["data"])) for row in rows]
 
     def get_cached_dates(
         self,

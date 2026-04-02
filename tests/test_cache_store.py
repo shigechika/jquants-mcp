@@ -512,3 +512,89 @@ class TestPlanDateRestrictionIntegration:
         assert len(result) == 1
         assert result[0]["O"] == 200
         store.close()
+
+
+class TestLegacyFieldNormalization:
+    """get_rows() が旧形式フィールド名を新形式に変換するテスト。"""
+
+    def test_legacy_fields_normalized(self, tmp_path: Path):
+        """Legacy field names (Open, Close, etc.) are converted to short names."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        legacy_row = {
+            "Code": "72030",
+            "Date": "2024-01-04",
+            "Open": 2800,
+            "High": 2900,
+            "Low": 2750,
+            "Close": 2850,
+            "Volume": 1000000,
+            "TurnoverValue": 2850000,
+            "AdjustmentOpen": 2800,
+            "AdjustmentHigh": 2900,
+            "AdjustmentLow": 2750,
+            "AdjustmentClose": 2850,
+            "AdjustmentVolume": 1000000,
+            "AdjustmentFactor": 1.0,
+            "UpperLimit": 3000,
+            "LowerLimit": 2500,
+        }
+        store.put_rows(
+            "equities_bars_daily", [legacy_row], ["Code", "Date"], adj_factor_key="AdjustmentFactor"
+        )
+        result = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert len(result) == 1
+        row = result[0]
+        assert row["O"] == 2800
+        assert row["H"] == 2900
+        assert row["L"] == 2750
+        assert row["C"] == 2850
+        assert row["Vo"] == 1000000
+        assert row["Va"] == 2850000
+        assert row["AdjO"] == 2800
+        assert row["AdjC"] == 2850
+        assert row["AdjFactor"] == 1.0
+        assert row["UL"] == 3000
+        assert row["LL"] == 2500
+        # 旧名は残らない
+        assert "Open" not in row
+        assert "Close" not in row
+        assert "AdjustmentFactor" not in row
+        store.close()
+
+    def test_current_fields_unchanged(self, tmp_path: Path):
+        """Current short field names pass through without modification."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        current_row = {
+            "Code": "72030",
+            "Date": "2024-01-04",
+            "O": 2800,
+            "C": 2850,
+            "AdjFactor": 1.0,
+        }
+        store.put_rows(
+            "equities_bars_daily", [current_row], ["Code", "Date"], adj_factor_key="AdjFactor"
+        )
+        result = store.get_rows("equities_bars_daily", {"code": "72030"})
+        row = result[0]
+        assert row["O"] == 2800
+        assert row["C"] == 2850
+        assert row["AdjFactor"] == 1.0
+        assert row["Code"] == "72030"
+        assert row["Date"] == "2024-01-04"
+        store.close()
+
+    def test_non_ohlc_fields_preserved(self, tmp_path: Path):
+        """Non-OHLC fields like Code, Date are not affected by normalization."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        row = {
+            "Code": "72030",
+            "Date": "2024-01-04",
+            "O": 100,
+            "AdjFactor": 1.0,
+            "CustomField": "x",
+        }
+        store.put_rows("equities_bars_daily", [row], ["Code", "Date"], adj_factor_key="AdjFactor")
+        result = store.get_rows("equities_bars_daily", {"code": "72030"})
+        assert result[0]["CustomField"] == "x"
+        assert result[0]["Code"] == "72030"
+        store.close()
