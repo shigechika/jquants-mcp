@@ -29,7 +29,7 @@ def test_default_settings():
             os.environ.pop(k, None)
         s = Settings(jquants_api_key="dummy")
         assert s.jquants_base_url == "https://api.jquants.com/v2"
-        assert s.jquants_plan == "free"
+        assert s.jquants_plan == ""  # デフォルトは空文字列（自動検出）
         assert s.max_retries == 5
         assert s.max_pages == 10
 

@@ -208,6 +208,16 @@ class JQuantsClient:
 
         return all_data
 
+    def update_rate_limit(self, plan: str) -> None:
+        """Update the rate limiter for a new plan."""
+        from .config import RATE_LIMITS
+
+        max_requests = RATE_LIMITS.get(plan.lower(), RATE_LIMITS["free"])
+        self._rate_limiter = RateLimiter(
+            max_requests=max_requests,
+            window_seconds=60.0,
+        )
+
     async def close(self) -> None:
         """Close the HTTP client."""
         if self._client is not None:

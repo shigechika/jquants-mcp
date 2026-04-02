@@ -78,6 +78,9 @@ _user_client_last_used: dict[str, float] = {}
 # 前回の古いクライアントクリーンアップ実行時のタイムスタンプ（monotonic）
 _last_cleanup: float = 0.0
 
+# シングルユーザーモード: プラン自動検出が完了済みかどうか
+_plan_detected: bool = False
+
 # クリーンアップは最大5分に1回実行
 _CLEANUP_INTERVAL = 300
 
@@ -135,6 +138,38 @@ def _get_user_db():
     return _user_db
 
 
+async def _ensure_plan_detected(client: JQuantsClient) -> None:
+    """Auto-detect the J-Quants plan on first call when JQUANTS_PLAN is not configured."""
+    global _plan_detected
+
+    if _plan_detected:
+        return
+
+    settings = _get_settings()
+    if settings.jquants_plan:
+        # 明示的に設定済み → 検出不要
+        _plan_detected = True
+        return
+
+    _plan_detected = True  # リトライしない（失敗時は free にフォールバック）
+
+    from .validation import detect_plan
+
+    try:
+        detected = await detect_plan(client)
+    except Exception as e:
+        logger.warning("プラン自動検出に失敗しました（free にフォールバック）: %s", e)
+        detected = "free"
+
+    logger.info("プラン自動検出: %s", detected)
+    settings.jquants_plan = detected
+    client.update_rate_limit(detected)
+
+    # CacheStore が既に初期化されていれば更新
+    if _cache is not None:
+        _cache.default_plan = detected
+
+
 async def _evict_stale_clients() -> None:
     """Evict in-memory client instances that have been idle for more than 1 hour."""
     from .validation import _STALE_CLIENT_TTL
@@ -175,7 +210,9 @@ async def _get_user_client() -> JQuantsClient:
 
     # 認証なしまたは静的 Bearer トークン → グローバルクライアントを使用
     if token is None or token.client_id == "bearer":
-        return _get_client()
+        client = _get_client()
+        await _ensure_plan_detected(client)
+        return client
 
     user_id = token.client_id
     user_db = _get_user_db()
@@ -246,7 +283,7 @@ def health_check() -> dict[str, Any]:
 
     settings = _get_settings()
     has_key = bool(settings.jquants_api_key)
-    plan = settings.jquants_plan
+    plan = settings.jquants_plan or "auto (not yet detected)"
 
     # マルチユーザーモードでは実際のユーザーのプランを解決
     token = get_access_token()

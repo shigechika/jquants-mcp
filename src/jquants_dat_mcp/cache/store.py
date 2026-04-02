@@ -159,6 +159,11 @@ class CacheStore:
         """Return the default plan used for cache operations."""
         return self._default_plan
 
+    @default_plan.setter
+    def default_plan(self, value: str) -> None:
+        """Update the default plan (e.g. after auto-detection)."""
+        self._default_plan = value
+
     @property
     def ready(self) -> bool:
         """Return whether the cache database is usable."""

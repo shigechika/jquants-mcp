@@ -49,7 +49,7 @@ _CONFIG_DEFS: list[_ConfigDef] = [
     _ConfigDef(
         "jquants_base_url", "jquants", "base_url", "JQUANTS_BASE_URL", "https://api.jquants.com/v2"
     ),
-    _ConfigDef("jquants_plan", "jquants", "plan", "JQUANTS_PLAN", "free"),
+    _ConfigDef("jquants_plan", "jquants", "plan", "JQUANTS_PLAN", ""),
     _ConfigDef("jquants_cache_dir", "jquants", "cache_dir", "JQUANTS_CACHE_DIR", ""),
     _ConfigDef("max_retries", "client", "max_retries", "MAX_RETRIES", "5"),
     _ConfigDef("retry_base_delay", "client", "retry_base_delay", "RETRY_BASE_DELAY", "1.0"),
