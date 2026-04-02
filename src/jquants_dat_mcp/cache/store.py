@@ -113,8 +113,17 @@ _LEGACY_FIELD_MAP: dict[str, str] = {
 
 
 def _normalize_fields(row: dict[str, Any]) -> dict[str, Any]:
-    """Rename legacy J-Quants field names to current short names."""
-    return {_LEGACY_FIELD_MAP.get(k, k): v for k, v in row.items()}
+    """Rename legacy J-Quants field names to current short names.
+
+    Cached rows may contain both legacy and current field names
+    (e.g. {"Open": 3103, "O": ""}).  Non-empty values always win.
+    """
+    result: dict[str, Any] = {}
+    for k, v in row.items():
+        new_key = _LEGACY_FIELD_MAP.get(k, k)
+        if new_key not in result or v not in ("", None):
+            result[new_key] = v
+    return result
 
 
 # エンドポイントパス → TTL のマッピング

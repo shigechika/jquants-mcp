@@ -598,3 +598,51 @@ class TestLegacyFieldNormalization:
         assert result[0]["CustomField"] == "x"
         assert result[0]["Code"] == "72030"
         store.close()
+
+    def test_dual_fields_legacy_value_wins(self, tmp_path: Path):
+        """When both legacy and current field names exist, non-empty value wins."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        # 実際のキャッシュデータ: 旧名に値あり、新名は空文字列
+        row = {
+            "Code": "72030",
+            "Date": "2024-01-04",
+            "Open": 3103,
+            "High": 3104,
+            "Low": 3000,
+            "Close": 3011,
+            "Volume": 41298500,
+            "TurnoverValue": 125154283500,
+            "AdjustmentFactor": 1,
+            "AdjustmentOpen": 3103,
+            "AdjustmentClose": 3011,
+            "AdjustmentVolume": 41298500,
+            "O": "",
+            "H": "",
+            "L": "",
+            "C": "",
+            "Vo": "",
+            "Va": "",
+            "AdjFactor": "",
+            "AdjO": "",
+            "AdjC": "",
+            "AdjVo": "",
+        }
+        store.put_rows(
+            "equities_bars_daily", [row], ["Code", "Date"], adj_factor_key="AdjustmentFactor"
+        )
+        result = store.get_rows("equities_bars_daily", {"code": "72030"})
+        r = result[0]
+        assert r["O"] == 3103
+        assert r["H"] == 3104
+        assert r["L"] == 3000
+        assert r["C"] == 3011
+        assert r["Vo"] == 41298500
+        assert r["Va"] == 125154283500
+        assert r["AdjFactor"] == 1
+        assert r["AdjO"] == 3103
+        assert r["AdjC"] == 3011
+        assert r["AdjVo"] == 41298500
+        # 旧名は残らない
+        assert "Open" not in r
+        assert "Close" not in r
+        store.close()
