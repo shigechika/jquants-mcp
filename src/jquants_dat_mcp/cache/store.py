@@ -273,8 +273,9 @@ class CacheStore:
         conn.execute(_RESPONSE_CACHE_DDL)
         conn.commit()
 
-        # 既存テーブルのマイグレーション: plan カラムを追加
+        # 既存テーブルのマイグレーション
         self._migrate_plan_column()
+        self._migrate_normalize_fields()
 
     def _migrate_plan_column(self) -> None:
         """Add plan column to existing Tier 1 tables if not already present.
@@ -296,6 +297,48 @@ class CacheStore:
                 pass  # カラムが既に存在する場合はスキップ
         if migrated:
             conn.commit()
+
+    def _migrate_normalize_fields(self) -> None:
+        """Normalize legacy J-Quants v1 field names to v2 in Tier 1 data JSON.
+
+        Runs once: skipped when ``PRAGMA user_version >= 1``.
+        Rewrites the ``data`` column in-place, removing redundant legacy
+        fields (Open, Close, AdjustmentOpen, etc.) and keeping only
+        current short names (O, C, AdjO, etc.) with non-empty values.
+        """
+        conn = self._conn
+        assert conn is not None
+
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= 1:
+            return
+
+        total_updated = 0
+        for table_name in _TIER1_TABLES:
+            try:
+                rows = conn.execute(f"SELECT rowid, data FROM {table_name}").fetchall()
+            except sqlite3.OperationalError:
+                continue
+
+            updates: list[tuple[str, int]] = []
+            for row in rows:
+                original = row["data"]
+                parsed = json.loads(original)
+                # 旧フィールド名が含まれていなければスキップ
+                if not any(k in parsed for k in _LEGACY_FIELD_MAP):
+                    continue
+                normalized = _normalize_fields(parsed)
+                updates.append((json.dumps(normalized, ensure_ascii=False), row["rowid"]))
+
+            if updates:
+                conn.executemany(f"UPDATE {table_name} SET data = ? WHERE rowid = ?", updates)
+                total_updated += len(updates)
+                logger.info("Migration: normalized %d rows in %s", len(updates), table_name)
+
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+        if total_updated:
+            logger.info("Migration: field normalization complete (%d rows total)", total_updated)
 
     # ----------------------------------------------------------------
     # Tier 1: 行レベルキャッシュ

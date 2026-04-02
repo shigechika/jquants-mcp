@@ -646,3 +646,87 @@ class TestLegacyFieldNormalization:
         assert "Open" not in r
         assert "Close" not in r
         store.close()
+
+
+class TestMigrateNormalizeFields:
+    """_migrate_normalize_fields() のテスト。"""
+
+    @staticmethod
+    def _get_conn(store: CacheStore) -> sqlite3.Connection:
+        """Trigger lazy connection and return the raw SQLite connection."""
+        # put_rows で接続を確立（_init_tables → _migrate も初回実行される）
+        dummy = [{"Code": "00000", "Date": "1970-01-01", "O": 0, "AdjFactor": 1.0}]
+        store.put_rows("equities_bars_daily", dummy, ["Code", "Date"], adj_factor_key="AdjFactor")
+        conn = store._conn
+        assert conn is not None
+        # ダミーデータを削除
+        conn.execute("DELETE FROM equities_bars_daily WHERE code = '00000'")
+        conn.commit()
+        return conn
+
+    def test_migration_rewrites_legacy_data_in_db(self, tmp_path: Path):
+        """Migration normalizes legacy field names in the data column itself."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = self._get_conn(store)
+
+        # user_version をリセットして旧形式データを INSERT
+        legacy_json = '{"Code":"72030","Date":"2024-01-04","Open":2800,"O":"","AdjustmentFactor":1}'
+        conn.execute("PRAGMA user_version = 0")
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_bars_daily "
+            "(code, date, plan, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?, ?)",
+            ("72030", "2024-01-04", "standard", legacy_json, 0.0, 1.0),
+        )
+        conn.commit()
+
+        store._migrate_normalize_fields()
+
+        row = conn.execute("SELECT data FROM equities_bars_daily WHERE code = '72030'").fetchone()
+        import json
+
+        data = json.loads(row["data"])
+        assert data["O"] == 2800
+        assert "Open" not in data
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        store.close()
+
+    def test_migration_skips_when_already_done(self, tmp_path: Path):
+        """Migration is skipped when user_version >= 1."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = self._get_conn(store)
+
+        # user_version は _init_tables で既に 1 → 旧形式データを INSERT しても変換されない
+        legacy_json = '{"Code":"72030","Date":"2024-01-04","Open":9999}'
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_bars_daily "
+            "(code, date, plan, data, fetched_at) VALUES (?, ?, ?, ?, ?)",
+            ("72030", "2024-01-04", "standard", legacy_json, 0.0),
+        )
+        conn.commit()
+
+        store._migrate_normalize_fields()
+
+        row = conn.execute("SELECT data FROM equities_bars_daily WHERE code = '72030'").fetchone()
+        assert "Open" in row["data"]
+        store.close()
+
+    def test_migration_ignores_rows_without_legacy_fields(self, tmp_path: Path):
+        """Rows with only current field names are not touched."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = self._get_conn(store)
+
+        conn.execute("PRAGMA user_version = 0")
+        current_json = '{"Code":"72030","Date":"2024-01-04","O":2800,"AdjFactor":1}'
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_bars_daily "
+            "(code, date, plan, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?, ?)",
+            ("72030", "2024-01-04", "standard", current_json, 0.0, 1.0),
+        )
+        conn.commit()
+
+        store._migrate_normalize_fields()
+
+        row = conn.execute("SELECT data FROM equities_bars_daily WHERE code = '72030'").fetchone()
+        assert row["data"] == current_json
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        store.close()
