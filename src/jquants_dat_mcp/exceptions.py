@@ -33,6 +33,8 @@ class APIError(JQuantsDatMCPError):
     def to_dict(self) -> dict:
         d = super().to_dict()
         d["status_code"] = self.status_code
+        if self.body:
+            d["body"] = self.body
         return d
 
 

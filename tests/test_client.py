@@ -91,6 +91,42 @@ class TestAPIErrors:
         assert exc_info.value.status_code == 400
         assert route.call_count == 1
 
+    @respx.mock
+    async def test_400_body_included_in_to_dict(self, client):
+        """HTTP 400 response body is included in to_dict() output."""
+        route = respx.get("https://api.example.com/v2/equities/bars/daily")
+        route.respond(400, text='{"message":"date range out of bounds"}')
+        with pytest.raises(APIError) as exc_info:
+            await client.get("/equities/bars/daily", {"code": "72030", "from": "20190101"})
+        d = exc_info.value.to_dict()
+        assert d["status_code"] == 400
+        assert d["body"] == '{"message":"date range out of bounds"}'
+
+
+class TestAPIErrorToDict:
+    """APIError.to_dict() のテスト。"""
+
+    def test_body_included_when_present(self):
+        err = APIError("test", status_code=400, body="some detail")
+        d = err.to_dict()
+        assert d["body"] == "some detail"
+
+    def test_body_excluded_when_none(self):
+        err = APIError("test", status_code=500, body=None)
+        d = err.to_dict()
+        assert "body" not in d
+
+    def test_body_excluded_when_empty(self):
+        err = APIError("test", status_code=400, body="")
+        d = err.to_dict()
+        assert "body" not in d
+
+    def test_plan_restriction_error_inherits_body(self):
+        err = PlanRestrictionError("forbidden", status_code=403, body="plan too low")
+        d = err.to_dict()
+        assert d["status_code"] == 403
+        assert d["body"] == "plan too low"
+
 
 class TestSuccessfulRequests:
     """正常リクエストのテスト。"""
