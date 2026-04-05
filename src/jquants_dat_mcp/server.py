@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import signal
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -109,6 +110,23 @@ def _get_cache() -> CacheStore:
         db_path = settings.get_cache_db_path()
         _cache = CacheStore(db_path, default_plan=settings.jquants_plan)
     return _cache
+
+
+def _sighup_handler(signum: int, frame: Any) -> None:
+    """Handle SIGHUP by requesting a lazy reload of the cache database.
+
+    Triggered externally (e.g. by ``launchctl kill SIGHUP``) after an
+    offline process such as ``daily.sh`` has updated ``cache.db``.
+    The handler only sets a flag; the actual reconnection happens on
+    the next request to avoid disturbing in-flight queries. uvicorn
+    does not install its own SIGHUP handler, so this handler coexists
+    with its SIGINT/SIGTERM shutdown handling.
+    """
+    logger.info("Received SIGHUP; scheduling cache DB reload")
+    if _cache is not None:
+        _cache.request_reload()
+    else:
+        logger.info("Cache DB not yet initialized; reload is a no-op")
 
 
 def _get_user_db():
@@ -529,6 +547,17 @@ def run_server(
     if transport == "stdio":
         mcp.run(transport="stdio")
     else:
+        # Install SIGHUP handler for lazy cache reload. Safe here because
+        # uvicorn only manages SIGINT/SIGTERM, and the handler itself only
+        # flips a flag (no I/O), so async reentrancy is not a concern.
+        try:
+            signal.signal(signal.SIGHUP, _sighup_handler)
+            logger.info("SIGHUP handler installed for cache DB reload")
+        except (ValueError, OSError) as e:
+            # ValueError: signal only works in main thread
+            # OSError: platform without SIGHUP (e.g. Windows)
+            logger.warning("Could not install SIGHUP handler: %s", e)
+
         # 認証プロバイダー作成前に CLI オーバーライドを設定に適用
         settings = _get_settings()
         ssl_certfile = ssl_certfile or settings.ssl_certfile

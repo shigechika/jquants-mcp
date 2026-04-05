@@ -5,6 +5,20 @@
 
 ---
 
+## 2026-04-05
+
+### SIGHUP-driven cache DB reload
+- `CacheStore.request_reload()` added: flags the store for lazy reconnect on next access, without closing the live connection (so in-flight queries are not disrupted).
+- `server.py` installs a `SIGHUP` handler on HTTP transport startup that calls `request_reload()`. `SIGHUP` is not used by uvicorn (which only handles `SIGINT`/`SIGTERM`), so the handler coexists cleanly with the existing lifecycle.
+- Enables external processes (e.g. `daily.sh` running `scripts/import_csv_to_cache.py`) to notify a running server to pick up updated `cache.db` via:
+  ```
+  launchctl kill SIGHUP gui/$(id -u)/<label>
+  ```
+  instead of a full `unload`/`load` or `kickstart -k` cycle.
+- Tests: `TestRequestReload` (4 cases) in `tests/test_cache_store.py`.
+
+---
+
 ## 2026-03-26
 
 ### `/settings` Web UI 改善

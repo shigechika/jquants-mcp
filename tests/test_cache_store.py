@@ -730,3 +730,85 @@ class TestMigrateNormalizeFields:
         assert row["data"] == current_json
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
         store.close()
+
+
+class TestRequestReload:
+    """Tests for CacheStore.request_reload() (SIGHUP-driven lazy reload)."""
+
+    def test_reload_reopens_connection(self, cache_store: CacheStore):
+        """After request_reload(), the next access establishes a fresh connection."""
+        # Force initial connection
+        rows = [{"Code": "72030", "Date": "2024-01-04", "O": 2800, "AdjFactor": 1.0}]
+        cache_store.put_rows(
+            "equities_bars_daily",
+            rows,
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        original_conn = cache_store._conn
+        assert original_conn is not None
+        assert cache_store._ready is True
+
+        # Request a reload
+        cache_store.request_reload()
+        assert cache_store._needs_reload is True
+        # The connection object is still held until the next access
+        assert cache_store._conn is original_conn
+
+        # Next access triggers reconnect
+        new_conn = cache_store._ensure_connection()
+        assert new_conn is not None
+        assert new_conn is not original_conn
+        assert cache_store._needs_reload is False
+        assert cache_store._ready is True
+
+    def test_reload_preserves_on_disk_data(self, cache_store: CacheStore):
+        """Data written before reload remains readable after reload."""
+        rows = [
+            {"Code": "72030", "Date": "2024-01-04", "O": 2800, "C": 2850, "AdjFactor": 1.0},
+            {"Code": "72030", "Date": "2024-01-05", "O": 2850, "C": 2900, "AdjFactor": 1.0},
+        ]
+        cache_store.put_rows(
+            "equities_bars_daily",
+            rows,
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+
+        cache_store.request_reload()
+        # Force the reconnect
+        cache_store._ensure_connection()
+
+        result = cache_store.get_rows(
+            "equities_bars_daily",
+            key_filter={"code": "72030"},
+            date_from="2024-01-04",
+            date_to="2024-01-05",
+        )
+        assert len(result) == 2
+
+    def test_reload_before_first_connection_is_noop(self, tmp_path: Path):
+        """Calling request_reload() before any DB access does not crash."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        # No connection yet
+        assert store._conn is None
+        store.request_reload()
+        assert store._needs_reload is True
+        # First access after reload request still works
+        conn = store._ensure_connection()
+        assert conn is not None
+        assert store._needs_reload is False
+        store.close()
+
+    def test_reload_resets_retry_interval(self, cache_store: CacheStore):
+        """request_reload() bypasses the _RETRY_INTERVAL throttle."""
+        # Put the store in a not-ready state with a recent retry timestamp
+        cache_store._ready = False
+        cache_store._last_retry = time.time()  # just retried
+
+        # Without reload request, _ensure_connection would return None (throttled)
+        # But the DB file exists and is valid, so a reload request should immediately reconnect
+        cache_store.request_reload()
+        conn = cache_store._ensure_connection()
+        assert conn is not None
+        assert cache_store._ready is True

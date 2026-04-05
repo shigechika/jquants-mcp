@@ -187,6 +187,7 @@ class CacheStore:
         self._conn: sqlite3.Connection | None = None
         self._ready: bool = False
         self._last_retry: float = 0.0
+        self._needs_reload: bool = False
 
     @property
     def default_plan(self) -> str:
@@ -203,6 +204,19 @@ class CacheStore:
         """Return whether the cache database is usable."""
         return self._ready
 
+    def request_reload(self) -> None:
+        """Request a lazy reload of the SQLite connection.
+
+        The actual reconnection happens on the next ``_ensure_connection``
+        call. The current connection object is detached without calling
+        ``close()`` so that any in-flight queries holding a reference
+        continue to succeed; the old connection is released when all
+        references go out of scope. This is intended to be called from
+        a signal handler after an external process (e.g. daily.sh's
+        ``import_csv_to_cache.py``) has updated the on-disk database.
+        """
+        self._needs_reload = True
+
     def _ensure_connection(self) -> sqlite3.Connection | None:
         """Lazy initialization of SQLite connection with integrity check.
 
@@ -211,6 +225,19 @@ class CacheStore:
         When not ready, retries at most once every ``_RETRY_INTERVAL``
         seconds.
         """
+        # Handle a pending reload request from request_reload()
+        if self._needs_reload:
+            self._needs_reload = False
+            # Do not explicitly close the old connection: in-flight queries
+            # may still hold a reference, and closing would break them.
+            # Setting self._conn to None forces a fresh connection on the
+            # next access; the old connection is released by Python's GC
+            # once all references go out of scope.
+            self._conn = None
+            self._ready = False
+            self._last_retry = 0.0  # reset retry interval for immediate reconnect
+            logger.info("Cache DB reload requested; will reconnect on next access")
+
         if self._conn is not None and self._ready:
             return self._conn
 
