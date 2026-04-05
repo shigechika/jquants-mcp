@@ -45,9 +45,10 @@ uv run ruff format src/ tests/  # Format
 - Single-user mode: global `_client` with env/config API key (backward compatible)
 - Tests patch `server_module._settings`, `_client`, `_cache` globals directly
 - `_call()` helper uses `mcp.call_tool(name, kwargs)` then parses `result.content[0].text`
-- docstring は英語で記述、コード内コメントは日本語
-- README.md は英語、README.ja.md は日本語
-- Commit messages in English (Public repository)
+- Code is English-only: docstrings, inline comments, log messages, exception messages (Public repository)
+- README.md is in English, README.ja.md is the Japanese translation
+- Commit messages in English
+- Existing Japanese comments are being migrated to English gradually; new code should always be written in English
 
 ## Security
 
