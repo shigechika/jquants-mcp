@@ -74,9 +74,7 @@ def test_create_auth_provider_google_oauth():
         google_client_secret="GOCSPX-secret",
         oauth_base_url="https://mcp.example.com",
     )
-    with patch(
-        "fastmcp.server.auth.providers.google.GoogleProvider"
-    ) as MockProvider:
+    with patch("fastmcp.server.auth.providers.google.GoogleProvider") as MockProvider:
         MockProvider.return_value = object()
         create_auth_provider(settings)
         _, kwargs = MockProvider.call_args
@@ -124,8 +122,6 @@ def test_create_auth_provider_google_http_ok_in_development(monkeypatch):
         google_client_secret="GOCSPX-secret",
         oauth_base_url="http://localhost:8080",
     )
-    with patch(
-        "fastmcp.server.auth.providers.google.GoogleProvider"
-    ) as MockProvider:
+    with patch("fastmcp.server.auth.providers.google.GoogleProvider") as MockProvider:
         MockProvider.return_value = object()
         create_auth_provider(settings)  # no error
