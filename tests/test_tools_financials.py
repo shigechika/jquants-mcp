@@ -92,6 +92,101 @@ class TestGetFinsSummary:
             assert mock_fn.call_count == 1
 
 
+class TestFinsSummarySplitAdjustment:
+    """Stock split adjustment for fins_summary per-share fields."""
+
+    async def test_adj_fields_added_when_split_detected(self, mock_env):
+        """AdjBPS/AdjEPS/AdjDivAnn are added when AdjFactor differs."""
+        cache = mock_env["cache"]
+        # Pre-populate equities_bars_daily with AdjFactor data
+        # Before split: AdjFactor=2.0, After split: AdjFactor=1.0
+        cache.put_rows(
+            "equities_bars_daily",
+            [
+                {"Code": "18220", "Date": "2024-01-04", "O": 100, "AdjFactor": 2.0},
+                {"Code": "18220", "Date": "2025-04-01", "O": 200, "AdjFactor": 1.0},
+            ],
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+
+        mock_data = [
+            {
+                "Code": "18220",
+                "DiscDate": "2024-02-06",
+                "DiscNo": "001",
+                "BPS": 6000.0,
+                "EPS": 500.0,
+                "DivAnn": 100.0,
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", code="18220")
+            row = result["data"][0]
+            # factor = hist_adj(2.0) / latest_adj(1.0) = 2.0
+            assert row["AdjBPS"] == 3000.0
+            assert row["AdjEPS"] == 250.0
+            assert row["AdjDivAnn"] == 50.0
+
+    async def test_no_adjustment_when_factor_is_same(self, mock_env):
+        """No split: AdjBPS == BPS."""
+        cache = mock_env["cache"]
+        cache.put_rows(
+            "equities_bars_daily",
+            [{"Code": "72030", "Date": "2024-01-04", "O": 100, "AdjFactor": 1.0}],
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+
+        mock_data = [
+            {
+                "Code": "72030",
+                "DiscDate": "2024-02-06",
+                "DiscNo": "001",
+                "BPS": 3000.0,
+                "EPS": 200.0,
+                "DivAnn": 80.0,
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", code="72030")
+            row = result["data"][0]
+            assert row["AdjBPS"] == 3000.0
+            assert row["AdjEPS"] == 200.0
+
+    async def test_not_applied_without_daily_data(self, mock_env):
+        """Without equities_bars_daily cache, split_adjustment='not_applied'."""
+        mock_data = [
+            {
+                "Code": "99990",
+                "DiscDate": "2024-02-06",
+                "DiscNo": "001",
+                "BPS": 5000.0,
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", code="99990")
+            assert result.get("split_adjustment") == "not_applied"
+            assert "AdjBPS" not in result["data"][0]
+
+    async def test_date_only_query_notes_not_applied(self, mock_env):
+        """Date-only queries note that split adjustment is not applied."""
+        mock_data = [
+            {"Code": "72030", "DiscDate": "2024-02-06", "BPS": 3000.0},
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", date="2024-02-06")
+            assert result.get("split_adjustment") == "not_applied"
+
+
 class TestGetFinsDetails:
     async def test_returns_data(self, mock_env):
         mock_data = [

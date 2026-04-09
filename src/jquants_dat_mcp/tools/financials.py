@@ -25,6 +25,66 @@ from ..validators import (
 
 logger = logging.getLogger(__name__)
 
+# Per-share fields in fins_summary that need stock split adjustment
+_SPLIT_ADJ_FIELDS = ("BPS", "EPS", "DivAnn")
+
+
+def _apply_split_adjustment(
+    rows: list[dict[str, Any]],
+    cache: CacheStore,
+) -> tuple[list[dict[str, Any]], bool]:
+    """Apply stock split adjustment to per-share financial fields.
+
+    Adds AdjBPS, AdjEPS, AdjDivAnn fields using AdjFactor from
+    equities_bars_daily cache.
+
+    Returns:
+        Tuple of (adjusted rows, whether adjustment was applied).
+    """
+    if not rows:
+        return rows, False
+
+    code = rows[0].get("Code", "")
+    if not code:
+        return rows, False
+
+    latest_adj = cache.get_latest_adj_factor(code)
+    if latest_adj is None:
+        return rows, False
+
+    adjusted = False
+    for row in rows:
+        disc_date = row.get("DiscDate", row.get("disc_date", ""))
+        if not disc_date:
+            continue
+
+        hist_adj = cache.get_adj_factor_at(code, disc_date)
+        if hist_adj is None or hist_adj == 0:
+            continue
+
+        # Relative factor: how much to divide old values by
+        # latest_adj=1.0, hist_adj=5.0 means a 1:5 split happened after disc_date
+        # BPS should be divided by (hist_adj / latest_adj)
+        factor = hist_adj / latest_adj
+        if abs(factor - 1.0) < 1e-10:
+            # No adjustment needed (same factor)
+            for field in _SPLIT_ADJ_FIELDS:
+                val = row.get(field)
+                if val is not None and val != "":
+                    row[f"Adj{field}"] = val
+            continue
+
+        adjusted = True
+        for field in _SPLIT_ADJ_FIELDS:
+            val = row.get(field)
+            if val is not None and val != "":
+                try:
+                    row[f"Adj{field}"] = round(float(val) / factor, 2)
+                except (ValueError, TypeError):
+                    pass
+
+    return rows, adjusted
+
 
 def register(
     mcp: FastMCP,
@@ -71,7 +131,12 @@ def register(
 
         try:
             data = await client.get_all_pages("/fins/summary", params)
-            result = {"count": len(data), "data": data}
+            result: dict[str, Any] = {"count": len(data), "data": data}
+            result["split_adjustment"] = "not_applied"
+            result["split_adjustment_reason"] = (
+                "Split adjustment requires code parameter (date-only queries "
+                "return multiple codes)."
+            )
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
         except (APIError, InvalidAPIKeyError, UserNotConfiguredError, DecryptionError) as e:
@@ -225,7 +290,17 @@ async def _get_fins_summary_with_cache(
             merged = api_data
             source = "api"
 
-        return {"count": len(merged), "data": merged, "source": source}
+        merged, split_adjusted = _apply_split_adjustment(merged, cache)
+        result = {"count": len(merged), "data": merged, "source": source}
+        if not split_adjusted and any(
+            r.get(f) not in (None, "") for r in merged for f in _SPLIT_ADJ_FIELDS
+        ):
+            result["split_adjustment"] = "not_applied"
+            result["split_adjustment_reason"] = (
+                "No AdjFactor data in equities_bars_daily cache for this code. "
+                "Fetch daily bars first to enable split adjustment."
+            )
+        return result
 
     except (APIError, InvalidAPIKeyError, UserNotConfiguredError, DecryptionError) as e:
         return format_api_error(e)

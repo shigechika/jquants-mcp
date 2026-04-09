@@ -148,6 +148,29 @@ ENDPOINT_TTL: dict[str, int] = {
     "/bulk/get": TTL_NONE,  # 署名付きURL、キャッシュしない
 }
 
+# Tier 1 table -> minimum required plan
+_TABLE_MIN_PLAN: dict[str, str] = {
+    "equities_bars_daily": "free",
+    "equities_master": "free",
+    "fins_summary": "free",
+    "indices_bars_daily_topix": "light",
+    "investor_types": "light",
+    "markets_margin_interest": "standard",
+    "markets_margin_alert": "standard",
+    "markets_short_ratio": "standard",
+    "markets_breakdown": "premium",
+    "markets_calendar": "free",
+    "markets_short_sale_report": "standard",
+}
+
+# Plan hierarchy for comparison
+_PLAN_LEVEL: dict[str, int] = {
+    "free": 0,
+    "light": 1,
+    "standard": 2,
+    "premium": 3,
+}
+
 # プラン別データ保持期間（年）。None = 制限なし
 _PLAN_RETENTION_YEARS: dict[str, int | None] = {
     "free": 2,
@@ -563,6 +586,44 @@ class CacheStore:
 
         return True
 
+    def get_adj_factor_at(self, code: str, target_date: str) -> float | None:
+        """Get the AdjFactor for a stock at or near a given date.
+
+        Looks up the closest AdjFactor from equities_bars_daily cache
+        on or before target_date.
+
+        Returns:
+            AdjFactor value, or None if no cached data available.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return None
+        row = conn.execute(
+            "SELECT adj_factor FROM equities_bars_daily "
+            "WHERE code = ? AND date <= ? ORDER BY date DESC LIMIT 1",
+            (code, target_date),
+        ).fetchone()
+        if row is None or row["adj_factor"] is None:
+            return None
+        return float(row["adj_factor"])
+
+    def get_latest_adj_factor(self, code: str) -> float | None:
+        """Get the most recent AdjFactor for a stock.
+
+        Returns:
+            Latest AdjFactor value, or None if no cached data available.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return None
+        row = conn.execute(
+            "SELECT adj_factor FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT 1",
+            (code,),
+        ).fetchone()
+        if row is None or row["adj_factor"] is None:
+            return None
+        return float(row["adj_factor"])
+
     # ----------------------------------------------------------------
     # Tier 2: レスポンスレベルキャッシュ
     # ----------------------------------------------------------------
@@ -643,12 +704,29 @@ class CacheStore:
                 stats["db_size_mb"] = round(self._db_path.stat().st_size / (1024 * 1024), 2)
             return stats
 
+        current_level = _PLAN_LEVEL.get(self._default_plan, 0)
         for table_name in _TIER1_TABLES:
+            min_plan = _TABLE_MIN_PLAN.get(table_name, "free")
+            if _PLAN_LEVEL.get(min_plan, 0) > current_level:
+                stats[table_name] = None  # plan restriction
+                continue
             row = conn.execute(f"SELECT COUNT(*) as cnt FROM {table_name}").fetchone()
             stats[table_name] = row["cnt"] if row else 0
 
-        row = conn.execute("SELECT COUNT(*) as cnt FROM response_cache").fetchone()
+        now = time.time()
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM response_cache "
+            "WHERE ttl_seconds = 0 OR fetched_at + ttl_seconds > ?",
+            (now,),
+        ).fetchone()
         stats["response_cache"] = row["cnt"] if row else 0
+
+        # Evict expired entries while we're here
+        conn.execute(
+            "DELETE FROM response_cache WHERE ttl_seconds > 0 AND fetched_at + ttl_seconds <= ?",
+            (now,),
+        )
+        conn.commit()
 
         # DB ファイルサイズ
         if self._db_path.exists():

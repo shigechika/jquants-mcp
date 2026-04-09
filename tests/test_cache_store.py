@@ -266,6 +266,44 @@ class TestCacheUtility:
         assert "equities_bars_daily" in status
         assert "response_cache" in status
         assert "db_size_mb" in status
+        # Standard plan: markets_breakdown requires Premium -> None
+        assert status["markets_breakdown"] is None
+        # Standard plan: equities_bars_daily is available -> int
+        assert isinstance(status["equities_bars_daily"], int)
+
+    def test_status_response_cache_excludes_expired(self, cache_store: CacheStore):
+        """status() counts only non-expired response_cache entries."""
+        # Insert an already-expired entry (fetched 2 hours ago, TTL 1 hour)
+        cache_store.put_response("expired_key", {"data": 1}, ttl_seconds=3600)
+        conn = cache_store._ensure_connection()
+        conn.execute(
+            "UPDATE response_cache SET fetched_at = ? WHERE cache_key = ?",
+            (time.time() - 7200, "expired_key|plan=standard"),
+        )
+        conn.commit()
+        # Insert a fresh entry
+        cache_store.put_response("fresh_key", {"data": 2}, ttl_seconds=3600)
+
+        status = cache_store.status()
+        assert status["response_cache"] == 1  # only fresh_key counted
+
+    def test_status_evicts_expired_entries(self, cache_store: CacheStore):
+        """status() evicts expired response_cache entries."""
+        cache_store.put_response("old_key", {"data": 1}, ttl_seconds=3600)
+        conn = cache_store._ensure_connection()
+        conn.execute(
+            "UPDATE response_cache SET fetched_at = ? WHERE cache_key = ?",
+            (time.time() - 7200, "old_key|plan=standard"),
+        )
+        conn.commit()
+
+        cache_store.status()  # triggers eviction
+
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM response_cache WHERE cache_key = ?",
+            ("old_key|plan=standard",),
+        ).fetchone()
+        assert row["cnt"] == 0
 
     def test_clear_all(self, cache_store: CacheStore):
         rows = [{"Code": "72030", "Date": "2024-01-04", "O": 100, "AdjFactor": 1.0}]
