@@ -50,6 +50,10 @@ def _apply_split_adjustment(
 
     latest_adj = cache.get_latest_adj_factor(code)
     if not latest_adj:  # None or 0
+        logger.warning(
+            "Split adjustment skipped: code=%s, get_latest_adj_factor returned %r",
+            code, latest_adj,
+        )
         return rows, False
 
     adjusted = False
