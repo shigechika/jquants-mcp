@@ -616,27 +616,33 @@ class CacheStore:
         """
         conn = self._ensure_connection()
         if conn is None:
-            logger.debug("get_latest_adj_factor: no connection for code=%s", code)
+            logger.info("get_latest_adj_factor: no DB connection for code=%s", code)
             return None
         row = conn.execute(
             "SELECT adj_factor FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT 1",
             (code,),
         ).fetchone()
         if row is None:
-            # Check if any rows exist for this code at all
             count = conn.execute(
                 "SELECT COUNT(*) as cnt FROM equities_bars_daily WHERE code = ?",
                 (code,),
             ).fetchone()
-            logger.warning(
-                "get_latest_adj_factor: no row for code=%s (total rows for code: %d)",
+            total = conn.execute(
+                "SELECT COUNT(*) as cnt FROM equities_bars_daily",
+            ).fetchone()
+            logger.info(
+                "get_latest_adj_factor: no row for code=%s "
+                "(rows for code: %d, total rows: %d, db_path: %s)",
                 code,
                 count["cnt"] if count else 0,
+                total["cnt"] if total else 0,
+                self._db_path,
             )
             return None
         if row["adj_factor"] is None:
-            logger.warning("get_latest_adj_factor: adj_factor is NULL for code=%s", code)
+            logger.info("get_latest_adj_factor: adj_factor is NULL for code=%s", code)
             return None
+        logger.info("get_latest_adj_factor: code=%s, adj_factor=%s", code, row["adj_factor"])
         return float(row["adj_factor"])
 
     # ----------------------------------------------------------------
