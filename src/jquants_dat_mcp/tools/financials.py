@@ -42,10 +42,13 @@ def _apply_split_adjustment(
         Tuple of (adjusted rows, whether adjustment was applied).
     """
     if not rows:
+        logger.info("Split adjustment: no rows")
         return rows, False
 
+    first_row_keys = list(rows[0].keys())[:5]
     code = rows[0].get("Code", "")
     if not code:
+        logger.warning("Split adjustment: 'Code' key missing in row. Keys: %s", first_row_keys)
         return rows, False
 
     latest_adj = cache.get_latest_adj_factor(code)
@@ -56,6 +59,7 @@ def _apply_split_adjustment(
             latest_adj,
         )
         return rows, False
+    logger.info("Split adjustment: code=%s, latest_adj=%s", code, latest_adj)
 
     adjusted = False
     for row in rows:
