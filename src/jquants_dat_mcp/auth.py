@@ -81,7 +81,8 @@ def _create_github_provider(settings: Settings) -> OAuthProvider:
 
 def _create_google_provider(settings: Settings) -> OAuthProvider:
     """Create a Google OAuth 2.0 provider."""
-    from .google_provider import GoogleProvider
+    from fastmcp.server.auth.providers.google import GoogleProvider
+
     from .oauth_kv_store import SQLiteKeyValueStore
 
     _enforce_https(settings.oauth_base_url)
@@ -98,11 +99,12 @@ def _create_google_provider(settings: Settings) -> OAuthProvider:
         client_secret=settings.google_client_secret,
         base_url=settings.oauth_base_url,
         redirect_path="/oauth/callback",
+        required_scopes=["openid", "email", "profile"],
         jwt_signing_key=settings.oauth_jwt_signing_key or None,
         require_authorization_consent=settings.oauth_require_consent,
         client_storage=client_storage,
-        # RFC 8252: ローカルホストの redirect_uri はポートを動的に割り当て可能
-        # Claude Desktop は claude.ai 経由、Claude Code CLI は localhost を使用
+        # RFC 8252: localhost redirect_uri can use dynamic ports
+        # Claude Desktop uses claude.ai, Claude Code CLI uses localhost
         allowed_client_redirect_uris=[
             "https://claude.ai/api/mcp/auth_callback",
             "http://localhost:*/callback",

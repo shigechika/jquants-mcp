@@ -22,8 +22,7 @@ uv run ruff format src/ tests/  # Format
   - `config.py` — configparser + env vars hybrid configuration
   - `cache/store.py` — 2-tier SQLite cache (Tier1: row-level, Tier2: response-level with TTL)
   - `tools/` — Tool modules registered via `register(mcp, get_client, get_cache)` pattern
-  - `auth.py` — Bearer token + Google/GitHub OAuth authentication
-  - `google_provider.py` — Custom Google OAuth 2.0 provider (pending upstream FastMCP release)
+  - `auth.py` — Bearer token + Google/GitHub OAuth authentication (Google via upstream FastMCP GoogleProvider)
   - `crypto.py` — AES-256-GCM encryption for user API keys
   - `db/users.py` — Per-user API key storage (SQLite, encrypted)
   - `validators.py` — Input validation (code, date, sector)
@@ -36,7 +35,7 @@ uv run ruff format src/ tests/  # Format
   - `gcs_sync.py` — GCS auth DB sync for Cloud Run (users.db + oauth_state.db)
   - `mcp-stdio-proxy.py` — stdio-to-HTTP proxy (legacy; use [mcp-stdio](https://pypi.org/project/mcp-stdio/) instead)
   - `entrypoint.sh` — Docker/Cloud Run entrypoint
-- `tests/` — pytest + pytest-asyncio tests (327 tests)
+- `tests/` — pytest + pytest-asyncio tests (347 tests)
 
 ## Key Patterns
 
