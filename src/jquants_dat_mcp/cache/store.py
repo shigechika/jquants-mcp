@@ -160,7 +160,6 @@ _TABLE_MIN_PLAN: dict[str, str] = {
     "markets_short_ratio": "standard",
     "markets_breakdown": "premium",
     "markets_calendar": "free",
-    "markets_short_sale_report": "standard",
 }
 
 # Plan hierarchy for comparison
@@ -433,7 +432,9 @@ class CacheStore:
         )
         sql = f"SELECT data FROM {table} WHERE {where} ORDER BY {date_column}"
         rows = conn.execute(sql, params).fetchall()
-        return [_normalize_fields(json.loads(row["data"])) for row in rows]
+        if table == "equities_bars_daily":
+            return [_normalize_fields(json.loads(row["data"])) for row in rows]
+        return [json.loads(row["data"]) for row in rows]
 
     def get_cached_dates(
         self,
@@ -704,12 +705,15 @@ class CacheStore:
                 stats["db_size_mb"] = round(self._db_path.stat().st_size / (1024 * 1024), 2)
             return stats
 
-        current_level = _PLAN_LEVEL.get(self._default_plan, 0)
+        # Empty plan (auto-detect pending): show all tables without restriction
+        plan_known = self._default_plan in _PLAN_LEVEL
+        current_level = _PLAN_LEVEL.get(self._default_plan, 0) if plan_known else None
         for table_name in _TIER1_TABLES:
-            min_plan = _TABLE_MIN_PLAN.get(table_name, "free")
-            if _PLAN_LEVEL.get(min_plan, 0) > current_level:
-                stats[table_name] = None  # plan restriction
-                continue
+            if plan_known:
+                min_plan = _TABLE_MIN_PLAN.get(table_name, "free")
+                if _PLAN_LEVEL.get(min_plan, 0) > current_level:
+                    stats[table_name] = None  # plan restriction
+                    continue
             row = conn.execute(f"SELECT COUNT(*) as cnt FROM {table_name}").fetchone()
             stats[table_name] = row["cnt"] if row else 0
 

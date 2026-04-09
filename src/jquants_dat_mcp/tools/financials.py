@@ -49,7 +49,7 @@ def _apply_split_adjustment(
         return rows, False
 
     latest_adj = cache.get_latest_adj_factor(code)
-    if latest_adj is None:
+    if not latest_adj:  # None or 0
         return rows, False
 
     adjusted = False

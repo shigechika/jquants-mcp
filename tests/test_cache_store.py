@@ -271,6 +271,15 @@ class TestCacheUtility:
         # Standard plan: equities_bars_daily is available -> int
         assert isinstance(status["equities_bars_daily"], int)
 
+    def test_status_no_plan_restriction_when_plan_empty(self, tmp_path: Path):
+        """status() shows all table counts when plan is empty (auto-detect pending)."""
+        store = CacheStore(tmp_path / "empty_plan.db", default_plan="")
+        status = store.status()
+        # All tables should have integer counts, not None
+        for table in ("equities_bars_daily", "markets_breakdown", "markets_margin_interest"):
+            assert isinstance(status[table], int), f"{table} should be int, got {status[table]}"
+        store.close()
+
     def test_status_response_cache_excludes_expired(self, cache_store: CacheStore):
         """status() counts only non-expired response_cache entries."""
         # Insert an already-expired entry (fetched 2 hours ago, TTL 1 hour)

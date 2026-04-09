@@ -54,7 +54,7 @@ async def handle_settings_get(request: Request, get_user_db_fn, settings=None) -
             status_code=503,
         )
 
-    # セッション cookie からメールアドレスを取得（表示用）
+    # Get email from session cookie for display
     display_email: str | None = None
     if signing_key:
         cookie = request.cookies.get(_SESSION_COOKIE)
@@ -71,7 +71,7 @@ async def handle_settings_get(request: Request, get_user_db_fn, settings=None) -
     response.set_cookie(
         key=_CSRF_COOKIE,
         value=csrf_token,
-        httponly=False,  # フォームから読み取り可能（same-site が保護機構）
+        httponly=False,  # readable by form JS (same-site protects against CSRF)
         secure=not is_dev,
         samesite="strict",
         path="/settings",
@@ -136,11 +136,11 @@ async def handle_settings_post(
 
     user_db.save_user(User(user_id=user_id, api_key=api_key, plan=plan))
 
-    # キャッシュクリア（次回リクエストで新しいキーを使う）
+    # Clear cached client (next request will use the new key)
     user_clients.pop(user_id, None)
     user_client_last_used.pop(user_id, None)
 
-    # プラン自動検出
+    # Auto-detect plan from API key
     probe_client = JQuantsClient(_Settings(jquants_api_key=api_key, jquants_plan=plan))
     warnings: list[str] = []
     try:
@@ -263,15 +263,15 @@ async def handle_settings_verify(request: Request, settings=None) -> Response:
         )
         return Response("Token audience mismatch", status_code=401)
 
-    # email_verified チェック — 未検証メールアドレスからのログインを拒否
-    # TODO: tokeninfo エンドポイントは deprecated。google-auth または PyJWT を用いた
-    #       JWKS ベースの検証に移行することで、ネットワーク往復を排除しセキュリティを向上できる。
+    # Reject unverified email addresses
+    # TODO: tokeninfo endpoint is deprecated. Migrate to JWKS-based verification
+    #       using google-auth or PyJWT to eliminate the network round trip.
     email_verified = token_data.get("email_verified")
     if email_verified is not True and email_verified != "true":
         logger.warning("Token email_verified is not True: %s", email_verified)
         return Response("Email not verified", status_code=401)
 
-    # sub はGoogleの不変ユーザーID（email はアカウント移行で変わる可能性がある）
+    # sub is Google's immutable user ID (email can change on account migration)
     sub = token_data.get("sub", "")
     if not sub:
         return Response("No sub in token", status_code=401)
@@ -280,7 +280,7 @@ async def handle_settings_verify(request: Request, settings=None) -> Response:
     if not email:
         return Response("No email in token", status_code=401)
 
-    # 署名付きセッション cookie を生成（sub をユーザーID、email を表示用として保存）
+    # Create signed session cookie (sub as user ID, email for display)
     session_value = sign_session(sub, signing_key, email=email)
     response = Response("OK", status_code=200)
     is_dev = os.environ.get("JQUANTS_ENV") == "development"
