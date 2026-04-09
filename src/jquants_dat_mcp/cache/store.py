@@ -630,7 +630,8 @@ class CacheStore:
             ).fetchone()
             logger.warning(
                 "get_latest_adj_factor: no row for code=%s (total rows for code: %d)",
-                code, count["cnt"] if count else 0,
+                code,
+                count["cnt"] if count else 0,
             )
             return None
         if row["adj_factor"] is None:

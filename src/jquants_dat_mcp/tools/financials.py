@@ -52,7 +52,8 @@ def _apply_split_adjustment(
     if not latest_adj:  # None or 0
         logger.warning(
             "Split adjustment skipped: code=%s, get_latest_adj_factor returned %r",
-            code, latest_adj,
+            code,
+            latest_adj,
         )
         return rows, False
 
