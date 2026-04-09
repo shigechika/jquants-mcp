@@ -130,6 +130,32 @@ class TestFinsSummarySplitAdjustment:
             assert row["AdjEPS"] == 250.0
             assert row["AdjDivAnn"] == 50.0
 
+    async def test_adj_fields_on_cache_hit(self, mock_env):
+        """Split adjustment applies even on Tier1 cache hit (date specified)."""
+        cache = mock_env["cache"]
+        cache.put_rows(
+            "equities_bars_daily",
+            [
+                {"Code": "18220", "Date": "2024-01-04", "O": 100, "AdjFactor": 2.0},
+                {"Code": "18220", "Date": "2025-04-01", "O": 200, "AdjFactor": 1.0},
+            ],
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        # Pre-populate fins_summary cache
+        cache.put_rows(
+            "fins_summary",
+            [{"Code": "18220", "DiscDate": "2024-02-06", "DiscNo": "001", "BPS": 6000.0}],
+            key_columns=["Code", "DiscDate"],
+        )
+
+        # Call with date to hit cache early-return path
+        mock_fn = AsyncMock(return_value=[])
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_fins_summary", code="18220", date="2024-02-06")
+            assert result["source"] == "cache"
+            assert result["data"][0]["AdjBPS"] == 3000.0
+
     async def test_no_adjustment_when_factor_is_same(self, mock_env):
         """No split: AdjBPS == BPS."""
         cache = mock_env["cache"]

@@ -252,8 +252,9 @@ async def _get_fins_summary_with_cache(
         )
 
         if cached_data and date:
-            # 特定日付のキャッシュがある場合はそのまま返す
-            return {"count": len(cached_data), "data": cached_data, "source": "cache"}
+            # Apply split adjustment even for cached data
+            adjusted, _ = _apply_split_adjustment(cached_data, cache)
+            return {"count": len(adjusted), "data": adjusted, "source": "cache"}
 
         # API から取得
         params: dict[str, Any] = {"code": code}
