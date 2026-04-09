@@ -35,31 +35,29 @@ def _apply_split_adjustment(
 ) -> tuple[list[dict[str, Any]], bool]:
     """Apply stock split adjustment to per-share financial fields.
 
-    Adds AdjBPS, AdjEPS, AdjDivAnn fields using AdjFactor from
-    equities_bars_daily cache.
+    J-Quants AdjFactor is the split ratio on the day it occurred (e.g., 0.2
+    for a 1:5 split), NOT a cumulative factor. To adjust historical per-share
+    values, we multiply all AdjFactor values after the disclosure date to get
+    the cumulative split factor, then multiply the per-share value by it.
+
+    Example: 1:5 split on 2025-03-28 (AdjFactor=0.2)
+      - BPS disclosed 2024-02-06 = 6000 -> AdjBPS = 6000 * 0.2 = 1200
+      - BPS disclosed 2025-05-01 = 1200 -> AdjBPS = 1200 * 1.0 = 1200 (no split after)
 
     Returns:
         Tuple of (adjusted rows, whether adjustment was applied).
     """
     if not rows:
-        logger.info("Split adjustment: no rows")
         return rows, False
 
-    first_row_keys = list(rows[0].keys())[:5]
     code = rows[0].get("Code", "")
     if not code:
-        logger.warning("Split adjustment: 'Code' key missing in row. Keys: %s", first_row_keys)
         return rows, False
 
+    # Check if any split data exists for this code
     latest_adj = cache.get_latest_adj_factor(code)
-    if not latest_adj:  # None or 0
-        logger.warning(
-            "Split adjustment skipped: code=%s, get_latest_adj_factor returned %r",
-            code,
-            latest_adj,
-        )
+    if latest_adj is None:
         return rows, False
-    logger.info("Split adjustment: code=%s, latest_adj=%s", code, latest_adj)
 
     adjusted = False
     for row in rows:
@@ -67,16 +65,10 @@ def _apply_split_adjustment(
         if not disc_date:
             continue
 
-        hist_adj = cache.get_adj_factor_at(code, disc_date)
-        if hist_adj is None or hist_adj == 0:
-            continue
+        cum_factor = cache.get_cumulative_split_factor(code, disc_date)
 
-        # Relative factor: how much to divide old values by
-        # latest_adj=1.0, hist_adj=5.0 means a 1:5 split happened after disc_date
-        # BPS should be divided by (hist_adj / latest_adj)
-        factor = hist_adj / latest_adj
-        if abs(factor - 1.0) < 1e-10:
-            # No adjustment needed (same factor)
+        if abs(cum_factor - 1.0) < 1e-10:
+            # No splits after this date — copy original values
             for field in _SPLIT_ADJ_FIELDS:
                 val = row.get(field)
                 if val is not None and val != "":
@@ -88,7 +80,7 @@ def _apply_split_adjustment(
             val = row.get(field)
             if val is not None and val != "":
                 try:
-                    row[f"Adj{field}"] = round(float(val) / factor, 2)
+                    row[f"Adj{field}"] = round(float(val) * cum_factor, 2)
                 except (ValueError, TypeError):
                     pass
 

@@ -587,26 +587,32 @@ class CacheStore:
 
         return True
 
-    def get_adj_factor_at(self, code: str, target_date: str) -> float | None:
-        """Get the AdjFactor for a stock at or near a given date.
+    def get_cumulative_split_factor(self, code: str, target_date: str) -> float:
+        """Get the cumulative split adjustment factor for a stock after target_date.
 
-        Looks up the closest AdjFactor from equities_bars_daily cache
-        on or before target_date.
+        J-Quants AdjFactor represents the split ratio on the day it occurred
+        (e.g., 0.2 for a 1:5 split). This method multiplies all AdjFactor
+        values after target_date to compute the total adjustment needed.
 
         Returns:
-            AdjFactor value, or None if no cached data available.
+            Cumulative factor (e.g., 0.2 for a 1:5 split after target_date).
+            Returns 1.0 if no splits occurred after target_date.
         """
         conn = self._ensure_connection()
         if conn is None:
-            return None
-        row = conn.execute(
+            return 1.0
+        rows = conn.execute(
             "SELECT adj_factor FROM equities_bars_daily "
-            "WHERE code = ? AND date <= ? ORDER BY date DESC LIMIT 1",
+            "WHERE code = ? AND date > ? AND adj_factor IS NOT NULL "
+            "AND adj_factor != 1.0 AND adj_factor != 0.0",
             (code, target_date),
-        ).fetchone()
-        if row is None or row["adj_factor"] is None:
-            return None
-        return float(row["adj_factor"])
+        ).fetchall()
+        if not rows:
+            return 1.0
+        factor = 1.0
+        for row in rows:
+            factor *= row["adj_factor"]
+        return factor
 
     def get_latest_adj_factor(self, code: str) -> float | None:
         """Get the most recent AdjFactor for a stock.
