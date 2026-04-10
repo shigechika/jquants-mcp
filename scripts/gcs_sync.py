@@ -109,6 +109,25 @@ def download_files(file_list: list[str] | None = None) -> None:
             tmp_path.unlink(missing_ok=True)
 
 
+def _checkpoint_sqlite(db_path: Path) -> None:
+    """Run a WAL checkpoint to ensure all data is in the main DB file.
+
+    SQLite WAL mode writes to .db-wal first; without checkpointing, the
+    main .db file will be missing recent changes when uploaded to GCS.
+    """
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.commit()
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError as e:
+        logger.warning("Failed to checkpoint %s: %s", db_path, e)
+
+
 def upload_files() -> None:
     """Upload local cache files to GCS.
 
@@ -125,6 +144,9 @@ def upload_files() -> None:
         if not local_path.exists():
             logger.debug("Local file %s not found, skipping upload", local_path)
             continue
+
+        # Checkpoint WAL to ensure recent writes are flushed to main DB.
+        _checkpoint_sqlite(local_path)
 
         blob_name = f"{prefix}{filename}"
         blob = gcs_bucket.blob(blob_name)
