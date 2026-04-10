@@ -39,16 +39,18 @@ logging.basicConfig(
 logger = logging.getLogger("gcs_sync")
 
 # Files to download from GCS at startup (auth DBs)
-# oauth_state.db is NOT synced via GCS — on Cloud Run it lives in Firestore
-# so OAuth state survives instance restarts without sync-timing issues.
-_DOWNLOAD_FILES = ["users.db"]
+# On Cloud Run, oauth_state.db and users.db live in Firestore instead
+# of GCS-synced SQLite so they survive instance restarts immediately.
+# Nothing currently needs to be downloaded on Cloud Run startup.
+_DOWNLOAD_FILES: list[str] = []
 
 # Cache file to download in background at startup
 _CACHE_FILES = ["cache.db"]
 
 # Files to upload to GCS (daemon / --upload)
 # cache.db is excluded: it is owned by self-hosted server (jpx-short-report daily.sh).
-_UPLOAD_FILES = ["users.db"]
+# users.db and oauth_state.db now live in Firestore on Cloud Run.
+_UPLOAD_FILES: list[str] = []
 
 # Sync interval in seconds
 _SYNC_INTERVAL = int(os.environ.get("GCS_SYNC_INTERVAL", "300"))  # 5 minutes

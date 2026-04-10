@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import time
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from .db.users import UserStore
+from typing import Any
 
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
@@ -85,8 +83,10 @@ _plan_detected: bool = False
 # クリーンアップは最大5分に1回実行
 _CLEANUP_INTERVAL = 300
 
-# UserStore — encryption_key が設定されている場合に遅延初期化
-_user_db: UserStore | None = None
+# User store — lazily initialized when encryption_key is configured.
+# Backend is SQLite (local) or Firestore (Cloud Run); both share the same
+# duck-typed interface, so the concrete type is not annotated here.
+_user_db: Any | None = None
 
 
 def _get_settings() -> Settings:
@@ -143,16 +143,30 @@ def _get_user_db():
         return None
 
     from .crypto import decrypt, encrypt
-    from .db.users import UserStore
 
-    # パスフレーズを直接渡す — encrypt/decrypt は内部でソルト導出を処理する
     passphrase = settings.encryption_key
-    db_path = settings.get_cache_dir() / "users.db"
-    _user_db = UserStore(
-        db_path,
-        encrypt_fn=lambda pt: encrypt(pt, passphrase),
-        decrypt_fn=lambda blob: decrypt(blob, passphrase),
-    )
+
+    def enc(pt: str) -> str:
+        return encrypt(pt, passphrase)
+
+    def dec(blob: str) -> str:
+        return decrypt(blob, passphrase)
+
+    # On Cloud Run, use Firestore so user data is shared across instances
+    # and survives restarts. Locally, use SQLite.
+    if os.environ.get("K_SERVICE"):
+        from .db.users_firestore import FirestoreUserStore
+
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT", "aikawa-dx")
+        _user_db = FirestoreUserStore(project=project, encrypt_fn=enc, decrypt_fn=dec)
+        logger.info("UserStore backend: Firestore (project=%s)", project)
+    else:
+        from .db.users import UserStore
+
+        db_path = settings.get_cache_dir() / "users.db"
+        _user_db = UserStore(db_path, encrypt_fn=enc, decrypt_fn=dec)
+        logger.info("UserStore backend: SQLite (%s)", db_path)
+
     return _user_db
 
 
