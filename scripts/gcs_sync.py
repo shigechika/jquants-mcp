@@ -90,17 +90,23 @@ def download_files(file_list: list[str] | None = None) -> None:
     for filename in files:
         blob_name = f"{prefix}{filename}"
         local_path = cache_dir / filename
+        # Download to a temp file first, then atomic rename.
+        # This prevents the MCP server from reading a half-written file.
+        tmp_path = cache_dir / f".{filename}.download"
         blob = gcs_bucket.blob(blob_name)
         try:
-            blob.download_to_filename(str(local_path))
+            blob.download_to_filename(str(tmp_path))
+            tmp_path.rename(local_path)
             size_mb = local_path.stat().st_size / 1024 / 1024
             logger.info(
                 "Downloaded gs://%s/%s -> %s (%.1f MB)", bucket, blob_name, local_path, size_mb
             )
         except NotFound:
             logger.info("gs://%s/%s not found, skipping (first run?)", bucket, blob_name)
+            tmp_path.unlink(missing_ok=True)
         except Exception as e:
             logger.warning("Failed to download %s: %s", blob_name, e)
+            tmp_path.unlink(missing_ok=True)
 
 
 def upload_files() -> None:
