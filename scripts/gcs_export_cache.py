@@ -98,6 +98,21 @@ def _vacuum(db_path: Path) -> None:
     conn.close()
 
 
+def _set_user_version_1(db_path: Path) -> None:
+    """Mark cache.db as already-migrated so Cloud Run skips the schema migration.
+
+    cache/store.py runs _migrate_normalize_fields() whenever PRAGMA user_version < 1,
+    which iterates every row across all Tier 1 tables. On Cloud Run's ephemeral /tmp
+    cache.db, this runs on every cold start and blocks the event loop for ~100 s on a
+    3.5 GB DB. Setting user_version=1 on the source file skips the migration entirely.
+    """
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA user_version = 1")
+    conn.commit()
+    conn.close()
+    logger.info("Set PRAGMA user_version = 1 (skip migration on Cloud Run)")
+
+
 def _upload_to_gcs(db_path: Path) -> None:
     """Upload the export DB to GCS."""
     from google.cloud import storage  # type: ignore[import-untyped]
@@ -161,6 +176,9 @@ def main() -> None:
     logger.info(
         "VACUUM done (%.0fs): %.1f GB -> %.1f GB", time.time() - start, source_size, export_size
     )
+
+    # Skip Cloud Run migration by marking the DB as already-migrated
+    _set_user_version_1(_EXPORT_PATH)
 
     # GCS アップロード
     if args.dry_run:
