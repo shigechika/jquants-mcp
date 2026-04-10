@@ -293,13 +293,11 @@ class CacheStore:
         try:
             conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
             conn.row_factory = sqlite3.Row
-            # integrity check — detect copy-in-progress files
-            result = conn.execute("PRAGMA quick_check").fetchone()
-            if result is None or result[0] != "ok":
-                msg = result[0] if result else "no result"
-                logger.warning("キャッシュDB整合性エラー（コピー中?）: %s", msg)
-                conn.close()
-                return None
+            # Previously we ran `PRAGMA quick_check` here, but on the
+            # 3.5 GB cache.db it takes ~1 minute and blocks the event loop.
+            # Atomic download (see gcs_sync._reinitialize temp-file rename)
+            # already prevents reading a half-written file, so this check
+            # is no longer needed. See #71 for a non-blocking alternative.
             conn.execute("PRAGMA journal_mode=WAL")
             self._conn = conn
             self._init_tables()
@@ -307,7 +305,7 @@ class CacheStore:
             logger.info("キャッシュDB接続: %s", self._db_path)
             return self._conn
         except sqlite3.DatabaseError as e:
-            logger.warning("キャッシュDB接続失敗（コピー中?）: %s", e)
+            logger.warning("キャッシュDB接続失敗: %s", e)
             return None
 
     def _init_tables(self) -> None:
