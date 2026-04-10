@@ -38,6 +38,8 @@ jobs:
             --execution-environment gen2 \
             --memory 8Gi \
             --cpu 2 \
+            --min-instances 1 \
+            --no-cpu-throttling \
             --clear-volumes --clear-volume-mounts \
             --cpu-boost \
             --set-env-vars "\
