@@ -8,14 +8,11 @@ survives Cloud Run container restarts instead of being lost in the ephemeral
 from __future__ import annotations
 
 import json
-import logging
 import sqlite3
 import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 
 _DEFAULT_COLLECTION = "__default__"
@@ -105,13 +102,6 @@ class SQLiteKeyValueStore:
         conn = self._ensure_connection()
         self._ensure_table(conn, table)
         value, _ = self._get_row(conn, table, key)
-        safe = _safe_table_name(table)
-        logger.info(
-            "SQLiteKV GET table=%s key=%s found=%s",
-            safe,
-            key[:16] if key else key,
-            value is not None,
-        )
         return value
 
     async def put(
@@ -133,13 +123,6 @@ class SQLiteKeyValueStore:
             (key, json.dumps(dict(value)), expires_at),
         )
         conn.commit()
-        logger.info(
-            "SQLiteKV PUT table=%s key=%s ttl=%s db=%s",
-            safe,
-            key[:16] if key else key,
-            ttl,
-            self._db_path,
-        )
 
     async def delete(self, key: str, *, collection: str | None = None) -> bool:
         """Delete a key. Returns True if the key existed."""

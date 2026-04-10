@@ -57,16 +57,12 @@ def _create_github_provider(settings: Settings) -> OAuthProvider:
     """Create a GitHub OAuth 2.1 provider."""
     from fastmcp.server.auth.providers.github import GitHubProvider
 
-    from .oauth_kv_store import SQLiteKeyValueStore
-
     _enforce_https(settings.oauth_base_url)
 
-    oauth_db_path = settings.get_cache_dir() / "oauth_state.db"
-    client_storage = SQLiteKeyValueStore(oauth_db_path)
+    client_storage = _create_oauth_client_storage(settings)
     logger.info(
-        "Initializing GitHub OAuth 2.1 provider (base_url=%s, storage=%s)",
+        "Initializing GitHub OAuth 2.1 provider (base_url=%s)",
         settings.oauth_base_url,
-        oauth_db_path,
     )
     return GitHubProvider(
         client_id=settings.github_client_id,
@@ -79,20 +75,38 @@ def _create_github_provider(settings: Settings) -> OAuthProvider:
     )
 
 
+def _create_oauth_client_storage(settings: Settings):
+    """Pick an OAuth client_storage backend.
+
+    On Cloud Run (K_SERVICE env var), use Firestore so OAuth state
+    survives instance restarts and is shared across instances.
+    Locally, use SQLite which is simpler and has no external deps.
+    """
+    if os.environ.get("K_SERVICE"):
+        from key_value.aio.stores.firestore import FirestoreStore
+
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT", "aikawa-dx")
+        storage = FirestoreStore(project=project)
+        logger.info("OAuth client_storage: Firestore (project=%s)", project)
+        return storage
+
+    from .oauth_kv_store import SQLiteKeyValueStore
+
+    oauth_db_path = settings.get_cache_dir() / "oauth_state.db"
+    logger.info("OAuth client_storage: SQLite (%s)", oauth_db_path)
+    return SQLiteKeyValueStore(oauth_db_path)
+
+
 def _create_google_provider(settings: Settings) -> OAuthProvider:
     """Create a Google OAuth 2.0 provider."""
     from fastmcp.server.auth.providers.google import GoogleProvider
 
-    from .oauth_kv_store import SQLiteKeyValueStore
-
     _enforce_https(settings.oauth_base_url)
 
-    oauth_db_path = settings.get_cache_dir() / "oauth_state.db"
-    client_storage = SQLiteKeyValueStore(oauth_db_path)
+    client_storage = _create_oauth_client_storage(settings)
     logger.info(
-        "Initializing Google OAuth 2.0 provider (base_url=%s, storage=%s)",
+        "Initializing Google OAuth 2.0 provider (base_url=%s)",
         settings.oauth_base_url,
-        oauth_db_path,
     )
     return GoogleProvider(
         client_id=settings.google_client_id,

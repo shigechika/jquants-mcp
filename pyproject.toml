@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 cloud-run = [
     "google-cloud-storage>=2.0.0",
+    "google-cloud-firestore>=2.0.0",
 ]
 
 [project.scripts]
