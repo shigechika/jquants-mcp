@@ -278,10 +278,22 @@ class CacheStore:
             self._conn = None
             self._ready = False
 
+        # If a download is in progress (sentinel file present), wait for it
+        # to finish. Otherwise we'd create an empty DB, and the subsequent
+        # atomic rename would produce a new inode that our open handle never
+        # sees, leaving us to serve empty results forever.
+        download_sentinel = self._db_path.parent / f".{self._db_path.name}.download"
+        if download_sentinel.exists() and not self._db_path.exists():
+            logger.info(
+                "Cache DB download in progress: %s (waiting for completion)",
+                download_sentinel,
+            )
+            return None
+
         try:
             conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
             conn.row_factory = sqlite3.Row
-            # integrity check — コピー途中のファイルを検出
+            # integrity check — detect copy-in-progress files
             result = conn.execute("PRAGMA quick_check").fetchone()
             if result is None or result[0] != "ok":
                 msg = result[0] if result else "no result"

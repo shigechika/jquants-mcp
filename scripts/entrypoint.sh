@@ -64,10 +64,14 @@ jquants-dat-mcp --transport streamable-http --host 0.0.0.0 --port "${PORT}" &
 MCP_PID=$!
 echo "MCP server started (PID=${MCP_PID})"
 
-# Step 4: Download cache.db in background (CacheStore will detect it via retry)
+# Step 4: Download cache.db in background, then signal MCP server to reload
 if [ -n "${GCS_BUCKET:-}" ]; then
     echo "Starting background cache.db download..."
-    python /app/scripts/gcs_sync.py --init-cache &
+    (
+        python /app/scripts/gcs_sync.py --init-cache
+        echo "cache.db download complete; signaling MCP server to reload"
+        kill -HUP "${MCP_PID}" 2>/dev/null || true
+    ) &
     CACHE_DL_PID=$!
 fi
 
