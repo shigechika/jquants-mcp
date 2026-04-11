@@ -628,21 +628,22 @@ Permission errors (403) are handled gracefully — the script logs the error and
 
 ## Cloud Run Deployment
 
-This server can be deployed to [Google Cloud Run](https://cloud.google.com/run) using the "in-memory + GCS write-back" pattern:
+This server can be deployed to [Google Cloud Run](https://cloud.google.com/run). The deployment splits state across two managed stores:
 
-- On startup, databases are downloaded from GCS to `/tmp`
-- SQLite runs entirely in `/tmp` (Cloud Run ephemeral filesystem)
-- Every 5 minutes (configurable) and on SIGTERM, the databases are uploaded back to GCS
+- **`cache.db`** — published to a GCS bucket by the self-hosted server and downloaded to `/tmp` (tmpfs) on every cold start. Cloud Run reads it but never writes back.
+- **`users` / `oauth_state`** — stored in Firestore (Native mode). Strongly consistent and multi-writer safe, so Cloud Run can scale horizontally without SQLite write conflicts.
 
-**Synced databases:** `cache.db`, `users.db`, `oauth_state.db`
-
-> **Note:** `maxScale: 1` is required to avoid concurrent SQLite writes from multiple instances.
+Details: see [GCS and Firestore integration](#gcs-and-firestore-integration) below.
 
 ### Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) and [Google Cloud SDK](https://cloud.google.com/sdk/docs/install)
-- A GCS bucket for database persistence
-- A service account with `roles/storage.objectAdmin` on that bucket
+- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install)
+- A GCS bucket holding a read-only snapshot of `cache.db` (updated out-of-band by the self-hosted server)
+- Firestore in Native mode enabled on the project (stores per-user API keys and OAuth session state)
+- A service account with:
+  - `roles/storage.objectViewer` on the GCS bucket (read-only access to `cache.db`)
+  - `roles/datastore.user` on the project (Firestore read/write)
+  - `roles/secretmanager.secretAccessor` if using Secret Manager for API keys
 
 ### Create a GCS bucket
 
@@ -651,146 +652,175 @@ gcloud storage buckets create gs://YOUR_BUCKET \
   --location asia-northeast1
 ```
 
-### Build and push
+### Enable Firestore
 
 ```bash
-PROJECT_ID=your-project-id
-REGION=asia-northeast1
-REPO=your-artifact-registry-repo
-IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO}/jquants-dat-mcp:latest"
-
-# Build (includes google-cloud-storage via [cloud-run] extra)
-docker build -t "${IMAGE}" .
-
-# Push
-docker push "${IMAGE}"
+gcloud firestore databases create \
+  --location=us-west1 \
+  --type=firestore-native
 ```
 
 ### Deploy
 
-```bash
-# Edit cloud-run-service.yaml: replace PROJECT_ID, REGION, REPO, GCS_BUCKET,
-# and uncomment secret references for JQUANTS_API_KEY and MCP_BEARER_TOKEN.
+The recommended path is to fork the repository and rely on the GitHub Actions CD workflow at [.github/workflows/cd.yml](.github/workflows/cd.yml), which calls `gcloud run deploy --source .` with the correct flags (memory, CPU, env vars, secrets). That workflow is the single source of truth for production deployment — do not run ad-hoc `gcloud run services update` commands, as they will be overwritten on the next CD run.
 
-gcloud run services replace cloud-run-service.yaml \
-  --region "${REGION}"
-```
-
-To update GCS settings on an existing service without redeploying the image:
+For a one-off manual deploy (e.g. testing a fork), run the same command locally:
 
 ```bash
-gcloud run services update jquants-dat-mcp \
+gcloud run deploy jquants-dat-mcp \
+  --project "${PROJECT_ID}" \
   --region "${REGION}" \
-  --set-env-vars "GCS_BUCKET=YOUR_BUCKET,GCS_PREFIX=jquants-dat-mcp/,GCS_SYNC_INTERVAL=300"
+  --source . \
+  --execution-environment gen2 \
+  --memory 6Gi \
+  --cpu 2 \
+  --no-cpu-throttling \
+  --cpu-boost \
+  --set-env-vars "GCS_BUCKET=YOUR_BUCKET,JQUANTS_CACHE_DIR=/tmp" \
+  --set-secrets "JQUANTS_API_KEY=jquants-api-key:latest"
 ```
+
+Memory sizing notes are in [Memory requirements](#memory-requirements) below.
 
 ### Environment variables
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `GCS_BUCKET` | Yes | — | GCS bucket name for database persistence |
+| `GCS_BUCKET` | Yes | — | GCS bucket holding the `cache.db` snapshot |
 | `GCS_PREFIX` | No | `jquants-dat-mcp/` | Object key prefix in the bucket |
-| `GCS_SYNC_INTERVAL` | No | `300` | Upload interval in seconds |
+| `JQUANTS_CACHE_DIR` | No | `/tmp` | Local directory where `cache.db` is materialized (tmpfs on Cloud Run) |
 | `PORT` | No | `8000` | HTTP port (set by Cloud Run) |
 | `JQUANTS_API_KEY` | Yes | — | J-Quants API key (use Secret Manager) |
-| `JQUANTS_PLAN` | No | `free` | Plan: `free` / `light` / `standard` / `premium` |
-| `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication |
+| `JQUANTS_PLAN` | No | auto-detect | Plan: `free` / `light` / `standard` / `premium` (auto-detected from the API key unless overridden) |
+| `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication (single-user mode only) |
+| `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | No | — | OAuth configuration for multi-user mode |
 
-### GCS Sync Operations
+Firestore uses Application Default Credentials from the Cloud Run service account — no explicit project ID env var is needed.
 
-The server syncs three SQLite databases between Cloud Run's ephemeral `/tmp` filesystem and GCS:
+### GCS and Firestore integration
 
-| File | Description |
-|---|---|
-| `cache.db` | Market data cache (price history, financial summaries, indices, etc.) |
-| `users.db` | Per-user encrypted J-Quants API keys (multi-user mode) |
-| `oauth_state.db` | OAuth session state and PKCE verifiers |
+Cloud Run deployments depend on two managed stores, not an in-container SQLite set:
 
-#### How sync works
+| Data | Where it lives | Access mode |
+|---|---|---|
+| `cache.db` (market data) | GCS object, materialized to `/tmp/cache.db` on startup | Read-only from Cloud Run |
+| `users` (per-user encrypted J-Quants API keys) | Firestore `users` collection | Read/write |
+| `oauth_state` (OAuth sessions, PKCE verifiers, dynamic client registrations) | Firestore `oauth_state` collection | Read/write |
 
+`cache.db` is owned by the self-hosted server (see `jpx-short-report/daily.sh`) which publishes a fresh snapshot to GCS on its daily run. Cloud Run never writes back to GCS.
+
+#### Startup flow
+
+```mermaid
+sequenceDiagram
+    participant E as entrypoint.sh
+    participant M as MCP server
+    participant D as cache.db downloader
+    participant G as GCS
+
+    E->>M: start (no cache.db yet)
+    activate M
+    Note right of M: serve requests via<br/>J-Quants API fallback
+    E->>D: spawn background job
+    activate D
+    D->>G: gcloud storage cp cache.db /tmp
+    G-->>D: ~3.5 GiB (1-2 min)
+    D->>M: SIGHUP
+    deactivate D
+    Note right of M: reload cache.db,<br/>switch to Tier 1 cache
+    deactivate M
 ```
-Startup            Periodic                  Shutdown
-   |                   |                         |
-   v                   v                         v
-GCS → /tmp       /tmp → GCS              /tmp → GCS
-(download)    (every GCS_SYNC_INTERVAL)  (SIGTERM handler)
-```
 
-1. **On startup** — `scripts/gcs_sync.py --init` downloads all three files from GCS to `/tmp`. Missing objects are silently skipped (first-run case).
-2. **Periodic upload** — the sync daemon uploads every `GCS_SYNC_INTERVAL` seconds (default: 300).
-3. **On SIGTERM** — Cloud Run sends SIGTERM before container shutdown; the daemon performs a final upload to avoid data loss.
-
-#### Scale-to-zero behavior
-
-With `minInstances: 0`, Cloud Run scales to zero when there are no requests. Because all data lives in GCS, scaling to zero causes no data loss:
-
-- When the last instance shuts down, SIGTERM triggers a final GCS upload.
-- When a new instance starts, it downloads the latest state from GCS before accepting requests.
-- During the cold-start download, the server is not yet accepting requests — no data loss window.
-
-> **Important:** `maxScale: 1` is required. Multiple concurrent instances would produce conflicting SQLite writes, corrupting the databases.
+Notes:
+- `cache.db` is ~3.5 GiB and takes 1–2 minutes to download. Requests during that window hit the live J-Quants API, so they work but are slower and count against rate limits.
+- During the cold-start window `cache_status` returns a minimal payload (`db_path` + `plan` only). A full payload with row counts and `db_size_mb` indicates the cache is loaded.
+- Firestore is strongly consistent, so multiple Cloud Run instances can run concurrently without data races. There is no `maxScale: 1` restriction — scale as needed.
 
 #### Troubleshooting
 
 **Permission error on startup (`403 Forbidden` or `storage.objects.get denied`):**
 
 ```bash
-# Verify the service account has objectAdmin on the bucket
 gcloud storage buckets get-iam-policy gs://YOUR_BUCKET \
   --format="table(bindings.role, bindings.members)"
 ```
 
-If the role is missing, grant it (see [IAM setup](#iam-setup) below).
+The service account needs `roles/storage.objectViewer` on the bucket — see [IAM setup](#iam-setup).
 
-**Sync delay — changes not visible after restart:**
-
-If `GCS_SYNC_INTERVAL` is large (e.g. 3600), recently registered API keys may not be persisted to GCS yet. Reduce the interval or trigger a manual upload:
+**Firestore permission errors:**
 
 ```bash
-# Trigger immediate upload (from inside the running container)
-python scripts/gcs_sync.py --upload
+gcloud projects get-iam-policy "${PROJECT_ID}" \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:serviceAccount:jquants-dat-mcp@*"
 ```
 
-**Databases not found on first deploy:**
+The service account needs `roles/datastore.user` on the project.
 
-On the very first deployment there are no objects in GCS — the `--init` step silently skips missing files and starts with empty databases. This is expected. To pre-populate, upload an existing database (see [Initial database upload](#initial-database-upload) below).
+**`cache_status` returns only `db_path` and `plan` (no row counts):**
+
+The cache.db background download has not finished yet. Normal during the first 1–2 minutes after a cold start. Check the logs for `cache.db download complete; signaling MCP server to reload`.
+
+**`cache.db` not found in GCS on first deploy:**
+
+There is no "empty cache" fallback mode beyond API fallback — the server will keep serving requests directly from the J-Quants API. Upload a `cache.db` snapshot from your self-hosted server to GCS to enable Tier 1 caching (see [Initial cache.db upload](#initial-cachedb-upload)).
 
 ### IAM setup
 
 ```bash
+SA="jquants-dat-mcp@${PROJECT_ID}.iam.gserviceaccount.com"
+
 # Create service account
 gcloud iam service-accounts create jquants-dat-mcp \
   --display-name "jquants-dat-mcp Cloud Run SA"
 
-# Grant GCS access
+# Read-only access to the cache.db snapshot in GCS
 gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET \
-  --member "serviceAccount:jquants-dat-mcp@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role "roles/storage.objectAdmin"
+  --member "serviceAccount:${SA}" \
+  --role "roles/storage.objectViewer"
 
-# Grant Secret Manager access (if using Secret Manager)
+# Firestore access for users / oauth_state collections
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-  --member "serviceAccount:jquants-dat-mcp@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --member "serviceAccount:${SA}" \
+  --role "roles/datastore.user"
+
+# Secret Manager access (if using Secret Manager for JQUANTS_API_KEY etc.)
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member "serviceAccount:${SA}" \
   --role "roles/secretmanager.secretAccessor"
 ```
 
-### Initial database upload
+Note: if the self-hosted server that publishes `cache.db` uses a different service account, only *that* account needs write access to the bucket. The Cloud Run service account remains viewer-only.
 
-Before the first deployment, upload existing databases to GCS:
+### Initial cache.db upload
+
+Cloud Run reads `cache.db` as a read-only snapshot. Publish a snapshot from your self-hosted server (which has been warming the cache) before the first deploy:
 
 ```bash
 gcloud storage cp ~/.cache/jquants-dat-mcp/cache.db \
-  gs://YOUR_BUCKET/jquants-dat-mcp/cache.db
-
-# Optional: upload users.db and oauth_state.db if they exist
-gcloud storage cp ~/.local/share/jquants-dat-mcp/users.db \
-  gs://YOUR_BUCKET/jquants-dat-mcp/users.db
-gcloud storage cp ~/.local/share/jquants-dat-mcp/oauth_state.db \
-  gs://YOUR_BUCKET/jquants-dat-mcp/oauth_state.db
+  gs://YOUR_BUCKET/jquants-dat-mcp/cache.db \
+  --no-gzip-in-flight
 ```
+
+> **Important:** disable parallel composite uploads (the default for large files). They corrupt SQLite files because the reassembled object contains byte ranges that do not form a valid database page layout. On the publishing host, set:
+>
+> ```bash
+> gcloud config set storage/parallel_composite_upload_enabled False
+> ```
+
+No manual Firestore setup is required — the server creates the `users` and `oauth_state` collections on first write.
 
 ### Memory requirements
 
-`cache.db` can grow to 4 GB or more depending on the plan and date range. The service yaml sets `memory: 8Gi` to provide sufficient headroom. Cloud Run gen2 is required for memory allocations above 4 Gi.
+Cloud Run materializes `cache.db` into `/tmp` (a tmpfs, i.e. RAM). The memory limit therefore must cover:
+
+- `cache.db` size (currently ~3.57 GiB)
+- Python runtime + fastmcp + sqlite + httpx overhead (~300 MiB)
+- Request-time JSON serialization headroom
+
+Current production sizing (see [.github/workflows/cd.yml](.github/workflows/cd.yml)) is `--memory 6Gi --cpu 2 --no-cpu-throttling`, which leaves ~2.2 GiB headroom over the baseline. Cloud Run gen2 is required for memory allocations above 4 Gi.
+
+If `cache.db` grows beyond ~4 GiB, bump the memory limit accordingly — the tmpfs ceiling is roughly the instance memory, so you need `cache.db + ~2 GiB` at a minimum.
 
 ## Development
 

@@ -628,20 +628,22 @@ python3 scripts/daily_fetch.py --db /path/to/cache.db
 
 ## Cloud Run デプロイ
 
-このサーバーは「インメモリ + GCS 書き戻し」パターンで [Google Cloud Run](https://cloud.google.com/run) にデプロイできます:
+このサーバーは [Google Cloud Run](https://cloud.google.com/run) にデプロイできます。状態管理は 2 つのマネージドサービスに分離されています:
 
-- 起動時: GCS からデータベースを `/tmp` にダウンロード
-- 定期的（デフォルト 5 分）および SIGTERM 受信時: `/tmp` のデータベースを GCS にアップロード
+- **`cache.db`** — セルフホストサーバー（`jpx-short-report` の daily pipeline）が GCS バケットに publish したスナップショットを、Cloud Run 起動時に `/tmp`（tmpfs）にダウンロード。Cloud Run は読み込みのみで、GCS に書き戻しません。
+- **`users` / `oauth_state`** — Firestore（Native モード）に保存。強整合性かつマルチライター安全なので、Cloud Run は SQLite 書き込み競合を気にせず水平スケール可能です。
 
-**同期対象:** `cache.db`、`users.db`、`oauth_state.db`
-
-> **Note:** 複数インスタンスによる同時 SQLite 書き込みを防ぐため `maxScale: 1` が必要です。
+詳細は下記 [GCS と Firestore の連携](#gcs-と-firestore-の連携) を参照してください。
 
 ### 前提条件
 
-- [Docker](https://docs.docker.com/get-docker/) と [Google Cloud SDK](https://cloud.google.com/sdk/docs/install)
-- データベース永続化用の GCS バケット
-- バケットへの `roles/storage.objectAdmin` を持つサービスアカウント
+- [Google Cloud SDK](https://cloud.google.com/sdk/docs/install)
+- `cache.db` のリードオンリースナップショットを保持する GCS バケット（セルフホストサーバーが更新）
+- Firestore（Native モード）がプロジェクトで有効化されていること（per-user API キーと OAuth セッション状態の保存用）
+- 以下の権限を持つサービスアカウント:
+  - GCS バケットに対する `roles/storage.objectViewer`（`cache.db` 読み取り専用）
+  - プロジェクトに対する `roles/datastore.user`（Firestore 読み書き）
+  - API キーを Secret Manager で管理する場合は `roles/secretmanager.secretAccessor`
 
 ### GCS バケットの作成
 
@@ -650,110 +652,177 @@ gcloud storage buckets create gs://YOUR_BUCKET \
   --location asia-northeast1
 ```
 
-### GCS 同期の仕組み
+### Firestore の有効化
 
-サーバーは Cloud Run のエフェメラルな `/tmp` ファイルシステムと GCS の間で、3 つの SQLite データベースを同期します:
-
-| ファイル | 説明 |
-|---|---|
-| `cache.db` | 市場データキャッシュ（株価履歴・財務サマリー・指数等） |
-| `users.db` | ユーザーごとの暗号化済み J-Quants API キー（マルチユーザーモード） |
-| `oauth_state.db` | OAuth セッション状態・PKCE 検証データ |
-
-#### 同期フロー
-
-```
-起動時              定期同期                  シャットダウン時
-  |                   |                            |
-  v                   v                            v
-GCS → /tmp       /tmp → GCS               /tmp → GCS
-（ダウンロード）  （GCS_SYNC_INTERVAL 毎）  （SIGTERM ハンドラ）
+```bash
+gcloud firestore databases create \
+  --location=us-west1 \
+  --type=firestore-native
 ```
 
-1. **起動時** — `scripts/gcs_sync.py --init` が GCS から 3 ファイルを `/tmp` にダウンロード。オブジェクトが存在しない場合はスキップ（初回起動時）。
-2. **定期アップロード** — 同期デーモンが `GCS_SYNC_INTERVAL` 秒ごとにアップロード（デフォルト: 300 秒）。
-3. **SIGTERM 時** — Cloud Run はコンテナ停止前に SIGTERM を送信。デーモンは最終アップロードを行い、データ損失を防ぎます。
+### デプロイ
 
-#### スケールゼロ時の挙動
+推奨経路はリポジトリを fork し、[.github/workflows/cd.yml](.github/workflows/cd.yml) の GitHub Actions CD ワークフローを利用する方法です。このワークフローは正しいフラグ（メモリ、CPU、環境変数、シークレット）付きで `gcloud run deploy --source .` を呼び出し、本番デプロイの唯一の真実源（single source of truth）になります。手動で `gcloud run services update` を実行すると次回の CD で上書きされるので避けてください。
 
-`minInstances: 0` の場合、Cloud Run はリクエストがないときにインスタンスを 0 にスケールダウンします。データはすべて GCS に保存されるため、スケールゼロでもデータは失われません:
+手動で一度だけデプロイしたい場合（fork のテスト等）は、同じコマンドをローカルで実行します:
 
-- 最後のインスタンスがシャットダウンするとき、SIGTERM で最終 GCS アップロードが実行されます。
-- 新しいインスタンスが起動するとき、リクエスト受け付け前に GCS から最新状態をダウンロードします。
-- コールドスタート中（ダウンロード完了前）はリクエストを受け付けないため、データ損失は発生しません。
+```bash
+gcloud run deploy jquants-dat-mcp \
+  --project "${PROJECT_ID}" \
+  --region "${REGION}" \
+  --source . \
+  --execution-environment gen2 \
+  --memory 6Gi \
+  --cpu 2 \
+  --no-cpu-throttling \
+  --cpu-boost \
+  --set-env-vars "GCS_BUCKET=YOUR_BUCKET,JQUANTS_CACHE_DIR=/tmp" \
+  --set-secrets "JQUANTS_API_KEY=jquants-api-key:latest"
+```
 
-> **注意:** `maxScale: 1` の設定が必須です。複数インスタンスが同時に SQLite に書き込むとデータベースが破損します。
+メモリサイジングの指針は下記 [メモリ要件](#メモリ要件) を参照してください。
+
+### 環境変数
+
+| 変数 | 必須 | デフォルト | 説明 |
+|---|---|---|---|
+| `GCS_BUCKET` | はい | — | `cache.db` スナップショットを保持する GCS バケット名 |
+| `GCS_PREFIX` | いいえ | `jquants-dat-mcp/` | バケット内のオブジェクトキープレフィックス |
+| `JQUANTS_CACHE_DIR` | いいえ | `/tmp` | `cache.db` を展開するローカルディレクトリ（Cloud Run では tmpfs） |
+| `PORT` | いいえ | `8000` | HTTP ポート（Cloud Run が自動設定） |
+| `JQUANTS_API_KEY` | はい | — | J-Quants API キー（Secret Manager 推奨） |
+| `JQUANTS_PLAN` | いいえ | 自動検出 | プラン: `free` / `light` / `standard` / `premium`（API キーから自動検出、明示設定はオーバーライド） |
+| `MCP_BEARER_TOKEN` | いいえ | — | HTTP 認証用 Bearer トークン（単一ユーザーモードのみ） |
+| `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | いいえ | — | マルチユーザーモード時の OAuth 設定 |
+
+Firestore は Cloud Run サービスアカウントの Application Default Credentials を使うため、プロジェクト ID の環境変数設定は不要です。
+
+### GCS と Firestore の連携
+
+Cloud Run デプロイはコンテナ内 SQLite セットではなく、2 つのマネージドストアに依存します:
+
+| データ | 保存先 | アクセスモード |
+|---|---|---|
+| `cache.db`（市場データ） | GCS オブジェクト、起動時に `/tmp/cache.db` へ展開 | Cloud Run からは読み取り専用 |
+| `users`（ユーザーごとの暗号化 J-Quants API キー） | Firestore `users` コレクション | 読み書き |
+| `oauth_state`（OAuth セッション・PKCE 検証・動的クライアント登録） | Firestore `oauth_state` コレクション | 読み書き |
+
+`cache.db` はセルフホストサーバー（`jpx-short-report/daily.sh` を参照）が所有しており、日次バッチで GCS に最新スナップショットを publish します。Cloud Run は GCS に書き戻しません。
+
+#### 起動フロー
+
+```mermaid
+sequenceDiagram
+    participant E as entrypoint.sh
+    participant M as MCP サーバー
+    participant D as cache.db ダウンローダ
+    participant G as GCS
+
+    E->>M: 起動（cache.db 未取得）
+    activate M
+    Note right of M: J-Quants API フォールバックで<br/>リクエスト応答
+    E->>D: バックグラウンド起動
+    activate D
+    D->>G: gcloud storage cp cache.db /tmp
+    G-->>D: 約 3.5 GiB（1〜2 分）
+    D->>M: SIGHUP
+    deactivate D
+    Note right of M: cache.db をリロードして<br/>Tier 1 キャッシュに切替
+    deactivate M
+```
+
+注意点:
+- `cache.db` は約 3.5 GiB、ダウンロードに 1〜2 分かかります。この間のリクエストは J-Quants API に直接アクセスします（動作はしますが遅くなり、rate limit 対象となります）。
+- コールドスタート中は `cache_status` が最小ペイロード（`db_path` + `plan` のみ）を返します。行数や `db_size_mb` まで返るようになればキャッシュロード完了のサインです。
+- Firestore は強整合性のため、複数の Cloud Run インスタンスが同時稼働してもデータ競合は発生しません。`maxScale: 1` のような制約は不要で、必要に応じて水平スケール可能です。
 
 #### トラブルシューティング
 
 **起動時の権限エラー（`403 Forbidden` または `storage.objects.get denied`）:**
 
 ```bash
-# バケットの IAM ポリシーを確認
 gcloud storage buckets get-iam-policy gs://YOUR_BUCKET \
   --format="table(bindings.role, bindings.members)"
 ```
 
-ロールが付与されていない場合は、以下の IAM の設定を参照してください。
+サービスアカウントにバケットへの `roles/storage.objectViewer` が必要です。下記 [IAM の設定](#iam-の設定) を参照してください。
 
-**同期遅延 — 再起動後に変更が反映されない:**
-
-`GCS_SYNC_INTERVAL` が大きい場合（例: 3600）、直近に登録した API キーがまだ GCS に保存されていない可能性があります。間隔を短くするか、手動でアップロードしてください:
+**Firestore 権限エラー:**
 
 ```bash
-# 実行中のコンテナ内から即時アップロード
-python scripts/gcs_sync.py --upload
+gcloud projects get-iam-policy "${PROJECT_ID}" \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:serviceAccount:jquants-dat-mcp@*"
 ```
 
-**初回デプロイ時にデータベースが見つからない:**
+サービスアカウントにプロジェクトに対する `roles/datastore.user` が必要です。
 
-初回デプロイ時は GCS にオブジェクトが存在しないため、`--init` はすべてスキップして空のデータベースで起動します。これは正常動作です。既存データを事前に投入するには、下記の「初回データベースアップロード」を参照してください。
+**`cache_status` が `db_path` と `plan` のみを返す（行数が出ない）:**
+
+`cache.db` のバックグラウンドダウンロードが未完了です。コールドスタート直後の 1〜2 分は正常動作です。ログに `cache.db download complete; signaling MCP server to reload` が出ていれば完了しています。
+
+**初回デプロイ時に `cache.db` が GCS に存在しない:**
+
+空キャッシュフォールバックモードはありませんが、サーバーは引き続き J-Quants API から直接データを取得して応答します。Tier 1 キャッシュを有効化するには、セルフホストサーバーで温めた `cache.db` のスナップショットを GCS にアップロードしてください（下記 [cache.db の初回アップロード](#cachedb-の初回アップロード) を参照）。
 
 ### IAM の設定
 
 ```bash
+SA="jquants-dat-mcp@${PROJECT_ID}.iam.gserviceaccount.com"
+
 # サービスアカウントの作成
 gcloud iam service-accounts create jquants-dat-mcp \
   --display-name "jquants-dat-mcp Cloud Run SA"
 
-# GCS アクセス権の付与
+# GCS の cache.db スナップショットへの読み取り専用アクセス
 gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET \
-  --member "serviceAccount:jquants-dat-mcp@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --role "roles/storage.objectAdmin"
+  --member "serviceAccount:${SA}" \
+  --role "roles/storage.objectViewer"
+
+# Firestore の users / oauth_state コレクションへのアクセス
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member "serviceAccount:${SA}" \
+  --role "roles/datastore.user"
+
+# Secret Manager アクセス（JQUANTS_API_KEY 等を Secret Manager で管理する場合）
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member "serviceAccount:${SA}" \
+  --role "roles/secretmanager.secretAccessor"
 ```
 
-### 環境変数
+Note: `cache.db` を publish するセルフホストサーバーが別のサービスアカウントを使っている場合、書き込み権限はそちら側にのみ必要です。Cloud Run サービスアカウントは viewer のみで構いません。
 
-| 変数 | 必須 | デフォルト | 説明 |
-|---|---|---|---|
-| `GCS_BUCKET` | はい | — | データベース永続化用の GCS バケット名 |
-| `GCS_PREFIX` | いいえ | `jquants-dat-mcp/` | バケット内のオブジェクトキープレフィックス |
-| `GCS_SYNC_INTERVAL` | いいえ | `300` | アップロード間隔（秒） |
+### cache.db の初回アップロード
 
-既存サービスの GCS 設定を更新する場合:
-
-```bash
-gcloud run services update jquants-dat-mcp \
-  --region "${REGION}" \
-  --set-env-vars "GCS_BUCKET=YOUR_BUCKET,GCS_PREFIX=jquants-dat-mcp/,GCS_SYNC_INTERVAL=300"
-```
-
-### 初回データベースアップロード
-
-初回デプロイ前に、既存のデータベースを GCS にアップロードします:
+Cloud Run は `cache.db` をリードオンリースナップショットとして読み込みます。キャッシュを温めたセルフホストサーバーから初回デプロイ前にスナップショットを publish してください:
 
 ```bash
 gcloud storage cp ~/.cache/jquants-dat-mcp/cache.db \
-  gs://YOUR_BUCKET/jquants-dat-mcp/cache.db
-
-# users.db・oauth_state.db が存在する場合はアップロード
-gcloud storage cp ~/.local/share/jquants-dat-mcp/users.db \
-  gs://YOUR_BUCKET/jquants-dat-mcp/users.db
-gcloud storage cp ~/.local/share/jquants-dat-mcp/oauth_state.db \
-  gs://YOUR_BUCKET/jquants-dat-mcp/oauth_state.db
+  gs://YOUR_BUCKET/jquants-dat-mcp/cache.db \
+  --no-gzip-in-flight
 ```
 
-詳細な設定（Dockerfile、`cloud-run-service.yaml` 例、Secret Manager 連携）は [README.md](README.md) を参照してください。
+> **重要:** 大きなファイルのアップロード時は parallel composite upload（デフォルト有効）を必ず無効化してください。SQLite ファイルが壊れます（再構成されたオブジェクトが有効な DB ページレイアウトにならないため）。publish ホスト側で以下を設定します:
+>
+> ```bash
+> gcloud config set storage/parallel_composite_upload_enabled False
+> ```
+
+Firestore 側の事前セットアップは不要です。サーバーが初回書き込み時に `users` と `oauth_state` コレクションを自動作成します。
+
+### メモリ要件
+
+Cloud Run は `cache.db` を `/tmp`（tmpfs = RAM）に展開します。したがってメモリ上限は以下を収容できる必要があります:
+
+- `cache.db` のサイズ（現状 ~3.57 GiB）
+- Python runtime + fastmcp + sqlite + httpx のオーバーヘッド（~300 MiB）
+- リクエスト処理中の JSON シリアライズ用ヘッドルーム
+
+本番の現行サイジング（[.github/workflows/cd.yml](.github/workflows/cd.yml) 参照）は `--memory 6Gi --cpu 2 --no-cpu-throttling` で、ベースラインに対して約 2.2 GiB のヘッドルームを確保しています。4 GiB を超えるメモリ割り当てには Cloud Run gen2 が必要です。
+
+`cache.db` が ~4 GiB を超えて肥大化した場合はメモリ上限も上げてください。tmpfs の上限はインスタンスメモリとほぼ同じなので、最低限 `cache.db サイズ + ~2 GiB` を確保してください。
+
+詳細は [README.md](README.md) の "Cloud Run Deployment" セクションを参照してください。
 
 ## 開発
 
