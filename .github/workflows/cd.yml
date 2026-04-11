@@ -36,7 +36,7 @@ jobs:
             --region us-west1 \
             --source . \
             --execution-environment gen2 \
-            --memory 8Gi \
+            --memory 6Gi \
             --cpu 2 \
             --no-cpu-throttling \
             --clear-volumes --clear-volume-mounts \

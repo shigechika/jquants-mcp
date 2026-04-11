@@ -22,3 +22,5 @@ venv/
 
 .DS_Store
 .claude/
+
+load_test_results/

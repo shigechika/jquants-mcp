@@ -80,17 +80,28 @@ def register(
     ) -> dict[str, Any]:
         """Retrieve daily stock prices (OHLC).
 
-        Returns daily OHLC data for stocks. Either 'code' or 'date' must be specified.
-        Includes adjusted prices (AdjO/AdjC, etc.) and morning/afternoon session breakdown.
+        Returns daily OHLC data for stocks. Includes adjusted prices (AdjO/AdjC, etc.)
+        and morning/afternoon session breakdown.
+
+        At least one of 'code' or 'date' (or 'date_from'/'date_to') must be specified.
+        Query patterns:
+        - code only: all history for that issue (up to the plan's retention limit,
+          e.g. Light returns ~5 years, Standard ~10 years). Response can be large
+          (>1000 rows per issue).
+        - date only: all issues traded on that date (thousands of rows).
+        - code + date: single row.
+        - code + date_from/date_to: range for one issue.
+        - date_from/date_to without code: all issues in the range (very large;
+          prefer bulk endpoints).
 
         [Supported plans] Free / Light / Standard / Premium
-        Note: Free plan data is delayed by 12 weeks.
+        Retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all.
 
         Args:
             code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
-            date: Date (YYYYMMDD or YYYY-MM-DD)
-            date_from: Start date for range query
-            date_to: End date for range query
+            date: Single date (YYYYMMDD or YYYY-MM-DD)
+            date_from: Start date for range query (inclusive)
+            date_to: End date for range query (inclusive)
         """
         if code is None and date is None and date_from is None and date_to is None:
             return make_validation_error_response(
