@@ -151,7 +151,7 @@ async def handle_settings_post(
     return HTMLResponse(
         html_page(
             "Saved",
-            f'<div class="success">API key registered. Detected plan: <strong>{html.escape(plan)}</strong></div>'
+            '<div class="success">API key registered.</div>'
             f"{warning_html}"
             '<p><a href="/settings">Back to settings</a></p>',
         )

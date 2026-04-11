@@ -96,8 +96,8 @@ class TestHandleSettingsGet:
         assert "No API key registered yet" in body
         assert 'name="api_key"' in body
 
-    async def test_registered_user_shows_plan(self):
-        """登録済みユーザーにはプランを表示。"""
+    async def test_registered_user_shows_registered_status(self):
+        """登録済みユーザーには登録済みステータスと Update ボタンを表示。"""
         token = _mock_token()
         user = User(user_id="gh-test-user", api_key="dummy-key", plan="light")
         user_db = _mock_user_db(existing_user=user)
@@ -105,8 +105,8 @@ class TestHandleSettingsGet:
             resp = await handle_settings_get(_mock_request(), lambda: user_db)
         assert resp.status_code == 200
         body = resp.body.decode()
-        assert "light" in body
-        assert "Currently registered" in body
+        assert "API key is registered" in body
+        assert "Update API Key" in body
 
 
 # ---- POST /settings ----
@@ -242,7 +242,7 @@ class TestHandleSettingsPost:
 
         assert resp.status_code == 200
         body = resp.body.decode()
-        assert "free" in body
+        assert "API key registered" in body
         user_db.update_plan.assert_called_once_with("gh-test-user", "free")
         mock_probe.close.assert_awaited_once()
 

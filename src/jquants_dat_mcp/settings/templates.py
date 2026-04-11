@@ -71,10 +71,7 @@ def form_html(
         else ""
     )
     if registered_plan is not None:
-        status_html = (
-            f'<div class="status">Currently registered \u2014 Plan: '
-            f"<strong>{html.escape(registered_plan)}</strong></div>"
-        )
+        status_html = '<div class="status">API key is registered.</div>'
         button_label = "Update API Key"
         delete_section = (
             '<hr style="margin-top:24px">'
@@ -92,9 +89,6 @@ def form_html(
     body = f"""<h1>J-Quants API Key Settings</h1>
 {user_info_html}
 {status_html}
-<p style="color:#555;font-size:0.9rem;margin-top:0">
-  Your plan is auto-detected from the API key — no selection needed.
-</p>
 <form method="post" action="/settings">
   {csrf_field}
   <label for="api_key">J-Quants API Key
