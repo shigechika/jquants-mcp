@@ -372,10 +372,7 @@ def cache_clear(table: str | None = None) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def register_api_key(
-    api_key: str,
-    plan: str = "free",
-) -> dict[str, Any]:
+async def register_api_key(api_key: str) -> dict[str, Any]:
     """Register or update your J-Quants API key (multi-user mode).
 
     ⚠️ SECURITY WARNING: The API key is transmitted in plaintext via the MCP
@@ -383,15 +380,17 @@ async def register_api_key(
     browser-based /settings page instead for secure key registration.
 
     Stores your J-Quants API key encrypted in the server's user database,
-    associated with your OAuth identity. Subsequent tool calls will
-    automatically use this key.
+    associated with your OAuth identity. The server probes plan-specific
+    J-Quants endpoints to auto-detect the plan (free / light / standard /
+    premium) and stores it alongside the key. Subsequent tool calls will
+    automatically use this key and the detected plan's rate limits and
+    date-range restrictions.
 
     This tool requires OAuth 2.1 authentication and server-side encryption
     (MCP_ENCRYPTION_KEY) to be configured.
 
     Args:
         api_key: Your J-Quants API key (refresh token from the J-Quants portal).
-        plan: Your J-Quants plan (free | light | standard | premium). Affects rate limits.
     """
     from fastmcp.server.dependencies import get_access_token
 
@@ -414,22 +413,16 @@ async def register_api_key(
             ),
         }
 
-    valid_plans = {"free", "light", "standard", "premium"}
-    if plan not in valid_plans:
-        return {
-            "error": True,
-            "message": f"Invalid plan '{plan}'. Must be one of: {', '.join(sorted(valid_plans))}",
-        }
-
     user_id = token.client_id
-    user = User(user_id=user_id, api_key=api_key, plan=plan)
-    user_db.save_user(user)
+    # Save with a temporary plan that will be overwritten by auto-detection below.
+    plan = "free"
+    user_db.save_user(User(user_id=user_id, api_key=api_key, plan=plan))
 
     # キャッシュされたクライアントを無効化して次回呼び出しで新しいキーを使用
     _user_clients.pop(user_id, None)
     _user_client_last_used.pop(user_id, None)
 
-    # プラン固有のエンドポイントをプローブして実際のプランを検証・自動検出
+    # プラン固有のエンドポイントをプローブして実際のプランを自動検出
     from .audit import audit
     from .config import Settings as _Settings
     from .validation import detect_plan
@@ -438,13 +431,8 @@ async def register_api_key(
     warnings: list[str] = []
     try:
         detected_plan = await detect_plan(probe_client)
-        if detected_plan != plan:
-            user_db.update_plan(user_id, detected_plan)
-            warnings.append(
-                f"Claimed plan '{plan}' differs from detected plan '{detected_plan}'. "
-                f"Stored plan updated to '{detected_plan}'."
-            )
-            plan = detected_plan
+        user_db.update_plan(user_id, detected_plan)
+        plan = detected_plan
     except Exception as e:
         logger.debug("Plan detection failed during registration for user %s: %s", user_id, e)
         warnings.append("Plan detection skipped due to internal error")
