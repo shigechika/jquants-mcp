@@ -84,7 +84,7 @@ plan = premium
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `JQUANTS_API_KEY` | No* | — | J-Quants API key |
-| `JQUANTS_PLAN` | No | `free` | Plan: `free` / `light` / `standard` / `premium` |
+| `JQUANTS_PLAN` | No | auto-detect | Plan: `free` / `light` / `standard` / `premium` (auto-detected from the API key at server startup; set this variable only to override) |
 | `JQUANTS_CACHE_DIR` | No | `~/.cache/jquants-dat-mcp` | Cache directory path |
 | `JQUANTS_BASE_URL` | No | `https://api.jquants.com/v2` | API base URL |
 | `MAX_RETRIES` | No | `5` | Max retry attempts for failed requests |
@@ -296,16 +296,13 @@ Claude calls `register_api_key(api_key="...")`. The server probes plan-specific 
 Register the MCP server with `claude mcp add`:
 
 ```bash
-claude mcp add jquants-dat-mcp \
-  -e JQUANTS_PLAN=premium \
-  -- jquants-dat-mcp
+claude mcp add jquants-dat-mcp -- jquants-dat-mcp
 ```
 
 Or if installed from source:
 
 ```bash
 claude mcp add jquants-dat-mcp \
-  -e JQUANTS_PLAN=premium \
   -- /path/to/jquants-dat-mcp/.venv/bin/jquants-dat-mcp
 ```
 
@@ -333,14 +330,13 @@ Add to Claude Desktop config file:
 {
   "mcpServers": {
     "jquants-dat-mcp": {
-      "command": "/path/to/jquants-dat-mcp/.venv/bin/jquants-dat-mcp",
-      "env": {
-        "JQUANTS_PLAN": "premium"
-      }
+      "command": "/path/to/jquants-dat-mcp/.venv/bin/jquants-dat-mcp"
     }
   }
 }
 ```
+
+The server auto-detects the plan from your API key on startup — no need to set it manually. Add an `env` block only if you want to override the detection or point to a different API key.
 
 > **Note:** Claude Desktop has a limited `PATH` (`/usr/local/bin`, `/usr/bin`, etc.), so you must specify the full path to the executable.
 
@@ -366,7 +362,6 @@ This exposes the MCP endpoint at `http://<host>:8080/mcp`. Clients on the same L
 
 ```bash
 claude mcp add jquants-dat-mcp \
-  -e JQUANTS_PLAN=premium \
   --transport http http://192.0.2.1:8080/mcp
 ```
 
