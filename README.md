@@ -248,9 +248,11 @@ sequenceDiagram
     C->>G: OAuth 2.1 Authorization
     G-->>C: Access token (JWT)
     U->>C: "Register my J-Quants API key: <key>"
-    C->>S: register_api_key(api_key="<key>", plan="light")
-    S->>S: Encrypt & store key (AES-256-GCM)
-    S-->>C: {"status": "ok"}
+    C->>S: register_api_key(api_key="<key>")
+    S->>J: Probe plan-specific endpoints (auto-detect)
+    J-->>S: Detected plan
+    S->>S: Encrypt & store key + plan (AES-256-GCM)
+    S-->>C: {"status": "ok", "plan": "<detected>"}
     U->>C: "Get TOPIX daily prices"
     C->>S: get_indices_bars_daily_topix(...)
     S->>J: API call with user's key
@@ -267,9 +269,9 @@ sequenceDiagram
 
 **Registering a key** (tell Claude):
 
-> "Register my J-Quants API key: `<your-api-key>`, plan: light"
+> "Register my J-Quants API key: `<your-api-key>`"
 
-Claude calls `register_api_key(api_key="...", plan="light")`. Valid plans: `free`, `light`, `standard`, `premium`. The plan controls per-user rate limiting.
+Claude calls `register_api_key(api_key="...")`. The server probes plan-specific endpoints with the key to auto-detect the plan (`free` / `light` / `standard` / `premium`) and stores it alongside the encrypted key — no manual selection needed. Subsequent tool calls use the detected plan for rate limiting and date-range restrictions.
 
 ### Security
 

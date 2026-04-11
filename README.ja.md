@@ -248,9 +248,11 @@ sequenceDiagram
     C->>G: OAuth 2.1 認可
     G-->>C: アクセストークン（JWT）
     U->>C: "J-Quants API キーを登録して: <key>"
-    C->>S: register_api_key(api_key="<key>", plan="light")
-    S->>S: キーを暗号化して保存（AES-256-GCM）
-    S-->>C: {"status": "ok"}
+    C->>S: register_api_key(api_key="<key>")
+    S->>J: プラン固有エンドポイントをプローブ（自動検出）
+    J-->>S: 検出されたプラン
+    S->>S: キー + プランを暗号化保存（AES-256-GCM）
+    S-->>C: {"status": "ok", "plan": "<detected>"}
     U->>C: "TOPIX の日足データを取得して"
     C->>S: get_indices_bars_daily_topix(...)
     S->>J: ユーザーのキーで API 呼び出し
@@ -267,9 +269,9 @@ sequenceDiagram
 
 **キーの登録**（Claude に伝える）:
 
-> 「J-Quants の API キー `<APIキー>` を light プランで登録して」
+> 「J-Quants の API キー `<APIキー>` を登録して」
 
-Claude が `register_api_key(api_key="...", plan="light")` を呼び出します。有効なプラン: `free`・`light`・`standard`・`premium`（ユーザーごとのレート制限に影響）。
+Claude が `register_api_key(api_key="...")` を呼び出します。サーバーはキーを使ってプラン固有のエンドポイントをプローブし、プラン（`free` / `light` / `standard` / `premium`）を自動検出して暗号化済みキーと一緒に保存します。手動でのプラン指定は不要です。以降のツール呼び出しは検出されたプランに基づいてレート制限・日付範囲制約を適用します。
 
 ### セキュリティ
 
