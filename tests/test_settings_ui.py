@@ -157,19 +157,33 @@ class TestHandleSettingsPost:
         assert resp.status_code == 400
         assert "required" in resp.body.decode()
 
-    async def test_invalid_plan_returns_400(self):
-        """無効なプランで 400。"""
+    async def test_plan_field_is_ignored(self):
+        """Plan field from the form is ignored — plan is auto-detected."""
         token = _mock_token()
         user_db = _mock_user_db()
-        with patch("fastmcp.server.dependencies.get_access_token", return_value=token):
+        mock_probe = MagicMock()
+        mock_probe.close = AsyncMock()
+
+        with (
+            patch("fastmcp.server.dependencies.get_access_token", return_value=token),
+            patch(
+                _PATCH_DETECT_PLAN,
+                new_callable=AsyncMock,
+                return_value="standard",
+            ),
+            patch(_PATCH_JQUANTS_CLIENT, return_value=mock_probe),
+            patch(_PATCH_AUDIT),
+        ):
+            # Client sends an arbitrary "plan" value — it should be ignored.
             resp = await handle_settings_post(
                 _mock_request({"api_key": "my-key", "plan": "ultra"}, csrf=True),
                 lambda: user_db,
                 {},
                 {},
             )
-        assert resp.status_code == 400
-        assert "Invalid plan" in resp.body.decode()
+        assert resp.status_code == 200
+        # Detected plan wins
+        user_db.update_plan.assert_called_once_with("gh-test-user", "standard")
 
     async def test_successful_registration(self):
         """正常登録で 200 と成功メッセージ。"""
@@ -202,8 +216,8 @@ class TestHandleSettingsPost:
         user_db.save_user.assert_called_once()
         mock_probe.close.assert_awaited_once()
 
-    async def test_plan_mismatch_shows_warning(self):
-        """プラン不一致時に警告を表示し DB を更新。"""
+    async def test_detected_plan_is_stored(self):
+        """Auto-detected plan is saved via update_plan()."""
         token = _mock_token()
         user_db = _mock_user_db()
         mock_probe = MagicMock()
@@ -214,13 +228,13 @@ class TestHandleSettingsPost:
             patch(
                 _PATCH_DETECT_PLAN,
                 new_callable=AsyncMock,
-                return_value="free",  # 入力は "light" だが検出は "free"
+                return_value="free",
             ),
             patch(_PATCH_JQUANTS_CLIENT, return_value=mock_probe),
             patch(_PATCH_AUDIT),
         ):
             resp = await handle_settings_post(
-                _mock_request({"api_key": "my-api-key", "plan": "light"}, csrf=True),
+                _mock_request({"api_key": "my-api-key"}, csrf=True),
                 lambda: user_db,
                 {},
                 {},
@@ -228,7 +242,7 @@ class TestHandleSettingsPost:
 
         assert resp.status_code == 200
         body = resp.body.decode()
-        assert "differs" in body
+        assert "free" in body
         user_db.update_plan.assert_called_once_with("gh-test-user", "free")
         mock_probe.close.assert_awaited_once()
 

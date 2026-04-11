@@ -26,7 +26,7 @@ from .session import (
     sign_session,
     validate_csrf,
 )
-from .templates import _VALID_PLANS, form_html, html_page, login_page_html
+from .templates import form_html, html_page, login_page_html
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +113,6 @@ async def handle_settings_post(
         )
 
     api_key = (form.get("api_key") or "").strip()
-    plan = (form.get("plan") or "free").strip()
 
     if not api_key:
         return HTMLResponse(
@@ -124,16 +123,9 @@ async def handle_settings_post(
             status_code=400,
         )
 
-    if plan not in _VALID_PLANS:
-        return HTMLResponse(
-            html_page(
-                "Error",
-                f'<div class="error">Invalid plan: {html.escape(plan)}</div>'
-                '<p><a href="/settings">Back</a></p>',
-            ),
-            status_code=400,
-        )
-
+    # Plan is auto-detected from the API key; save with a temporary value
+    # that will be overwritten by the detection step below.
+    plan = "free"
     user_db.save_user(User(user_id=user_id, api_key=api_key, plan=plan))
 
     # Clear cached client (next request will use the new key)
@@ -145,13 +137,8 @@ async def handle_settings_post(
     warnings: list[str] = []
     try:
         detected_plan = await detect_plan(probe_client)
-        if detected_plan != plan:
-            user_db.update_plan(user_id, detected_plan)
-            warnings.append(
-                f"Claimed plan '{html.escape(plan)}' differs from detected plan "
-                f"'{html.escape(detected_plan)}'. Updated to '{html.escape(detected_plan)}'."
-            )
-            plan = detected_plan
+        user_db.update_plan(user_id, detected_plan)
+        plan = detected_plan
     except Exception as e:
         logger.warning("Plan detection failed for user %s: %s", user_id, e)
         warnings.append(f"Plan detection skipped: {html.escape(str(e))}")
@@ -164,7 +151,7 @@ async def handle_settings_post(
     return HTMLResponse(
         html_page(
             "Saved",
-            f'<div class="success">API key registered. Plan: <strong>{html.escape(plan)}</strong></div>'
+            f'<div class="success">API key registered. Detected plan: <strong>{html.escape(plan)}</strong></div>'
             f"{warning_html}"
             '<p><a href="/settings">Back to settings</a></p>',
         )

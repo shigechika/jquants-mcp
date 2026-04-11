@@ -89,15 +89,12 @@ def form_html(
         button_label = "Register API Key"
         delete_section = ""
 
-    plan_options = "\n".join(
-        f'  <option value="{p}"{" selected" if p == (registered_plan or "free") else ""}>'
-        f"{p}</option>"
-        for p in _VALID_PLANS
-    )
-
     body = f"""<h1>J-Quants API Key Settings</h1>
 {user_info_html}
 {status_html}
+<p style="color:#555;font-size:0.9rem;margin-top:0">
+  Your plan is auto-detected from the API key — no selection needed.
+</p>
 <form method="post" action="/settings">
   {csrf_field}
   <label for="api_key">J-Quants API Key
@@ -105,10 +102,6 @@ def form_html(
   </label>
   <input type="password" id="api_key" name="api_key" required autocomplete="off"
          placeholder="{"••••••••（registered — enter new key to update）" if registered_plan is not None else "Enter your J-Quants API Key"}">
-  <label for="plan">Plan</label>
-  <select id="plan" name="plan">
-{plan_options}
-  </select>
   <button type="submit">{html.escape(button_label)}</button>
 </form>
 {delete_section}"""
