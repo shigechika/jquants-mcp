@@ -18,7 +18,9 @@ unchanged, and there is still ~2.2 GiB of headroom on the 6 GiB instance.
 
 **Update (Apr 12):** After removing plan column duplicates and adding 5-year
 date trim to `gcs_export_cache.py`, `cache.db` shrank from 3.57 GB to 2.7 GB.
-Re-tested with 4 GiB — all phases passed with 0 errors.  Adopted 4 GiB.
+Re-tested with 4 GiB — all phases passed with 0 errors. Further tested with
+1 vCPU: parallel/burst latency increased ~20-30% but 0 errors. Adopted
+**1 vCPU + 4 GiB** (down from 2 vCPU + 8 GiB — 75% cost reduction).
 
 ## Motivation
 
@@ -206,8 +208,22 @@ Errors: 0 across all phases. Latency is comparable to or better than 6 GiB
 | **4 GiB** | ~1.1 GiB headroom over baseline, tight but passed load test | **OK — adopted** |
 | 6 GiB (previous) | ~3.0 GiB headroom | overprovisioned |
 
-**vCPU stays at 2.** p99 = 0.92 vCPU with the 60 s window smoothing real
-peaks. Dropping to 1 vCPU was not tested and would leave no safety margin.
+### Apr 12 vCPU test (1 vCPU + 4 GiB, cache.db = 2.7 GB)
+
+| Phase | n | p50 (2 vCPU) | p95 (2 vCPU) | p50 (1 vCPU) | p95 (1 vCPU) |
+|---|---|---|---|---|---|
+| warmup    |   1 |  419 ms |  419 ms |  663 ms |  663 ms |
+| steady    |  30 |  290 ms |  645 ms |  287 ms |  669 ms |
+| heavy_mem |  15 | 1283 ms | 1710 ms | 1316 ms | 1855 ms |
+| parallel  | ~623–734 |  479 ms |  574 ms |  559 ms |  675 ms |
+| burst     | ~193–257 | 1137 ms | 1586 ms | 1465 ms | 2074 ms |
+
+Errors: 0 across all phases. Sequential workloads (steady, heavy_mem) are
+nearly identical. Parallel/burst phases show 20-30% latency increase due to
+CPU contention, but all requests complete successfully within 2.7 seconds.
+
+**Adopted 1 vCPU + 4 GiB.** Single-user workload does not require 2 vCPU
+parallelism. The 20-30% latency increase under burst is acceptable.
 
 ## Gotchas
 
@@ -277,10 +293,8 @@ Filed as a future polish.
   or if real users consistently exercise a workload heavier than the
   10-concurrent burst. The 4 GiB limit is tight (~1.1 GiB headroom), so
   monitor for OOM events in Cloud Run logs.
-- **vCPU downsizing:** not tested. The current p99 of 0.92 vCPU with 60 s
-  smoothing leaves insufficient signal to justify dropping to 1 vCPU.
-  Would require a separate test with finer-grained metrics (e.g. raw
-  distribution points) before committing.
+- **vCPU:** tested and adopted 1 vCPU on Apr 12. If multi-user concurrent
+  access becomes a requirement, bump back to 2 vCPU.
 - **Burst concurrency ceiling:** Cloud Run `containerConcurrency` defaults
   to 80 per instance (current deployment uses `--concurrency=320`
   implicitly via default). The 10-concurrent burst did not stress this
@@ -291,7 +305,7 @@ Filed as a future polish.
 - [`scripts/load_test.py`](../scripts/load_test.py)
 - [`scripts/collect_metrics.py`](../scripts/collect_metrics.py)
 - [`.github/workflows/cd.yml`](../.github/workflows/cd.yml) — single source
-  of truth for the `--memory 4Gi --cpu 2` setting
+  of truth for the `--memory 4Gi --cpu 1` setting
 - [`docs/gcsfuse-postmortem.md`](gcsfuse-postmortem.md) — the previous
   sizing-related incident that motivated the startup-copy architecture
 - Issue [#72](https://github.com/shigechika/jquants-dat-mcp/issues/72),
