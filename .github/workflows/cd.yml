@@ -37,7 +37,7 @@ jobs:
             --source . \
             --execution-environment gen2 \
             --memory 4Gi \
-            --cpu 2 \
+            --cpu 1 \
             --no-cpu-throttling \
             --clear-volumes --clear-volume-mounts \
             --cpu-boost \
