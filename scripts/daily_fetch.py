@@ -25,11 +25,20 @@ import configparser
 import json
 import os
 import sqlite3
+import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import jquantsapi
+# schema.py は stdlib のみ依存 — jpx-short-report の venv でもインポート可能
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from jquants_dat_mcp.cache.schema import (  # noqa: E402
+    RESPONSE_CACHE_DDL,
+    TIER1_TABLES,
+    generate_ddl,
+)
+
+import jquantsapi  # noqa: E402
 
 # キャッシュ DB のデフォルトパス
 DEFAULT_DB_PATH = Path.home() / ".cache" / "jquants-dat-mcp" / "cache.db"
@@ -92,111 +101,119 @@ def _available_endpoints(plan: str) -> list[str]:
     ]
 
 
+_DAILY_FETCH_TABLES = [
+    "indices_bars_daily_topix",
+    "fins_summary",
+    "investor_types",
+    "markets_margin_interest",
+    "markets_margin_alert",
+    "markets_short_ratio",
+    "markets_breakdown",
+    "markets_calendar",
+]
+
+
 def _ensure_tables(conn: sqlite3.Connection) -> None:
     """Create required tables if they do not exist."""
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS indices_bars_daily_topix (
-            date TEXT NOT NULL,
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            PRIMARY KEY (date, plan)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS fins_summary (
-            code TEXT NOT NULL,
-            disc_date TEXT NOT NULL,
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            PRIMARY KEY (code, disc_date, plan)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS investor_types (
-            pub_date TEXT NOT NULL,
-            section TEXT NOT NULL,
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            PRIMARY KEY (pub_date, section, plan)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS response_cache (
-            cache_key TEXT PRIMARY KEY,
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            ttl_seconds INTEGER NOT NULL
-        )
-    """)
-    # Markets Tier 1 テーブル
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS markets_margin_interest (
-            code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            PRIMARY KEY (code, date, plan)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS markets_margin_alert (
-            code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            PRIMARY KEY (code, date, plan)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS markets_short_ratio (
-            s33 TEXT NOT NULL,
-            date TEXT NOT NULL,
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            PRIMARY KEY (s33, date, plan)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS markets_breakdown (
-            code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            PRIMARY KEY (code, date, plan)
-        )
-    """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS markets_calendar (
-            date TEXT NOT NULL,
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            PRIMARY KEY (date, plan)
-        )
-    """)
-    # 既存テーブルのマイグレーション: plan カラムを追加
-    _TIER1_TABLES_MIGRATE = [
-        "indices_bars_daily_topix",
-        "fins_summary",
-        "investor_types",
-        "markets_margin_interest",
-        "markets_margin_alert",
-        "markets_short_ratio",
-        "markets_breakdown",
-        "markets_calendar",
-    ]
-    for table in _TIER1_TABLES_MIGRATE:
-        try:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'")
-        except sqlite3.OperationalError:
-            pass  # カラムが既に存在する場合
+    for name in _DAILY_FETCH_TABLES:
+        conn.execute(generate_ddl(name, TIER1_TABLES[name]))
+    conn.execute(RESPONSE_CACHE_DDL)
+    conn.commit()
+    _migrate_drop_plan(conn)
+
+
+def _migrate_drop_plan(conn: sqlite3.Connection) -> None:
+    """Remove plan column from Tier 1 tables if present.
+
+    Mirrors the same migration in store.py._migrate_drop_plan() so that
+    daily_fetch.py (which connects directly, bypassing CacheStore) can
+    also clean up legacy plan columns.
+    """
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version >= 2:
+        return
+
+    _TABLES_WITH_PLAN_SCHEMA = {
+        "indices_bars_daily_topix": ("date", "date"),
+        "fins_summary": ("code, disc_date", "code, disc_date"),
+        "investor_types": ("pub_date, section", "pub_date, section"),
+        "markets_margin_interest": ("code, date", "code, date"),
+        "markets_margin_alert": ("code, date", "code, date"),
+        "markets_short_ratio": ("s33, date", "s33, date"),
+        "markets_breakdown": ("code, date", "code, date"),
+        "markets_calendar": ("date", "date"),
+    }
+
+    migrated = False
+    for table, (key_cols, pk_cols) in _TABLES_WITH_PLAN_SCHEMA.items():
+        cols_info = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        col_names = [c[1] for c in cols_info]
+        if "plan" not in col_names:
+            continue
+
+        pk_positions = [c[1] for c in cols_info if c[5] > 0]
+        select_cols = [c for c in col_names if c != "plan"]
+        select_str = ", ".join(select_cols)
+
+        if "plan" in pk_positions:
+            # Rebuild: deduplicate (highest plan wins)
+            conn.execute(f"""
+                CREATE TABLE {table}_v2 AS SELECT {select_str} FROM (
+                    SELECT {select_str},
+                        ROW_NUMBER() OVER (
+                            PARTITION BY {pk_cols}
+                            ORDER BY CASE plan
+                                WHEN 'premium' THEN 3 WHEN 'standard' THEN 2
+                                WHEN 'light' THEN 1 ELSE 0 END DESC
+                        ) AS rn
+                    FROM {table}
+                ) WHERE rn = 1
+            """)
+            conn.execute(f"DROP TABLE {table}")
+            conn.execute(f"ALTER TABLE {table}_v2 RENAME TO {table}")
+        else:
+            try:
+                conn.execute(f"ALTER TABLE {table} DROP COLUMN plan")
+            except sqlite3.OperationalError:
+                pass
+        migrated = True
+
+    # Tier 2: strip |plan= suffix
+    try:
+        has_plan_keys = conn.execute(
+            "SELECT COUNT(*) FROM response_cache WHERE cache_key LIKE '%|plan=%'"
+        ).fetchone()[0]
+    except sqlite3.OperationalError:
+        has_plan_keys = 0
+
+    if has_plan_keys:
+        conn.execute("""
+            CREATE TABLE response_cache_v2 (
+                cache_key TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                fetched_at REAL NOT NULL,
+                ttl_seconds INTEGER NOT NULL
+            )
+        """)
+        conn.execute("""
+            INSERT OR REPLACE INTO response_cache_v2
+                (cache_key, data, fetched_at, ttl_seconds)
+            SELECT
+                CASE WHEN INSTR(cache_key, '|plan=') > 0
+                    THEN SUBSTR(cache_key, 1, INSTR(cache_key, '|plan=') - 1)
+                    ELSE cache_key END,
+                data, fetched_at, ttl_seconds
+            FROM response_cache
+            ORDER BY fetched_at ASC
+        """)
+        conn.execute("DROP TABLE response_cache")
+        conn.execute("ALTER TABLE response_cache_v2 RENAME TO response_cache")
+        migrated = True
+
+    if migrated:
+        print("  マイグレーション: plan カラムを除去しました")
+
+    conn.execute("PRAGMA user_version = 2")
     conn.commit()
 
 
@@ -210,7 +227,6 @@ def _store_tier1(
     table: str,
     rows: list[dict],
     key_mapping: list[tuple[str, str]],
-    plan: str,
 ) -> int:
     """Insert records into a Tier 1 table.
 
@@ -219,7 +235,6 @@ def _store_tier1(
         table: Table name
         rows: API response row data
         key_mapping: List of (API column name, DB column name)
-        plan: Subscription plan tag
 
     Returns:
         Number of inserted rows
@@ -229,17 +244,17 @@ def _store_tier1(
 
     now = time.time()
     db_col_names = ", ".join([db_col for _, db_col in key_mapping])
-    placeholders = ", ".join(["?"] * (len(key_mapping) + 3))
+    placeholders = ", ".join(["?"] * (len(key_mapping) + 2))
     sql = (
         f"INSERT OR REPLACE INTO {table} "
-        f"({db_col_names}, data, fetched_at, plan) VALUES ({placeholders})"
+        f"({db_col_names}, data, fetched_at) VALUES ({placeholders})"
     )
 
     count = 0
     for row in rows:
         key_values = [str(row.get(api_col, "")) for api_col, _ in key_mapping]
         data_json = json.dumps(row, ensure_ascii=False, default=str)
-        conn.execute(sql, key_values + [data_json, now, plan])
+        conn.execute(sql, key_values + [data_json, now])
         count += 1
 
     conn.commit()
@@ -250,13 +265,10 @@ def _get_max_date(
     conn: sqlite3.Connection,
     table: str,
     date_column: str = "date",
-    plan: str = "free",
 ) -> str | None:
-    """Get the latest date from a Tier 1 table, scoped by plan."""
+    """Get the latest date from a Tier 1 table."""
     try:
-        row = conn.execute(
-            f"SELECT MAX({date_column}) FROM {table} WHERE plan = ?", (plan,)
-        ).fetchone()
+        row = conn.execute(f"SELECT MAX({date_column}) FROM {table}").fetchone()
         return row[0][:10] if row and row[0] else None
     except sqlite3.OperationalError:
         return None
@@ -264,7 +276,7 @@ def _get_max_date(
 
 def fetch_topix(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan: str) -> int:
     """Fetch TOPIX daily bars incrementally and insert into cache."""
-    max_date = _get_max_date(conn, "indices_bars_daily_topix", plan=plan)
+    max_date = _get_max_date(conn, "indices_bars_daily_topix")
 
     if max_date:
         from_date = (datetime.strptime(max_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y%m%d")
@@ -284,8 +296,8 @@ def fetch_topix(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan: str) -
         data_json = json.dumps(_sanitize_row(r.to_dict()), ensure_ascii=False, default=str)
         conn.execute(
             "INSERT OR REPLACE INTO indices_bars_daily_topix "
-            "(date, data, fetched_at, plan) VALUES (?, ?, ?, ?)",
-            (str(r["Date"]), data_json, now, plan),
+            "(date, data, fetched_at) VALUES (?, ?, ?)",
+            (str(r["Date"]), data_json, now),
         )
         count += 1
 
@@ -319,8 +331,8 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan:
             disc_date = str(r.get("DiscDate", date_iso))
             conn.execute(
                 "INSERT OR REPLACE INTO fins_summary "
-                "(code, disc_date, data, fetched_at, plan) VALUES (?, ?, ?, ?, ?)",
-                (code, disc_date, data_json, now, plan),
+                "(code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+                (code, disc_date, data_json, now),
             )
             count += 1
 
@@ -358,11 +370,8 @@ def fetch_earnings_calendar(
     now = time.time()
     response_data = json.dumps(records, ensure_ascii=False, default=str)
 
-    # Tier 2 キーに plan サフィックスを付与（MCP サーバーの _plan_cache_key と同じ形式）
-    plan_suffix = f"|plan={plan}"
-
     # 日付別キーで蓄積（TTL 90日）
-    cache_key = f"/equities/earnings-calendar?date={date_key}{plan_suffix}"
+    cache_key = f"/equities/earnings-calendar?date={date_key}"
     conn.execute(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
         (cache_key, response_data, now, TTL_90D),
@@ -371,7 +380,7 @@ def fetch_earnings_calendar(
     # パラメータなしキーも更新（最新データ用）
     conn.execute(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
-        (f"/equities/earnings-calendar{plan_suffix}", response_data, now, TTL_90D),
+        ("/equities/earnings-calendar", response_data, now, TTL_90D),
     )
 
     conn.commit()
@@ -406,8 +415,8 @@ def fetch_investor_types(
         section = str(r.get("Section", ""))
         conn.execute(
             "INSERT OR REPLACE INTO investor_types "
-            "(pub_date, section, data, fetched_at, plan) VALUES (?, ?, ?, ?, ?)",
-            (pub_date, section, data_json, now, plan),
+            "(pub_date, section, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (pub_date, section, data_json, now),
         )
         count += 1
 
@@ -420,20 +429,17 @@ def _store_response_cache(
     cache_key: str,
     records: list[dict],
     ttl: int,
-    plan: str,
 ) -> int:
-    """Store records in Tier 2 response cache with plan-scoped key."""
+    """Store records in Tier 2 response cache."""
     if not records:
         print("  データなし")
         return 0
 
     response_data = json.dumps(records, ensure_ascii=False, default=str)
     now = time.time()
-    # Tier 2 キーに plan サフィックスを付与（MCP サーバーの _plan_cache_key と同じ形式）
-    full_key = f"{cache_key}|plan={plan}"
     conn.execute(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
-        (full_key, response_data, now, ttl),
+        (cache_key, response_data, now, ttl),
     )
     conn.commit()
     return len(records)
@@ -465,7 +471,7 @@ def _fetch_markets_tier1(
         conn: SQLite connection
         table: Tier 1 table name
         key_mapping: List of (API column name, DB column name)
-        plan: Subscription plan tag
+        plan: Subscription plan (used for endpoint access control only)
         from_yyyymmdd: Start date
         to_yyyymmdd: End date
         date_yyyymmdd: Specific date
@@ -475,7 +481,7 @@ def _fetch_markets_tier1(
     """
     # 差分取得: キャッシュ最新日の翌日から
     if incremental and not from_yyyymmdd and not date_yyyymmdd:
-        max_date = _get_max_date(conn, table, date_column, plan=plan)
+        max_date = _get_max_date(conn, table, date_column)
         if max_date:
             from_yyyymmdd = (
                 datetime.strptime(max_date[:10], "%Y-%m-%d") + timedelta(days=1)
@@ -515,7 +521,7 @@ def _fetch_markets_tier1(
         return 0
 
     rows = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
-    return _store_tier1(conn, table, rows, key_mapping, plan)
+    return _store_tier1(conn, table, rows, key_mapping)
 
 
 def fetch_short_ratio(
@@ -593,7 +599,7 @@ def fetch_short_sale_report(
         return 0
 
     records = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
-    return _store_response_cache(conn, "/markets/short-sale-report", records, TTL_24H, plan)
+    return _store_response_cache(conn, "/markets/short-sale-report", records, TTL_24H)
 
 
 def fetch_breakdown(
@@ -628,7 +634,7 @@ def fetch_calendar(
         return 0
 
     rows = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
-    return _store_tier1(conn, "markets_calendar", rows, [("Date", "date")], plan)
+    return _store_tier1(conn, "markets_calendar", rows, [("Date", "date")])
 
 
 # ------------------------------------------------------------------

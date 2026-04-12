@@ -10,80 +10,15 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
-
-# Tier 1 テーブル: 行レベルキャッシュ（日付×コード単位）
-_TIER1_TABLES = {
-    "equities_bars_daily": {
-        "key_columns": "code TEXT NOT NULL, date TEXT NOT NULL",
-        "primary_key": "code, date",
-        "extra_columns": "adj_factor REAL",
-    },
-    "equities_master": {
-        "key_columns": "code TEXT NOT NULL, date TEXT NOT NULL",
-        "primary_key": "code, date",
-        "extra_columns": "",
-    },
-    "fins_summary": {
-        "key_columns": "code TEXT NOT NULL, disc_date TEXT NOT NULL",
-        "primary_key": "code, disc_date",
-        "extra_columns": "",
-    },
-    "indices_bars_daily_topix": {
-        "key_columns": "date TEXT NOT NULL",
-        "primary_key": "date",
-        "extra_columns": "",
-    },
-    "investor_types": {
-        "key_columns": "pub_date TEXT NOT NULL, section TEXT NOT NULL",
-        "primary_key": "pub_date, section",
-        "extra_columns": "",
-    },
-    "markets_margin_interest": {
-        "key_columns": "code TEXT NOT NULL, date TEXT NOT NULL",
-        "primary_key": "code, date",
-        "extra_columns": "",
-    },
-    "markets_margin_alert": {
-        "key_columns": "code TEXT NOT NULL, date TEXT NOT NULL",
-        "primary_key": "code, date",
-        "extra_columns": "",
-    },
-    "markets_short_ratio": {
-        "key_columns": "s33 TEXT NOT NULL, date TEXT NOT NULL",
-        "primary_key": "s33, date",
-        "extra_columns": "",
-    },
-    "markets_breakdown": {
-        "key_columns": "code TEXT NOT NULL, date TEXT NOT NULL",
-        "primary_key": "code, date",
-        "extra_columns": "",
-    },
-    "markets_calendar": {
-        "key_columns": "date TEXT NOT NULL",
-        "primary_key": "date",
-        "extra_columns": "",
-    },
-}
-
-# テーブルごとの許可カラム名（SQL インジェクション対策ホワイトリスト）
-_TIER1_KEY_COLUMNS: dict[str, frozenset[str]] = {
-    table: frozenset(part.strip().split()[0] for part in schema["key_columns"].split(","))
-    for table, schema in _TIER1_TABLES.items()
-}
-
-# 有効なテーブル名セット（Tier 1 + Tier 2）
-_ALL_TABLE_NAMES: frozenset[str] = frozenset(_TIER1_TABLES.keys()) | frozenset(["response_cache"])
-
-# Tier 2 テーブル: レスポンスレベルキャッシュ
-_RESPONSE_CACHE_DDL = """
-CREATE TABLE IF NOT EXISTS response_cache (
-    cache_key TEXT PRIMARY KEY,
-    data TEXT NOT NULL,
-    fetched_at REAL NOT NULL,
-    ttl_seconds INTEGER NOT NULL
+from jquants_dat_mcp.cache.schema import (
+    ALL_TABLE_NAMES as _ALL_TABLE_NAMES,
+    RESPONSE_CACHE_DDL as _RESPONSE_CACHE_DDL,
+    TIER1_KEY_COLUMNS as _TIER1_KEY_COLUMNS,
+    TIER1_TABLES as _TIER1_TABLES,
+    generate_ddl,
 )
-"""
+
+logger = logging.getLogger(__name__)
 
 # TTL 定義（秒）
 TTL_NONE = 0  # キャッシュしない
@@ -185,9 +120,8 @@ _FREE_DELAY_WEEKS = 12
 class CacheStore:
     """SQLite-based two-tier cache store.
 
-    All cache operations are plan-scoped: Tier 1 rows include a ``plan``
-    column and Tier 2 response keys are suffixed with the plan name so that
-    data fetched under different subscription plans is stored separately.
+    Plan is used only for date-range restriction on reads (via
+    ``_plan_date_bounds``), not for storage isolation.
 
     When the database file is missing or corrupt (e.g. GCS copy still in
     progress on Cloud Run), the store enters a *not-ready* state where all
@@ -313,49 +247,168 @@ class CacheStore:
         conn = self._conn
         assert conn is not None
 
-        # Tier 1 テーブル（plan カラム含む）
+        # Tier 1 テーブル
         for table_name, schema in _TIER1_TABLES.items():
-            extra = f", {schema['extra_columns']}" if schema["extra_columns"] else ""
-            ddl = f"""
-                CREATE TABLE IF NOT EXISTS {table_name} (
-                    {schema["key_columns"]},
-                    plan TEXT NOT NULL DEFAULT 'free',
-                    data TEXT NOT NULL,
-                    fetched_at REAL NOT NULL
-                    {extra},
-                    PRIMARY KEY ({schema["primary_key"]})
-                )
-            """
-            conn.execute(ddl)
+            conn.execute(generate_ddl(table_name, schema))
 
         # Tier 2 テーブル
         conn.execute(_RESPONSE_CACHE_DDL)
         conn.commit()
 
         # 既存テーブルのマイグレーション
-        self._migrate_plan_column()
         self._migrate_normalize_fields()
+        self._migrate_drop_plan()
 
-    def _migrate_plan_column(self) -> None:
-        """Add plan column to existing Tier 1 tables if not already present.
+    def _migrate_drop_plan(self) -> None:
+        """Remove plan column from Tier 1 tables and plan suffix from Tier 2 keys.
 
-        Existing rows are backfilled with ``DEFAULT 'free'`` via SQLite's
-        column default mechanism.
+        Runs once: skipped when ``PRAGMA user_version >= 2``.
+        For tables where plan is part of the PRIMARY KEY, the table is
+        rebuilt.  Duplicate rows (same natural key, different plan) are
+        deduplicated by keeping the highest-plan row (standard > light > free).
         """
         conn = self._conn
         assert conn is not None
-        migrated = False
+
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= 2:
+            return
+
+        # Check if any table actually has a plan column
+        has_plan_anywhere = False
         for table_name in _TIER1_TABLES:
-            try:
-                conn.execute(
-                    f"ALTER TABLE {table_name} ADD COLUMN plan TEXT NOT NULL DEFAULT 'free'"
-                )
-                logger.info("Migration: added 'plan' column to %s", table_name)
-                migrated = True
-            except sqlite3.OperationalError:
-                pass  # カラムが既に存在する場合はスキップ
-        if migrated:
+            cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+            if any(c[1] == "plan" for c in cols):
+                has_plan_anywhere = True
+                break
+
+        # Also check response_cache for plan-suffixed keys
+        has_plan_keys = False
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM response_cache WHERE cache_key LIKE '%|plan=%'"
+            ).fetchone()
+            has_plan_keys = row[0] > 0
+        except sqlite3.OperationalError:
+            pass
+
+        if not has_plan_anywhere and not has_plan_keys:
+            conn.execute("PRAGMA user_version = 2")
             conn.commit()
+            return
+
+        logger.info("Migration: removing plan column from Tier 1 tables")
+
+        for table_name, schema in _TIER1_TABLES.items():
+            cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+            col_names = [c[1] for c in cols]
+            if "plan" not in col_names:
+                continue
+
+            # Check if plan is in PK
+            pk_cols = [c[1] for c in cols if c[5] > 0]
+
+            if "plan" in pk_cols:
+                # Rebuild table: deduplicate by inserting lowest plan first,
+                # highest last (INSERT OR REPLACE keeps the last = highest)
+                extra = f", {schema['extra_columns']}" if schema["extra_columns"] else ""
+                new_ddl = f"""
+                    CREATE TABLE {table_name}_v2 (
+                        {schema["key_columns"]},
+                        data TEXT NOT NULL,
+                        fetched_at REAL NOT NULL
+                        {extra},
+                        PRIMARY KEY ({schema["primary_key"]})
+                    )
+                """
+                conn.execute(new_ddl)
+
+                # Build column list for SELECT (exclude plan)
+                select_cols = [c for c in col_names if c != "plan"]
+                select_str = ", ".join(select_cols)
+
+                conn.execute(f"""
+                    INSERT OR REPLACE INTO {table_name}_v2 ({select_str})
+                    SELECT {select_str} FROM {table_name}
+                    ORDER BY CASE plan
+                        WHEN 'free' THEN 0
+                        WHEN 'light' THEN 1
+                        WHEN 'standard' THEN 2
+                        WHEN 'premium' THEN 3
+                        ELSE 0 END ASC
+                """)
+
+                old_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
+                new_count = conn.execute(
+                    f"SELECT COUNT(*) FROM {table_name}_v2"
+                ).fetchone()[0]
+
+                conn.execute(f"DROP TABLE {table_name}")
+                conn.execute(f"ALTER TABLE {table_name}_v2 RENAME TO {table_name}")
+                logger.info(
+                    "Migration: rebuilt %s without plan (PK rebuild, %d -> %d rows)",
+                    table_name,
+                    old_count,
+                    new_count,
+                )
+            else:
+                # plan is not in PK — just drop the column (SQLite 3.35+)
+                try:
+                    conn.execute(f"ALTER TABLE {table_name} DROP COLUMN plan")
+                    logger.info("Migration: dropped plan column from %s", table_name)
+                except sqlite3.OperationalError:
+                    # Fallback for older SQLite: rebuild
+                    extra = f", {schema['extra_columns']}" if schema["extra_columns"] else ""
+                    new_ddl = f"""
+                        CREATE TABLE {table_name}_v2 (
+                            {schema["key_columns"]},
+                            data TEXT NOT NULL,
+                            fetched_at REAL NOT NULL
+                            {extra},
+                            PRIMARY KEY ({schema["primary_key"]})
+                        )
+                    """
+                    conn.execute(new_ddl)
+                    select_cols = [c for c in col_names if c != "plan"]
+                    select_str = ", ".join(select_cols)
+                    conn.execute(
+                        f"INSERT OR REPLACE INTO {table_name}_v2 ({select_str}) "
+                        f"SELECT {select_str} FROM {table_name}"
+                    )
+                    conn.execute(f"DROP TABLE {table_name}")
+                    conn.execute(f"ALTER TABLE {table_name}_v2 RENAME TO {table_name}")
+                    logger.info(
+                        "Migration: rebuilt %s without plan (fallback)", table_name
+                    )
+
+        # Tier 2: strip |plan=X suffix from response_cache keys
+        if has_plan_keys:
+            conn.execute("""
+                CREATE TABLE response_cache_v2 (
+                    cache_key TEXT PRIMARY KEY,
+                    data TEXT NOT NULL,
+                    fetched_at REAL NOT NULL,
+                    ttl_seconds INTEGER NOT NULL
+                )
+            """)
+            conn.execute("""
+                INSERT OR REPLACE INTO response_cache_v2
+                    (cache_key, data, fetched_at, ttl_seconds)
+                SELECT
+                    CASE WHEN INSTR(cache_key, '|plan=') > 0
+                        THEN SUBSTR(cache_key, 1, INSTR(cache_key, '|plan=') - 1)
+                        ELSE cache_key END,
+                    data, fetched_at, ttl_seconds
+                FROM response_cache
+                ORDER BY fetched_at ASC
+            """)
+            conn.execute("DROP TABLE response_cache")
+            conn.execute("ALTER TABLE response_cache_v2 RENAME TO response_cache")
+            logger.info("Migration: stripped plan suffix from response_cache keys")
+
+        conn.execute("PRAGMA user_version = 2")
+        conn.commit()
+        logger.info("Migration: plan removal complete (user_version=2)")
 
     def _migrate_normalize_fields(self) -> None:
         """Normalize legacy J-Quants v1 field names to v2 in Tier 1 data JSON.
@@ -485,7 +538,6 @@ class CacheStore:
         rows: list[dict[str, Any]],
         key_columns: list[str],
         adj_factor_key: str | None = None,
-        plan: str | None = None,
     ) -> int:
         """Insert or replace rows into a Tier 1 table.
 
@@ -494,7 +546,6 @@ class CacheStore:
             rows: List of data dicts from the API response
             key_columns: Column names to extract as key values (e.g. ["code", "date"])
             adj_factor_key: If set, extract this key from data as adj_factor column
-            plan: Subscription plan to tag each row. Defaults to ``default_plan``.
 
         Returns:
             Number of rows inserted
@@ -502,7 +553,6 @@ class CacheStore:
         if table not in _TIER1_TABLES or not rows:
             return 0
 
-        effective_plan = plan if plan is not None else self._default_plan
         conn = self._ensure_connection()
         if conn is None:
             return 0
@@ -520,14 +570,14 @@ class CacheStore:
             if has_adj:
                 adj = row.get(adj_factor_key)
                 col_names = (
-                    ", ".join(_key_col_names(table)) + ", plan, data, fetched_at, adj_factor"
+                    ", ".join(_key_col_names(table)) + ", data, fetched_at, adj_factor"
                 )
-                placeholders = ", ".join(["?"] * (len(key_values) + 4))
-                values = key_values + [effective_plan, data_json, now, adj]
-            else:
-                col_names = ", ".join(_key_col_names(table)) + ", plan, data, fetched_at"
                 placeholders = ", ".join(["?"] * (len(key_values) + 3))
-                values = key_values + [effective_plan, data_json, now]
+                values = key_values + [data_json, now, adj]
+            else:
+                col_names = ", ".join(_key_col_names(table)) + ", data, fetched_at"
+                placeholders = ", ".join(["?"] * (len(key_values) + 2))
+                values = key_values + [data_json, now]
 
             sql = f"INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})"
             conn.execute(sql, values)
@@ -665,24 +715,14 @@ class CacheStore:
     # Tier 2: レスポンスレベルキャッシュ
     # ----------------------------------------------------------------
 
-    def _plan_cache_key(self, cache_key: str, plan: str | None = None) -> str:
-        """Append plan suffix to a Tier 2 cache key."""
-        effective_plan = plan if plan is not None else self._default_plan
-        return f"{cache_key}|plan={effective_plan}"
-
-    def get_response(self, cache_key: str, plan: str | None = None) -> dict[str, Any] | None:
-        """Retrieve a cached response if it exists and hasn't expired.
-
-        Args:
-            plan: Subscription plan scope. Defaults to ``default_plan``.
-        """
-        full_key = self._plan_cache_key(cache_key, plan)
+    def get_response(self, cache_key: str) -> dict[str, Any] | None:
+        """Retrieve a cached response if it exists and hasn't expired."""
         conn = self._ensure_connection()
         if conn is None:
             return None
         row = conn.execute(
             "SELECT data, fetched_at, ttl_seconds FROM response_cache WHERE cache_key = ?",
-            (full_key,),
+            (cache_key,),
         ).fetchone()
 
         if row is None:
@@ -690,7 +730,7 @@ class CacheStore:
 
         age = time.time() - row["fetched_at"]
         if row["ttl_seconds"] > 0 and age > row["ttl_seconds"]:
-            conn.execute("DELETE FROM response_cache WHERE cache_key = ?", (full_key,))
+            conn.execute("DELETE FROM response_cache WHERE cache_key = ?", (cache_key,))
             conn.commit()
             return None
 
@@ -701,24 +741,18 @@ class CacheStore:
         cache_key: str,
         data: Any,
         ttl_seconds: int,
-        plan: str | None = None,
     ) -> None:
-        """Store a response in the cache.
-
-        Args:
-            plan: Subscription plan scope. Defaults to ``default_plan``.
-        """
+        """Store a response in the cache."""
         if ttl_seconds == TTL_NONE:
             return  # キャッシュしない設定
 
-        full_key = self._plan_cache_key(cache_key, plan)
         conn = self._ensure_connection()
         if conn is None:
             return
         conn.execute(
             "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) "
             "VALUES (?, ?, ?, ?)",
-            (full_key, json.dumps(data, ensure_ascii=False), time.time(), ttl_seconds),
+            (cache_key, json.dumps(data, ensure_ascii=False), time.time(), ttl_seconds),
         )
         conn.commit()
 

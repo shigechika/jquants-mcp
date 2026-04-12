@@ -140,12 +140,11 @@ class TestTier2ResponseCache:
         data = {"expired": True}
         cache_store.put_response("old|key", data, ttl_seconds=1)
 
-        # TTL を強制的に過去にする（実際のストレージキーは plan suffix 付き）
-        full_key = cache_store._plan_cache_key("old|key")
+        # TTL を強制的に過去にする
         conn = cache_store._ensure_connection()
         conn.execute(
             "UPDATE response_cache SET fetched_at = ? WHERE cache_key = ?",
-            (time.time() - 10, full_key),
+            (time.time() - 10, "old|key"),
         )
         conn.commit()
 
@@ -196,23 +195,18 @@ class TestPlanIsolation:
         assert len(store.get_rows("equities_bars_daily", {"code": "72030"}, plan="premium")) == 1
         store.close()
 
-    def test_tier2_different_plans_isolated(self, tmp_path: Path):
-        """Response cache entries written under different plans must not collide."""
-        free_cache = CacheStore(tmp_path / "cache.db", default_plan="free")
-        premium_cache = CacheStore(tmp_path / "cache.db", default_plan="premium")
+    def test_tier2_shared_across_plans(self, tmp_path: Path):
+        """Response cache entries are shared (no plan isolation)."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
 
         cache_key = make_cache_key("/equities/master")
-        free_cache.put_response(cache_key, {"data": "free"}, ttl_seconds=3600)
-        premium_cache.put_response(cache_key, {"data": "premium"}, ttl_seconds=3600)
+        store.put_response(cache_key, {"data": "shared"}, ttl_seconds=3600)
 
-        assert free_cache.get_response(cache_key)["data"] == "free"
-        assert premium_cache.get_response(cache_key)["data"] == "premium"
+        assert store.get_response(cache_key)["data"] == "shared"
+        store.close()
 
-        free_cache.close()
-        premium_cache.close()
-
-    def test_tier1_invalidate_removes_all_plans(self, tmp_path: Path):
-        """invalidate_rows removes rows regardless of plan tag."""
+    def test_tier1_invalidate_removes_rows(self, tmp_path: Path):
+        """invalidate_rows removes rows."""
         store = CacheStore(tmp_path / "cache.db", default_plan="standard")
         store.put_rows(
             "equities_bars_daily",
@@ -226,35 +220,55 @@ class TestPlanIsolation:
         assert len(store.get_rows("equities_bars_daily", {"code": "72030"})) == 0
         store.close()
 
-    def test_migration_adds_plan_column_to_existing_table(self, tmp_path: Path):
-        """Tables created without plan column are migrated transparently."""
+    def test_migration_drops_plan_column(self, tmp_path: Path):
+        """Tables with plan column are migrated to drop it."""
         db_path = tmp_path / "cache.db"
 
-        # plan カラムなしで古いテーブルを作成
         import sqlite3
 
         conn = sqlite3.connect(str(db_path))
+        # Old schema with plan in PK
         conn.execute(
             "CREATE TABLE equities_bars_daily "
             "(code TEXT NOT NULL, date TEXT NOT NULL, "
+            "plan TEXT NOT NULL DEFAULT 'free', "
             "data TEXT NOT NULL, fetched_at REAL NOT NULL, "
-            "adj_factor REAL, PRIMARY KEY (code, date))"
+            "adj_factor REAL, PRIMARY KEY (code, date, plan))"
+        )
+        # Same row stored under two plans
+        conn.execute(
+            "INSERT INTO equities_bars_daily VALUES "
+            "('72030', '2024-01-04', 'free', '{\"O\":1}', 0, 1.0)"
         )
         conn.execute(
-            "INSERT INTO equities_bars_daily VALUES ('72030', '2024-01-04', '{\"O\":1}', 0, 1.0)"
+            "INSERT INTO equities_bars_daily VALUES "
+            "('72030', '2024-01-04', 'standard', '{\"O\":999}', 1.0, 1.0)"
         )
+        conn.execute("PRAGMA user_version = 1")
         conn.commit()
         conn.close()
 
-        # CacheStore で開くとマイグレーションが走る
-        store = CacheStore(db_path, default_plan="free")
+        # CacheStore triggers migration
+        store = CacheStore(db_path, default_plan="standard")
         store._ensure_connection()
 
-        # 既存データに plan='free' が付与されていること
         conn2 = store._ensure_connection()
-        row = conn2.execute("SELECT plan FROM equities_bars_daily WHERE code = '72030'").fetchone()
-        assert row["plan"] == "free"
+        # plan column should be gone
+        cols = [c[1] for c in conn2.execute("PRAGMA table_info(equities_bars_daily)").fetchall()]
+        assert "plan" not in cols
 
+        # Deduplicated: only 1 row, highest plan (standard) wins
+        count = conn2.execute("SELECT COUNT(*) FROM equities_bars_daily").fetchone()[0]
+        assert count == 1
+
+        import json
+
+        row = conn2.execute(
+            "SELECT data FROM equities_bars_daily WHERE code = '72030'"
+        ).fetchone()
+        assert json.loads(row[0])["O"] == 999
+
+        assert conn2.execute("PRAGMA user_version").fetchone()[0] == 2
         store.close()
 
 
@@ -287,7 +301,7 @@ class TestCacheUtility:
         conn = cache_store._ensure_connection()
         conn.execute(
             "UPDATE response_cache SET fetched_at = ? WHERE cache_key = ?",
-            (time.time() - 7200, "expired_key|plan=standard"),
+            (time.time() - 7200, "expired_key"),
         )
         conn.commit()
         # Insert a fresh entry
@@ -302,7 +316,7 @@ class TestCacheUtility:
         conn = cache_store._ensure_connection()
         conn.execute(
             "UPDATE response_cache SET fetched_at = ? WHERE cache_key = ?",
-            (time.time() - 7200, "old_key|plan=standard"),
+            (time.time() - 7200, "old_key"),
         )
         conn.commit()
 
@@ -310,7 +324,7 @@ class TestCacheUtility:
 
         row = conn.execute(
             "SELECT COUNT(*) as cnt FROM response_cache WHERE cache_key = ?",
-            ("old_key|plan=standard",),
+            ("old_key",),
         ).fetchone()
         assert row["cnt"] == 0
 
@@ -721,8 +735,8 @@ class TestMigrateNormalizeFields:
         conn.execute("PRAGMA user_version = 0")
         conn.execute(
             "INSERT OR REPLACE INTO equities_bars_daily "
-            "(code, date, plan, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?, ?)",
-            ("72030", "2024-01-04", "standard", legacy_json, 0.0, 1.0),
+            "(code, date, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?)",
+            ("72030", "2024-01-04", legacy_json, 0.0, 1.0),
         )
         conn.commit()
 
@@ -746,8 +760,8 @@ class TestMigrateNormalizeFields:
         legacy_json = '{"Code":"72030","Date":"2024-01-04","Open":9999}'
         conn.execute(
             "INSERT OR REPLACE INTO equities_bars_daily "
-            "(code, date, plan, data, fetched_at) VALUES (?, ?, ?, ?, ?)",
-            ("72030", "2024-01-04", "standard", legacy_json, 0.0),
+            "(code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            ("72030", "2024-01-04", legacy_json, 0.0),
         )
         conn.commit()
 
@@ -766,8 +780,8 @@ class TestMigrateNormalizeFields:
         current_json = '{"Code":"72030","Date":"2024-01-04","O":2800,"AdjFactor":1}'
         conn.execute(
             "INSERT OR REPLACE INTO equities_bars_daily "
-            "(code, date, plan, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?, ?)",
-            ("72030", "2024-01-04", "standard", current_json, 0.0, 1.0),
+            "(code, date, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?)",
+            ("72030", "2024-01-04", current_json, 0.0, 1.0),
         )
         conn.commit()
 

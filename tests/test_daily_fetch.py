@@ -174,29 +174,29 @@ class TestStoreResponseCache:
 
     def test_basic_store(self, db_conn):
         records = [{"a": 1}, {"a": 2}]
-        n = _store_response_cache(db_conn, "/test/endpoint", records, TTL_24H, "light")
+        n = _store_response_cache(db_conn, "/test/endpoint", records, TTL_24H)
         assert n == 2
 
         row = db_conn.execute(
             "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
-            ("/test/endpoint|plan=light",),
+            ("/test/endpoint",),
         ).fetchone()
         assert row is not None
         assert json.loads(row[0]) == records
         assert row[1] == TTL_24H
 
     def test_empty_records(self, db_conn):
-        n = _store_response_cache(db_conn, "/test/empty", [], TTL_6H, "light")
+        n = _store_response_cache(db_conn, "/test/empty", [], TTL_6H)
         assert n == 0
 
     def test_upsert(self, db_conn):
         """同じキーで上書きされること。"""
-        _store_response_cache(db_conn, "/test/key", [{"v": 1}], TTL_6H, "light")
-        _store_response_cache(db_conn, "/test/key", [{"v": 2}], TTL_24H, "light")
+        _store_response_cache(db_conn, "/test/key", [{"v": 1}], TTL_6H)
+        _store_response_cache(db_conn, "/test/key", [{"v": 2}], TTL_24H)
 
         row = db_conn.execute(
             "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
-            ("/test/key|plan=light",),
+            ("/test/key",),
         ).fetchone()
         assert json.loads(row[0]) == [{"v": 2}]
         assert row[1] == TTL_24H
@@ -230,8 +230,8 @@ class TestFetchTopix:
     def test_incremental_fetch(self, db_conn):
         """キャッシュあり → from_date 指定で差分取得。"""
         db_conn.execute(
-            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at, plan) VALUES (?, ?, ?, ?)",
-            ("2026-02-24", '{"Date":"2026-02-24"}', 1.0, "light"),
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
+            ("2026-02-24", '{"Date":"2026-02-24"}', 1.0),
         )
         db_conn.commit()
 
@@ -245,8 +245,8 @@ class TestFetchTopix:
     def test_timestamp_in_date(self, db_conn):
         """日付に時刻部分が含まれる場合でも正常動作すること。"""
         db_conn.execute(
-            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at, plan) VALUES (?, ?, ?, ?)",
-            ("2026-02-24 00:00:00", '{"Date":"2026-02-24 00:00:00"}', 1.0, "light"),
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
+            ("2026-02-24 00:00:00", '{"Date":"2026-02-24 00:00:00"}', 1.0),
         )
         db_conn.commit()
 
@@ -314,18 +314,18 @@ class TestFetchEarningsCalendar:
         n = fetch_earnings_calendar(cli, db_conn, "light")
         assert n == 2
 
-        # パラメータなしキー（最新データ用、plan サフィックス付き）
+        # パラメータなしキー（最新データ用）
         row = db_conn.execute(
             "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
-            ("/equities/earnings-calendar|plan=light",),
+            ("/equities/earnings-calendar",),
         ).fetchone()
         assert row is not None
         assert row[1] == TTL_90D
 
-        # 日付別キー（蓄積用、plan サフィックス付き）
+        # 日付別キー（蓄積用）
         row_dated = db_conn.execute(
             "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
-            ("/equities/earnings-calendar?date=20260301|plan=light",),
+            ("/equities/earnings-calendar?date=20260301",),
         ).fetchone()
         assert row_dated is not None
         assert row_dated[1] == TTL_90D
@@ -360,7 +360,7 @@ class TestFetchInvestorTypes:
         assert count == 2
 
     def test_upsert(self, db_conn):
-        """同じ pub_date+section+plan で上書きされること。"""
+        """同じ pub_date+section で上書きされること。"""
         df1 = FakeDataFrame(
             [
                 {"PubDate": "2026-02-20", "Section": "TSEPrime", "FrgnBuy": 100},
@@ -409,7 +409,6 @@ class TestStoreTier1:
             "markets_short_ratio",
             rows,
             key_mapping=[("S33", "s33"), ("Date", "date")],
-            plan="standard",
         )
         assert n == 2
 
@@ -425,14 +424,12 @@ class TestStoreTier1:
             "markets_margin_interest",
             rows1,
             [("Code", "code"), ("Date", "date")],
-            "standard",
         )
         _store_tier1(
             db_conn,
             "markets_margin_interest",
             rows2,
             [("Code", "code"), ("Date", "date")],
-            "standard",
         )
 
         count = db_conn.execute("SELECT COUNT(*) FROM markets_margin_interest").fetchone()[0]
@@ -443,7 +440,7 @@ class TestStoreTier1:
         assert data["LoanBalance"] == 999
 
     def test_empty_rows(self, db_conn):
-        n = _store_tier1(db_conn, "markets_calendar", [], [("Date", "date")], "free")
+        n = _store_tier1(db_conn, "markets_calendar", [], [("Date", "date")])
         assert n == 0
 
 
@@ -478,7 +475,6 @@ class TestFetchMarketsTier1:
             "markets_short_ratio",
             [{"S33": "0050", "Date": "2026-03-09", "Ratio": 0.30}],
             [("S33", "s33"), ("Date", "date")],
-            "standard",
         )
 
         df = FakeDataFrame([{"S33": "0050", "Date": "2026-03-10", "Ratio": 0.35}])

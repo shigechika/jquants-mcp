@@ -25,8 +25,9 @@ from pathlib import Path
 
 import httpx
 
-# プロジェクトの設定を再利用
+# プロジェクトの設定・スキーマを再利用
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from jquants_dat_mcp.cache.schema import all_ddl
 from jquants_dat_mcp.config import Settings
 
 logging.basicConfig(
@@ -107,129 +108,8 @@ ENDPOINTS: dict[str, dict] = {
     },
 }
 
-# テーブル DDL（store.py の定義と同じ構造 + plan カラム）
-# PRIMARY KEY に plan は含めない（store.py と一致させる）
-TABLE_DDL: dict[str, str] = {
-    "fins_summary": """
-        CREATE TABLE IF NOT EXISTS fins_summary (
-            code TEXT NOT NULL,
-            disc_date TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, disc_date)
-        )
-    """,
-    "investor_types": """
-        CREATE TABLE IF NOT EXISTS investor_types (
-            pub_date TEXT NOT NULL,
-            section TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (pub_date, section)
-        )
-    """,
-    "indices_bars_daily_topix": """
-        CREATE TABLE IF NOT EXISTS indices_bars_daily_topix (
-            date TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (date)
-        )
-    """,
-    "equities_master": """
-        CREATE TABLE IF NOT EXISTS equities_master (
-            code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, date)
-        )
-    """,
-    "markets_margin_interest": """
-        CREATE TABLE IF NOT EXISTS markets_margin_interest (
-            code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, date)
-        )
-    """,
-    "markets_margin_alert": """
-        CREATE TABLE IF NOT EXISTS markets_margin_alert (
-            code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, date)
-        )
-    """,
-    "markets_short_ratio": """
-        CREATE TABLE IF NOT EXISTS markets_short_ratio (
-            s33 TEXT NOT NULL,
-            date TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (s33, date)
-        )
-    """,
-    "markets_short_sale_report": """
-        CREATE TABLE IF NOT EXISTS markets_short_sale_report (
-            code TEXT NOT NULL,
-            disc_date TEXT NOT NULL,
-            reporter_name TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, disc_date, reporter_name)
-        )
-    """,
-    "markets_breakdown": """
-        CREATE TABLE IF NOT EXISTS markets_breakdown (
-            code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, date)
-        )
-    """,
-    "markets_calendar": """
-        CREATE TABLE IF NOT EXISTS markets_calendar (
-            date TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (date)
-        )
-    """,
-    "indices_bars_daily": """
-        CREATE TABLE IF NOT EXISTS indices_bars_daily (
-            code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, date)
-        )
-    """,
-    "derivatives_bars_daily_options_225": """
-        CREATE TABLE IF NOT EXISTS derivatives_bars_daily_options_225 (
-            code TEXT NOT NULL,
-            date TEXT NOT NULL,
-            plan TEXT NOT NULL DEFAULT 'free',
-            data TEXT NOT NULL,
-            fetched_at REAL NOT NULL,
-            PRIMARY KEY (code, date)
-        )
-    """,
-}
+# テーブル DDL（schema.py から一元生成）
+TABLE_DDL: dict[str, str] = all_ddl()
 
 
 def _convert_numeric(value: str) -> int | float | str:
@@ -322,15 +202,15 @@ class BulkFetcher:
         count = 0
 
         db_cols = [db_col for _, db_col in csv_key_map]
-        col_names = ", ".join(db_cols) + ", plan, data, fetched_at"
-        placeholders = ", ".join(["?"] * (len(db_cols) + 3))
+        col_names = ", ".join(db_cols) + ", data, fetched_at"
+        placeholders = ", ".join(["?"] * (len(db_cols) + 2))
         sql = f"INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})"
 
         for row in reader:
             key_values = [str(row.get(csv_col, "")) for csv_col, _ in csv_key_map]
             data = {k: _convert_numeric(v) for k, v in row.items()}
             data_json = json.dumps(data, ensure_ascii=False)
-            batch.append((*key_values, self._plan, data_json, now))
+            batch.append((*key_values, data_json, now))
             count += 1
 
             if len(batch) >= BATCH_SIZE:
