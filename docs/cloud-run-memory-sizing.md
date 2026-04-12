@@ -1,6 +1,6 @@
-# Cloud Run memory sizing (8 GiB → 6 GiB)
+# Cloud Run memory sizing (8 GiB → 6 GiB → 4 GiB)
 
-Date: 2026-04-11
+Date: 2026-04-11 (initial), 2026-04-12 (4 GiB re-test)
 Issue: [#72](https://github.com/shigechika/jquants-dat-mcp/issues/72)
 PR: [#73](https://github.com/shigechika/jquants-dat-mcp/pull/73)
 
@@ -12,9 +12,13 @@ candidate for reduction. We ran a 6-phase load test against the live
 deployment, measured peak memory under load, and reduced memory from 8 GiB
 to 6 GiB. vCPU stayed at 2. No regression observed.
 
-**Outcome:** memory p99 stayed at ~3850 MiB in both 8 GiB and 6 GiB
+**Outcome (Apr 11):** memory p99 stayed at ~3850 MiB in both 8 GiB and 6 GiB
 configurations (47% → 61% of the new limit), latency and error rate were
 unchanged, and there is still ~2.2 GiB of headroom on the 6 GiB instance.
+
+**Update (Apr 12):** After removing plan column duplicates and adding 5-year
+date trim to `gcs_export_cache.py`, `cache.db` shrank from 3.57 GB to 2.7 GB.
+Re-tested with 4 GiB — all phases passed with 0 errors.  Adopted 4 GiB.
 
 ## Motivation
 
@@ -146,13 +150,61 @@ serialization. The "true" peak during heavy serialization is unknown from
 these metrics alone, but the fact that overall p99 stays flat across phases
 implies it is small relative to the 60 s bucket average.
 
+## 4 GiB re-test (2026-04-12)
+
+### Background
+
+On 2026-04-12, two changes significantly reduced `cache.db` size:
+
+1. **Plan column removal** — Tier 1 tables had identical rows stored under
+   `free`, `light`, and `standard` plan values. Removing the plan column
+   and deduplicating reduced `equities_bars_daily` from 12.9M → 5.5M rows.
+   Local DB: 5.7 GB → 3.2 GB.
+2. **5-year date trim in `gcs_export_cache.py`** — Cloud Run serves Light-plan
+   users (5-year window). Trimming data older than 5 years + VACUUM reduced
+   the GCS-exported DB from 3.2 GB → **2.7 GB**.
+
+With `cache.db` at 2.7 GB (down from 3.57 GB), the previous "4 GiB = FAIL"
+verdict warranted re-testing.
+
+### Revised baseline decomposition
+
+```
+~2700 MiB  cache.db on tmpfs (2.7 GB after 5-year trim)
++  280 MiB  Python runtime + fastmcp + sqlite + httpx
+= ~2980 MiB baseline
++ headroom  → 4 GiB (4096 MiB) gives ~1100 MiB headroom
+```
+
+### Latency (4 GiB)
+
+| Phase | n | p50 (6 GiB) | p95 (6 GiB) | p50 (4 GiB) | p95 (4 GiB) |
+|---|---|---|---|---|---|
+| warmup    |   1 |  417 ms |  417 ms |  419 ms |  419 ms |
+| steady    |  30 |  290 ms |  891 ms |  290 ms |  645 ms |
+| heavy_mem |  15 | 1342 ms | 1649 ms | 1283 ms | 1710 ms |
+| parallel  | ~650–734 |  515 ms |  628 ms |  479 ms |  574 ms |
+| burst     | ~215–257 | 1307 ms | 1761 ms | 1137 ms | 1586 ms |
+
+Errors: 0 across all phases. Latency is comparable to or better than 6 GiB
+(variance is within noise for the lighter DB).
+
 ## Sizing verdict
+
+### Apr 11 verdict (cache.db = 3.57 GB)
 
 | Target | 1.5x safety margin (5.6 GiB needed) | Verdict |
 |---|---|---|
 | 4 GiB | over budget — baseline alone is 3.76 GiB | **FAIL** |
 | **6 GiB** | under budget by ~400 MiB | **OK — adopted** |
 | 8 GiB (original) | under budget by ~4.2 GiB | overprovisioned |
+
+### Apr 12 verdict (cache.db = 2.7 GB after plan dedup + date trim)
+
+| Target | 1.5x safety margin (4.5 GiB needed) | Verdict |
+|---|---|---|
+| **4 GiB** | ~1.1 GiB headroom over baseline, tight but passed load test | **OK — adopted** |
+| 6 GiB (previous) | ~3.0 GiB headroom | overprovisioned |
 
 **vCPU stays at 2.** p99 = 0.92 vCPU with the 60 s window smoothing real
 peaks. Dropping to 1 vCPU was not tested and would leave no safety margin.
@@ -200,8 +252,9 @@ minimum memory limit = cache.db size + runtime overhead + headroom
                      ≈ cache.db size + ~300 MiB + ~1.5 GiB safety
 ```
 
-For the current 3.57 GiB `cache.db`, that lands at ~5.4 GiB minimum. 6 GiB
-gives a comfortable margin; 4 GiB would be unsafe.
+For the Apr 11 cache.db of 3.57 GiB, that landed at ~5.4 GiB minimum. After
+the Apr 12 shrink to 2.7 GiB, the minimum is ~4.5 GiB. 4 GiB is tight but
+passed the full load test without OOM.
 
 ### 5. `cache.db` is downloaded asynchronously at cold start
 
@@ -220,9 +273,10 @@ Filed as a future polish.
 
 ## Future considerations
 
-- **When to revisit:** if `cache.db` shrinks below ~2.5 GiB (re-examine 4
-  GiB option) or grows above ~4 GiB (bump to 8 GiB), or if real users
-  consistently exercise a workload heavier than the 10-concurrent burst.
+- **When to revisit:** if `cache.db` grows above ~3 GiB (bump to 6 GiB),
+  or if real users consistently exercise a workload heavier than the
+  10-concurrent burst. The 4 GiB limit is tight (~1.1 GiB headroom), so
+  monitor for OOM events in Cloud Run logs.
 - **vCPU downsizing:** not tested. The current p99 of 0.92 vCPU with 60 s
   smoothing leaves insufficient signal to justify dropping to 1 vCPU.
   Would require a separate test with finer-grained metrics (e.g. raw
@@ -237,7 +291,7 @@ Filed as a future polish.
 - [`scripts/load_test.py`](../scripts/load_test.py)
 - [`scripts/collect_metrics.py`](../scripts/collect_metrics.py)
 - [`.github/workflows/cd.yml`](../.github/workflows/cd.yml) — single source
-  of truth for the `--memory 6Gi --cpu 2` setting
+  of truth for the `--memory 4Gi --cpu 2` setting
 - [`docs/gcsfuse-postmortem.md`](gcsfuse-postmortem.md) — the previous
   sizing-related incident that motivated the startup-copy architecture
 - Issue [#72](https://github.com/shigechika/jquants-dat-mcp/issues/72),
