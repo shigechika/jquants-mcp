@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Export a standard-plan-only cache.db to GCS for Cloud Run.
+"""Export cache.db to GCS for Cloud Run.
 
-Creates a temporary copy of the local cache.db, removes non-standard
-plan rows, runs VACUUM, and uploads the result to GCS.  This keeps
-Cloud Run's cache compact (~40% of the full DB) while m1.local retains
-all plans.
+Creates a temporary copy of the local cache.db, runs VACUUM, and
+uploads the result to GCS.
+
+Legacy plan-column cleanup is retained for backward compatibility but
+is a no-op once the plan column has been removed (user_version >= 2).
 
 Usage:
     python scripts/gcs_export_cache.py [--dry-run]
@@ -26,25 +27,16 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+from jquants_dat_mcp.cache.schema import TIER1_TABLES  # noqa: E402
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
 logger = logging.getLogger("gcs_export_cache")
 
-# Tier 1 テーブル名（cache/store.py の _TIER1_TABLES と同期）
-_TIER1_TABLES = [
-    "equities_bars_daily",
-    "equities_master",
-    "fins_summary",
-    "indices_bars_daily_topix",
-    "investor_types",
-    "markets_margin_interest",
-    "markets_margin_alert",
-    "markets_short_ratio",
-    "markets_breakdown",
-    "markets_calendar",
-]
+_TIER1_TABLE_NAMES = list(TIER1_TABLES.keys())
 
 _EXPORT_PATH = Path("/tmp/cache_gcs_export.db")
 
@@ -67,7 +59,7 @@ def _trim_to_standard(db_path: Path) -> dict[str, int]:
     conn.execute("PRAGMA journal_mode=WAL")
 
     deleted: dict[str, int] = {}
-    for table in _TIER1_TABLES:
+    for table in _TIER1_TABLE_NAMES:
         try:
             cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
         except sqlite3.OperationalError:
@@ -98,19 +90,24 @@ def _vacuum(db_path: Path) -> None:
     conn.close()
 
 
-def _set_user_version_1(db_path: Path) -> None:
-    """Mark cache.db as already-migrated so Cloud Run skips the schema migration.
+def _ensure_user_version(db_path: Path) -> None:
+    """Ensure user_version is at least 2 so Cloud Run skips all migrations.
 
-    cache/store.py runs _migrate_normalize_fields() whenever PRAGMA user_version < 1,
-    which iterates every row across all Tier 1 tables. On Cloud Run's ephemeral /tmp
-    cache.db, this runs on every cold start and blocks the event loop for ~100 s on a
-    3.5 GB DB. Setting user_version=1 on the source file skips the migration entirely.
+    store.py migrations:
+      - user_version < 1: _migrate_normalize_fields (rewrite legacy field names)
+      - user_version < 2: _migrate_drop_plan (remove plan column)
+    Both are expensive on large DBs. The export DB should already be fully
+    migrated, but set user_version = 2 explicitly as a safety net.
     """
     conn = sqlite3.connect(str(db_path))
-    conn.execute("PRAGMA user_version = 1")
-    conn.commit()
+    current = conn.execute("PRAGMA user_version").fetchone()[0]
+    if current < 2:
+        conn.execute("PRAGMA user_version = 2")
+        conn.commit()
+        logger.info("Set PRAGMA user_version = 2 (was %d)", current)
+    else:
+        logger.info("PRAGMA user_version = %d (already up to date)", current)
     conn.close()
-    logger.info("Set PRAGMA user_version = 1 (skip migration on Cloud Run)")
 
 
 def _upload_to_gcs(db_path: Path) -> None:
@@ -178,7 +175,7 @@ def main() -> None:
     )
 
     # Skip Cloud Run migration by marking the DB as already-migrated
-    _set_user_version_1(_EXPORT_PATH)
+    _ensure_user_version(_EXPORT_PATH)
 
     # GCS アップロード
     if args.dry_run:
