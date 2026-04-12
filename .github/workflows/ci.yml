@@ -18,7 +18,7 @@ jobs:
           enable-cache: true
       - run: uv sync --dev
       - run: uv run ruff check src/ tests/
-      - run: uv run ruff format --check src/ tests/
+      - run: uv run ruff format --check --exclude _version.py src/ tests/
 
   test:
     runs-on: ubuntu-latest
