@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Export cache.db to GCS for Cloud Run.
 
-Creates a temporary copy of the local cache.db, runs VACUUM, and
-uploads the result to GCS.
+Creates a temporary copy of the local cache.db, trims old data to the
+Cloud Run retention window (default 5 years), runs VACUUM, and uploads
+the result to GCS.
 
 Legacy plan-column cleanup is retained for backward compatibility but
 is a no-op once the plan column has been removed (user_version >= 2).
 
 Usage:
     python scripts/gcs_export_cache.py [--dry-run]
+    python scripts/gcs_export_cache.py --retention-years 3
 
 Environment variables:
     GCS_BUCKET          GCS bucket name (required)
@@ -25,6 +27,7 @@ import shutil
 import sqlite3
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -76,6 +79,67 @@ def _trim_to_standard(db_path: Path) -> dict[str, int]:
         conn.execute(f"DELETE FROM {table} WHERE plan != 'standard'")  # noqa: S608
         deleted[table] = count
         logger.info("Deleted %d non-standard rows from %s", count, table)
+
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+# Table name -> date column name for trimming
+_DATE_COLUMN: dict[str, str] = {
+    "equities_bars_daily": "date",
+    "equities_master": "date",
+    "fins_summary": "disc_date",
+    "indices_bars_daily_topix": "date",
+    "investor_types": "pub_date",
+    "markets_margin_interest": "date",
+    "markets_margin_alert": "date",
+    "markets_short_ratio": "date",
+    "markets_breakdown": "date",
+    "markets_calendar": "date",
+}
+
+
+def _trim_by_date(db_path: Path, retention_years: int) -> dict[str, int]:
+    """Delete rows older than retention_years from all Tier 1 tables.
+
+    Cloud Run serves Light-plan users (5-year window). Trimming old data
+    keeps the exported DB compact.
+
+    Returns:
+        Dict of table_name -> deleted row count.
+    """
+    today = date.today()
+    try:
+        cutoff = today.replace(year=today.year - retention_years)
+    except ValueError:
+        cutoff = today.replace(year=today.year - retention_years, day=28)
+    cutoff_str = cutoff.isoformat()
+
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("PRAGMA journal_mode=WAL")
+
+    deleted: dict[str, int] = {}
+    for table in _TIER1_TABLE_NAMES:
+        date_col = _DATE_COLUMN.get(table)
+        if not date_col:
+            continue
+        try:
+            count = conn.execute(
+                f"SELECT count(*) FROM {table} WHERE {date_col} < ?",  # noqa: S608
+                (cutoff_str,),
+            ).fetchone()[0]
+        except sqlite3.OperationalError:
+            continue
+        if count == 0:
+            continue
+
+        conn.execute(
+            f"DELETE FROM {table} WHERE {date_col} < ?",  # noqa: S608
+            (cutoff_str,),
+        )
+        deleted[table] = count
+        logger.info("Trimmed %d rows older than %s from %s", count, cutoff_str, table)
 
     conn.commit()
     conn.close()
@@ -137,12 +201,18 @@ def _upload_to_gcs(db_path: Path) -> None:
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="Export standard-plan-only cache.db to GCS",
+        description="Export cache.db to GCS for Cloud Run",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Trim and vacuum locally but skip GCS upload",
+    )
+    parser.add_argument(
+        "--retention-years",
+        type=int,
+        default=5,
+        help="Keep only the last N years of data (default: 5, Light plan window)",
     )
     args = parser.parse_args()
 
@@ -160,11 +230,23 @@ def main() -> None:
     shutil.copy2(str(source), str(_EXPORT_PATH))
     logger.info("Copy done (%.0fs)", time.time() - start)
 
-    # non-standard 行の削除
+    # Legacy: non-standard plan 行の削除（plan カラム除去済みなら no-op）
     start = time.time()
     deleted = _trim_to_standard(_EXPORT_PATH)
     total_deleted = sum(deleted.values())
-    logger.info("Trimmed %d rows (%.0fs)", total_deleted, time.time() - start)
+    if total_deleted:
+        logger.info("Trimmed %d plan rows (%.0fs)", total_deleted, time.time() - start)
+
+    # 日付ベースのトリム（Cloud Run 用にデータ期間を制限）
+    start = time.time()
+    date_deleted = _trim_by_date(_EXPORT_PATH, args.retention_years)
+    total_date_deleted = sum(date_deleted.values())
+    logger.info(
+        "Date trim (%d-year retention): %d rows deleted (%.0fs)",
+        args.retention_years,
+        total_date_deleted,
+        time.time() - start,
+    )
 
     # VACUUM
     start = time.time()
