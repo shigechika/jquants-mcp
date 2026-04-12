@@ -263,9 +263,7 @@ class TestPlanIsolation:
 
         import json
 
-        row = conn2.execute(
-            "SELECT data FROM equities_bars_daily WHERE code = '72030'"
-        ).fetchone()
+        row = conn2.execute("SELECT data FROM equities_bars_daily WHERE code = '72030'").fetchone()
         assert json.loads(row[0])["O"] == 999
 
         assert conn2.execute("PRAGMA user_version").fetchone()[0] == 2

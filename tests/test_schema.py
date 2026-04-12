@@ -42,9 +42,7 @@ class TestForbiddenColumns:
 
     def test_no_plan_in_tier1_tables(self):
         for name, schema in TIER1_TABLES.items():
-            col_names = {
-                part.strip().split()[0] for part in schema["key_columns"].split(",")
-            }
+            col_names = {part.strip().split()[0] for part in schema["key_columns"].split(",")}
             assert not col_names & _FORBIDDEN_COLUMNS, (
                 f"TIER1_TABLES[{name!r}] key_columns contains forbidden column(s): "
                 f"{col_names & _FORBIDDEN_COLUMNS}"
@@ -59,9 +57,7 @@ class TestForbiddenColumns:
 
     def test_no_plan_in_bulk_tables(self):
         for name, schema in BULK_TABLES.items():
-            col_names = {
-                part.strip().split()[0] for part in schema["key_columns"].split(",")
-            }
+            col_names = {part.strip().split()[0] for part in schema["key_columns"].split(",")}
             assert not col_names & _FORBIDDEN_COLUMNS, (
                 f"BULK_TABLES[{name!r}] key_columns contains forbidden column(s)"
             )
@@ -69,9 +65,7 @@ class TestForbiddenColumns:
     def test_no_plan_in_generated_ddl(self):
         """Generated DDL must not contain 'plan' column."""
         for name, ddl in all_ddl().items():
-            assert "plan " not in ddl.lower(), (
-                f"DDL for {name!r} contains 'plan'"
-            )
+            assert "plan " not in ddl.lower(), f"DDL for {name!r} contains 'plan'"
 
     def test_no_plan_in_actual_tables(self, tmp_path: Path):
         """Tables created by CacheStore must not have a 'plan' column."""
@@ -82,9 +76,7 @@ class TestForbiddenColumns:
         for table_name in TIER1_TABLES:
             cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
             col_names = {c[1] for c in cols}
-            assert "plan" not in col_names, (
-                f"Table {table_name!r} has forbidden 'plan' column"
-            )
+            assert "plan" not in col_names, f"Table {table_name!r} has forbidden 'plan' column"
         store.close()
 
 
@@ -162,9 +154,7 @@ class TestSchemaConsistency:
         for name in _DAILY_FETCH_TABLES:
             expected = _get_table_schema(ref_conn, name)
             actual = _get_table_schema(test_conn, name)
-            assert actual == expected, (
-                f"daily_fetch schema mismatch for {name!r}"
-            )
+            assert actual == expected, f"daily_fetch schema mismatch for {name!r}"
         test_conn.close()
 
     def test_import_csv_matches_schema_py(self, tmp_path: Path):
@@ -180,9 +170,7 @@ class TestSchemaConsistency:
         for name in ("equities_bars_daily", "equities_master"):
             expected = _get_table_schema(ref_conn, name)
             actual = _get_table_schema(test_conn, name)
-            assert actual == expected, (
-                f"import_csv schema mismatch for {name!r}"
-            )
+            assert actual == expected, f"import_csv schema mismatch for {name!r}"
         test_conn.close()
 
 
@@ -212,8 +200,7 @@ class TestCoverage:
         """TIER1_KEY_COLUMNS matches TIER1_TABLES."""
         for table, expected_keys in TIER1_KEY_COLUMNS.items():
             actual_keys = frozenset(
-                part.strip().split()[0]
-                for part in TIER1_TABLES[table]["key_columns"].split(",")
+                part.strip().split()[0] for part in TIER1_TABLES[table]["key_columns"].split(",")
             )
             assert actual_keys == expected_keys
 

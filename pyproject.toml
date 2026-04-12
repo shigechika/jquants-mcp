@@ -45,5 +45,8 @@ version-file = "src/jquants_dat_mcp/_version.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/jquants_dat_mcp"]
 
+[tool.ruff]
+exclude = ["_version.py"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

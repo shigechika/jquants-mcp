@@ -72,10 +72,7 @@ TIER1_TABLES: dict[str, dict[str, str]] = {
 
 BULK_TABLES: dict[str, dict[str, str]] = {
     "markets_short_sale_report": {
-        "key_columns": (
-            "code TEXT NOT NULL, disc_date TEXT NOT NULL, "
-            "reporter_name TEXT NOT NULL"
-        ),
+        "key_columns": ("code TEXT NOT NULL, disc_date TEXT NOT NULL, reporter_name TEXT NOT NULL"),
         "primary_key": "code, disc_date, reporter_name",
         "extra_columns": "",
     },
@@ -109,15 +106,11 @@ CREATE TABLE IF NOT EXISTS response_cache (
 # ----------------------------------------------------------------
 
 TIER1_KEY_COLUMNS: dict[str, frozenset[str]] = {
-    table: frozenset(
-        part.strip().split()[0] for part in schema["key_columns"].split(",")
-    )
+    table: frozenset(part.strip().split()[0] for part in schema["key_columns"].split(","))
     for table, schema in TIER1_TABLES.items()
 }
 
-ALL_TABLE_NAMES: frozenset[str] = (
-    frozenset(TIER1_TABLES.keys()) | frozenset(["response_cache"])
-)
+ALL_TABLE_NAMES: frozenset[str] = frozenset(TIER1_TABLES.keys()) | frozenset(["response_cache"])
 
 # ----------------------------------------------------------------
 # DDL generation

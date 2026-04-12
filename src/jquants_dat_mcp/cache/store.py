@@ -339,9 +339,7 @@ class CacheStore:
                 """)
 
                 old_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
-                new_count = conn.execute(
-                    f"SELECT COUNT(*) FROM {table_name}_v2"
-                ).fetchone()[0]
+                new_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}_v2").fetchone()[0]
 
                 conn.execute(f"DROP TABLE {table_name}")
                 conn.execute(f"ALTER TABLE {table_name}_v2 RENAME TO {table_name}")
@@ -377,9 +375,7 @@ class CacheStore:
                     )
                     conn.execute(f"DROP TABLE {table_name}")
                     conn.execute(f"ALTER TABLE {table_name}_v2 RENAME TO {table_name}")
-                    logger.info(
-                        "Migration: rebuilt %s without plan (fallback)", table_name
-                    )
+                    logger.info("Migration: rebuilt %s without plan (fallback)", table_name)
 
         # Tier 2: strip |plan=X suffix from response_cache keys
         if has_plan_keys:
@@ -569,9 +565,7 @@ class CacheStore:
 
             if has_adj:
                 adj = row.get(adj_factor_key)
-                col_names = (
-                    ", ".join(_key_col_names(table)) + ", data, fetched_at, adj_factor"
-                )
+                col_names = ", ".join(_key_col_names(table)) + ", data, fetched_at, adj_factor"
                 placeholders = ", ".join(["?"] * (len(key_values) + 3))
                 values = key_values + [data_json, now, adj]
             else:
