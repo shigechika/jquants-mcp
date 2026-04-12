@@ -14,6 +14,9 @@ RUN uv sync --frozen --no-dev --no-install-project --extra cloud-run
 # Install the project itself
 COPY README.md ./
 COPY src/ ./src/
+# hatch-vcs needs git tags; Docker build has no .git dir.
+# Fallback: set a placeholder version for the container build.
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0+docker
 RUN uv sync --frozen --no-dev --extra cloud-run
 
 
