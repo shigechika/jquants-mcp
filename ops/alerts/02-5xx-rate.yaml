@@ -1,0 +1,32 @@
+displayName: "Cloud Run 5xx rate > 1%"
+documentation:
+  content: |
+    jquants-dat-mcp is returning 5xx responses at >1% over 10 minutes.
+    Check logs for the top error, recent deploys, and Firestore / J-Quants
+    API availability.
+  mimeType: text/markdown
+combiner: OR
+conditions:
+  - displayName: "5xx ratio > 0.01 for 10min"
+    conditionMonitoringQueryLanguage:
+      query: |
+        fetch cloud_run_revision
+        | metric 'run.googleapis.com/request_count'
+        | filter resource.service_name == 'jquants-dat-mcp'
+        | align rate(1m)
+        | {
+            total: group_by [], sum(val());
+            errs:  filter metric.response_code_class == '5xx'
+                   | group_by [], sum(val())
+          }
+        | join
+        | value [ratio: val(1) / val(0)]
+        | condition val() > 0.01
+      duration: 600s
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 86400s
+notificationChannels:
+  - __CHANNEL__
+severity: WARNING

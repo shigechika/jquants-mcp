@@ -1,0 +1,32 @@
+displayName: "Firestore error rate > 5%"
+documentation:
+  content: |
+    Firestore API error rate exceeded 5% over 10 minutes. Users may not be
+    able to log in or persist OAuth state. Check Firestore dashboard and
+    recent quota changes.
+  mimeType: text/markdown
+combiner: OR
+conditions:
+  - displayName: "firestore error ratio > 0.05 for 10min"
+    conditionMonitoringQueryLanguage:
+      query: |
+        fetch consumed_api
+        | metric 'serviceruntime.googleapis.com/api/request_count'
+        | filter resource.service == 'firestore.googleapis.com'
+        | align rate(1m)
+        | {
+            total: group_by [], sum(val());
+            errs:  filter metric.response_code_class != '2xx'
+                   | group_by [], sum(val())
+          }
+        | join
+        | value [ratio: val(1) / val(0)]
+        | condition val() > 0.05
+      duration: 600s
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 86400s
+notificationChannels:
+  - __CHANNEL__
+severity: WARNING

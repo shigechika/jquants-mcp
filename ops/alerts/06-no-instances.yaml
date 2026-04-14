@@ -1,0 +1,31 @@
+displayName: "Cloud Run instance count == 0 for 1h"
+documentation:
+  content: |
+    jquants-dat-mcp has had zero serving instances for over an hour.
+    Usually fine (cold-scaled to zero), but prolonged zero during market
+    hours plus no recent requests can signal routing or deploy issues.
+    Tune / silence if noisy.
+  mimeType: text/markdown
+combiner: OR
+conditions:
+  - displayName: "instance_count == 0 for 1h"
+    conditionThreshold:
+      filter: |
+        resource.type = "cloud_run_revision" AND
+        resource.labels.service_name = "jquants-dat-mcp" AND
+        metric.type = "run.googleapis.com/container/instance_count"
+      aggregations:
+        - alignmentPeriod: 60s
+          perSeriesAligner: ALIGN_MEAN
+          crossSeriesReducer: REDUCE_SUM
+      comparison: COMPARISON_LT
+      thresholdValue: 1
+      duration: 3600s
+      trigger:
+        count: 1
+alertStrategy:
+  autoClose: 86400s
+notificationChannels:
+  - __CHANNEL__
+severity: WARNING
+enabled: false

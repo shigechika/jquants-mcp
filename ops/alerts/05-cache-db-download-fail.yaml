@@ -1,0 +1,24 @@
+displayName: "cache.db download failed"
+documentation:
+  content: |
+    The background cache.db download from GCS failed on startup.
+    Without cache.db the server falls back to live J-Quants API — slower and
+    rate-limit-prone. Check GCS bucket ACLs and the gcs_sync.py log.
+  mimeType: text/markdown
+combiner: OR
+conditions:
+  - displayName: "download failure log pattern matched"
+    conditionMatchedLog:
+      filter: |
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="jquants-dat-mcp"
+        (textPayload:"cache.db download failed" OR
+         textPayload:"gcs_sync.py: error" OR
+         jsonPayload.message:"cache.db download failed")
+alertStrategy:
+  notificationRateLimit:
+    period: 3600s
+  autoClose: 86400s
+notificationChannels:
+  - __CHANNEL__
+severity: WARNING
