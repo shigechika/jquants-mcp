@@ -1,0 +1,50 @@
+name: SBOM
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "33 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - run: uv sync --dev
+
+      - name: Export requirements for SBOM
+        run: uv export --format requirements-txt --no-hashes > requirements.txt
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          uv tool run --from cyclonedx-bom cyclonedx-py requirements requirements.txt \
+            --output-format JSON \
+            --output-file sbom.cyclonedx.json
+
+      - name: Run pip-audit
+        continue-on-error: true
+        run: |
+          uv tool run pip-audit --requirement requirements.txt \
+            --format json --output pip-audit.json
+          uv tool run pip-audit --requirement requirements.txt || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            sbom.cyclonedx.json
+            pip-audit.json
+            requirements.txt
+          retention-days: 90
