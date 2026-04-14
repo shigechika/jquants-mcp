@@ -21,7 +21,7 @@ RUN uv sync --frozen --no-dev --extra cloud-run
 
 
 # Stage 2: Runtime image
-FROM python:3.12-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 WORKDIR /app
 
