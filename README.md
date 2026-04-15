@@ -838,6 +838,8 @@ Alert policies that trigger these are in [`ops/alerts/`](ops/alerts/); each poli
 
 The [disaster recovery posture](docs/dr.md) documents the current single-region deployment, RTO/RPO expectations, and the (undrilled) standby-region procedure.
 
+Service-level objectives — availability and latency targets with an error-budget policy — are in [docs/slo.md](docs/slo.md).
+
 ## Development
 
 ```bash
