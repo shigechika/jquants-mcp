@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 import time
 from datetime import date, timedelta
 from pathlib import Path
@@ -144,6 +145,11 @@ class CacheStore:
         self._ready: bool = False
         self._last_retry: float = 0.0
         self._needs_reload: bool = False
+        # Integrity check state — populated asynchronously after first
+        # successful connection. Values: "pending", "ok", "not-checked", or
+        # a short error description.
+        self._integrity_status: str = "not-checked"
+        self._integrity_thread: threading.Thread | None = None
 
     @property
     def default_plan(self) -> str:
@@ -159,6 +165,51 @@ class CacheStore:
     def ready(self) -> bool:
         """Return whether the cache database is usable."""
         return self._ready
+
+    @property
+    def integrity_status(self) -> str:
+        """Return the result of the background SQLite integrity check.
+
+        Values: ``"not-checked"`` (DB never opened), ``"pending"`` (check
+        running), ``"ok"`` (passed), or a short error description. Surfaced
+        via ``cache_status`` / ``health_check`` so operators can spot cache
+        corruption without waiting for downstream queries to silent-fail.
+        """
+        return self._integrity_status
+
+    def _start_integrity_check(self) -> None:
+        """Kick off PRAGMA quick_check in a background thread.
+
+        quick_check on a 3.5 GB cache.db takes ~1 minute — running it on the
+        event loop would freeze the server. A dedicated thread with its own
+        sqlite connection runs the check in parallel with normal traffic
+        and records the result on ``self._integrity_status``.
+        """
+        if self._integrity_thread is not None and self._integrity_thread.is_alive():
+            return
+        self._integrity_status = "pending"
+
+        def _run() -> None:
+            try:
+                probe = sqlite3.connect(str(self._db_path), check_same_thread=False)
+                try:
+                    row = probe.execute("PRAGMA quick_check").fetchone()
+                finally:
+                    probe.close()
+                result = row[0] if row else "unknown"
+                if result == "ok":
+                    self._integrity_status = "ok"
+                    logger.info("cache.db integrity check: ok")
+                else:
+                    self._integrity_status = f"failed: {result}"
+                    logger.warning("cache.db integrity check failed: %s", result)
+            except Exception as exc:  # pragma: no cover — defensive
+                self._integrity_status = f"error: {exc}"
+                logger.warning("cache.db integrity check errored: %s", exc)
+
+        t = threading.Thread(target=_run, name="cache-integrity-check", daemon=True)
+        self._integrity_thread = t
+        t.start()
 
     def request_reload(self) -> None:
         """Request a lazy reload of the SQLite connection.
@@ -237,6 +288,7 @@ class CacheStore:
             self._init_tables()
             self._ready = True
             logger.info("キャッシュDB接続: %s", self._db_path)
+            self._start_integrity_check()
             return self._conn
         except sqlite3.DatabaseError as e:
             logger.warning("キャッシュDB接続失敗: %s", e)
@@ -780,6 +832,7 @@ class CacheStore:
         if self._db_path.exists():
             stats["db_size_mb"] = round(self._db_path.stat().st_size / (1024 * 1024), 2)
 
+        stats["integrity"] = self._integrity_status
         return stats
 
     def clear(self, table: str | None = None) -> dict[str, int]:
