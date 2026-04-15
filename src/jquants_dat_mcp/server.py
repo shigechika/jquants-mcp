@@ -380,12 +380,19 @@ def health_check() -> dict[str, Any]:
                 plan = user.plan
                 has_key = True
 
+    cache = _get_cache()
+    integrity = cache.integrity_status
+    status = "healthy"
+    if integrity.startswith("failed") or integrity.startswith("error"):
+        status = "degraded"
+
     return {
-        "status": "healthy",
+        "status": status,
         "service": "jquants-dat-mcp",
         "version": __version__,
         "api_key_configured": has_key,
         "plan": plan,
+        "cache_integrity": integrity,
     }
 
 
