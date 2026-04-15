@@ -1,0 +1,23 @@
+displayName: "Cloud Run OOM kill"
+documentation:
+  content: |
+    jquants-dat-mcp container was OOM-killed. Check recent request volume
+    and cache.db size. After #73, 6 GiB should have ~2.2 GiB headroom over
+    the ~3.9 GiB peak seen during load testing — an OOM here is a signal
+    that something has drifted.
+  mimeType: text/markdown
+combiner: OR
+conditions:
+  - displayName: "OOM log pattern matched"
+    conditionMatchedLog:
+      filter: |
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="jquants-dat-mcp"
+        (textPayload:"Memory limit" OR textPayload:"OOMKilled" OR textPayload:"exceeded memory limit")
+alertStrategy:
+  notificationRateLimit:
+    period: 300s
+  autoClose: 86400s
+notificationChannels:
+  - __CHANNEL__
+severity: CRITICAL
