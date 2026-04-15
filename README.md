@@ -102,6 +102,8 @@ plan = premium
 | `OAUTH_JWT_SIGNING_KEY` | No | auto | Secret for JWT signing; auto-generated if blank |
 | `OAUTH_REQUIRE_CONSENT` | No | `true` | Show OAuth consent screen on every login (`true`/`false`) |
 | `MCP_ENCRYPTION_KEY` | No | — | Passphrase for AES-256-GCM encryption of per-user API keys |
+| `RATE_LIMIT_PER_MINUTE` | No | `60` | Per-user request ceiling (multi-user mode). Applies per OAuth user |
+| `RATE_LIMIT_BURST` | No | `20` | Per-user burst allowance (token-bucket capacity) |
 
 \* API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `JQUANTS_API_KEY` only to override.
 

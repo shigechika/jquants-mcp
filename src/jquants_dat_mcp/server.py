@@ -77,6 +77,9 @@ _user_client_last_used: dict[str, float] = {}
 # 前回の古いクライアントクリーンアップ実行時のタイムスタンプ（monotonic）
 _last_cleanup: float = 0.0
 
+# Per-user rate limiter (multi-user mode only). Lazily initialized.
+_rate_limiter: Any | None = None
+
 # シングルユーザーモード: プラン自動検出が完了済みかどうか
 _plan_detected: bool = False
 
@@ -127,6 +130,20 @@ def _sighup_handler(signum: int, frame: Any) -> None:
         _cache.request_reload()
     else:
         logger.info("Cache DB not yet initialized; reload is a no-op")
+
+
+def _get_rate_limiter():
+    """Return the per-user rate limiter, creating it on first access."""
+    global _rate_limiter
+    if _rate_limiter is None:
+        from .rate_limit import RateLimiter
+
+        settings = _get_settings()
+        _rate_limiter = RateLimiter(
+            per_minute=settings.rate_limit_per_minute,
+            burst=settings.rate_limit_burst,
+        )
+    return _rate_limiter
 
 
 def _get_user_db():
@@ -247,6 +264,17 @@ async def _get_user_client() -> JQuantsClient:
         return client
 
     user_id = token.client_id
+
+    # Per-user rate limiting (multi-user only; bearer / anonymous were handled above).
+    from .audit import audit
+    from .rate_limit import RateLimitExceededError
+
+    try:
+        await _get_rate_limiter().acquire(user_id)
+    except RateLimitExceededError as exc:
+        audit("rate_limited", user_id=user_id, retry_after=exc.retry_after)
+        raise
+
     user_db = _get_user_db()
 
     # encryption_key 未設定 → 全 OAuth ユーザーでグローバルクライアントを共有
