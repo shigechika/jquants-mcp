@@ -12,6 +12,7 @@ from fastmcp import FastMCP
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
+from starlette.responses import Response
 
 from . import __version__
 from .cache.store import CacheStore
@@ -46,7 +47,22 @@ class OAuthDebugMiddleware(BaseHTTPMiddleware):
                 headers,
             )
 
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except RuntimeError as exc:
+            # Starlette BaseHTTPMiddleware raises "No response returned." when
+            # the client disconnects mid-request. That's a cosmetic symptom of
+            # the well-known BaseHTTPMiddleware limitation, not a server bug —
+            # swallow it and let the ASGI layer handle the disconnect.
+            if "No response returned" in str(exc):
+                if is_oauth:
+                    logger.info(
+                        "OAuth request aborted (client disconnect): method=%s path=%s",
+                        request.method,
+                        path,
+                    )
+                return Response(status_code=499)
+            raise
 
         if is_oauth:
             logger.info(
