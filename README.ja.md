@@ -840,6 +840,8 @@ Cloud Run デプロイの障害対応 runbook:
 
 [災害復旧ポスチャ](docs/dr.md) に現行のシングルリージョン構成、RTO/RPO、未実施のスタンバイリージョン復旧手順を記載しています。
 
+Service Level Objectives（可用性・レイテンシ目標とエラーバジェット方針）は [docs/slo.md](docs/slo.md) にあります。
+
 ## 開発
 
 ```bash
