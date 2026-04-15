@@ -836,6 +836,8 @@ Cloud Run デプロイの障害対応 runbook:
 
 アラートポリシーは [`ops/alerts/`](ops/alerts/) にあり、各ポリシーの documentation から対応する runbook にリンクしています。
 
+[災害復旧ポスチャ](docs/dr.md) に現行のシングルリージョン構成、RTO/RPO、未実施のスタンバイリージョン復旧手順を記載しています。
+
 ## 開発
 
 ```bash

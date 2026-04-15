@@ -834,6 +834,8 @@ For production incidents on the Cloud Run deployment, see the runbooks:
 
 Alert policies that trigger these are in [`ops/alerts/`](ops/alerts/); each policy's documentation links back to the matching runbook.
 
+The [disaster recovery posture](docs/dr.md) documents the current single-region deployment, RTO/RPO expectations, and the (undrilled) standby-region procedure.
+
 ## Development
 
 ```bash
