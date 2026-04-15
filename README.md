@@ -50,6 +50,14 @@ Settings are loaded with the following priority (later wins):
 
 If you already use [jquants-api-client](https://github.com/J-Quants/jquants-api-client-python), your API key is automatically read from `~/.jquants-api/jquants-api.toml`. No extra configuration needed.
 
+### API Key via browser login
+
+```sh
+jquants-dat-mcp login
+```
+
+Opens a browser to J-Quants (AWS Cognito, PKCE flow), and on success writes the API key to `~/.config/jquants-dat-mcp/config.ini` (mode 0600). Same auth backend as the [official jquants-cli](https://github.com/J-Quants/jquants-cli). Use `jquants-dat-mcp logout` to clear the saved key.
+
 ### config.ini
 
 MCP-specific settings (plan, cache, client behavior):
