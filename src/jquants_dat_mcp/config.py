@@ -73,6 +73,11 @@ _CONFIG_DEFS: list[_ConfigDef] = [
     ),
     # マルチユーザー: ユーザーごとの API キー保存用暗号化キー
     _ConfigDef("encryption_key", "server", "encryption_key", "MCP_ENCRYPTION_KEY", ""),
+    # Per-user rate limiting (multi-user mode only)
+    _ConfigDef(
+        "rate_limit_per_minute", "server", "rate_limit_per_minute", "RATE_LIMIT_PER_MINUTE", "60"
+    ),
+    _ConfigDef("rate_limit_burst", "server", "rate_limit_burst", "RATE_LIMIT_BURST", "20"),
 ]
 
 # 型変換テーブル
@@ -80,6 +85,8 @@ _TYPE_MAP: dict[str, type] = {
     "max_retries": int,
     "retry_base_delay": float,
     "max_pages": int,
+    "rate_limit_per_minute": int,
+    "rate_limit_burst": int,
 }
 
 # 真偽値設定 — 文字列変換後に bool として扱う
