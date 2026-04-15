@@ -122,3 +122,31 @@ def decrypt(blob: str, passphrase: str | bytes) -> str:
 
     except Exception as exc:
         raise ValueError("Decryption failed — wrong key or corrupted data") from exc
+
+
+def decrypt_with_fallback(blob: str, passphrases: list[str]) -> str:
+    """Try each passphrase in order until one decrypts successfully.
+
+    Used during a key rotation window where some ciphertexts were created
+    with the previous passphrase and others with the new one. Pass the
+    primary (new) key first for efficiency.
+
+    Args:
+        blob: Base64url-encoded ciphertext blob.
+        passphrases: Non-empty list of candidate passphrases.
+
+    Returns:
+        Decrypted plaintext string.
+
+    Raises:
+        ValueError: When no passphrase decrypts the blob.
+    """
+    if not passphrases:
+        raise ValueError("passphrases list must not be empty")
+    last_exc: Exception | None = None
+    for pw in passphrases:
+        try:
+            return decrypt(blob, pw)
+        except ValueError as exc:
+            last_exc = exc
+    raise ValueError("Decryption failed with all provided keys") from last_exc

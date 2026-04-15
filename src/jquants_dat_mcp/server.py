@@ -159,15 +159,24 @@ def _get_user_db():
     if not settings.encryption_key:
         return None
 
-    from .crypto import decrypt, encrypt
+    from .crypto import decrypt, decrypt_with_fallback, encrypt
 
     passphrase = settings.encryption_key
+    previous = getattr(settings, "encryption_key_previous", "")
 
     def enc(pt: str) -> str:
         return encrypt(pt, passphrase)
 
-    def dec(blob: str) -> str:
-        return decrypt(blob, passphrase)
+    if previous:
+        logger.info("MCP_ENCRYPTION_KEY_PREVIOUS is set; dual-key decrypt is active")
+        candidates = [passphrase, previous]
+
+        def dec(blob: str) -> str:
+            return decrypt_with_fallback(blob, candidates)
+    else:
+
+        def dec(blob: str) -> str:
+            return decrypt(blob, passphrase)
 
     # On Cloud Run, use Firestore so user data is shared across instances
     # and survives restarts. Locally, use SQLite.

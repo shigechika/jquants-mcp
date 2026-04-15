@@ -150,3 +150,37 @@ def test_decrypt_legacy_wrong_passphrase_raises():
     legacy_blob = _make_legacy_blob("secret", _PASSPHRASE)
     with pytest.raises(ValueError, match="Decryption failed"):
         decrypt(legacy_blob, "wrong-passphrase")
+
+
+# ---------------------------------------------------------------------------
+# decrypt_with_fallback (dual-key rotation window)
+# ---------------------------------------------------------------------------
+
+
+def test_fallback_primary_key_wins():
+    from jquants_dat_mcp.crypto import decrypt_with_fallback
+
+    blob = encrypt("secret", "new-key")
+    assert decrypt_with_fallback(blob, ["new-key", "old-key"]) == "secret"
+
+
+def test_fallback_uses_previous_key():
+    from jquants_dat_mcp.crypto import decrypt_with_fallback
+
+    blob = encrypt("secret", "old-key")
+    assert decrypt_with_fallback(blob, ["new-key", "old-key"]) == "secret"
+
+
+def test_fallback_all_keys_fail_raises():
+    from jquants_dat_mcp.crypto import decrypt_with_fallback
+
+    blob = encrypt("secret", "real-key")
+    with pytest.raises(ValueError, match="Decryption failed with all"):
+        decrypt_with_fallback(blob, ["wrong1", "wrong2"])
+
+
+def test_fallback_empty_list_raises():
+    from jquants_dat_mcp.crypto import decrypt_with_fallback
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        decrypt_with_fallback("whatever", [])

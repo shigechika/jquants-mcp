@@ -73,6 +73,15 @@ _CONFIG_DEFS: list[_ConfigDef] = [
     ),
     # マルチユーザー: ユーザーごとの API キー保存用暗号化キー
     _ConfigDef("encryption_key", "server", "encryption_key", "MCP_ENCRYPTION_KEY", ""),
+    # Rotation window: previous encryption key — allowed to decrypt old blobs
+    # while the primary key re-encrypts new writes. Leave empty outside a rotation.
+    _ConfigDef(
+        "encryption_key_previous",
+        "server",
+        "encryption_key_previous",
+        "MCP_ENCRYPTION_KEY_PREVIOUS",
+        "",
+    ),
     # Per-user rate limiting (multi-user mode only)
     _ConfigDef(
         "rate_limit_per_minute", "server", "rate_limit_per_minute", "RATE_LIMIT_PER_MINUTE", "60"

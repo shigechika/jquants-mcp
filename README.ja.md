@@ -102,6 +102,7 @@ plan = premium
 | `OAUTH_JWT_SIGNING_KEY` | いいえ | 自動 | JWT 署名用シークレット。省略時は起動ごとに自動生成 |
 | `OAUTH_REQUIRE_CONSENT` | いいえ | `true` | ログインのたびに OAuth 同意画面を表示（`true`/`false`） |
 | `MCP_ENCRYPTION_KEY` | いいえ | — | ユーザー API キーの AES-256-GCM 暗号化に使うパスフレーズ |
+| `MCP_ENCRYPTION_KEY_PREVIOUS` | いいえ | — | 前世代の暗号化パスフレーズ — ローテーション中の dual-key 復号用。[secrets rotation runbook](docs/runbooks/secrets-rotation.md) 参照 |
 | `RATE_LIMIT_PER_MINUTE` | いいえ | `60` | マルチユーザー時のユーザー別リクエスト上限（OAuth ユーザー単位） |
 | `RATE_LIMIT_BURST` | いいえ | `20` | ユーザー別バースト許容量（トークンバケット容量） |
 
@@ -833,6 +834,7 @@ Cloud Run デプロイの障害対応 runbook:
 - [cache.db 欠損 / ダウンロード失敗](docs/runbooks/cache-db-missing.md)
 - [OAuth ループ / 401 継続](docs/runbooks/oauth-loop.md)
 - [Firestore リストア](docs/runbooks/firestore-restore.md)
+- [Secrets ローテーション](docs/runbooks/secrets-rotation.md)
 
 アラートポリシーは [`ops/alerts/`](ops/alerts/) にあり、各ポリシーの documentation から対応する runbook にリンクしています。
 
