@@ -5,6 +5,8 @@ documentation:
     and cache.db size. After #73, 6 GiB should have ~2.2 GiB headroom over
     the ~3.9 GiB peak seen during load testing — an OOM here is a signal
     that something has drifted.
+
+    Runbook: https://github.com/shigechika/jquants-dat-mcp/blob/main/docs/runbooks/oom.md
   mimeType: text/markdown
 combiner: OR
 conditions:

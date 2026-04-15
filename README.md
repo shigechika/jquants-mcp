@@ -821,6 +821,19 @@ Current production sizing (see [.github/workflows/cd.yml](.github/workflows/cd.y
 
 If `cache.db` grows beyond ~4 GiB, bump the memory limit accordingly — the tmpfs ceiling is roughly the instance memory, so you need `cache.db + ~2 GiB` at a minimum.
 
+## Operations
+
+For production incidents on the Cloud Run deployment, see the runbooks:
+
+- [OOM / memory pressure](docs/runbooks/oom.md)
+- [5xx spike](docs/runbooks/5xx-spike.md)
+- [Firestore outage / quota](docs/runbooks/firestore-outage.md)
+- [cache.db missing / download failed](docs/runbooks/cache-db-missing.md)
+- [OAuth loop / persistent 401](docs/runbooks/oauth-loop.md)
+- [Firestore restore](docs/runbooks/firestore-restore.md)
+
+Alert policies that trigger these are in [`ops/alerts/`](ops/alerts/); each policy's documentation links back to the matching runbook.
+
 ## Development
 
 ```bash

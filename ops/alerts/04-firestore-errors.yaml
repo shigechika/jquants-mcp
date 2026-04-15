@@ -4,6 +4,8 @@ documentation:
     Firestore API error rate exceeded 5% over 10 minutes. Users may not be
     able to log in or persist OAuth state. Check Firestore dashboard and
     recent quota changes.
+
+    Runbook: https://github.com/shigechika/jquants-dat-mcp/blob/main/docs/runbooks/firestore-outage.md
   mimeType: text/markdown
 combiner: OR
 conditions:
