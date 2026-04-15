@@ -102,6 +102,7 @@ plan = premium
 | `OAUTH_JWT_SIGNING_KEY` | No | auto | Secret for JWT signing; auto-generated if blank |
 | `OAUTH_REQUIRE_CONSENT` | No | `true` | Show OAuth consent screen on every login (`true`/`false`) |
 | `MCP_ENCRYPTION_KEY` | No | — | Passphrase for AES-256-GCM encryption of per-user API keys |
+| `MCP_ENCRYPTION_KEY_PREVIOUS` | No | — | Previous encryption passphrase — enables dual-key decrypt during a rotation window. See [secrets rotation runbook](docs/runbooks/secrets-rotation.md) |
 | `RATE_LIMIT_PER_MINUTE` | No | `60` | Per-user request ceiling (multi-user mode). Applies per OAuth user |
 | `RATE_LIMIT_BURST` | No | `20` | Per-user burst allowance (token-bucket capacity) |
 
@@ -831,6 +832,7 @@ For production incidents on the Cloud Run deployment, see the runbooks:
 - [cache.db missing / download failed](docs/runbooks/cache-db-missing.md)
 - [OAuth loop / persistent 401](docs/runbooks/oauth-loop.md)
 - [Firestore restore](docs/runbooks/firestore-restore.md)
+- [Secrets rotation](docs/runbooks/secrets-rotation.md)
 
 Alert policies that trigger these are in [`ops/alerts/`](ops/alerts/); each policy's documentation links back to the matching runbook.
 
