@@ -50,6 +50,14 @@ uv sync --dev
 
 [jquants-api-client](https://github.com/J-Quants/jquants-api-client-python) を既に利用している場合、`~/.jquants-api/jquants-api.toml` から API キーが自動読み込みされます。追加の設定は不要です。
 
+### ブラウザログインで API キーを取得
+
+```sh
+jquants-dat-mcp login
+```
+
+ブラウザで J-Quants（AWS Cognito、PKCE フロー）にログインし、成功したら API キーを `~/.config/jquants-dat-mcp/config.ini`（mode 0600）に保存します。認証バックエンドは [公式 jquants-cli](https://github.com/J-Quants/jquants-cli) と同一です。保存済みキーの削除は `jquants-dat-mcp logout`。
+
 ### config.ini
 
 MCP 固有の設定（プラン、キャッシュ、クライアント動作）:
