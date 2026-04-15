@@ -4,6 +4,8 @@
 
 [j-quants-doc-mcp](https://github.com/knishioka/j-quants-doc-mcp)（ドキュメント MCP）の対になるサーバーです。doc が API の仕様を説明するのに対し、dat は実際に **API を呼び出してデータを取得** します。
 
+リリース履歴・変更履歴は [GitHub Releases](https://github.com/shigechika/jquants-dat-mcp/releases) を参照してください。
+
 ## 特徴
 
 - **27 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー

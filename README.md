@@ -4,6 +4,8 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that 
 
 This is a companion to [j-quants-doc-mcp](https://github.com/knishioka/j-quants-doc-mcp) (documentation MCP) — while that server explains the API, this one actually **calls** it.
 
+Release history and changelog: [GitHub Releases](https://github.com/shigechika/jquants-dat-mcp/releases).
+
 ## Features
 
 - **27 MCP tools** covering all J-Quants API v2 endpoints
