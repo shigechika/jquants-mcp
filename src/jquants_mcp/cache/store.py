@@ -11,7 +11,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from jquants_dat_mcp.cache.schema import (
+from jquants_mcp.cache.schema import (
     ALL_TABLE_NAMES as _ALL_TABLE_NAMES,
     RESPONSE_CACHE_DDL as _RESPONSE_CACHE_DDL,
     TIER1_KEY_COLUMNS as _TIER1_KEY_COLUMNS,

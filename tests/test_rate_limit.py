@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from jquants_dat_mcp.rate_limit import RateLimiter, RateLimitExceededError
+from jquants_mcp.rate_limit import RateLimiter, RateLimitExceededError
 
 
 @pytest.mark.asyncio
@@ -42,7 +42,7 @@ async def test_per_user_isolation():
 async def test_refill_restores_tokens(monkeypatch):
     rl = RateLimiter(per_minute=60, burst=2)
     t = [1000.0]
-    monkeypatch.setattr("jquants_dat_mcp.rate_limit.time.monotonic", lambda: t[0])
+    monkeypatch.setattr("jquants_mcp.rate_limit.time.monotonic", lambda: t[0])
 
     await rl.acquire("alice")
     await rl.acquire("alice")

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from jquants_dat_mcp.cache.store import CacheStore
+from jquants_mcp.cache.store import CacheStore
 
 
 def _wait_for(pred, timeout: float = 5.0) -> None:

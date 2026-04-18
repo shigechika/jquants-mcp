@@ -6,7 +6,7 @@ import json
 import logging
 import time
 
-_audit_logger = logging.getLogger("jquants_dat_mcp.audit")
+_audit_logger = logging.getLogger("jquants_mcp.audit")
 
 
 def audit(action: str, user_id: str | None = None, **fields) -> None:

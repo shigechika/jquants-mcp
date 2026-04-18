@@ -4,7 +4,7 @@ import base64
 
 import pytest
 
-from jquants_dat_mcp.crypto import (
+from jquants_mcp.crypto import (
     _FORMAT_V2,
     _IV_BYTES,
     _LEGACY_SALT,
@@ -158,21 +158,21 @@ def test_decrypt_legacy_wrong_passphrase_raises():
 
 
 def test_fallback_primary_key_wins():
-    from jquants_dat_mcp.crypto import decrypt_with_fallback
+    from jquants_mcp.crypto import decrypt_with_fallback
 
     blob = encrypt("secret", "new-key")
     assert decrypt_with_fallback(blob, ["new-key", "old-key"]) == "secret"
 
 
 def test_fallback_uses_previous_key():
-    from jquants_dat_mcp.crypto import decrypt_with_fallback
+    from jquants_mcp.crypto import decrypt_with_fallback
 
     blob = encrypt("secret", "old-key")
     assert decrypt_with_fallback(blob, ["new-key", "old-key"]) == "secret"
 
 
 def test_fallback_all_keys_fail_raises():
-    from jquants_dat_mcp.crypto import decrypt_with_fallback
+    from jquants_mcp.crypto import decrypt_with_fallback
 
     blob = encrypt("secret", "real-key")
     with pytest.raises(ValueError, match="Decryption failed with all"):
@@ -180,7 +180,7 @@ def test_fallback_all_keys_fail_raises():
 
 
 def test_fallback_empty_list_raises():
-    from jquants_dat_mcp.crypto import decrypt_with_fallback
+    from jquants_mcp.crypto import decrypt_with_fallback
 
     with pytest.raises(ValueError, match="must not be empty"):
         decrypt_with_fallback("whatever", [])

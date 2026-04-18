@@ -4,24 +4,24 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from jquants_dat_mcp.models.user import User
-from jquants_dat_mcp.settings.routes import (
+from jquants_mcp.models.user import User
+from jquants_mcp.settings.routes import (
     handle_settings_delete,
     handle_settings_get,
     handle_settings_post,
     handle_settings_verify,
 )
-from jquants_dat_mcp.settings.session import sign_session as _sign_session
-from jquants_dat_mcp.settings.session import verify_session as _verify_session
+from jquants_mcp.settings.session import sign_session as _sign_session
+from jquants_mcp.settings.session import verify_session as _verify_session
 
 # CSRF test token — 64 hex chars (same format as os.urandom(32).hex())
 _CSRF_TOKEN = "a" * 64
 
 # Patch targets (after refactor to settings/routes.py)
-_PATCH_DETECT_PLAN = "jquants_dat_mcp.settings.routes.detect_plan"
-_PATCH_JQUANTS_CLIENT = "jquants_dat_mcp.settings.routes.JQuantsClient"
-_PATCH_AUDIT = "jquants_dat_mcp.settings.routes.audit"
-_PATCH_HTTPX = "jquants_dat_mcp.settings.routes.httpx.AsyncClient"
+_PATCH_DETECT_PLAN = "jquants_mcp.settings.routes.detect_plan"
+_PATCH_JQUANTS_CLIENT = "jquants_mcp.settings.routes.JQuantsClient"
+_PATCH_AUDIT = "jquants_mcp.settings.routes.audit"
+_PATCH_HTTPX = "jquants_mcp.settings.routes.httpx.AsyncClient"
 
 
 # ---- ヘルパー ----

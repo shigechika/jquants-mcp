@@ -28,7 +28,7 @@ from pathlib import Path
 
 # schema.py は stdlib のみ依存 — 外部 venv でもインポート可能
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from jquants_dat_mcp.cache.schema import TIER1_TABLES, generate_ddl  # noqa: E402
+from jquants_mcp.cache.schema import TIER1_TABLES, generate_ddl  # noqa: E402
 
 # キャッシュ DB のデフォルトパス
 DEFAULT_DB_PATH = Path.home() / ".cache" / "jquants-dat-mcp" / "cache.db"

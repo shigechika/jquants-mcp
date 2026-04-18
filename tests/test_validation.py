@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from jquants_dat_mcp.exceptions import AuthenticationError, PlanRestrictionError
-from jquants_dat_mcp.validation import (
+from jquants_mcp.exceptions import AuthenticationError, PlanRestrictionError
+from jquants_mcp.validation import (
     _VALIDATION_INTERVAL,
     detect_plan,
     needs_validation,

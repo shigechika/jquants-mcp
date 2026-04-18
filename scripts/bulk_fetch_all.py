@@ -27,8 +27,8 @@ import httpx
 
 # プロジェクトの設定・スキーマを再利用
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from jquants_dat_mcp.cache.schema import all_ddl
-from jquants_dat_mcp.config import Settings
+from jquants_mcp.cache.schema import all_ddl
+from jquants_mcp.config import Settings
 
 logging.basicConfig(
     level=logging.INFO,

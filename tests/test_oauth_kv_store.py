@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from jquants_dat_mcp.oauth_kv_store import SQLiteKeyValueStore
+from jquants_mcp.oauth_kv_store import SQLiteKeyValueStore
 
 
 @pytest.fixture()

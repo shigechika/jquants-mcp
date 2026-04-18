@@ -9,8 +9,8 @@ import httpx
 import pytest
 import respx
 
-from jquants_dat_mcp import oauth_login
-from jquants_dat_mcp.oauth_login import (
+from jquants_mcp import oauth_login
+from jquants_mcp.oauth_login import (
     COGNITO_CLIENT_ID,
     COGNITO_DOMAIN,
     LoginError,

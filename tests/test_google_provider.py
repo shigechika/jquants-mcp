@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
-from jquants_dat_mcp.auth import create_auth_provider
-from jquants_dat_mcp.config import Settings
+from jquants_mcp.auth import create_auth_provider
+from jquants_mcp.config import Settings
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ def test_create_auth_provider_google_oauth():
 
 def test_create_auth_provider_google_incomplete_fallback_to_bearer():
     """Incomplete Google OAuth falls back to GitHub then Bearer."""
-    from jquants_dat_mcp.auth import BearerTokenVerifier
+    from jquants_mcp.auth import BearerTokenVerifier
 
     settings = Settings(
         oauth_provider="google",

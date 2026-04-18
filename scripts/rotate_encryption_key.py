@@ -32,7 +32,7 @@ import argparse
 import sys
 from typing import TYPE_CHECKING
 
-from jquants_dat_mcp.crypto import decrypt_with_fallback, encrypt
+from jquants_mcp.crypto import decrypt_with_fallback, encrypt
 
 if TYPE_CHECKING:
     from google.cloud import firestore  # type: ignore[import-untyped]

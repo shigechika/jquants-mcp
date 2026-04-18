@@ -11,7 +11,7 @@ set -euo pipefail
 
 PORT="${PORT:-8000}"
 
-echo "=== jquants-dat-mcp startup ==="
+echo "=== jquants-mcp startup ==="
 echo "PORT=${PORT}"
 echo "GCS_BUCKET=${GCS_BUCKET:-<not set>}"
 echo "JQUANTS_CACHE_DIR=${JQUANTS_CACHE_DIR:-/tmp}"
@@ -60,7 +60,7 @@ trap _shutdown SIGTERM SIGINT
 
 # Step 3: Start MCP server (cache.db not yet available — API fallback)
 echo "Starting MCP server on port ${PORT}..."
-jquants-dat-mcp --transport streamable-http --host 0.0.0.0 --port "${PORT}" &
+jquants-mcp --transport streamable-http --host 0.0.0.0 --port "${PORT}" &
 MCP_PID=$!
 echo "MCP server started (PID=${MCP_PID})"
 

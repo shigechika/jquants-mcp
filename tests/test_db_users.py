@@ -2,9 +2,9 @@
 
 import pytest
 
-from jquants_dat_mcp.crypto import decrypt, encrypt
-from jquants_dat_mcp.db.users import UserStore
-from jquants_dat_mcp.models.user import User
+from jquants_mcp.crypto import decrypt, encrypt
+from jquants_mcp.db.users import UserStore
+from jquants_mcp.models.user import User
 
 _PASSPHRASE = "test-encryption-key"
 _ENCRYPT = lambda pt: encrypt(pt, _PASSPHRASE)  # noqa: E731
