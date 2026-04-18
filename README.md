@@ -1,10 +1,10 @@
-# jquants-dat-mcp
+# jquants-mcp
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that retrieves Japanese stock market data via [J-Quants API v2](https://jpx-jquants.com/).
 
 This is a companion to [j-quants-doc-mcp](https://github.com/knishioka/j-quants-doc-mcp) (documentation MCP) — while that server explains the API, this one actually **calls** it.
 
-Release history and changelog: [GitHub Releases](https://github.com/shigechika/jquants-dat-mcp/releases).
+Release history and changelog: [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases).
 
 ## Features
 
@@ -25,17 +25,17 @@ Release history and changelog: [GitHub Releases](https://github.com/shigechika/j
 
 ```bash
 # Using uv (recommended)
-uv pip install jquants-dat-mcp
+uv pip install jquants-mcp
 
 # Using pip
-pip install jquants-dat-mcp
+pip install jquants-mcp
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/shigechika/jquants-dat-mcp.git
-cd jquants-dat-mcp
+git clone https://github.com/shigechika/jquants-mcp.git
+cd jquants-mcp
 uv sync --dev
 ```
 
@@ -55,10 +55,10 @@ If you already use [jquants-api-client](https://github.com/J-Quants/jquants-api-
 ### API Key via browser login
 
 ```sh
-jquants-dat-mcp login
+jquants-mcp login
 ```
 
-Opens a browser to J-Quants (AWS Cognito, PKCE flow), and on success writes the API key to `~/.config/jquants-dat-mcp/config.ini` (mode 0600). Same auth backend as the [official jquants-cli](https://github.com/J-Quants/jquants-cli). Use `jquants-dat-mcp logout` to clear the saved key.
+Opens a browser to J-Quants (AWS Cognito, PKCE flow), and on success writes the API key to `~/.config/jquants-dat-mcp/config.ini` (mode 0600). Same auth backend as the [official jquants-cli](https://github.com/J-Quants/jquants-cli). Use `jquants-mcp logout` to clear the saved key.
 
 ### config.ini
 
@@ -122,7 +122,7 @@ Environment variables override both `config.ini` and `jquants-api.toml`. This al
 
 ## Authentication
 
-jquants-dat-mcp supports three authentication modes:
+jquants-mcp supports three authentication modes:
 
 | Mode | When to use |
 |---|---|
@@ -146,7 +146,7 @@ The server acts as an OAuth 2.1 authorization server using GitHub as the upstrea
 
 1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
 2. Fill in:
-   - **Application name**: `jquants-dat-mcp` (or any name)
+   - **Application name**: `jquants-mcp` (or any name)
    - **Homepage URL**: your server's public base URL (e.g. `https://mcp.example.com`)
    - **Authorization callback URL**: `https://mcp.example.com/oauth/callback/github`
 3. Click **Register application**, then click **Generate a new client secret**
@@ -181,7 +181,7 @@ encryption_key = <random-secret>      # required for per-user API key storage
 #### 3. Start the server with OAuth
 
 ```bash
-jquants-dat-mcp -t streamable-http --port 8080 \
+jquants-mcp -t streamable-http --port 8080 \
   --ssl-certfile /path/to/fullchain.pem \
   --ssl-keyfile /path/to/privkey.pem \
   --github-client-id <ID> \
@@ -254,7 +254,7 @@ When GitHub OAuth 2.1 and `MCP_ENCRYPTION_KEY` are both configured, the server o
 sequenceDiagram
     participant U as User
     participant C as Claude
-    participant S as jquants-dat-mcp
+    participant S as jquants-mcp
     participant G as GitHub
     participant J as J-Quants API
     U->>C: Connect (Connectors UI / Claude Code)
@@ -309,14 +309,14 @@ Claude calls `register_api_key(api_key="...")`. The server probes plan-specific 
 Register the MCP server with `claude mcp add`:
 
 ```bash
-claude mcp add jquants-dat-mcp -- jquants-dat-mcp
+claude mcp add jquants-mcp -- jquants-mcp
 ```
 
 Or if installed from source:
 
 ```bash
-claude mcp add jquants-dat-mcp \
-  -- /path/to/jquants-dat-mcp/.venv/bin/jquants-dat-mcp
+claude mcp add jquants-mcp \
+  -- /path/to/jquants-mcp/.venv/bin/jquants-mcp
 ```
 
 The `--scope` (`-s`) option controls where the configuration is stored:
@@ -342,8 +342,8 @@ Add to Claude Desktop config file:
 ```json
 {
   "mcpServers": {
-    "jquants-dat-mcp": {
-      "command": "/path/to/jquants-dat-mcp/.venv/bin/jquants-dat-mcp"
+    "jquants-mcp": {
+      "command": "/path/to/jquants-mcp/.venv/bin/jquants-mcp"
     }
   }
 }
@@ -358,7 +358,7 @@ Restart Claude Desktop after editing.
 ### Standalone (stdio)
 
 ```bash
-jquants-dat-mcp
+jquants-mcp
 ```
 
 ### Streamable HTTP (remote access)
@@ -366,7 +366,7 @@ jquants-dat-mcp
 Run the server over HTTP so that MCP clients on other machines can connect:
 
 ```bash
-jquants-dat-mcp --transport streamable-http --port 8080
+jquants-mcp --transport streamable-http --port 8080
 ```
 
 This exposes the MCP endpoint at `http://<host>:8080/mcp`. Clients on the same LAN (or via SSH tunnel) can connect to the server.
@@ -374,7 +374,7 @@ This exposes the MCP endpoint at `http://<host>:8080/mcp`. Clients on the same L
 **Claude Code (remote):**
 
 ```bash
-claude mcp add jquants-dat-mcp \
+claude mcp add jquants-mcp \
   --transport http http://192.0.2.1:8080/mcp
 ```
 
@@ -396,7 +396,7 @@ For secure remote access over the internet (e.g., IPv6), enable TLS encryption a
 python3 -c "import secrets; print(secrets.token_hex(32))"
 
 # Start with TLS and authentication
-jquants-dat-mcp -t streamable-http --port 8080 \
+jquants-mcp -t streamable-http --port 8080 \
   --ssl-certfile /path/to/fullchain.pem \
   --ssl-keyfile /path/to/privkey.pem \
   --bearer-token <TOKEN>
@@ -418,7 +418,7 @@ bearer_token = <TOKEN>
 ```bash
 pip install mcp-stdio  # or: uvx mcp-stdio
 
-claude mcp add jquants-dat-mcp -- \
+claude mcp add jquants-mcp -- \
   mcp-stdio https://192.0.2.1:8080/mcp --bearer-token <TOKEN>
 ```
 
@@ -429,7 +429,7 @@ Claude Desktop does not support Streamable HTTP transport directly. Use [mcp-std
 ```json
 {
   "mcpServers": {
-    "jquants-dat-mcp": {
+    "jquants-mcp": {
       "command": "mcp-stdio",
       "args": [
         "http://192.0.2.1:8080/mcp"
@@ -444,7 +444,7 @@ To connect to a TLS-enabled server with Bearer token authentication:
 ```json
 {
   "mcpServers": {
-    "jquants-dat-mcp": {
+    "jquants-mcp": {
       "command": "mcp-stdio",
       "args": [
         "https://192.0.2.1:8080/mcp",
@@ -469,7 +469,7 @@ Claude Desktop's **Connectors** feature provides a native OAuth 2.1 authenticati
 **Server-side startup:**
 
 ```bash
-jquants-dat-mcp -t streamable-http --port 8080 \
+jquants-mcp -t streamable-http --port 8080 \
   --ssl-certfile /path/to/fullchain.pem \
   --ssl-keyfile /path/to/privkey.pem \
   --github-client-id <ID> \
@@ -482,7 +482,7 @@ jquants-dat-mcp -t streamable-http --port 8080 \
 ```json
 {
   "mcpServers": {
-    "jquants-dat-mcp": {
+    "jquants-mcp": {
       "type": "http",
       "url": "https://mcp.example.com/mcp"
     }
@@ -677,7 +677,7 @@ The recommended path is to fork the repository and rely on the GitHub Actions CD
 For a one-off manual deploy (e.g. testing a fork), run the same command locally:
 
 ```bash
-gcloud run deploy jquants-dat-mcp \
+gcloud run deploy jquants-mcp \
   --project "${PROJECT_ID}" \
   --region "${REGION}" \
   --source . \
@@ -697,7 +697,7 @@ Memory sizing notes are in [Memory requirements](#memory-requirements) below.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `GCS_BUCKET` | Yes | — | GCS bucket holding the `cache.db` snapshot |
-| `GCS_PREFIX` | No | `jquants-dat-mcp/` | Object key prefix in the bucket |
+| `GCS_PREFIX` | No | `jquants-mcp/` | Object key prefix in the bucket |
 | `JQUANTS_CACHE_DIR` | No | `/tmp` | Local directory where `cache.db` is materialized (tmpfs on Cloud Run) |
 | `PORT` | No | `8000` | HTTP port (set by Cloud Run) |
 | `JQUANTS_API_KEY` | Yes | — | J-Quants API key (use Secret Manager) |
@@ -762,7 +762,7 @@ The service account needs `roles/storage.objectViewer` on the bucket — see [IA
 ```bash
 gcloud projects get-iam-policy "${PROJECT_ID}" \
   --flatten="bindings[].members" \
-  --filter="bindings.members:serviceAccount:jquants-dat-mcp@*"
+  --filter="bindings.members:serviceAccount:jquants-mcp@*"
 ```
 
 The service account needs `roles/datastore.user` on the project.
@@ -778,11 +778,11 @@ There is no "empty cache" fallback mode beyond API fallback — the server will 
 ### IAM setup
 
 ```bash
-SA="jquants-dat-mcp@${PROJECT_ID}.iam.gserviceaccount.com"
+SA="jquants-mcp@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # Create service account
-gcloud iam service-accounts create jquants-dat-mcp \
-  --display-name "jquants-dat-mcp Cloud Run SA"
+gcloud iam service-accounts create jquants-mcp \
+  --display-name "jquants-mcp Cloud Run SA"
 
 # Read-only access to the cache.db snapshot in GCS
 gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET \

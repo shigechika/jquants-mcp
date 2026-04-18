@@ -18,7 +18,7 @@ nine-nines reliability.
 
 ## Components and their failure modes
 
-### Cloud Run (`jquants-dat-mcp`, `us-west1`)
+### Cloud Run (`jquants-mcp`, `us-west1`)
 
 | Risk | Impact | Mitigation today |
 |---|---|---|

@@ -1,7 +1,7 @@
 displayName: "Cloud Run instance count == 0 for 1h"
 documentation:
   content: |
-    jquants-dat-mcp has had zero serving instances for over an hour.
+    jquants-mcp has had zero serving instances for over an hour.
     Usually fine (cold-scaled to zero), but prolonged zero during market
     hours plus no recent requests can signal routing or deploy issues.
     Tune / silence if noisy.

@@ -1,6 +1,6 @@
 # Cloud Run alert policies
 
-Declarative alert policies for the Cloud Run `jquants-dat-mcp` deployment.
+Declarative alert policies for the Cloud Run `jquants-mcp` deployment.
 Each `*.yaml` is a single policy; `__CHANNEL__` is a placeholder substituted
 at deploy time.
 

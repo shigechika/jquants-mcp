@@ -7,7 +7,7 @@
   "bump-patch-for-minor-pre-major": false,
   "packages": {
     ".": {
-      "package-name": "jquants-dat-mcp",
+      "package-name": "jquants-mcp",
       "changelog-path": "CHANGELOG.md"
     }
   }
