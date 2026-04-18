@@ -115,6 +115,7 @@ plan = premium
 | `MCP_ENCRYPTION_KEY_PREVIOUS` | No | — | Previous encryption passphrase — enables dual-key decrypt during a rotation window. See [secrets rotation runbook](docs/runbooks/secrets-rotation.md) |
 | `RATE_LIMIT_PER_MINUTE` | No | `60` | Per-user request ceiling (multi-user mode). Applies per OAuth user |
 | `RATE_LIMIT_BURST` | No | `20` | Per-user burst allowance (token-bucket capacity) |
+| `JQUANTS_ALLOWED_EMAILS` | No | — | Comma-separated allowlist of emails. Empty = allow any authenticated user (self-host default). Set this on public Cloud Run instances to restrict access; unauthorized users get a 403-style message pointing them to self-host |
 
 \* API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `JQUANTS_API_KEY` only to override.
 

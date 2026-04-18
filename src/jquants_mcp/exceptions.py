@@ -106,6 +106,30 @@ class ValidationError(JQuantsDatMCPError):
         return d
 
 
+class UserNotAllowedError(JQuantsDatMCPError):
+    """Authenticated user is not in the deployment's allowlist.
+
+    Raised when ``JQUANTS_ALLOWED_EMAILS`` is configured and the
+    current OAuth user's email is not in the allowlist. The tool
+    layer translates this into a permission-denied response.
+    """
+
+    def __init__(self, user_id: str) -> None:
+        # Import locally to avoid circular import at module load time.
+        from .allowlist import unauthorized_message
+
+        super().__init__(unauthorized_message(user_id))
+        self.user_id = user_id
+
+    def to_dict(self) -> dict:
+        d = super().to_dict()
+        d["hint"] = (
+            "Run your own jquants-mcp instance (README → Cloud Run deployment) "
+            "or ask the deployment owner to add your email."
+        )
+        return d
+
+
 def format_api_error(error: JQuantsDatMCPError) -> dict:
     """Format a JQuantsDatMCPError into an MCP-compatible response dict."""
     d = error.to_dict()

@@ -87,6 +87,9 @@ _CONFIG_DEFS: list[_ConfigDef] = [
         "rate_limit_per_minute", "server", "rate_limit_per_minute", "RATE_LIMIT_PER_MINUTE", "60"
     ),
     _ConfigDef("rate_limit_burst", "server", "rate_limit_burst", "RATE_LIMIT_BURST", "20"),
+    # Email allowlist for restricting Cloud Run access. Comma-separated list.
+    # Empty value means "allow any authenticated user" (self-host default).
+    _ConfigDef("allowed_emails", "server", "allowed_emails", "JQUANTS_ALLOWED_EMAILS", ""),
 ]
 
 # 型変換テーブル
@@ -212,3 +215,9 @@ class Settings:
     def get_rate_limit(self) -> int:
         """Return the rate limit (requests/min) for the current plan."""
         return RATE_LIMITS.get(self.jquants_plan.lower(), RATE_LIMITS["free"])
+
+    def get_allowed_emails(self) -> list[str]:
+        """Return the parsed ``JQUANTS_ALLOWED_EMAILS`` value."""
+        from .allowlist import parse_allowed_emails
+
+        return parse_allowed_emails(self.allowed_emails)

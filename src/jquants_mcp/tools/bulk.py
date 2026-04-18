@@ -13,6 +13,7 @@ from ..exceptions import (
     APIError,
     DecryptionError,
     InvalidAPIKeyError,
+    UserNotAllowedError,
     UserNotConfiguredError,
     format_api_error,
 )
@@ -94,7 +95,13 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_6H)
             return result
-        except (APIError, InvalidAPIKeyError, UserNotConfiguredError, DecryptionError) as e:
+        except (
+            APIError,
+            InvalidAPIKeyError,
+            UserNotConfiguredError,
+            DecryptionError,
+            UserNotAllowedError,
+        ) as e:
             return format_api_error(e)
 
     @mcp.tool()
@@ -121,5 +128,11 @@ def register(
                 "url": url,
                 "hint": "The URL expires in approximately 5 minutes. Download within the expiry time.",
             }
-        except (APIError, InvalidAPIKeyError, UserNotConfiguredError, DecryptionError) as e:
+        except (
+            APIError,
+            InvalidAPIKeyError,
+            UserNotConfiguredError,
+            DecryptionError,
+            UserNotAllowedError,
+        ) as e:
             return format_api_error(e)
