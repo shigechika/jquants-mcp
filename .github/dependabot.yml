@@ -25,6 +25,16 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # Python base-image bumps require a coordinated update of both the
+    # builder and runtime stages in Dockerfile (see PR #89 postmortem:
+    # silently mismatched stages would break Cloud Run at deploy time).
+    # CI does not build the Docker image, so Dependabot's "tests green"
+    # signal cannot catch this. Handle Python bumps manually.
+    ignore:
+      - dependency-name: "python"
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
     labels:
       - dependencies
       - docker
