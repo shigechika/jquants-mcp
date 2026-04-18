@@ -31,7 +31,7 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from jquants_dat_mcp.cache.schema import TIER1_TABLES  # noqa: E402
+from jquants_mcp.cache.schema import TIER1_TABLES  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,

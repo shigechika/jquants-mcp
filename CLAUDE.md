@@ -16,7 +16,7 @@ uv run ruff format src/ tests/  # Format
 
 ## Architecture
 
-- `src/jquants_dat_mcp/` — Main package
+- `src/jquants_mcp/` — Main package
   - `server.py` — FastMCP server, per-user client management, tool registration
   - `client.py` — httpx async client with rate limiting, retry, pagination
   - `config.py` — configparser + env vars hybrid configuration

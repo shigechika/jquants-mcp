@@ -15,7 +15,7 @@ def html_page(title: str, body: str) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{escaped_title} \u2014 jquants-dat-mcp</title>
+  <title>{escaped_title} \u2014 jquants-mcp</title>
   <style>
     body {{ font-family: sans-serif; max-width: 480px; margin: 40px auto; padding: 0 16px; color: #333; }}
     h1 {{ font-size: 1.4rem; }}

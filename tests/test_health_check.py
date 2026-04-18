@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-import jquants_dat_mcp.server as server_module
-from jquants_dat_mcp.cache.store import CacheStore
-from jquants_dat_mcp.config import Settings
-from jquants_dat_mcp.client import JQuantsClient
-from jquants_dat_mcp.models.user import User
+import jquants_mcp.server as server_module
+from jquants_mcp.cache.store import CacheStore
+from jquants_mcp.config import Settings
+from jquants_mcp.client import JQuantsClient
+from jquants_mcp.models.user import User
 
 import pytest
 

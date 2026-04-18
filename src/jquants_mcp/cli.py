@@ -58,7 +58,7 @@ def _cmd_login(args: argparse.Namespace) -> int:
     path = _write_api_key(result.api_key)
     print(f"API key saved to {path}")
     print(
-        "You can now start the server normally (e.g. `jquants-dat-mcp`) — "
+        "You can now start the server normally (e.g. `jquants-mcp`) — "
         "the key is picked up automatically."
     )
     return 0
@@ -146,14 +146,14 @@ def _add_serve_args(p: argparse.ArgumentParser) -> None:
 def main(argv: list[str] | None = None) -> int:
     """Main entry point for the CLI."""
     parser = argparse.ArgumentParser(
-        prog="jquants-dat-mcp",
+        prog="jquants-mcp",
         description="MCP server for J-Quants API v2 data retrieval",
     )
     parser.add_argument(
         "--version",
         "-v",
         action="version",
-        version=f"jquants-dat-mcp {__version__}",
+        version=f"jquants-mcp {__version__}",
     )
 
     subparsers = parser.add_subparsers(dest="command")
@@ -179,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     # Default subcommand: serve. Kept as the top-level arg set for backward compat
-    # so that ``jquants-dat-mcp --port 9000`` still works without ``serve`` prefix.
+    # so that ``jquants-mcp --port 9000`` still works without ``serve`` prefix.
     _add_serve_args(parser)
 
     args = parser.parse_args(argv)

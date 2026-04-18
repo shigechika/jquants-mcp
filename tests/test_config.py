@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
-from jquants_dat_mcp.config import RATE_LIMITS, Settings
+from jquants_mcp.config import RATE_LIMITS, Settings
 
 
 def test_default_settings():
@@ -20,10 +20,8 @@ def test_default_settings():
     ]
     with (
         patch.dict(os.environ, {}, clear=False),
-        patch(
-            "jquants_dat_mcp.config._load_config_files", return_value=configparser.ConfigParser()
-        ),
-        patch("jquants_dat_mcp.config._read_jquants_toml", return_value=""),
+        patch("jquants_mcp.config._load_config_files", return_value=configparser.ConfigParser()),
+        patch("jquants_mcp.config._read_jquants_toml", return_value=""),
     ):
         for k in env_keys:
             os.environ.pop(k, None)
@@ -70,7 +68,7 @@ def test_config_ini_loading(tmp_path):
         "[jquants]\napi_key = ini-key\nplan = premium\n\n[client]\nmax_retries = 3\n",
         encoding="utf-8",
     )
-    with patch("jquants_dat_mcp.config._load_config_files") as mock_load:
+    with patch("jquants_mcp.config._load_config_files") as mock_load:
         import configparser
 
         config = configparser.ConfigParser()
@@ -88,7 +86,7 @@ def test_env_overrides_config_ini(tmp_path):
     ini_file = tmp_path / "config.ini"
     ini_file.write_text("[jquants]\napi_key = ini-key\nplan = light\n", encoding="utf-8")
     with (
-        patch("jquants_dat_mcp.config._load_config_files") as mock_load,
+        patch("jquants_mcp.config._load_config_files") as mock_load,
         patch.dict(os.environ, {"JQUANTS_API_KEY": "env-key", "JQUANTS_PLAN": "premium"}),
     ):
         import configparser
@@ -114,8 +112,8 @@ def test_reads_api_key_from_jquants_toml(tmp_path):
     toml_file = tmp_path / "jquants-api.toml"
     toml_file.write_bytes(b'[jquants-api-client]\napi_key = "toml-key-123"\n')
     with (
-        patch("jquants_dat_mcp.config._JQUANTS_TOML_PATH", toml_file),
-        patch("jquants_dat_mcp.config._load_config_files") as mock_load,
+        patch("jquants_mcp.config._JQUANTS_TOML_PATH", toml_file),
+        patch("jquants_mcp.config._load_config_files") as mock_load,
     ):
         import configparser
 
@@ -132,8 +130,8 @@ def test_config_ini_overrides_jquants_toml(tmp_path):
     ini_file = tmp_path / "config.ini"
     ini_file.write_text("[jquants]\napi_key = ini-key\n", encoding="utf-8")
     with (
-        patch("jquants_dat_mcp.config._JQUANTS_TOML_PATH", toml_file),
-        patch("jquants_dat_mcp.config._load_config_files") as mock_load,
+        patch("jquants_mcp.config._JQUANTS_TOML_PATH", toml_file),
+        patch("jquants_mcp.config._load_config_files") as mock_load,
     ):
         import configparser
 
@@ -150,7 +148,7 @@ def test_env_overrides_jquants_toml(tmp_path):
     toml_file = tmp_path / "jquants-api.toml"
     toml_file.write_bytes(b'[jquants-api-client]\napi_key = "toml-key"\n')
     with (
-        patch("jquants_dat_mcp.config._JQUANTS_TOML_PATH", toml_file),
+        patch("jquants_mcp.config._JQUANTS_TOML_PATH", toml_file),
         patch.dict(os.environ, {"JQUANTS_API_KEY": "env-key"}),
     ):
         s = Settings()
@@ -160,6 +158,6 @@ def test_env_overrides_jquants_toml(tmp_path):
 def test_missing_toml_file_no_error(tmp_path):
     """jquants-api.toml が存在しなくてもエラーにならないこと。"""
     nonexistent = tmp_path / "nonexistent.toml"
-    with patch("jquants_dat_mcp.config._JQUANTS_TOML_PATH", nonexistent):
+    with patch("jquants_mcp.config._JQUANTS_TOML_PATH", nonexistent):
         s = Settings(jquants_api_key="fallback")
         assert s.jquants_api_key == "fallback"

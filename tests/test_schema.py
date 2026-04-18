@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from jquants_dat_mcp.cache.schema import (
+from jquants_mcp.cache.schema import (
     ALL_TABLE_NAMES,
     BULK_TABLES,
     RESPONSE_CACHE_DDL,
@@ -20,7 +20,7 @@ from jquants_dat_mcp.cache.schema import (
     all_ddl,
     generate_ddl,
 )
-from jquants_dat_mcp.cache.store import CacheStore
+from jquants_mcp.cache.store import CacheStore
 
 # daily_fetch.py depends on jquantsapi (not in this venv) — mock it
 sys.modules.setdefault("jquantsapi", MagicMock())

@@ -1,5 +1,5 @@
 [project]
-name = "jquants-dat-mcp"
+name = "jquants-mcp"
 dynamic = ["version"]
 description = "MCP server for retrieving Japanese stock market data via J-Quants API v2"
 readme = "README.md"
@@ -21,7 +21,7 @@ cloud-run = [
 ]
 
 [project.scripts]
-jquants-dat-mcp = "jquants_dat_mcp.cli:main"
+jquants-mcp = "jquants_mcp.cli:main"
 
 [dependency-groups]
 dev = [
@@ -40,10 +40,10 @@ build-backend = "hatchling.build"
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "src/jquants_dat_mcp/_version.py"
+version-file = "src/jquants_mcp/_version.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/jquants_dat_mcp"]
+packages = ["src/jquants_mcp"]
 
 [tool.ruff]
 exclude = ["_version.py"]

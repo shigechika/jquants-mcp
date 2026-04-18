@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from jquants_dat_mcp.cache.store import CacheStore
-from jquants_dat_mcp.config import Settings
+from jquants_mcp.cache.store import CacheStore
+from jquants_mcp.config import Settings
 
 
 @pytest.fixture(autouse=True)
 def _reset_plan_detected():
     """Reset the plan detection flag between tests."""
-    import jquants_dat_mcp.server as server_module
+    import jquants_mcp.server as server_module
 
     server_module._plan_detected = False
     yield

@@ -2,8 +2,8 @@
 
 import pytest
 
-from jquants_dat_mcp.auth import BearerTokenVerifier, create_auth_provider
-from jquants_dat_mcp.config import Settings
+from jquants_mcp.auth import BearerTokenVerifier, create_auth_provider
+from jquants_mcp.config import Settings
 
 VALID_TOKEN = "abc123secret"
 

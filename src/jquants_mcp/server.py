@@ -75,7 +75,7 @@ class OAuthDebugMiddleware(BaseHTTPMiddleware):
         return response
 
 
-mcp = FastMCP("jquants-dat-mcp")
+mcp = FastMCP("jquants-mcp")
 
 # 共有グローバル変数 — 初回リクエスト時に遅延初期化
 _settings: Settings | None = None
@@ -388,7 +388,7 @@ def health_check() -> dict[str, Any]:
 
     return {
         "status": status,
-        "service": "jquants-dat-mcp",
+        "service": "jquants-mcp",
         "version": __version__,
         "api_key_configured": has_key,
         "plan": plan,
@@ -604,7 +604,7 @@ def run_server(
         oauth_base_url: Public base URL for OAuth endpoints (e.g. https://mcp.example.com)
     """
     logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
-    logger.info("jquants-dat-mcp v%s starting (transport=%s)", __version__, transport)
+    logger.info("jquants-mcp v%s starting (transport=%s)", __version__, transport)
 
     if transport == "stdio":
         mcp.run(transport="stdio")

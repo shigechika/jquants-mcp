@@ -8,7 +8,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from jquants_dat_mcp.cache.store import (
+from jquants_mcp.cache.store import (
     CacheStore,
     _plan_date_bounds,
     make_cache_key,
@@ -488,7 +488,7 @@ class TestPlanDateBounds:
 
     def test_leap_year_boundary(self):
         """Feb 29 minus N years should not raise."""
-        with patch("jquants_dat_mcp.cache.store.date") as mock_date:
+        with patch("jquants_mcp.cache.store.date") as mock_date:
             mock_date.today.return_value = date(2024, 2, 29)
             mock_date.side_effect = lambda *args, **kw: date(*args, **kw)
             min_d, _ = _plan_date_bounds("free")

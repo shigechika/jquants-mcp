@@ -1,6 +1,6 @@
 """Tests for input validation helpers."""
 
-from jquants_dat_mcp.validators import (
+from jquants_mcp.validators import (
     collect_errors,
     make_validation_error_response,
     validate_code,
