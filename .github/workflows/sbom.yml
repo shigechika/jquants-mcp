@@ -40,7 +40,7 @@ jobs:
             --format json --output pip-audit.json
           uv tool run pip-audit --requirement requirements.txt || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: |
