@@ -1,11 +1,11 @@
 displayName: "Cloud Run 5xx rate > 1%"
 documentation:
   content: |
-    jquants-dat-mcp is returning 5xx responses at >1% over 10 minutes.
+    jquants-mcp is returning 5xx responses at >1% over 10 minutes.
     Check logs for the top error, recent deploys, and Firestore / J-Quants
     API availability.
 
-    Runbook: https://github.com/shigechika/jquants-dat-mcp/blob/main/docs/runbooks/5xx-spike.md
+    Runbook: https://github.com/shigechika/jquants-mcp/blob/main/docs/runbooks/5xx-spike.md
   mimeType: text/markdown
 combiner: OR
 conditions:

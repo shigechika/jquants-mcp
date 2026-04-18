@@ -1,8 +1,8 @@
 # Cloud Run memory sizing (8 GiB → 6 GiB → 4 GiB)
 
 Date: 2026-04-11 (initial), 2026-04-12 (4 GiB re-test)
-Issue: [#72](https://github.com/shigechika/jquants-dat-mcp/issues/72)
-PR: [#73](https://github.com/shigechika/jquants-dat-mcp/pull/73)
+Issue: [#72](https://github.com/shigechika/jquants-mcp/issues/72)
+PR: [#73](https://github.com/shigechika/jquants-mcp/pull/73)
 
 ## Summary
 
@@ -33,7 +33,7 @@ Re-tested with 4 GiB — all phases passed with 0 errors. Further tested with
      "multi-instance SQLite contention" concern.
   3. `gcs_export_cache.py` now sets `PRAGMA user_version=1`, eliminating the
      97-second migration scan on cold start.
-- Issue [#72](https://github.com/shigechika/jquants-dat-mcp/issues/72)
+- Issue [#72](https://github.com/shigechika/jquants-mcp/issues/72)
   required evidence-based sizing, not a guess.
 
 ## Methodology
@@ -308,5 +308,5 @@ Filed as a future polish.
   of truth for the `--memory 4Gi --cpu 1` setting
 - [`docs/gcsfuse-postmortem.md`](gcsfuse-postmortem.md) — the previous
   sizing-related incident that motivated the startup-copy architecture
-- Issue [#72](https://github.com/shigechika/jquants-dat-mcp/issues/72),
-  PR [#73](https://github.com/shigechika/jquants-dat-mcp/pull/73)
+- Issue [#72](https://github.com/shigechika/jquants-mcp/issues/72),
+  PR [#73](https://github.com/shigechika/jquants-mcp/pull/73)

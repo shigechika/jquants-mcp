@@ -5,7 +5,7 @@ documentation:
     Without cache.db the server falls back to live J-Quants API — slower and
     rate-limit-prone. Check GCS bucket ACLs and the gcs_sync.py log.
 
-    Runbook: https://github.com/shigechika/jquants-dat-mcp/blob/main/docs/runbooks/cache-db-missing.md
+    Runbook: https://github.com/shigechika/jquants-mcp/blob/main/docs/runbooks/cache-db-missing.md
   mimeType: text/markdown
 combiner: OR
 conditions:

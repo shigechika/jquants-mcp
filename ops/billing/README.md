@@ -15,7 +15,7 @@ notification channel used by the Cloud Monitoring alerts in `ops/alerts/`.
 ```sh
 gcloud billing budgets create \
   --billing-account=019C8B-42A471-9512F0 \
-  --display-name="aikawa-dx (jquants-dat-mcp) monthly" \
+  --display-name="aikawa-dx (jquants-mcp) monthly" \
   --budget-amount=500JPY \
   --threshold-rule=percent=0.5 \
   --threshold-rule=percent=0.8 \

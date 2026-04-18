@@ -1,6 +1,6 @@
 # Service Level Objectives
 
-Minimal SLO set for the Cloud Run `jquants-dat-mcp` deployment. Three
+Minimal SLO set for the Cloud Run `jquants-mcp` deployment. Three
 numbers, 30-day rolling window. The goal is to have *a* principled
 answer to "is the service healthy?", not to chase nines.
 
@@ -28,7 +28,7 @@ leave generous headroom.
 ## Measurement
 
 All via Cloud Monitoring on resource `cloud_run_revision` filtered to
-`service_name=jquants-dat-mcp`.
+`service_name=jquants-mcp`.
 
 ### Availability
 

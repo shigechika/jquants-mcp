@@ -5,7 +5,7 @@ documentation:
     able to log in or persist OAuth state. Check Firestore dashboard and
     recent quota changes.
 
-    Runbook: https://github.com/shigechika/jquants-dat-mcp/blob/main/docs/runbooks/firestore-outage.md
+    Runbook: https://github.com/shigechika/jquants-mcp/blob/main/docs/runbooks/firestore-outage.md
   mimeType: text/markdown
 combiner: OR
 conditions:

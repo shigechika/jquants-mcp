@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-jquants-dat-mcp is an MCP server that retrieves Japanese stock market data via J-Quants API v2.
+jquants-mcp is an MCP server that retrieves Japanese stock market data via J-Quants API v2.
 Built with FastMCP v3, httpx, SQLite cache. Supports multi-user OAuth and Cloud Run deployment.
 
 ## Commands
@@ -65,7 +65,7 @@ uv run ruff format src/ tests/  # Format
 
 ## Deployment Targets
 
-- **Local (stdio)**: `jquants-dat-mcp` — single user, env/config API key
+- **Local (stdio)**: `jquants-mcp` — single user, env/config API key
 - **Remote (self-hosted)**: Streamable HTTP + TLS + Bearer token
 - **Cloud Run**: `us-west1`, Google OAuth, multi-user, GCS startup copy (cache.db)
 
