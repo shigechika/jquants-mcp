@@ -5,6 +5,13 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ---
 
+## [0.4.0](https://github.com/shigechika/jquants-mcp/compare/v0.3.0...v0.4.0) (2026-04-19)
+
+
+### Features
+
+* add JQUANTS_ALLOWED_EMAILS allowlist for multi-user access ([#121](https://github.com/shigechika/jquants-mcp/issues/121)) ([77ead63](https://github.com/shigechika/jquants-mcp/commit/77ead635a76eaae11d2de0e224c86ff514b94af7)), closes [#107](https://github.com/shigechika/jquants-mcp/issues/107) [#102](https://github.com/shigechika/jquants-mcp/issues/102)
+
 ## [0.3.0](https://github.com/shigechika/jquants-mcp/compare/v0.2.0...v0.3.0) (2026-04-18)
 
 
