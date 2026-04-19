@@ -1,4 +1,4 @@
-"""Shared test fixtures for jquants-dat-mcp."""
+"""Shared test fixtures for jquants-mcp."""
 
 from __future__ import annotations
 

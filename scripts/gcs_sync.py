@@ -19,7 +19,7 @@ Usage:
 
 Environment variables:
     GCS_BUCKET      GCS bucket name (required)
-    GCS_PREFIX      Object key prefix (default: "jquants-dat-mcp/")
+    GCS_PREFIX      Object key prefix (default: "jquants-mcp/")
     JQUANTS_CACHE_DIR  Local cache directory (default: /tmp)
 """
 
@@ -65,7 +65,7 @@ def _get_config() -> tuple[str, str, Path]:
         logger.error("GCS_BUCKET environment variable is not set")
         sys.exit(1)
 
-    prefix = os.environ.get("GCS_PREFIX", "jquants-dat-mcp/")
+    prefix = os.environ.get("GCS_PREFIX", "jquants-mcp/")
     # Ensure prefix ends with /
     if prefix and not prefix.endswith("/"):
         prefix += "/"

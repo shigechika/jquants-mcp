@@ -809,7 +809,7 @@ Cloud Run reads `cache.db` as a read-only snapshot. Publish a snapshot from your
 
 ```bash
 gcloud storage cp ~/.cache/jquants-mcp/cache.db \
-  gs://YOUR_BUCKET/jquants-dat-mcp/cache.db \
+  gs://YOUR_BUCKET/jquants-mcp/cache.db \
   --no-gzip-in-flight
 ```
 
