@@ -94,6 +94,7 @@ plan = premium
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `JQUANTS_API_KEY` | No* | — | J-Quants API key |
+| `JQUANTS_API_TOML_PATH` | No | `~/.jquants-api/jquants-api.toml` | Path to the J-Quants official config file. Override to avoid macOS 26+ launchd sandbox restrictions (see [macOS launchd note](#macos-launchd-note) below) |
 | `JQUANTS_PLAN` | No | auto-detect | Plan: `free` / `light` / `standard` / `premium` (auto-detected from the API key at server startup; set this variable only to override) |
 | `JQUANTS_CACHE_DIR` | No | `~/.cache/jquants-mcp` | Cache directory path |
 | `JQUANTS_BASE_URL` | No | `https://api.jquants.com/v2` | API base URL |
@@ -120,6 +121,30 @@ plan = premium
 \* API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `JQUANTS_API_KEY` only to override.
 
 Environment variables override both `config.ini` and `jquants-api.toml`. This allows MCP clients (Claude Desktop, Claude Code) to pass settings via their `env` block while keeping defaults elsewhere.
+
+### macOS launchd note
+
+If you run `jquants-mcp` as a **macOS LaunchAgent** and the API key lives in `~/.jquants-api/jquants-api.toml`, the server may silently hang during startup on macOS 26 or later. The TCC sandbox applied to launchd-spawned processes blocks `open()` on some dotfiles under `$HOME` (mode `600`), and the process never reaches the port-bind step.
+
+Workaround: copy the toml outside the sandboxed home hierarchy and point the server at it via `JQUANTS_API_TOML_PATH`:
+
+```sh
+sudo mkdir -p /usr/local/etc/jquants-mcp
+sudo cp ~/.jquants-api/jquants-api.toml /usr/local/etc/jquants-mcp/jquants-api.toml
+sudo chown "$USER":staff /usr/local/etc/jquants-mcp/jquants-api.toml
+sudo chmod 600 /usr/local/etc/jquants-mcp/jquants-api.toml
+```
+
+Then add the following to your LaunchAgent plist's `EnvironmentVariables` dict:
+
+```xml
+<key>JQUANTS_API_TOML_PATH</key>
+<string>/usr/local/etc/jquants-mcp/jquants-api.toml</string>
+```
+
+Alternatives: set `JQUANTS_API_KEY` directly in the plist (simpler but puts the key in a plist file that Time Machine / iCloud may back up), or put `api_key =` directly in `~/.config/jquants-mcp/config.ini` (if that path is not sandbox-blocked on your macOS version).
+
+Linux/systemd and other init systems are not affected.
 
 ## Authentication
 

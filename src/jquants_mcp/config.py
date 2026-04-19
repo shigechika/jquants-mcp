@@ -104,8 +104,25 @@ _TYPE_MAP: dict[str, type] = {
 # 真偽値設定 — 文字列変換後に bool として扱う
 _BOOL_SETTINGS: frozenset[str] = frozenset({"oauth_require_consent"})
 
-# J-Quants 公式設定ファイルのデフォルトパス
+# J-Quants official config file default path. Tests patch this directly,
+# so keep it as a plain module-level constant.
 _JQUANTS_TOML_PATH = Path.home() / ".jquants-api" / "jquants-api.toml"
+
+
+def _jquants_toml_path() -> Path:
+    """Return the effective jquants-api.toml path.
+
+    JQUANTS_API_TOML_PATH overrides the default. On macOS 26+ under
+    launchd, open() on files inside ~/.jquants-api/ (mode 600) can
+    silently hang due to TCC sandbox rules applied to launchd-spawned
+    processes; pointing this env var at a non-sandboxed path (e.g.
+    /usr/local/etc/jquants-mcp/jquants-api.toml) is the known-good
+    workaround.
+    """
+    override = os.environ.get("JQUANTS_API_TOML_PATH")
+    if override:
+        return Path(override).expanduser()
+    return _JQUANTS_TOML_PATH
 
 
 def _xdg_config_dir() -> Path:
@@ -125,8 +142,12 @@ def _default_cache_dir() -> Path:
 
 
 def _read_jquants_toml(path: Path | None = None) -> str:
-    """Read api_key from ~/.jquants-api/jquants-api.toml."""
-    toml_path = path or _JQUANTS_TOML_PATH
+    """Read api_key from the J-Quants official config file.
+
+    Honours JQUANTS_API_TOML_PATH when ``path`` is not given so users can
+    point at a location outside the launchd sandbox on macOS.
+    """
+    toml_path = path or _jquants_toml_path()
     if not toml_path.exists():
         return ""
     try:
@@ -134,10 +155,10 @@ def _read_jquants_toml(path: Path | None = None) -> str:
             data = tomllib.load(f)
         api_key = data.get("jquants-api-client", {}).get("api_key", "")
         if api_key:
-            logger.debug("API キーを %s から読み込みました", toml_path)
+            logger.debug("Loaded API key from %s", toml_path)
         return api_key
     except Exception:
-        logger.warning("jquants-api.toml の読み込みに失敗しました: %s", toml_path)
+        logger.warning("Failed to read jquants-api.toml: %s", toml_path)
         return ""
 
 

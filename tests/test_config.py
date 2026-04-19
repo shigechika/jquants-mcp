@@ -161,3 +161,46 @@ def test_missing_toml_file_no_error(tmp_path):
     with patch("jquants_mcp.config._JQUANTS_TOML_PATH", nonexistent):
         s = Settings(jquants_api_key="fallback")
         assert s.jquants_api_key == "fallback"
+
+
+def test_jquants_api_toml_path_env_override(tmp_path):
+    """JQUANTS_API_TOML_PATH env overrides the default jquants-api.toml location.
+
+    Motivation: macOS 26+ launchd sandboxing silently blocks open() on
+    ~/.jquants-api/jquants-api.toml (mode 600). Users must be able to
+    relocate the file to a non-sandboxed path.
+    """
+    import configparser
+
+    override_file = tmp_path / "override-location" / "jquants-api.toml"
+    override_file.parent.mkdir()
+    override_file.write_bytes(b'[jquants-api-client]\napi_key = "override-toml-key"\n')
+
+    # Even if the module-level default points at a different toml, env wins.
+    decoy = tmp_path / "decoy.toml"
+    decoy.write_bytes(b'[jquants-api-client]\napi_key = "decoy-key"\n')
+
+    with (
+        patch("jquants_mcp.config._JQUANTS_TOML_PATH", decoy),
+        patch.dict(os.environ, {"JQUANTS_API_TOML_PATH": str(override_file)}),
+        patch("jquants_mcp.config._load_config_files") as mock_load,
+    ):
+        mock_load.return_value = configparser.ConfigParser()
+        s = Settings()
+        assert s.jquants_api_key == "override-toml-key"
+
+
+def test_jquants_api_toml_path_env_with_tilde(tmp_path, monkeypatch):
+    """Tilde in JQUANTS_API_TOML_PATH expands via Path.expanduser()."""
+    import configparser
+
+    toml_file = tmp_path / "home" / "custom.toml"
+    toml_file.parent.mkdir()
+    toml_file.write_bytes(b'[jquants-api-client]\napi_key = "tilde-key"\n')
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("JQUANTS_API_TOML_PATH", "~/custom.toml")
+    with patch("jquants_mcp.config._load_config_files") as mock_load:
+        mock_load.return_value = configparser.ConfigParser()
+        s = Settings()
+        assert s.jquants_api_key == "tilde-key"
