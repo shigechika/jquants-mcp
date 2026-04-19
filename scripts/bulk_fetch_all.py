@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Bulk fetch data from J-Quants API into SQLite cache.
+"""Bulk fetch data from the J-Quants API into the SQLite cache.
 
-バルクダウンロードで全データをキャッシュDBにインポートする。
-Bulk API で月次/日次 CSV を一括取得し、INSERT OR REPLACE で既存データを上書きする。
+Pulls monthly / daily CSVs via the J-Quants Bulk API and loads them
+into the jquants-mcp cache with INSERT OR REPLACE semantics. Use this
+for initial cache hydration or periodic backfill — it is dramatically
+faster than warming the cache via per-tool MCP calls, which are
+rate-limited per plan.
 
 Usage:
     uv run python scripts/bulk_fetch_all.py
@@ -25,7 +28,9 @@ from pathlib import Path
 
 import httpx
 
-# プロジェクトの設定・スキーマを再利用
+# Reuse the project's settings + schema modules via sys.path so this
+# script can run inside a foreign venv that doesn't have jquants-mcp
+# installed, as long as the repo is on disk.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from jquants_mcp.cache.schema import all_ddl
 from jquants_mcp.config import Settings
@@ -37,12 +42,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DEFAULT_DB_PATH = Path.home() / ".cache" / "jquants-dat-mcp" / "cache.db"
+DEFAULT_DB_PATH = Path.home() / ".cache" / "jquants-mcp" / "cache.db"
 BATCH_SIZE = 5_000
 
 # ========================================
-# エンドポイント設定
-# csv_key_map: [(CSVカラム名, DBカラム名), ...]
+# Endpoint configuration
+# csv_key_map: [(CSV column name, DB column name), ...]
 # ========================================
 
 ENDPOINTS: dict[str, dict] = {
@@ -108,12 +113,12 @@ ENDPOINTS: dict[str, dict] = {
     },
 }
 
-# テーブル DDL（schema.py から一元生成）
+# Table DDL (single source of truth in schema.py)
 TABLE_DDL: dict[str, str] = all_ddl()
 
 
 def _convert_numeric(value: str) -> int | float | str:
-    """数値文字列を適切な型に変換する。"""
+    """Convert a numeric string into the most specific type it fits."""
     if not value:
         return value
     try:
@@ -127,7 +132,7 @@ def _convert_numeric(value: str) -> int | float | str:
 
 
 class BulkFetcher:
-    """J-Quants Bulk API からデータを取得してSQLiteにインポートする。"""
+    """Fetches data via the J-Quants Bulk API and loads it into SQLite."""
 
     def __init__(
         self, settings: Settings, db_path: Path, dry_run: bool = False, plan: str | None = None
@@ -140,7 +145,7 @@ class BulkFetcher:
         self._api_headers = {"x-api-key": settings.jquants_api_key}
         self._request_count = 0
         self._rate_limit = settings.get_rate_limit()
-        # リクエスト間の最小間隔（秒）: バースト防止
+        # Minimum inter-request interval (seconds) to prevent bursts.
         self._min_interval = 60.0 / self._rate_limit
         self._last_request_at = 0.0
 
@@ -151,9 +156,9 @@ class BulkFetcher:
         params: dict | None = None,
         max_retries: int = 5,
     ) -> dict:
-        """レート制限付き API GET リクエスト（429 リトライ対応）。"""
+        """Rate-limited GET with 429 retry handling."""
         for attempt in range(max_retries):
-            # リクエスト間隔を制御
+            # Pace requests to stay within the plan's rate limit.
             now = time.monotonic()
             elapsed = now - self._last_request_at
             if elapsed < self._min_interval:
@@ -167,7 +172,7 @@ class BulkFetcher:
                 retry_after = float(resp.headers.get("Retry-After", 2**attempt))
                 wait = max(retry_after, self._min_interval * 2)
                 logger.warning(
-                    "  429 レート制限 (試行 %d/%d): %.1f秒待機",
+                    "  429 rate limited (attempt %d/%d): sleeping %.1fs",
                     attempt + 1,
                     max_retries,
                     wait,
@@ -182,7 +187,7 @@ class BulkFetcher:
         return {}
 
     def _download_csv(self, url: str) -> str:
-        """署名付きURLからgzip CSVをダウンロードして展開する。"""
+        """Download a gzipped CSV from a signed URL and decompress it."""
         resp = httpx.get(url, timeout=120.0, follow_redirects=True)
         resp.raise_for_status()
         raw = gzip.decompress(resp.content)
@@ -195,7 +200,7 @@ class BulkFetcher:
         table: str,
         csv_key_map: list[tuple[str, str]],
     ) -> int:
-        """CSV テキストをパースして SQLite にインポートする。"""
+        """Parse CSV text and import rows into SQLite."""
         reader = csv.DictReader(io.StringIO(text))
         now = time.time()
         batch: list[tuple] = []
@@ -225,16 +230,16 @@ class BulkFetcher:
         return count
 
     def fetch_endpoint(self, name: str, conn: sqlite3.Connection) -> int:
-        """1つのエンドポイントのバルクデータを取得・インポートする。"""
+        """Fetch and import bulk data for a single endpoint."""
         config = ENDPOINTS[name]
         api_path = config["api_path"]
         table = config["table"]
         csv_key_map = config["csv_key_map"]
 
         logger.info("=" * 60)
-        logger.info("開始: %s → テーブル %s", api_path, table)
+        logger.info("start: %s -> table %s", api_path, table)
 
-        # テーブル作成
+        # Ensure the destination table exists.
         conn.execute(TABLE_DDL[table])
         conn.commit()
 
@@ -243,11 +248,11 @@ class BulkFetcher:
             headers=self._api_headers,
             timeout=60.0,
         ) as client:
-            # バルクリスト取得
+            # List the bulk files available for this endpoint.
             result = self._api_get(client, "/bulk/list", {"endpoint": api_path})
             files = result.get("data", [])
             total_size = sum(f.get("Size", 0) for f in files)
-            logger.info("  ファイル数: %d (合計 %.1f MB gz)", len(files), total_size / 1024 / 1024)
+            logger.info("  files: %d (%.1f MB gz total)", len(files), total_size / 1024 / 1024)
 
             if self._dry_run:
                 for f in files:
@@ -259,19 +264,19 @@ class BulkFetcher:
                 key = file_info["Key"]
                 size = file_info.get("Size", 0)
 
-                # 署名付き URL 取得
+                # Get a signed download URL for the file.
                 url_result = self._api_get(client, "/bulk/get", {"key": key})
                 download_url = url_result.get("url", "")
                 if not download_url:
-                    logger.warning("  [%d/%d] URL 取得失敗: %s", i, len(files), key)
+                    logger.warning("  [%d/%d] failed to get signed URL: %s", i, len(files), key)
                     continue
 
-                # CSV ダウンロード＆インポート
+                # Download the CSV and import it.
                 text = self._download_csv(download_url)
                 rows = self._import_csv_text(text, conn, table, csv_key_map)
                 total_rows += rows
                 logger.info(
-                    "  [%d/%d] %s → %d 行 (%.1f KB)",
+                    "  [%d/%d] %s -> %d rows (%.1f KB)",
                     i,
                     len(files),
                     key.split("/")[-1],
@@ -279,25 +284,25 @@ class BulkFetcher:
                     size / 1024,
                 )
 
-            logger.info("  完了: %s 合計 %s 行", table, f"{total_rows:,}")
+            logger.info("  done: %s total %s rows", table, f"{total_rows:,}")
             return total_rows
 
     def run(self, endpoints: list[str] | None = None) -> dict[str, int]:
-        """指定されたエンドポイント（未指定時は全て）のデータを取得する。"""
+        """Fetch the specified endpoints (or all endpoints when unspecified)."""
         targets = endpoints or list(ENDPOINTS.keys())
 
         logger.info("=" * 60)
-        logger.info("J-Quants バルクデータ取得")
-        logger.info("対象: %s", ", ".join(targets))
-        logger.info("キャッシュ DB: %s", self._db_path)
-        logger.info("保存プラン: %s", self._plan)
+        logger.info("J-Quants bulk fetch")
+        logger.info("targets: %s", ", ".join(targets))
+        logger.info("cache DB: %s", self._db_path)
+        logger.info("saving plan: %s", self._plan)
         logger.info(
-            "レート制限: %d req/min (%s プラン)",
+            "rate limit: %d req/min (%s plan)",
             self._rate_limit,
             self._settings.jquants_plan,
         )
         if self._dry_run:
-            logger.info("*** ドライラン ***")
+            logger.info("*** dry run ***")
 
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path))
@@ -309,42 +314,42 @@ class BulkFetcher:
         try:
             for name in targets:
                 if name not in ENDPOINTS:
-                    logger.warning("不明なエンドポイント: %s（スキップ）", name)
+                    logger.warning("unknown endpoint: %s (skipped)", name)
                     continue
                 try:
                     rows = self.fetch_endpoint(name, conn)
                     results[name] = rows
                 except httpx.HTTPStatusError as e:
                     if e.response.status_code == 403:
-                        logger.warning("  プラン制限でスキップ: %s (403)", name)
+                        logger.warning("  skipped due to plan restriction: %s (403)", name)
                         results[name] = 0
                     else:
-                        logger.error("  HTTP エラー: %s: %s", name, e)
+                        logger.error("  HTTP error: %s: %s", name, e)
                         results[name] = -1
                 except Exception as e:
-                    logger.error("  エラー: %s: %s", name, e)
+                    logger.error("  error: %s: %s", name, e)
                     results[name] = -1
         finally:
-            # DB 統計表示
+            # Log per-table row counts.
             for tbl in set(ENDPOINTS[n]["table"] for n in targets if n in ENDPOINTS):
                 try:
                     row = conn.execute(f"SELECT COUNT(*) FROM {tbl}").fetchone()
                     if row:
-                        logger.info("  テーブル %s: %s 行", tbl, f"{row[0]:,}")
+                        logger.info("  table %s: %s rows", tbl, f"{row[0]:,}")
                 except sqlite3.OperationalError:
                     pass
 
             if self._db_path.exists():
                 db_size = self._db_path.stat().st_size / (1024 * 1024)
-                logger.info("  DB サイズ: %.1f MB", db_size)
+                logger.info("  DB size: %.1f MB", db_size)
 
             conn.close()
 
         elapsed = time.time() - t0
         logger.info("=" * 60)
-        logger.info("完了: %.1f秒, API リクエスト: %d 回", elapsed, self._request_count)
+        logger.info("done: %.1fs, API requests: %d", elapsed, self._request_count)
         for name, rows in results.items():
-            status = f"{rows:,} 行" if rows >= 0 else "エラー"
+            status = f"{rows:,} rows" if rows >= 0 else "error"
             logger.info("  %s: %s", name, status)
 
         return results
@@ -352,32 +357,36 @@ class BulkFetcher:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="J-Quants Bulk API でデータをダウンロードしてキャッシュ DB にインポート",
+        description="Bulk-download J-Quants data and import it into the SQLite cache.",
     )
     parser.add_argument(
         "--endpoints",
         nargs="+",
         choices=list(ENDPOINTS.keys()),
-        help="対象エンドポイント（省略時は全て）",
+        help="Target endpoints (default: all endpoints allowed by the plan).",
     )
     parser.add_argument(
         "--db",
         type=Path,
         default=DEFAULT_DB_PATH,
-        help=f"キャッシュ DB パス (default: {DEFAULT_DB_PATH})",
+        help=f"Cache DB path (default: {DEFAULT_DB_PATH})",
     )
     parser.add_argument(
         "--plan",
         choices=["free", "light", "standard", "premium"],
         default=None,
-        help="保存するプラン名（省略時は設定ファイルの値）",
+        help="Plan to record rows under (default: value from config file).",
     )
-    parser.add_argument("--dry-run", action="store_true", help="ファイル一覧のみ表示")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List the files that would be fetched without downloading them.",
+    )
     args = parser.parse_args()
 
     settings = Settings()
     if not settings.jquants_api_key:
-        logger.error("JQUANTS_API_KEY が設定されていません")
+        logger.error("JQUANTS_API_KEY is not configured")
         sys.exit(1)
 
     fetcher = BulkFetcher(settings, args.db, dry_run=args.dry_run, plan=args.plan)

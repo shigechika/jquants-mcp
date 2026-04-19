@@ -1,8 +1,8 @@
-"""Configuration management for jquants-dat-mcp.
+"""Configuration management for jquants-mcp.
 
 Configuration priority (last wins):
 1. ~/.jquants-api/jquants-api.toml  (J-Quants official config: api_key only)
-2. ~/.config/jquants-dat-mcp/config.ini  (user global)
+2. ~/.config/jquants-mcp/config.ini  (user global)
 3. ./config.ini                            (current directory)
 4. Environment variables                   (MCP client / CLI)
 5. Constructor arguments                   (for testing)
@@ -112,16 +112,16 @@ def _xdg_config_dir() -> Path:
     """Return the XDG-compliant global configuration directory."""
     xdg = os.environ.get("XDG_CONFIG_HOME")
     if xdg:
-        return Path(xdg) / "jquants-dat-mcp"
-    return Path.home() / ".config" / "jquants-dat-mcp"
+        return Path(xdg) / "jquants-mcp"
+    return Path.home() / ".config" / "jquants-mcp"
 
 
 def _default_cache_dir() -> Path:
     """Return the XDG-compliant default cache directory."""
     xdg = os.environ.get("XDG_CACHE_HOME")
     if xdg:
-        return Path(xdg) / "jquants-dat-mcp"
-    return Path.home() / ".cache" / "jquants-dat-mcp"
+        return Path(xdg) / "jquants-mcp"
+    return Path.home() / ".cache" / "jquants-mcp"
 
 
 def _read_jquants_toml(path: Path | None = None) -> str:

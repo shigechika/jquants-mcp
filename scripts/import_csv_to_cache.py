@@ -1,4 +1,4 @@
-"""Import CSV data into jquants-dat-mcp SQLite cache.
+"""Import CSV data into jquants-mcp SQLite cache.
 
 ローカルの CSV ファイルをキャッシュ DB にバルクインポートする。
 既存データは INSERT OR REPLACE で上書きされる。
@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from jquants_mcp.cache.schema import TIER1_TABLES, generate_ddl  # noqa: E402
 
 # キャッシュ DB のデフォルトパス
-DEFAULT_DB_PATH = Path.home() / ".cache" / "jquants-dat-mcp" / "cache.db"
+DEFAULT_DB_PATH = Path.home() / ".cache" / "jquants-mcp" / "cache.db"
 
 # バッチサイズ（メモリ使用量と速度のバランス）
 BATCH_SIZE = 10_000

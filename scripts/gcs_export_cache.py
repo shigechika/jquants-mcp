@@ -14,8 +14,8 @@ Usage:
 
 Environment variables:
     GCS_BUCKET          GCS bucket name (required)
-    GCS_PREFIX          Object key prefix (default: "jquants-dat-mcp/")
-    JQUANTS_CACHE_DIR   Local cache directory (default: ~/.cache/jquants-dat-mcp)
+    GCS_PREFIX          Object key prefix (default: "jquants-mcp/")
+    JQUANTS_CACHE_DIR   Local cache directory (default: ~/.cache/jquants-mcp)
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def _get_source_path() -> Path:
     cache_dir = os.environ.get("JQUANTS_CACHE_DIR", "")
     if cache_dir:
         return Path(cache_dir) / "cache.db"
-    return Path.home() / ".cache" / "jquants-dat-mcp" / "cache.db"
+    return Path.home() / ".cache" / "jquants-mcp" / "cache.db"
 
 
 def _trim_to_standard(db_path: Path) -> dict[str, int]:
@@ -183,7 +183,7 @@ def _upload_to_gcs(db_path: Path) -> None:
         logger.error("GCS_BUCKET environment variable is not set")
         sys.exit(1)
 
-    prefix = os.environ.get("GCS_PREFIX", "jquants-dat-mcp/")
+    prefix = os.environ.get("GCS_PREFIX", "jquants-mcp/")
     if prefix and not prefix.endswith("/"):
         prefix += "/"
 

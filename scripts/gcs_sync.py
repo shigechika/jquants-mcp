@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GCS sync utility for Cloud Run deployment of jquants-dat-mcp.
+"""GCS sync utility for Cloud Run deployment of jquants-mcp.
 
 Manages database synchronization between Cloud Run's ephemeral /tmp
 filesystem and Google Cloud Storage.
@@ -19,7 +19,7 @@ Usage:
 
 Environment variables:
     GCS_BUCKET      GCS bucket name (required)
-    GCS_PREFIX      Object key prefix (default: "jquants-dat-mcp/")
+    GCS_PREFIX      Object key prefix (default: "jquants-mcp/")
     JQUANTS_CACHE_DIR  Local cache directory (default: /tmp)
 """
 
@@ -48,7 +48,9 @@ _DOWNLOAD_FILES: list[str] = []
 _CACHE_FILES = ["cache.db"]
 
 # Files to upload to GCS (daemon / --upload)
-# cache.db is excluded: it is owned by self-hosted server (jpx-short-report daily.sh).
+# cache.db is excluded here: it is owned by the self-hosted publisher
+# (see scripts/daily_fetch.py + scripts/gcs_export_cache.py) which pushes
+# a fresh snapshot to GCS on its own schedule.
 # users.db and oauth_state.db now live in Firestore on Cloud Run.
 _UPLOAD_FILES: list[str] = []
 
@@ -63,7 +65,7 @@ def _get_config() -> tuple[str, str, Path]:
         logger.error("GCS_BUCKET environment variable is not set")
         sys.exit(1)
 
-    prefix = os.environ.get("GCS_PREFIX", "jquants-dat-mcp/")
+    prefix = os.environ.get("GCS_PREFIX", "jquants-mcp/")
     # Ensure prefix ends with /
     if prefix and not prefix.endswith("/"):
         prefix += "/"
@@ -202,7 +204,7 @@ def main() -> None:
     """CLI entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="GCS cache sync utility for jquants-dat-mcp")
+    parser = argparse.ArgumentParser(description="GCS cache sync utility for jquants-mcp")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--init-cache",

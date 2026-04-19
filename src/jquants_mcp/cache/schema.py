@@ -3,9 +3,38 @@
 This module has ZERO non-stdlib imports so that external scripts
 (daily_fetch.py, import_csv_to_cache.py) running in foreign venvs
 can import it via sys.path without pulling in the full package.
+
+Public API (stable contract):
+    TIER1_TABLES       — dict[str, dict[str, str]] : Tier 1 (row-level) table
+                          schemas keyed by table name.
+    BULK_TABLES        — dict[str, dict[str, str]] : Bulk-only table schemas.
+    RESPONSE_CACHE_DDL — str : DDL for the response-level Tier 2 cache table.
+    generate_ddl(name, schema) — Build CREATE TABLE DDL from a schema dict.
+    all_ddl()          — dict[str, str] : {table_name: DDL} for all
+                          row-level tables (TIER1_TABLES + BULK_TABLES).
+    all_tier1_ddl() / all_bulk_ddl() — convenience subsets of `all_ddl()`.
+
+Compatibility policy:
+    * Breaking changes to the symbols above (renames, removals, structural
+      changes to TIER1_TABLES / BULK_TABLES entries) require a major bump.
+    * Additive changes (new tables, new optional columns) are minor.
+    * Downstream consumers (external CSV-import / bulk-fetch tools) import
+      these symbols to keep their scripts in sync with the server's schema.
 """
 
 from __future__ import annotations
+
+__all__ = [
+    "ALL_TABLE_NAMES",
+    "BULK_TABLES",
+    "RESPONSE_CACHE_DDL",
+    "TIER1_KEY_COLUMNS",
+    "TIER1_TABLES",
+    "all_bulk_ddl",
+    "all_ddl",
+    "all_tier1_ddl",
+    "generate_ddl",
+]
 
 # ----------------------------------------------------------------
 # Tier 1 tables: row-level cache (date x code granularity)

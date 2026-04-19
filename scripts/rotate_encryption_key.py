@@ -30,12 +30,8 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import TYPE_CHECKING
 
 from jquants_mcp.crypto import decrypt_with_fallback, encrypt
-
-if TYPE_CHECKING:
-    from google.cloud import firestore  # type: ignore[import-untyped]
 
 
 def rotate(

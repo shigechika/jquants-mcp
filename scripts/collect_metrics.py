@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -182,7 +183,13 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--jsonl", type=Path, help="load_test.py output JSONL")
     p.add_argument("--project", default=None, help="GCP project id (default: gcloud config)")
-    p.add_argument("--service", default="jquants-dat-mcp")
+    p.add_argument(
+        "--service",
+        default=os.environ.get("JQUANTS_CLOUD_RUN_SERVICE", "jquants-mcp"),
+        help=(
+            "Cloud Run service name (default from JQUANTS_CLOUD_RUN_SERVICE env or 'jquants-mcp')"
+        ),
+    )
     p.add_argument(
         "--memory-gib",
         type=float,
