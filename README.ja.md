@@ -94,6 +94,7 @@ plan = premium
 | 変数名 | 必須 | デフォルト | 説明 |
 |---|---|---|---|
 | `JQUANTS_API_KEY` | いいえ* | — | J-Quants API キー |
+| `JQUANTS_API_TOML_PATH` | いいえ | `~/.jquants-api/jquants-api.toml` | J-Quants 公式設定ファイルのパス。macOS 26+ の launchd サンドボックス回避に使用（下記 [macOS launchd 注意](#macos-launchd-注意) 参照）|
 | `JQUANTS_PLAN` | いいえ | 自動検出 | プラン: `free` / `light` / `standard` / `premium`（サーバー起動時に API キーから自動検出、明示設定はオーバーライド用） |
 | `JQUANTS_CACHE_DIR` | いいえ | `~/.cache/jquants-mcp` | キャッシュディレクトリのパス |
 | `JQUANTS_BASE_URL` | いいえ | `https://api.jquants.com/v2` | API ベース URL |
@@ -120,6 +121,30 @@ plan = premium
 \* API キーは `~/.jquants-api/jquants-api.toml` から自動検出されます。上書きが必要な場合のみ `JQUANTS_API_KEY` を設定してください。
 
 環境変数は `config.ini` と `jquants-api.toml` の両方を上書きします。普段使いの設定は `config.ini` や `jquants-api.toml` に任せ、MCP クライアント（Claude Desktop, Claude Code）からは `env` ブロックで必要な設定だけ渡すことができます。
+
+### macOS launchd 注意
+
+`jquants-mcp` を **macOS の LaunchAgent として常駐**させ、API キーを `~/.jquants-api/jquants-api.toml` から読み込む構成では、macOS 26 以降で起動時に **silent にサンドボックスへ block されて port を bind せず hang** する現象が発生します。launchd 配下のプロセスに適用される TCC サンドボックスが `$HOME` 直下の一部 dotfile（mode `600`）への `open()` を遮断するため、ログにも何も出ずに固まります。
+
+回避策: toml をサンドボックス外の位置にコピーし、`JQUANTS_API_TOML_PATH` で指定:
+
+```sh
+sudo mkdir -p /usr/local/etc/jquants-mcp
+sudo cp ~/.jquants-api/jquants-api.toml /usr/local/etc/jquants-mcp/jquants-api.toml
+sudo chown "$USER":staff /usr/local/etc/jquants-mcp/jquants-api.toml
+sudo chmod 600 /usr/local/etc/jquants-mcp/jquants-api.toml
+```
+
+LaunchAgent の plist の `EnvironmentVariables` dict に以下を追加:
+
+```xml
+<key>JQUANTS_API_TOML_PATH</key>
+<string>/usr/local/etc/jquants-mcp/jquants-api.toml</string>
+```
+
+代替: `JQUANTS_API_KEY` を plist に直接設定する（簡単だが plist ファイルが Time Machine / iCloud にバックアップされるリスクあり）、もしくは `~/.config/jquants-mcp/config.ini` の `[jquants]` セクションに `api_key =` を直接書く（macOS のバージョンによっては `~/.config/` も block される可能性）。
+
+Linux/systemd 等は影響を受けません。
 
 ## 認証
 
