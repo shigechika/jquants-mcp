@@ -5,6 +5,13 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ---
 
+## [0.5.0](https://github.com/shigechika/jquants-mcp/compare/v0.4.0...v0.5.0) (2026-04-19)
+
+
+### Features
+
+* **config:** honour JQUANTS_API_TOML_PATH to dodge macOS 26 launchd sandbox ([#128](https://github.com/shigechika/jquants-mcp/issues/128)) ([33b82b3](https://github.com/shigechika/jquants-mcp/commit/33b82b3b0606906c3614dd1043665f513f346e7c)), closes [#102](https://github.com/shigechika/jquants-mcp/issues/102)
+
 ## [0.4.0](https://github.com/shigechika/jquants-mcp/compare/v0.3.0...v0.4.0) (2026-04-19)
 
 
