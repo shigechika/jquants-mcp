@@ -501,6 +501,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
+    if not args.url:
+        print(
+            "error: --url (or JQUANTS_CLOUD_RUN_URL env) is required",
+            file=sys.stderr,
+        )
+        return 2
     try:
         return asyncio.run(run_all(args))
     except KeyboardInterrupt:
