@@ -1,21 +1,27 @@
-"""Fetch daily J-Quants data and insert directly into SQLite cache.
+"""Fetch daily J-Quants data and insert directly into the SQLite cache.
 
-jpx-short-report の daily.sh から呼び出され、jquantsapi.ClientV2 で
-追加データを取得して jquants-dat-mcp のキャッシュに直接投入する。
+Intended as a cron / scheduled-task companion to the MCP server: it
+pulls the latest day's data into the local cache so subsequent tool
+calls hit warm rows instead of round-tripping to the J-Quants API.
 
-依存: jquantsapi + 標準ライブラリのみ（jpx-short-report の .venv で動作可能）
+Dependencies: ``jquantsapi`` + the Python standard library. The script
+does NOT import from the ``jquants_mcp`` package beyond the schema
+module (imported via sys.path) so it can also run inside a consumer
+project's own virtualenv.
 
-プラン設定は ~/.config/jquants-dat-mcp/config.ini の [jquants] plan を参照。
-プランに応じて取得対象を自動決定する（--オプションで個別指定も可能）。
+Plan is read from ``~/.config/jquants-mcp/config.ini`` section
+``[jquants]`` key ``plan``. The plan decides which endpoints are
+fetched (Free / Light / Standard / Premium). Individual flags override
+the plan default.
 
 Usage:
-    python3 scripts/daily_fetch.py                  # プランに応じた全データ取得
-    python3 scripts/daily_fetch.py --topix           # TOPIX のみ
-    python3 scripts/daily_fetch.py --fins-summary    # 決算サマリーのみ
-    python3 scripts/daily_fetch.py --earnings-cal    # 決算発表予定のみ
-    python3 scripts/daily_fetch.py --short-ratio     # 業種別空売り比率のみ (Standard+)
-    python3 scripts/daily_fetch.py --margin-interest # 信用取引残高のみ (Standard+)
-    python3 scripts/daily_fetch.py --backfill 90     # 過去90日分のバックフィル
+    python3 scripts/daily_fetch.py                    # fetch everything allowed by the plan
+    python3 scripts/daily_fetch.py --topix             # TOPIX only
+    python3 scripts/daily_fetch.py --fins-summary      # earnings summary only
+    python3 scripts/daily_fetch.py --earnings-cal      # earnings calendar only
+    python3 scripts/daily_fetch.py --short-ratio       # short ratio only (Standard+)
+    python3 scripts/daily_fetch.py --margin-interest   # margin interest only (Standard+)
+    python3 scripts/daily_fetch.py --backfill 90       # backfill the last 90 days
 """
 
 from __future__ import annotations
@@ -41,7 +47,7 @@ from jquants_mcp.cache.schema import (  # noqa: E402
 import jquantsapi  # noqa: E402
 
 # キャッシュ DB のデフォルトパス
-DEFAULT_DB_PATH = Path.home() / ".cache" / "jquants-dat-mcp" / "cache.db"
+DEFAULT_DB_PATH = Path.home() / ".cache" / "jquants-mcp" / "cache.db"
 
 # 決算サマリーのデフォルト遡り日数
 FINS_LOOKBACK_DAYS = 7
@@ -80,7 +86,7 @@ def _load_plan() -> str:
     # config.ini を探索
     config = configparser.ConfigParser()
     search_paths = [
-        str(Path.home() / ".config" / "jquants-dat-mcp" / "config.ini"),
+        str(Path.home() / ".config" / "jquants-mcp" / "config.ini"),
         "config.ini",
     ]
     config.read(search_paths, encoding="utf-8")
@@ -246,8 +252,7 @@ def _store_tier1(
     db_col_names = ", ".join([db_col for _, db_col in key_mapping])
     placeholders = ", ".join(["?"] * (len(key_mapping) + 2))
     sql = (
-        f"INSERT OR REPLACE INTO {table} "
-        f"({db_col_names}, data, fetched_at) VALUES ({placeholders})"
+        f"INSERT OR REPLACE INTO {table} ({db_col_names}, data, fetched_at) VALUES ({placeholders})"
     )
 
     count = 0

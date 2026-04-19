@@ -44,7 +44,7 @@ uv sync --dev
 Settings are loaded with the following priority (later wins):
 
 1. `~/.jquants-api/jquants-api.toml` — API key only (J-Quants official config)
-2. `~/.config/jquants-dat-mcp/config.ini` (user global)
+2. `~/.config/jquants-mcp/config.ini` (user global)
 3. `./config.ini` (current directory)
 4. Environment variables (from MCP client or shell)
 
@@ -58,7 +58,7 @@ If you already use [jquants-api-client](https://github.com/J-Quants/jquants-api-
 jquants-mcp login
 ```
 
-Opens a browser to J-Quants (AWS Cognito, PKCE flow), and on success writes the API key to `~/.config/jquants-dat-mcp/config.ini` (mode 0600). Same auth backend as the [official jquants-cli](https://github.com/J-Quants/jquants-cli). Use `jquants-mcp logout` to clear the saved key.
+Opens a browser to J-Quants (AWS Cognito, PKCE flow), and on success writes the API key to `~/.config/jquants-mcp/config.ini` (mode 0600). Same auth backend as the [official jquants-cli](https://github.com/J-Quants/jquants-cli). Use `jquants-mcp logout` to clear the saved key.
 
 ### config.ini
 
@@ -67,7 +67,7 @@ MCP-specific settings (plan, cache, client behavior):
 ```ini
 [jquants]
 plan = premium
-# cache_dir = ~/.cache/jquants-dat-mcp
+# cache_dir = ~/.cache/jquants-mcp
 # base_url = https://api.jquants.com/v2
 
 [client]
@@ -95,7 +95,7 @@ plan = premium
 |---|---|---|---|
 | `JQUANTS_API_KEY` | No* | — | J-Quants API key |
 | `JQUANTS_PLAN` | No | auto-detect | Plan: `free` / `light` / `standard` / `premium` (auto-detected from the API key at server startup; set this variable only to override) |
-| `JQUANTS_CACHE_DIR` | No | `~/.cache/jquants-dat-mcp` | Cache directory path |
+| `JQUANTS_CACHE_DIR` | No | `~/.cache/jquants-mcp` | Cache directory path |
 | `JQUANTS_BASE_URL` | No | `https://api.jquants.com/v2` | API base URL |
 | `MAX_RETRIES` | No | `5` | Max retry attempts for failed requests |
 | `RETRY_BASE_DELAY` | No | `1.0` | Base delay (seconds) for exponential backoff |
@@ -567,7 +567,7 @@ The server uses a two-tier SQLite cache:
   - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`, `markets_margin_interest`, `markets_margin_alert`, `markets_short_ratio`, `markets_breakdown`, `markets_calendar`
 - **Tier 2 (Response-level)**: Full API responses cached with configurable TTL (6h / 24h / 7d).
 
-Cache is stored at `~/.cache/jquants-dat-mcp/cache.db` by default.
+Cache is stored at `~/.cache/jquants-mcp/cache.db` by default.
 
 ### Bulk Data Import
 
@@ -609,7 +609,7 @@ With `--incremental`, only rows newer than the latest cached date are imported (
 
 `scripts/daily_fetch.py` fetches additional J-Quants data via `jquantsapi.ClientV2` and inserts it directly into the SQLite cache. Designed to be called from an external daily pipeline (e.g. a cron job or shell script).
 
-The script reads the plan from `~/.config/jquants-dat-mcp/config.ini` (or `JQUANTS_PLAN` env var) and automatically determines which endpoints to fetch:
+The script reads the plan from `~/.config/jquants-mcp/config.ini` (or `JQUANTS_PLAN` env var) and automatically determines which endpoints to fetch:
 
 | Plan | Endpoints |
 |---|---|
@@ -718,7 +718,7 @@ Cloud Run deployments depend on two managed stores, not an in-container SQLite s
 | `users` (per-user encrypted J-Quants API keys) | Firestore `users` collection | Read/write |
 | `oauth_state` (OAuth sessions, PKCE verifiers, dynamic client registrations) | Firestore `oauth_state` collection | Read/write |
 
-`cache.db` is owned by the self-hosted server (see `jpx-short-report/daily.sh`) which publishes a fresh snapshot to GCS on its daily run. Cloud Run never writes back to GCS.
+`cache.db` is owned by a self-hosted publisher (a cron / scheduled task running `scripts/daily_fetch.py` or `scripts/bulk_fetch_all.py` + `scripts/gcs_export_cache.py`) that pushes a fresh snapshot to GCS on each run. Cloud Run never writes back to GCS.
 
 #### Startup flow
 
@@ -808,7 +808,7 @@ Note: if the self-hosted server that publishes `cache.db` uses a different servi
 Cloud Run reads `cache.db` as a read-only snapshot. Publish a snapshot from your self-hosted server (which has been warming the cache) before the first deploy:
 
 ```bash
-gcloud storage cp ~/.cache/jquants-dat-mcp/cache.db \
+gcloud storage cp ~/.cache/jquants-mcp/cache.db \
   gs://YOUR_BUCKET/jquants-dat-mcp/cache.db \
   --no-gzip-in-flight
 ```

@@ -44,7 +44,7 @@ uv sync --dev
 設定は以下の優先順位で読み込まれます（後勝ち）:
 
 1. `~/.jquants-api/jquants-api.toml` — API キーのみ（J-Quants 公式設定）
-2. `~/.config/jquants-dat-mcp/config.ini`（ユーザーグローバル）
+2. `~/.config/jquants-mcp/config.ini`（ユーザーグローバル）
 3. `./config.ini`（カレントディレクトリ）
 4. 環境変数（MCP クライアントや CLI から）
 
@@ -58,7 +58,7 @@ uv sync --dev
 jquants-mcp login
 ```
 
-ブラウザで J-Quants（AWS Cognito、PKCE フロー）にログインし、成功したら API キーを `~/.config/jquants-dat-mcp/config.ini`（mode 0600）に保存します。認証バックエンドは [公式 jquants-cli](https://github.com/J-Quants/jquants-cli) と同一です。保存済みキーの削除は `jquants-mcp logout`。
+ブラウザで J-Quants（AWS Cognito、PKCE フロー）にログインし、成功したら API キーを `~/.config/jquants-mcp/config.ini`（mode 0600）に保存します。認証バックエンドは [公式 jquants-cli](https://github.com/J-Quants/jquants-cli) と同一です。保存済みキーの削除は `jquants-mcp logout`。
 
 ### config.ini
 
@@ -67,7 +67,7 @@ MCP 固有の設定（プラン、キャッシュ、クライアント動作）:
 ```ini
 [jquants]
 plan = premium
-# cache_dir = ~/.cache/jquants-dat-mcp
+# cache_dir = ~/.cache/jquants-mcp
 # base_url = https://api.jquants.com/v2
 
 [client]
@@ -95,7 +95,7 @@ plan = premium
 |---|---|---|---|
 | `JQUANTS_API_KEY` | いいえ* | — | J-Quants API キー |
 | `JQUANTS_PLAN` | いいえ | 自動検出 | プラン: `free` / `light` / `standard` / `premium`（サーバー起動時に API キーから自動検出、明示設定はオーバーライド用） |
-| `JQUANTS_CACHE_DIR` | いいえ | `~/.cache/jquants-dat-mcp` | キャッシュディレクトリのパス |
+| `JQUANTS_CACHE_DIR` | いいえ | `~/.cache/jquants-mcp` | キャッシュディレクトリのパス |
 | `JQUANTS_BASE_URL` | いいえ | `https://api.jquants.com/v2` | API ベース URL |
 | `MAX_RETRIES` | いいえ | `5` | リクエスト失敗時の最大リトライ回数 |
 | `RETRY_BASE_DELAY` | いいえ | `1.0` | 指数バックオフの基本遅延（秒） |
@@ -567,7 +567,7 @@ jquants-mcp -t streamable-http --port 8080 \
   - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`, `markets_margin_interest`, `markets_margin_alert`, `markets_short_ratio`, `markets_breakdown`, `markets_calendar`
 - **Tier 2（レスポンスレベル）**: API レスポンス全体を TTL 付きでキャッシュ（6h / 24h / 7d）。
 
-キャッシュの保存先はデフォルトで `~/.cache/jquants-dat-mcp/cache.db` です。
+キャッシュの保存先はデフォルトで `~/.cache/jquants-mcp/cache.db` です。
 
 ### バルクデータ一括取得
 
@@ -609,7 +609,7 @@ uv run python scripts/import_csv_to_cache.py \
 
 `scripts/daily_fetch.py` は `jquantsapi.ClientV2` で追加データを取得し、SQLite キャッシュに直接投入するスクリプトです。外部の日次パイプライン（cron やシェルスクリプト）から呼び出す想定です。
 
-`~/.config/jquants-dat-mcp/config.ini`（または `JQUANTS_PLAN` 環境変数）からプランを読み取り、取得対象を自動決定します:
+`~/.config/jquants-mcp/config.ini`（または `JQUANTS_PLAN` 環境変数）からプランを読み取り、取得対象を自動決定します:
 
 | プラン | 取得対象 |
 |---|---|
@@ -641,7 +641,7 @@ python3 scripts/daily_fetch.py --db /path/to/cache.db
 
 このサーバーは [Google Cloud Run](https://cloud.google.com/run) にデプロイできます。状態管理は 2 つのマネージドサービスに分離されています:
 
-- **`cache.db`** — セルフホストサーバー（`jpx-short-report` の daily pipeline）が GCS バケットに publish したスナップショットを、Cloud Run 起動時に `/tmp`（tmpfs）にダウンロード。Cloud Run は読み込みのみで、GCS に書き戻しません。
+- **`cache.db`** — セルフホストサーバー（`scripts/daily_fetch.py` / `scripts/bulk_fetch_all.py` + `scripts/gcs_export_cache.py` を cron/launchd/systemd 等で日次実行）が GCS バケットに publish したスナップショットを、Cloud Run 起動時に `/tmp`（tmpfs）にダウンロード。Cloud Run は読み込みのみで、GCS に書き戻しません。
 - **`users` / `oauth_state`** — Firestore（Native モード）に保存。強整合性かつマルチライター安全なので、Cloud Run は SQLite 書き込み競合を気にせず水平スケール可能です。
 
 詳細は下記 [GCS と Firestore の連携](#gcs-と-firestore-の連携) を参照してください。
@@ -718,7 +718,7 @@ Cloud Run デプロイはコンテナ内 SQLite セットではなく、2 つの
 | `users`（ユーザーごとの暗号化 J-Quants API キー） | Firestore `users` コレクション | 読み書き |
 | `oauth_state`（OAuth セッション・PKCE 検証・動的クライアント登録） | Firestore `oauth_state` コレクション | 読み書き |
 
-`cache.db` はセルフホストサーバー（`jpx-short-report/daily.sh` を参照）が所有しており、日次バッチで GCS に最新スナップショットを publish します。Cloud Run は GCS に書き戻しません。
+`cache.db` はセルフホストの publisher（`scripts/daily_fetch.py` / `scripts/bulk_fetch_all.py` + `scripts/gcs_export_cache.py` を cron/launchd/systemd 等で日次実行）が所有しており、日次バッチで GCS に最新スナップショットを publish します。Cloud Run は GCS に書き戻しません。
 
 #### 起動フロー
 
@@ -808,7 +808,7 @@ Note: `cache.db` を publish するセルフホストサーバーが別のサー
 Cloud Run は `cache.db` をリードオンリースナップショットとして読み込みます。キャッシュを温めたセルフホストサーバーから初回デプロイ前にスナップショットを publish してください:
 
 ```bash
-gcloud storage cp ~/.cache/jquants-dat-mcp/cache.db \
+gcloud storage cp ~/.cache/jquants-mcp/cache.db \
   gs://YOUR_BUCKET/jquants-dat-mcp/cache.db \
   --no-gzip-in-flight
 ```

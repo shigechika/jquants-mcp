@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Cloud Run load test for jquants-dat-mcp sizing (#72).
+"""Cloud Run load test for jquants-mcp sizing (#72).
 
 Runs a 6-phase workload against the deployed MCP server and records every
 request to a JSONL file. Pair with ``collect_metrics.py`` to correlate the
 time window with Cloud Run memory/CPU utilization samples.
 
 Usage:
+    # Requires an OAuth token file (get one via `mcp-stdio --oauth`).
+    # URL can be set via --url or JQUANTS_CLOUD_RUN_URL env.
     uv run scripts/load_test.py \\
-        --url https://jquants-dat-mcp-29004083822.us-west1.run.app/mcp \\
+        --url https://your-cloud-run-service.run.app/mcp \\
         --token-file ~/.config/mcp-stdio/tokens.json \\
         --output load_test_results/run_$(date +%Y%m%d_%H%M%S).jsonl
 
@@ -28,6 +30,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import random
 import sys
 import time
@@ -465,11 +468,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument(
         "--url",
-        default="https://jquants-dat-mcp-29004083822.us-west1.run.app/mcp",
+        default=os.environ.get("JQUANTS_CLOUD_RUN_URL"),
+        help=("MCP endpoint URL (default from JQUANTS_CLOUD_RUN_URL env; required)"),
     )
     p.add_argument(
         "--token-file",
-        default="~/.config/mcp-stdio/tokens.json",
+        default=os.environ.get("JQUANTS_TOKEN_FILE", "~/.config/mcp-stdio/tokens.json"),
+        help=(
+            "OAuth token file produced by `mcp-stdio --oauth` (default "
+            "from JQUANTS_TOKEN_FILE env or ~/.config/mcp-stdio/tokens.json)"
+        ),
     )
     default_output = DEFAULT_OUTPUT_DIR / f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
     p.add_argument("--output", default=str(default_output))

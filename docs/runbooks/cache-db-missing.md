@@ -29,8 +29,8 @@ gcloud storage buckets get-iam-policy gs://aikawa-dx-jquants-dat-mcp \
 
 ## Root cause options
 
-1. **GCS object missing or stale** — self-hosted `jpx-short-report/daily.sh`
-   failed to upload. Check the self-hosted cron status.
+1. **GCS object missing or stale** — the self-hosted daily refresh
+   script failed to upload. Check the cron / scheduled-task status.
 2. **IAM drift** — SA lost `roles/storage.objectViewer`. Re-grant.
 3. **Transient GCS error** — restart and retry.
 4. **Disk full on `/tmp`** — unlikely but possible if another process
@@ -38,9 +38,11 @@ gcloud storage buckets get-iam-policy gs://aikawa-dx-jquants-dat-mcp \
 
 ## Recovery
 
-- **Stale / missing object**: re-run the upload from `m1.local`:
+- **Stale / missing object**: re-run the daily refresh on the publisher
+  host, for example:
   ```sh
-  cd ~/src/kb/jpx-short-report && ./daily.sh   # steps 4-8 export cache.db
+  uv run python scripts/daily_fetch.py
+  uv run python scripts/gcs_export_cache.py
   ```
 - **IAM**: `gcloud projects add-iam-policy-binding aikawa-dx --member=serviceAccount:jquants-dat-mcp@aikawa-dx.iam.gserviceaccount.com --role=roles/storage.objectViewer`
 - **Force a retry**: send SIGHUP or deploy a new revision
@@ -51,5 +53,5 @@ gcloud storage buckets get-iam-policy gs://aikawa-dx-jquants-dat-mcp \
 
 ## Post-incident
 
-- Confirm `daily.sh` succeeded subsequently
-- If cron was down, check the self-hosted launchd service on m1.local
+- Confirm the next scheduled daily refresh succeeds
+- If the schedule was down, check your cron / launchd / systemd service

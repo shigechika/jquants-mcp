@@ -41,7 +41,7 @@ shows `locationId: us-west1` (single-region, **not** `nam5` multi-region).
 
 | Risk | Impact | Mitigation today |
 |---|---|---|
-| Publisher (self-hosted on `m1.local`) dies | No fresh data until publisher restored. Cloud Run keeps serving stale snapshot, falls back to live API | Publisher rebuild steps below |
+| Publisher (self-hosted) dies | No fresh data until publisher restored. Cloud Run keeps serving stale snapshot, falls back to live API | Publisher rebuild steps below |
 | GCS object corrupted | Fresh cold starts lose Tier 1 cache, API fallback kicks in | Re-upload from publisher; [cache-db-missing runbook](runbooks/cache-db-missing.md) |
 | `us-west1` outage | Cloud Run cannot read bucket | Bucket is currently regional; could be promoted to multi-region if needed |
 

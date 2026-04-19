@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GCS sync utility for Cloud Run deployment of jquants-dat-mcp.
+"""GCS sync utility for Cloud Run deployment of jquants-mcp.
 
 Manages database synchronization between Cloud Run's ephemeral /tmp
 filesystem and Google Cloud Storage.
@@ -48,7 +48,9 @@ _DOWNLOAD_FILES: list[str] = []
 _CACHE_FILES = ["cache.db"]
 
 # Files to upload to GCS (daemon / --upload)
-# cache.db is excluded: it is owned by self-hosted server (jpx-short-report daily.sh).
+# cache.db is excluded here: it is owned by the self-hosted publisher
+# (see scripts/daily_fetch.py + scripts/gcs_export_cache.py) which pushes
+# a fresh snapshot to GCS on its own schedule.
 # users.db and oauth_state.db now live in Firestore on Cloud Run.
 _UPLOAD_FILES: list[str] = []
 
@@ -202,7 +204,7 @@ def main() -> None:
     """CLI entry point."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="GCS cache sync utility for jquants-dat-mcp")
+    parser = argparse.ArgumentParser(description="GCS cache sync utility for jquants-mcp")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--init-cache",

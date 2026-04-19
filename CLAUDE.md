@@ -29,13 +29,14 @@ uv run ruff format src/ tests/  # Format
   - `settings/` — Web UI for API key registration (/settings endpoint)
   - `oauth_kv_store.py` — SQLite-backed OAuth state persistence
 - `scripts/` — Operational scripts
-  - `daily_fetch.py` — Daily data fetch (called from jpx-short-report)
-  - `import_csv_to_cache.py` — CSV bulk import to cache
-  - `bulk_fetch_all.py` — Historical data bulk fetch
+  - `daily_fetch.py` — Daily data fetch (cron / scheduled-task companion for cache population)
+  - `bulk_fetch_all.py` — Historical data bulk fetch via J-Quants Bulk API
   - `gcs_sync.py` — GCS auth DB sync for Cloud Run (users.db + oauth_state.db)
-  - `mcp-stdio-proxy.py` — stdio-to-HTTP proxy (legacy; use [mcp-stdio](https://pypi.org/project/mcp-stdio/) instead)
+  - `gcs_export_cache.py` — Export cache.db to GCS (used by the daily publisher)
+  - `rotate_encryption_key.py` — Re-encrypt user API keys during MCP_ENCRYPTION_KEY rotation
+  - `collect_metrics.py` / `load_test.py` — Cloud Run sizing helpers
   - `entrypoint.sh` — Docker/Cloud Run entrypoint
-- `tests/` — pytest + pytest-asyncio tests (347 tests)
+- `tests/` — pytest + pytest-asyncio tests (412 tests)
 
 ## Key Patterns
 
