@@ -176,7 +176,7 @@ The server acts as an OAuth 2.1 authorization server using GitHub as the upstrea
 2. Fill in:
    - **Application name**: `jquants-mcp` (or any name)
    - **Homepage URL**: your server's public base URL (e.g. `https://mcp.example.com`)
-   - **Authorization callback URL**: `https://mcp.example.com/oauth/callback/github`
+   - **Authorization callback URL**: `https://mcp.example.com/oauth/callback`
 3. Click **Register application**, then click **Generate a new client secret**
 4. Copy the **Client ID** and the generated **Client secret**
 
@@ -234,7 +234,7 @@ The server supports Google as an alternative OAuth 2.1 identity provider. Users 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/) → **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID**
 2. Select **Web application** and fill in:
    - **Authorized JavaScript origins**: `https://mcp.example.com`
-   - **Authorized redirect URIs**: `https://mcp.example.com/oauth/callback/google`
+   - **Authorized redirect URIs**: `https://mcp.example.com/oauth/callback`
 3. Click **Create**, then copy the **Client ID** and **Client secret**
 
 #### 2. Configure the server

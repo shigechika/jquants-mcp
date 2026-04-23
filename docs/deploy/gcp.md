@@ -174,13 +174,13 @@ The `attribute-condition` on the Provider is your security boundary: only workfl
 1. [APIs & Services → Credentials](https://console.cloud.google.com/apis/credentials) in the GCP console
 2. Configure the OAuth consent screen (User type: External, scopes: `openid email profile`)
 3. Create OAuth 2.0 Client ID → Web application
-4. Authorized redirect URI: `https://<your Cloud Run URL>/oauth/callback/google` — you'll set this for real after the first deploy (the URL is assigned at deploy time). Leave a placeholder for now and come back.
+4. Authorized redirect URI: `https://<your Cloud Run URL>/oauth/callback` — you'll set this for real after the first deploy (the URL is assigned at deploy time). Leave a placeholder for now and come back.
 5. Note the Client ID and Client Secret
 
 ### GitHub OAuth (optional, legacy path)
 
 1. GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
-2. Authorization callback URL: `https://<your Cloud Run URL>/oauth/callback/github`
+2. Authorization callback URL: `https://<your Cloud Run URL>/oauth/callback`
 3. Note the Client ID and Client Secret
 
 ## 9. Populate Secret Manager
@@ -283,7 +283,7 @@ Note the URL, e.g. `https://jquants-mcp-abc123-uw.a.run.app`.
 
 Update in this order:
 1. Set `OAUTH_BASE_URL` in `cd.yml` to this URL
-2. Update the OAuth client redirect URIs: Google → `<URL>/oauth/callback/google`, GitHub → `<URL>/oauth/callback/github`
+2. Update the OAuth client redirect URIs (Google + GitHub) to `<URL>/oauth/callback`
 3. Commit + push → CD redeploys automatically
 
 ## 14. Smoke test
