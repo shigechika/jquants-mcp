@@ -6,6 +6,8 @@ This is a companion to [j-quants-doc-mcp](https://github.com/knishioka/j-quants-
 
 Release history and changelog: [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases).
 
+Deployment shapes (stdio / self-hosted HTTP / Cloud Run) and how to pick between them: see [docs/deploy/overview.md](docs/deploy/overview.md).
+
 ## Features
 
 - **27 MCP tools** covering all J-Quants API v2 endpoints
@@ -174,7 +176,7 @@ The server acts as an OAuth 2.1 authorization server using GitHub as the upstrea
 2. Fill in:
    - **Application name**: `jquants-mcp` (or any name)
    - **Homepage URL**: your server's public base URL (e.g. `https://mcp.example.com`)
-   - **Authorization callback URL**: `https://mcp.example.com/oauth/callback/github`
+   - **Authorization callback URL**: `https://mcp.example.com/oauth/callback`
 3. Click **Register application**, then click **Generate a new client secret**
 4. Copy the **Client ID** and the generated **Client secret**
 
@@ -232,7 +234,7 @@ The server supports Google as an alternative OAuth 2.1 identity provider. Users 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/) → **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID**
 2. Select **Web application** and fill in:
    - **Authorized JavaScript origins**: `https://mcp.example.com`
-   - **Authorized redirect URIs**: `https://mcp.example.com/oauth/callback/google`
+   - **Authorized redirect URIs**: `https://mcp.example.com/oauth/callback`
 3. Click **Create**, then copy the **Client ID** and **Client secret**
 
 #### 2. Configure the server
@@ -670,6 +672,8 @@ This server can be deployed to [Google Cloud Run](https://cloud.google.com/run).
 - **`users` / `oauth_state`** — stored in Firestore (Native mode). Strongly consistent and multi-writer safe, so Cloud Run can scale horizontally without SQLite write conflicts.
 
 Details: see [GCS and Firestore integration](#gcs-and-firestore-integration) below.
+
+> For a fork-and-deploy walkthrough (WIF, OAuth clients, custom domain, Claude mobile setup, allowlist), see [docs/deploy/gcp.md](docs/deploy/gcp.md). The sections below summarise the moving parts; the deploy guide is the canonical step-by-step.
 
 ### Prerequisites
 
