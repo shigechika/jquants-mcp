@@ -6,6 +6,8 @@
 
 リリース履歴・変更履歴は [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases) を参照してください。
 
+デプロイ形態（stdio / セルフホスト HTTP / Cloud Run）の選び方は [docs/deploy/overview.md](docs/deploy/overview.md) を参照。
+
 ## 特徴
 
 - **27 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー
@@ -670,6 +672,8 @@ python3 scripts/daily_fetch.py --db /path/to/cache.db
 - **`users` / `oauth_state`** — Firestore（Native モード）に保存。強整合性かつマルチライター安全なので、Cloud Run は SQLite 書き込み競合を気にせず水平スケール可能です。
 
 詳細は下記 [GCS と Firestore の連携](#gcs-と-firestore-の連携) を参照してください。
+
+> fork して自分の GCP にデプロイする手順（WIF / OAuth クライアント / カスタムドメイン / Claude モバイル接続 / allowlist）は [docs/deploy/gcp.md](docs/deploy/gcp.md) を参照。以下のセクションは要点のサマリで、step-by-step はデプロイガイドが正本です。
 
 ### 前提条件
 

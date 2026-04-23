@@ -6,6 +6,8 @@ This is a companion to [j-quants-doc-mcp](https://github.com/knishioka/j-quants-
 
 Release history and changelog: [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases).
 
+Deployment shapes (stdio / self-hosted HTTP / Cloud Run) and how to pick between them: see [docs/deploy/overview.md](docs/deploy/overview.md).
+
 ## Features
 
 - **27 MCP tools** covering all J-Quants API v2 endpoints
@@ -670,6 +672,8 @@ This server can be deployed to [Google Cloud Run](https://cloud.google.com/run).
 - **`users` / `oauth_state`** — stored in Firestore (Native mode). Strongly consistent and multi-writer safe, so Cloud Run can scale horizontally without SQLite write conflicts.
 
 Details: see [GCS and Firestore integration](#gcs-and-firestore-integration) below.
+
+> For a fork-and-deploy walkthrough (WIF, OAuth clients, custom domain, Claude mobile setup, allowlist), see [docs/deploy/gcp.md](docs/deploy/gcp.md). The sections below summarise the moving parts; the deploy guide is the canonical step-by-step.
 
 ### Prerequisites
 
