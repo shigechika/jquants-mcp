@@ -1,6 +1,6 @@
 """Screener tools for jquants-mcp.
 
-All four tools operate on the ``equities_bars_daily`` Tier 1 cache and
+All five tools operate on the ``equities_bars_daily`` Tier 1 cache and
 require no extra API calls. They are pure Python (stdlib only) — no
 numpy/pandas.
 
@@ -11,9 +11,12 @@ Exposed tools:
   response). Optionally narrows to one code.
 - ``compare_close_vs_vwap`` — compute the daily VWAP (``Va / Vo``) for a
   code and compare to the close.
-- ``detect_yearly_high_low`` — check whether today's close is the
-  highest/lowest close over the trailing 252 trading days (yearly
-  high/low signal), using split-adjusted prices.
+- ``detect_52w_high_low`` — check whether today's bar makes a new
+  52-week (rolling 252-session) high or low using split-adjusted prices.
+  Matches the convention used by Yahoo Finance, Bloomberg, TradingView.
+- ``detect_ytd_high_low`` — check whether today's bar makes a new
+  year-to-date (年初来) high or low using split-adjusted prices. Matches
+  the convention used by Kabutan, JPX, and most JP retail-broker UIs.
 - ``detect_volume_surge`` — list stocks whose volume on a given date is
   at least ``multiplier`` times the trailing ``baseline_days`` average.
 
@@ -49,12 +52,19 @@ from ..validators import (
 logger = logging.getLogger(__name__)
 
 
-# Conventional yearly trading-day window (JPX ~247–252 sessions/year;
+# Conventional 52-week trading-day window (JPX ~247–252 sessions/year;
 # use 252 to match common market convention).
-_YEARLY_WINDOW_DAYS = 252
+_FIFTY_TWO_WEEK_SESSIONS = 252
 
 # Default baseline for volume-surge detection.
 _DEFAULT_VOLUME_BASELINE = 20
+
+# Default minimum prior-session count required for a cross-sectional
+# yearly-high/low signal to be reported. Suppresses noise from stocks
+# that listed inside the window (a 5-day-old IPO will hit "new high"
+# trivially every up-day, which clutters cross-sectional results).
+# Per-code mode bypasses this filter — the caller asked explicitly.
+_DEFAULT_MIN_PRIOR_SESSIONS = 60
 
 
 def _normalize_date(date: str) -> str:
@@ -262,26 +272,28 @@ def register(
         return {"count": len(out), "data": out}
 
     @mcp.tool()
-    async def detect_yearly_high_low(
+    async def detect_52w_high_low(
         date: str,
         code: str | None = None,
-        window_days: int = _YEARLY_WINDOW_DAYS,
+        window_sessions: int = _FIFTY_TWO_WEEK_SESSIONS,
+        min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
     ) -> dict[str, Any]:
-        """Flag stocks making a new 52-week (≈252 session) high or low.
+        """Flag stocks making a new 52-week rolling high or low.
 
-        Uses split-adjusted prices (``AdjH`` / ``AdjL`` / ``AdjC``) so
-        corporate actions inside the window do not distort the signal.
+        Convention used by Yahoo Finance, Bloomberg, TradingView, JPX
+        official 52週高値/安値. Today's bar is compared against the
+        prior ``window_sessions - 1`` sessions (today excluded).
 
-        Today's bar is compared against the **prior** ``window_days - 1``
-        sessions:
+        Returns four signals per row, all using split-adjusted prices
+        (``AdjH`` / ``AdjL`` / ``AdjC``):
 
-        - ``new_yearly_high`` — today's intraday high (``AdjH``) strictly
-          exceeds the prior window's max high
-        - ``new_yearly_high_close`` — today's close (``AdjC``) strictly
-          exceeds the prior window's max high (a stronger signal than
-          intraday-only)
-        - ``new_yearly_low`` / ``new_yearly_low_close`` — analogous for
-          lows.
+        - ``new_high``       — today's ``AdjH`` >= prior window max
+        - ``new_high_close`` — today's ``AdjC`` >= prior window max
+        - ``new_low``        — today's ``AdjL`` <= prior window min
+        - ``new_low_close``  — today's ``AdjC`` <= prior window min
+
+        ``>=`` (not strict ``>``) so days that tie the prior extreme
+        also flag, matching standard market-data convention.
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily Tier 1 cache
@@ -289,108 +301,99 @@ def register(
         Performance: cross-sectional mode (``code=None``) with the default
         252-session window scans roughly 1M rows on a populated cache and
         can take 10–30 seconds. Specify ``code`` for sub-second response,
-        or shrink ``window_days`` for cross-sectional scans.
+        or shrink ``window_sessions`` for cross-sectional scans.
 
         Args:
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
-            code: Optional 4- or 5-digit code. If omitted, checks every
-                code with a row on ``date`` (cross-sectional scan).
-            window_days: Trailing trading-day window (today included).
-                Default 252.
+            code: Optional 4- or 5-digit code. If omitted, scans every
+                code with a row on ``date`` (cross-sectional).
+            window_sessions: Trailing trading-day window including today.
+                Default 252 (52 weeks).
+            min_prior_sessions: Cross-sectional only — drop codes whose
+                prior history inside the window has fewer than this many
+                sessions (suppresses noise from recent IPOs). Default 60.
+                Set to 1 to disable.
         """
         errors = collect_errors(validate_date(date), validate_code(code))
         if errors:
             return make_validation_error_response(errors)
-        if window_days < 2:
-            return make_validation_error_response(["`window_days` must be >= 2."])
+        if window_sessions < 2:
+            return make_validation_error_response(["`window_sessions` must be >= 2."])
+        if min_prior_sessions < 1:
+            return make_validation_error_response(["`min_prior_sessions` must be >= 1."])
 
         cache: CacheStore = get_cache()
-
         norm_date = _normalize_date(date)
-        start = _calendar_window_start(norm_date, window_days)
-        key_filter: dict[str, str] = {}
-        if code:
-            key_filter["code"] = _normalize_code(code)
+        start = _calendar_window_start(norm_date, window_sessions)
+        return await _high_low_signals(
+            cache=cache,
+            norm_date=norm_date,
+            range_start=start,
+            code=code,
+            window_sessions=window_sessions,
+            min_prior_sessions=min_prior_sessions,
+            mode_label="52w",
+        )
 
-        try:
-            rows = cache.get_rows(
-                "equities_bars_daily",
-                key_filter=key_filter,
-                date_from=start,
-                date_to=norm_date,
-            )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
-            return format_api_error(e)
+    @mcp.tool()
+    async def detect_ytd_high_low(
+        date: str,
+        code: str | None = None,
+        min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
+    ) -> dict[str, Any]:
+        """Flag stocks making a new year-to-date (年初来) high or low.
 
-        # Group rows per code, keep only the trailing `window_days`
-        # sessions so that the "yearly" signal is computed over
-        # exactly the intended window even if the cache spans more.
-        by_code: dict[str, list[dict[str, Any]]] = {}
-        for row in rows:
-            c = str(row.get("Code") or "")
-            if not c:
-                continue
-            by_code.setdefault(c, []).append(row)
+        Convention used by Kabutan (株探), Yahoo!ファイナンス JP, JPX
+        official 年初来高値/安値, and most JP retail-broker UIs. Today's
+        bar is compared against every prior session **since the first
+        trading day of the same calendar year**.
 
-        matches: list[dict[str, Any]] = []
-        for c, sessions in by_code.items():
-            sessions.sort(key=lambda r: r.get("Date") or "")
-            window = sessions[-window_days:]
-            if not window or window[-1].get("Date") != norm_date:
-                # Last row in the window must be the requested date;
-                # otherwise the stock didn't trade that day.
-                continue
-            if len(window) < 2:
-                # Need at least one prior session for a comparison.
-                continue
-            today = window[-1]
-            prior = window[:-1]
+        Returns four signals per row, all using split-adjusted prices
+        (``AdjH`` / ``AdjL`` / ``AdjC``):
 
-            today_high = _as_float(today.get("AdjH"))
-            today_low = _as_float(today.get("AdjL"))
-            today_close = _as_float(today.get("AdjC"))
+        - ``new_high``       — today's ``AdjH`` >= YTD prior max
+        - ``new_high_close`` — today's ``AdjC`` >= YTD prior max
+        - ``new_low``        — today's ``AdjL`` <= YTD prior min
+        - ``new_low_close``  — today's ``AdjC`` <= YTD prior min
 
-            prior_highs = [_as_float(s.get("AdjH")) for s in prior]
-            prior_highs = [h for h in prior_highs if h is not None]
-            prior_lows = [_as_float(s.get("AdjL")) for s in prior]
-            prior_lows = [low for low in prior_lows if low is not None]
-            if not prior_highs or not prior_lows:
-                continue
+        Edge case: the very first trading day of the year has no prior
+        YTD sessions and is skipped (the row would be empty by
+        definition; "新年最初" is not a meaningful screening signal).
 
-            prior_high = max(prior_highs)
-            prior_low = min(prior_lows)
+        [Supported plans] Free / Light / Standard / Premium
+        [Source] equities_bars_daily Tier 1 cache
 
-            new_high = today_high is not None and today_high > prior_high
-            new_low = today_low is not None and today_low < prior_low
-            new_high_close = today_close is not None and today_close > prior_high
-            new_low_close = today_close is not None and today_close < prior_low
+        Performance: cross-sectional mode (``code=None``) loads year-to-
+        date rows for every listed stock. Late in the year (~December)
+        this approaches ~1M rows; in January it is essentially free.
 
-            if code is None and not (new_high or new_low or new_high_close or new_low_close):
-                continue
+        Args:
+            date: Trading date (YYYYMMDD or YYYY-MM-DD).
+            code: Optional 4- or 5-digit code. If omitted, scans every
+                code with a row on ``date`` (cross-sectional).
+            min_prior_sessions: Cross-sectional only — drop codes whose
+                YTD history has fewer than this many prior sessions
+                (suppresses noise from recent IPOs / January itself).
+                Default 60. Set to 1 to disable.
+        """
+        errors = collect_errors(validate_date(date), validate_code(code))
+        if errors:
+            return make_validation_error_response(errors)
+        if min_prior_sessions < 1:
+            return make_validation_error_response(["`min_prior_sessions` must be >= 1."])
 
-            matches.append(
-                {
-                    "Code": c,
-                    "Date": norm_date,
-                    "window_days": len(window),
-                    "AdjH": today_high,
-                    "AdjL": today_low,
-                    "AdjC": today_close,
-                    "prior_window_high": prior_high,
-                    "prior_window_low": prior_low,
-                    "new_yearly_high": new_high,
-                    "new_yearly_low": new_low,
-                    "new_yearly_high_close": new_high_close,
-                    "new_yearly_low_close": new_low_close,
-                }
-            )
-        return {"count": len(matches), "data": matches}
+        cache: CacheStore = get_cache()
+        norm_date = _normalize_date(date)
+        year_start = norm_date[:4] + "-01-01"
+        return await _high_low_signals(
+            cache=cache,
+            norm_date=norm_date,
+            range_start=year_start,
+            code=code,
+            window_sessions=None,  # YTD has no fixed window cap
+            min_prior_sessions=min_prior_sessions,
+            mode_label="ytd",
+        )
 
     @mcp.tool()
     async def detect_volume_surge(
@@ -516,3 +519,104 @@ def _as_float(v: Any) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
+
+
+async def _high_low_signals(
+    *,
+    cache: CacheStore,
+    norm_date: str,
+    range_start: str,
+    code: str | None,
+    window_sessions: int | None,
+    min_prior_sessions: int,
+    mode_label: str,
+) -> dict[str, Any]:
+    """Shared implementation for ``detect_52w_high_low`` / ``detect_ytd_high_low``.
+
+    Loads bars between ``range_start`` and ``norm_date`` (inclusive), groups
+    by code, and computes new-high / new-low signals against the prior
+    sessions in the window. ``window_sessions`` caps the trailing window
+    (52w mode); pass ``None`` to use the full range (YTD mode).
+
+    Returns the standard ``{"count": N, "data": [...], "mode": ...}``
+    response shape.
+    """
+    key_filter: dict[str, str] = {}
+    if code:
+        key_filter["code"] = _normalize_code(code)
+
+    try:
+        rows = cache.get_rows(
+            "equities_bars_daily",
+            key_filter=key_filter,
+            date_from=range_start,
+            date_to=norm_date,
+        )
+    except (
+        APIError,
+        InvalidAPIKeyError,
+        UserNotConfiguredError,
+        DecryptionError,
+        UserNotAllowedError,
+    ) as e:
+        return format_api_error(e)
+
+    by_code: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        c = str(row.get("Code") or "")
+        if not c:
+            continue
+        by_code.setdefault(c, []).append(row)
+
+    matches: list[dict[str, Any]] = []
+    for c, sessions in sorted(by_code.items()):
+        sessions.sort(key=lambda r: r.get("Date") or "")
+        window = sessions if window_sessions is None else sessions[-window_sessions:]
+        if not window or window[-1].get("Date") != norm_date:
+            # Stock didn't trade on the requested date.
+            continue
+        today = window[-1]
+        prior = window[:-1]
+
+        prior_highs = [_as_float(s.get("AdjH")) for s in prior]
+        prior_highs = [h for h in prior_highs if h is not None]
+        prior_lows = [_as_float(s.get("AdjL")) for s in prior]
+        prior_lows = [low for low in prior_lows if low is not None]
+        if not prior_highs or not prior_lows:
+            continue
+        if code is None and len(prior) < min_prior_sessions:
+            # Cross-sectional noise filter for IPOs / January.
+            continue
+
+        today_high = _as_float(today.get("AdjH"))
+        today_low = _as_float(today.get("AdjL"))
+        today_close = _as_float(today.get("AdjC"))
+
+        prior_high = max(prior_highs)
+        prior_low = min(prior_lows)
+
+        new_high = today_high is not None and today_high >= prior_high
+        new_low = today_low is not None and today_low <= prior_low
+        new_high_close = today_close is not None and today_close >= prior_high
+        new_low_close = today_close is not None and today_close <= prior_low
+
+        if code is None and not (new_high or new_low or new_high_close or new_low_close):
+            continue
+
+        matches.append(
+            {
+                "Code": c,
+                "Date": norm_date,
+                "prior_sessions": len(prior),
+                "AdjH": today_high,
+                "AdjL": today_low,
+                "AdjC": today_close,
+                "prior_high": prior_high,
+                "prior_low": prior_low,
+                "new_high": new_high,
+                "new_low": new_low,
+                "new_high_close": new_high_close,
+                "new_low_close": new_low_close,
+            }
+        )
+    return {"count": len(matches), "mode": mode_label, "data": matches}

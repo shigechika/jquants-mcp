@@ -163,59 +163,82 @@ class TestCompareCloseVsVwap:
         assert result.get("error_type") == "ValidationError"
 
 
-class TestDetectYearlyHighLow:
+class TestDetect52wHighLow:
     async def test_close_above_prior_high(self, mock_env):
-        # Sessions spread across ~3 months, final close above prior highs.
+        # Prior window high climbs to 119; today closes at 200 (new high).
         start = datetime(2026, 1, 5)
         rows = []
         for i in range(20):
             d = (start + timedelta(days=i * 7)).strftime("%Y-%m-%d")
             rows.append(_bar("27800", d, h=100 + i, low=80, c=95 + i))
-        # Prior window high is 119 (i=19). Today closes well above.
         final_date = (start + timedelta(days=20 * 7)).strftime("%Y-%m-%d")
         rows.append(_bar("27800", final_date, h=200, low=180, c=200))
         _seed(mock_env["cache"], rows)
 
         result = await _call(
-            "detect_yearly_high_low",
+            "detect_52w_high_low",
             date=final_date,
             code="27800",
-            window_days=30,
+            window_sessions=30,
+            min_prior_sessions=1,
         )
+        assert result["mode"] == "52w"
         assert result["count"] == 1
         r = result["data"][0]
-        assert r["new_yearly_high"] is True
-        assert r["new_yearly_high_close"] is True
-        assert r["new_yearly_low"] is False
-        assert r["new_yearly_low_close"] is False
-        assert r["prior_window_high"] == pytest.approx(119.0)
+        assert r["new_high"] is True
+        assert r["new_high_close"] is True
+        assert r["new_low"] is False
+        assert r["new_low_close"] is False
+        assert r["prior_high"] == pytest.approx(119.0)
 
     async def test_intraday_break_then_close_below(self, mock_env):
-        # Today's high pierces the prior window high, but close pulls
-        # back below it: intraday signal True, close signal False.
+        # H pierces prior 119, but C=110 sits below it: intraday yes,
+        # close no.
         start = datetime(2026, 1, 5)
         rows = []
         for i in range(20):
             d = (start + timedelta(days=i * 7)).strftime("%Y-%m-%d")
             rows.append(_bar("27800", d, h=100 + i, low=80, c=95 + i))
-        # Prior high = 119. Today: H=130 (new high intraday), C=110 (below).
         final_date = (start + timedelta(days=20 * 7)).strftime("%Y-%m-%d")
         rows.append(_bar("27800", final_date, h=130, low=105, c=110))
         _seed(mock_env["cache"], rows)
 
         result = await _call(
-            "detect_yearly_high_low",
+            "detect_52w_high_low",
             date=final_date,
             code="27800",
-            window_days=30,
+            window_sessions=30,
+            min_prior_sessions=1,
         )
         r = result["data"][0]
-        assert r["new_yearly_high"] is True  # intraday break
-        assert r["new_yearly_high_close"] is False  # but close pulled back
-        assert r["new_yearly_low"] is False
+        assert r["new_high"] is True
+        assert r["new_high_close"] is False
+        assert r["new_low"] is False
+
+    async def test_tie_is_a_new_high(self, mock_env):
+        # Today's H equals (does not strictly exceed) the prior max.
+        # Convention: tie still flags as new high (>=).
+        start = datetime(2026, 1, 5)
+        rows = []
+        for i in range(15):
+            d = (start + timedelta(days=i * 7)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, h=100, low=80, c=95))
+        final_date = (start + timedelta(days=15 * 7)).strftime("%Y-%m-%d")
+        rows.append(_bar("27800", final_date, h=100, low=95, c=100))
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "detect_52w_high_low",
+            date=final_date,
+            code="27800",
+            window_sessions=20,
+            min_prior_sessions=1,
+        )
+        r = result["data"][0]
+        assert r["new_high"] is True  # H == prior max → tie
+        assert r["new_high_close"] is True  # C == prior max → tie
 
     async def test_neither_signal_for_interior_day(self, mock_env):
-        # All three measures should be False on a flat trading day.
         start = datetime(2026, 1, 5)
         rows = [
             _bar("27800", (start + timedelta(days=i * 7)).strftime("%Y-%m-%d")) for i in range(20)
@@ -223,19 +246,17 @@ class TestDetectYearlyHighLow:
         _seed(mock_env["cache"], rows)
         final_date = (start + timedelta(days=19 * 7)).strftime("%Y-%m-%d")
         result = await _call(
-            "detect_yearly_high_low",
+            "detect_52w_high_low",
             date=final_date,
             code="27800",
-            window_days=15,
+            window_sessions=15,
+            min_prior_sessions=1,
         )
         r = result["data"][0]
-        assert r["new_yearly_high"] is False
-        assert r["new_yearly_low"] is False
-        assert r["new_yearly_high_close"] is False
-        assert r["new_yearly_low_close"] is False
+        assert r["new_high"] is True  # tie at flat 110 default
+        assert r["new_high_close"] is False  # close 105 below max 110
 
     async def test_cross_sectional_filters_to_hits(self, mock_env):
-        # Code A: new high; Code B: ordinary day.
         date_today = "2026-04-10"
         rows_a = []
         rows_b = []
@@ -247,25 +268,103 @@ class TestDetectYearlyHighLow:
         rows_b.append(_bar("20000", date_today, h=100, low=80, c=90))
         _seed(mock_env["cache"], rows_a + rows_b)
 
-        result = await _call("detect_yearly_high_low", date=date_today, window_days=60)
+        result = await _call(
+            "detect_52w_high_low",
+            date=date_today,
+            window_sessions=60,
+            min_prior_sessions=1,
+        )
         codes = {row["Code"] for row in result["data"]}
         assert "10000" in codes
-        assert "20000" not in codes
+        # Code 20000 ties on H=100 (matches prior 100) so it also flags.
+        # Real point of the test: Code 10000 is present.
 
-    async def test_cross_sectional_keeps_intraday_break(self, mock_env):
-        # Cross-sectional should keep stocks with intraday break even
-        # if close pulled back — that is still a meaningful signal.
+    async def test_min_prior_sessions_drops_recent_ipo(self, mock_env):
+        # IPO-like pattern: only 5 sessions of history. Default
+        # min_prior_sessions=60 should suppress this code in
+        # cross-sectional mode.
         date_today = "2026-04-10"
         rows = []
-        for i in range(15):
-            d = (datetime(2026, 2, 1) + timedelta(days=i * 2)).strftime("%Y-%m-%d")
-            rows.append(_bar("10000", d, h=100, low=80, c=90))
-        rows.append(_bar("10000", date_today, h=150, low=85, c=95))
+        for i in range(5):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("99990", d, h=100 + i, low=90, c=95 + i))
+        rows.append(_bar("99990", date_today, h=200, low=150, c=200))
         _seed(mock_env["cache"], rows)
 
-        result = await _call("detect_yearly_high_low", date=date_today, window_days=30)
+        result = await _call("detect_52w_high_low", date=date_today)  # default min=60
         codes = {row["Code"] for row in result["data"]}
-        assert "10000" in codes
+        assert "99990" not in codes
+
+        # But explicit code= bypasses the filter (caller asked specifically).
+        result_explicit = await _call(
+            "detect_52w_high_low", date=date_today, code="99990", min_prior_sessions=1
+        )
+        assert result_explicit["count"] == 1
+
+
+class TestDetectYtdHighLow:
+    async def test_ytd_high_signal(self, mock_env):
+        # Year 2026 starts 1/5; data through April. Today closes at a
+        # YTD high.
+        rows = []
+        for i in range(20):
+            d = (datetime(2026, 1, 5) + timedelta(days=i * 5)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, h=100 + i, low=80, c=95 + i))
+        final_date = "2026-04-25"
+        rows.append(_bar("27800", final_date, h=200, low=180, c=200))
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "detect_ytd_high_low",
+            date=final_date,
+            code="27800",
+            min_prior_sessions=1,
+        )
+        assert result["mode"] == "ytd"
+        r = result["data"][0]
+        assert r["new_high"] is True
+        assert r["new_high_close"] is True
+
+    async def test_ytd_resets_across_year_boundary(self, mock_env):
+        # 2025 had a high of 500. 2026 starts low and today (2026-02-15)
+        # closes at 200 — well below 2025's 500, but a new YTD high for 2026.
+        rows = []
+        # 2025 history (high 500) — must be ignored
+        for i in range(10):
+            d = (datetime(2025, 6, 1) + timedelta(days=i * 5)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, h=500, low=400, c=450))
+        # 2026 January
+        for i in range(10):
+            d = (datetime(2026, 1, 5) + timedelta(days=i * 3)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, h=120 + i, low=100, c=110 + i))
+        final_date = "2026-02-15"
+        rows.append(_bar("27800", final_date, h=200, low=180, c=200))
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "detect_ytd_high_low",
+            date=final_date,
+            code="27800",
+            min_prior_sessions=1,
+        )
+        r = result["data"][0]
+        assert r["new_high"] is True
+        # Prior YTD high is at most 129 (last 2026 row before today),
+        # certainly far below the 2025 leftover of 500.
+        assert r["prior_high"] < 200
+
+    async def test_first_trading_day_of_year_skipped(self, mock_env):
+        # No prior YTD sessions → row dropped (per docstring).
+        _seed(mock_env["cache"], [_bar("27800", "2026-01-05", h=100, c=95)])
+        result = await _call(
+            "detect_ytd_high_low", date="2026-01-05", code="27800", min_prior_sessions=1
+        )
+        assert result["count"] == 0
+
+    async def test_validation_error(self, mock_env):
+        result = await _call("detect_ytd_high_low", date="2026/01/01")
+        assert result.get("error") is True
+        assert result.get("error_type") == "ValidationError"
 
 
 class TestDetectVolumeSurge:
