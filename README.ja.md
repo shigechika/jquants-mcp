@@ -10,7 +10,7 @@
 
 ## 特徴
 
-- **27 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー
+- **31 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー + オフライン screener
 - **2層 SQLite キャッシュ** — 時系列データは行レベル、その他はレスポンスレベル（TTL付き）
 - **株式分割検知** — AdjFactor 変化時にキャッシュを自動無効化
 - **レート制限** — プラン別スライディングウィンドウ（Free: 5回/分, Light: 60, Standard: 120, Premium: 500）
@@ -575,6 +575,17 @@ jquants-mcp -t streamable-http --port 8080 \
 |---|---|---|---|
 | `get_bulk_list` | `/bulk/list` | Light+ | ダウンロード可能ファイル一覧 |
 | `get_bulk_download_url` | `/bulk/get` | Light+ | 署名付きダウンロード URL 取得 |
+
+### スクリーナー (Screener) — 4ツール
+
+キャッシュ済の `equities_bars_daily` から直接計算するオフラインツール。追加 API コールなし、numpy / pandas 非依存の pure Python 実装。Claude と組み合わせた銘柄スクリーニング向け。
+
+| ツール名 | 説明 |
+|---|---|
+| `detect_price_limit` | `UL`/`LL` フラグからストップ高/安の銘柄を検出。終値が高安と一致する場合は `limit_high_close` / `limit_low_close` も True になる。 |
+| `compare_close_vs_vwap` | 日次 VWAP (`Va / Vo`) と終値を比較。単日または期間指定。 |
+| `detect_yearly_high_low` | 株式分割調整後（`AdjH`/`AdjL`/`AdjC`）で 52 週（≈252 営業日）高値・安値更新を判定。単一銘柄または横断。 |
+| `detect_volume_surge` | 指定日の出来高が直近 20 営業日平均の `multiplier` 倍（既定 2.0）以上の銘柄を列挙。 |
 
 ### ユーティリティ — 5ツール
 

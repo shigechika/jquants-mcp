@@ -582,7 +582,7 @@ async def delete_api_key() -> dict[str, Any]:
 
 def _register_tools() -> None:
     """Register all endpoint tools. Called during module import."""
-    from .tools import bulk, derivatives, equities, financials, indices, markets
+    from .tools import bulk, derivatives, equities, financials, indices, markets, screener
 
     equities.register(mcp, _get_user_client, _get_cache)
     financials.register(mcp, _get_user_client, _get_cache)
@@ -590,6 +590,7 @@ def _register_tools() -> None:
     derivatives.register(mcp, _get_user_client, _get_cache)
     markets.register(mcp, _get_user_client, _get_cache)
     bulk.register(mcp, _get_user_client, _get_cache)
+    screener.register(mcp, _get_user_client, _get_cache)
 
 
 _register_tools()

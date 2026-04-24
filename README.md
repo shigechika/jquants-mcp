@@ -10,7 +10,7 @@ Deployment shapes (stdio / self-hosted HTTP / Cloud Run) and how to pick between
 
 ## Features
 
-- **27 MCP tools** covering all J-Quants API v2 endpoints
+- **31 MCP tools** covering all J-Quants API v2 endpoints, plus an offline screener
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -575,6 +575,17 @@ On first use, Claude Desktop opens a browser window for GitHub OAuth. After auth
 |---|---|---|---|
 | `get_bulk_list` | `/bulk/list` | Light+ | List downloadable CSV files |
 | `get_bulk_download_url` | `/bulk/get` | Light+ | Get signed download URL |
+
+### Screener (4 tools)
+
+Offline tools that compute signals directly from the cached `equities_bars_daily` rows. No extra API calls, pure Python, no numpy/pandas. Intended for Claude-assisted stock screening without hitting rate limits.
+
+| Tool | Description |
+|---|---|
+| `detect_price_limit` | Find stocks that touched the daily upper/lower price limit (ストップ高/安) using the `UL`/`LL` flags. Optional close-at-limit refinement via `C == H` / `C == L`. |
+| `compare_close_vs_vwap` | Compute the daily VWAP (`Va / Vo`) and compare to the close for a given code + date or date range. |
+| `detect_yearly_high_low` | Flag new 52-week (≈252 session) highs/lows using split-adjusted prices (`AdjH`, `AdjL`, `AdjC`). Single code or cross-sectional. |
+| `detect_volume_surge` | List stocks whose volume on `date` exceeds the trailing 20-day average by a configurable `multiplier` (default 2.0). |
 
 ### Utility (5 tools)
 
