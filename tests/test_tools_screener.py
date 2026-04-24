@@ -164,27 +164,16 @@ class TestCompareCloseVsVwap:
 
 
 class TestDetectYearlyHighLow:
-    async def test_new_high_flagged(self, mock_env):
+    async def test_close_above_prior_high(self, mock_env):
         # Sessions spread across ~3 months, final close above prior highs.
         start = datetime(2026, 1, 5)
         rows = []
         for i in range(20):
             d = (start + timedelta(days=i * 7)).strftime("%Y-%m-%d")
             rows.append(_bar("27800", d, h=100 + i, low=80, c=95 + i))
-        # Final bar closes at the highest high so far.
+        # Prior window high is 119 (i=19). Today closes well above.
         final_date = (start + timedelta(days=20 * 7)).strftime("%Y-%m-%d")
-        rows.append(
-            _bar(
-                "27800",
-                final_date,
-                h=200,
-                low=180,
-                c=200,
-                adj_c=200,
-                adj_h=200,
-                adj_l=180,
-            )
-        )
+        rows.append(_bar("27800", final_date, h=200, low=180, c=200))
         _seed(mock_env["cache"], rows)
 
         result = await _call(
@@ -196,7 +185,54 @@ class TestDetectYearlyHighLow:
         assert result["count"] == 1
         r = result["data"][0]
         assert r["new_yearly_high"] is True
+        assert r["new_yearly_high_close"] is True
         assert r["new_yearly_low"] is False
+        assert r["new_yearly_low_close"] is False
+        assert r["prior_window_high"] == pytest.approx(119.0)
+
+    async def test_intraday_break_then_close_below(self, mock_env):
+        # Today's high pierces the prior window high, but close pulls
+        # back below it: intraday signal True, close signal False.
+        start = datetime(2026, 1, 5)
+        rows = []
+        for i in range(20):
+            d = (start + timedelta(days=i * 7)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, h=100 + i, low=80, c=95 + i))
+        # Prior high = 119. Today: H=130 (new high intraday), C=110 (below).
+        final_date = (start + timedelta(days=20 * 7)).strftime("%Y-%m-%d")
+        rows.append(_bar("27800", final_date, h=130, low=105, c=110))
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "detect_yearly_high_low",
+            date=final_date,
+            code="27800",
+            window_days=30,
+        )
+        r = result["data"][0]
+        assert r["new_yearly_high"] is True  # intraday break
+        assert r["new_yearly_high_close"] is False  # but close pulled back
+        assert r["new_yearly_low"] is False
+
+    async def test_neither_signal_for_interior_day(self, mock_env):
+        # All three measures should be False on a flat trading day.
+        start = datetime(2026, 1, 5)
+        rows = [
+            _bar("27800", (start + timedelta(days=i * 7)).strftime("%Y-%m-%d")) for i in range(20)
+        ]
+        _seed(mock_env["cache"], rows)
+        final_date = (start + timedelta(days=19 * 7)).strftime("%Y-%m-%d")
+        result = await _call(
+            "detect_yearly_high_low",
+            date=final_date,
+            code="27800",
+            window_days=15,
+        )
+        r = result["data"][0]
+        assert r["new_yearly_high"] is False
+        assert r["new_yearly_low"] is False
+        assert r["new_yearly_high_close"] is False
+        assert r["new_yearly_low_close"] is False
 
     async def test_cross_sectional_filters_to_hits(self, mock_env):
         # Code A: new high; Code B: ordinary day.
@@ -215,6 +251,21 @@ class TestDetectYearlyHighLow:
         codes = {row["Code"] for row in result["data"]}
         assert "10000" in codes
         assert "20000" not in codes
+
+    async def test_cross_sectional_keeps_intraday_break(self, mock_env):
+        # Cross-sectional should keep stocks with intraday break even
+        # if close pulled back — that is still a meaningful signal.
+        date_today = "2026-04-10"
+        rows = []
+        for i in range(15):
+            d = (datetime(2026, 2, 1) + timedelta(days=i * 2)).strftime("%Y-%m-%d")
+            rows.append(_bar("10000", d, h=100, low=80, c=90))
+        rows.append(_bar("10000", date_today, h=150, low=85, c=95))
+        _seed(mock_env["cache"], rows)
+
+        result = await _call("detect_yearly_high_low", date=date_today, window_days=30)
+        codes = {row["Code"] for row in result["data"]}
+        assert "10000" in codes
 
 
 class TestDetectVolumeSurge:
@@ -245,7 +296,9 @@ class TestDetectVolumeSurge:
         result = await _call("detect_volume_surge", date=probe, multiplier=2.0, baseline_days=20)
         assert result["count"] == 0
 
-    async def test_zero_baseline_skipped(self, mock_env):
+    async def test_zero_baseline_volume_skipped(self, mock_env):
+        # Stocks whose entire baseline window has Vo=0 (suspended/illiquid)
+        # are skipped to avoid divide-by-zero on the surge ratio.
         rows = []
         for i in range(5):
             d = (datetime(2026, 3, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
@@ -259,5 +312,11 @@ class TestDetectVolumeSurge:
 
     async def test_invalid_multiplier(self, mock_env):
         result = await _call("detect_volume_surge", date="2026-04-01", multiplier=0)
+        assert result.get("error") is True
+        assert result.get("error_type") == "ValidationError"
+
+    async def test_invalid_baseline_days(self, mock_env):
+        # baseline_days < 2 fails the validation guard.
+        result = await _call("detect_volume_surge", date="2026-04-01", baseline_days=1)
         assert result.get("error") is True
         assert result.get("error_type") == "ValidationError"

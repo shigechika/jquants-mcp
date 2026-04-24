@@ -10,7 +10,7 @@ Deployment shapes (stdio / self-hosted HTTP / Cloud Run) and how to pick between
 
 ## Features
 
-- **31 MCP tools** covering all J-Quants API v2 endpoints, plus an offline screener
+- **27 MCP tools** covering all J-Quants API v2 endpoints, plus 4 offline screener tools
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)

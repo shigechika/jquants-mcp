@@ -25,7 +25,6 @@ date-range gating applied by the cache layer.
 from __future__ import annotations
 
 import logging
-from datetime import date as _date
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -82,11 +81,12 @@ def _normalize_code(code: str) -> str:
 def _calendar_window_start(end_date: str, trading_days: int) -> str:
     """Return a calendar-date start ≥ ``trading_days`` trading days earlier.
 
-    Trading days ≈ 252/year in Japan. Pad by ~1.5× to cover weekends and
-    holidays without a calendar lookup.
+    Trading days ≈ 252/year in Japan. Pad by 2× plus an extra two weeks so
+    that long holiday clusters (Golden Week, year-end) do not eat into the
+    requested window.
     """
     end = datetime.strptime(end_date, "%Y-%m-%d").date()
-    calendar_days = int(trading_days * 1.5) + 7
+    calendar_days = trading_days * 2 + 14
     return (end - timedelta(days=calendar_days)).isoformat()
 
 
@@ -272,18 +272,31 @@ def register(
         Uses split-adjusted prices (``AdjH`` / ``AdjL`` / ``AdjC``) so
         corporate actions inside the window do not distort the signal.
 
-        A "new yearly high" means today's ``AdjC`` equals the max
-        ``AdjH`` over the trailing window including today. Analogous for
-        lows.
+        Today's bar is compared against the **prior** ``window_days - 1``
+        sessions:
+
+        - ``new_yearly_high`` — today's intraday high (``AdjH``) strictly
+          exceeds the prior window's max high
+        - ``new_yearly_high_close`` — today's close (``AdjC``) strictly
+          exceeds the prior window's max high (a stronger signal than
+          intraday-only)
+        - ``new_yearly_low`` / ``new_yearly_low_close`` — analogous for
+          lows.
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily Tier 1 cache
+
+        Performance: cross-sectional mode (``code=None``) with the default
+        252-session window scans roughly 1M rows on a populated cache and
+        can take 10–30 seconds. Specify ``code`` for sub-second response,
+        or shrink ``window_days`` for cross-sectional scans.
 
         Args:
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
             code: Optional 4- or 5-digit code. If omitted, checks every
                 code with a row on ``date`` (cross-sectional scan).
-            window_days: Trailing trading-day window. Default 252.
+            window_days: Trailing trading-day window (today included).
+                Default 252.
         """
         errors = collect_errors(validate_date(date), validate_code(code))
         if errors:
@@ -333,30 +346,48 @@ def register(
                 # Last row in the window must be the requested date;
                 # otherwise the stock didn't trade that day.
                 continue
+            if len(window) < 2:
+                # Need at least one prior session for a comparison.
+                continue
             today = window[-1]
-            adj_close = _as_float(today.get("AdjC"))
-            highs = [_as_float(s.get("AdjH")) for s in window]
-            lows = [_as_float(s.get("AdjL")) for s in window]
-            highs = [h for h in highs if h is not None]
-            lows = [low for low in lows if low is not None]
-            if not highs or not lows or adj_close is None:
+            prior = window[:-1]
+
+            today_high = _as_float(today.get("AdjH"))
+            today_low = _as_float(today.get("AdjL"))
+            today_close = _as_float(today.get("AdjC"))
+
+            prior_highs = [_as_float(s.get("AdjH")) for s in prior]
+            prior_highs = [h for h in prior_highs if h is not None]
+            prior_lows = [_as_float(s.get("AdjL")) for s in prior]
+            prior_lows = [low for low in prior_lows if low is not None]
+            if not prior_highs or not prior_lows:
                 continue
-            window_high = max(highs)
-            window_low = min(lows)
-            new_high = adj_close >= window_high
-            new_low = adj_close <= window_low
-            if code is None and not (new_high or new_low):
+
+            prior_high = max(prior_highs)
+            prior_low = min(prior_lows)
+
+            new_high = today_high is not None and today_high > prior_high
+            new_low = today_low is not None and today_low < prior_low
+            new_high_close = today_close is not None and today_close > prior_high
+            new_low_close = today_close is not None and today_close < prior_low
+
+            if code is None and not (new_high or new_low or new_high_close or new_low_close):
                 continue
+
             matches.append(
                 {
                     "Code": c,
                     "Date": norm_date,
                     "window_days": len(window),
-                    "AdjC": adj_close,
-                    "window_high": window_high,
-                    "window_low": window_low,
+                    "AdjH": today_high,
+                    "AdjL": today_low,
+                    "AdjC": today_close,
+                    "prior_window_high": prior_high,
+                    "prior_window_low": prior_low,
                     "new_yearly_high": new_high,
                     "new_yearly_low": new_low,
+                    "new_yearly_high_close": new_high_close,
+                    "new_yearly_low_close": new_low_close,
                 }
             )
         return {"count": len(matches), "data": matches}
@@ -485,7 +516,3 @@ def _as_float(v: Any) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
-
-
-# ``_date`` is imported for future calendar operations; silence lint.
-_ = _date
