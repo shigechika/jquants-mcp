@@ -303,6 +303,12 @@ def register(
         can take 10–30 seconds. Specify ``code`` for sub-second response,
         or shrink ``window_sessions`` for cross-sectional scans.
 
+        **Call sequentially when scanning multiple dates** (one date per
+        tool call, not in parallel). Cross-sectional scans are CPU-heavy;
+        firing N dates in parallel multiplies server load and risks
+        client-side tool-call timeouts. A native multi-date batch
+        endpoint is on the roadmap.
+
         Args:
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
             code: Optional 4- or 5-digit code. If omitted, scans every
@@ -366,6 +372,12 @@ def register(
         Performance: cross-sectional mode (``code=None``) loads year-to-
         date rows for every listed stock. Late in the year (~December)
         this approaches ~1M rows; in January it is essentially free.
+
+        **Call sequentially when scanning multiple dates** (one date per
+        tool call, not in parallel). Cross-sectional scans are CPU-heavy;
+        firing N dates in parallel multiplies server load and risks
+        client-side tool-call timeouts. A native multi-date batch
+        endpoint is on the roadmap.
 
         Args:
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
