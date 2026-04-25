@@ -22,6 +22,11 @@ venv/
 *.sqlite3
 
 .DS_Store
-.claude/
+# Ignore .claude/ contents (chat history, local memory, etc.) but keep
+# project-level slash-command overrides (e.g. localised /review). Git
+# can't apply a re-include negation when the parent directory itself
+# is ignored, so we ignore the children instead of the dir.
+.claude/*
+!.claude/commands/
 
 load_test_results/
