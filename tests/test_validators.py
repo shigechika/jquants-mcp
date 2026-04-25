@@ -71,9 +71,31 @@ def test_validate_code_rejects_letter_in_wrong_position():
     assert validate_code("13AA0") is not None  # 英字 2 文字
 
 
-def test_validate_code_rejects_4digit_with_letter():
-    # 4 桁形式は legacy の数字のみ受理 (e.g. 7203)。英字混入は rejected。
-    assert validate_code("130A") is not None
+def test_validate_code_alphanumeric_4char_dddu():
+    # Issue #153 — JPX 公式 display 形式 (Kabutan / Yahoo! ファイナンス
+    # 等で表示される 4 桁英数 ticker、e.g. 130A) も受理。
+    # _normalize_code が 4桁→5桁化 (130A → 130A0) するので cache lookup
+    # も自然に動く。これにより PR #151 で書いた
+    # `test_validate_code_rejects_4digit_with_letter` の前提は逆転した。
+    assert validate_code("130A") is None
+    assert validate_code("554A") is None
+    assert validate_code("999Z") is None
+
+
+def test_validate_code_rejects_4char_pure_letters():
+    # 4 文字 pure letters は J-Quants 仕様外、引き続き reject。
+    assert validate_code("ABCD") is not None
+
+
+def test_validate_code_rejects_4char_two_letters():
+    # 英字 2 文字 (e.g. "12AB") は DDDU パターンに合致しない、reject。
+    assert validate_code("12AB") is not None
+    assert validate_code("1AB2") is not None
+
+
+def test_validate_code_rejects_3char_alphanumeric():
+    # 3 文字以下は短すぎ、引き続き reject。
+    assert validate_code("13A") is not None
 
 
 # ---------------------------------------------------------------------------

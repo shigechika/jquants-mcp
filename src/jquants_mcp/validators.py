@@ -6,9 +6,11 @@ import re
 
 # 銘柄コード:
 #   - 4-5 桁の数字（legacy 4桁、現行 5桁数字。例: 7203, 72030）
-#   - 5 桁の英数混じり (DDDUD: 数字3 + 英大字1 + 数字1。例: 130A0)
+#   - 4-5 桁の英数混じり (DDDU / DDDUD: 数字3 + 英大字1 + 数字 0 or 1。例: 130A, 130A0)
 # 英数混じりは新規上場で近年増加。jpx-tickers.csv (4438 件) で 340 件 (7.6%) を占める。
-_CODE_RE = re.compile(r"^([0-9]{4,5}|[0-9]{3}[A-Z][0-9])$")
+# 4 桁形式は Kabutan / Yahoo!ファイナンス / JPX 公式の display 形式、
+# 5 桁形式は J-Quants API の正規化形（末尾 0 = ordinary share suffix）。
+_CODE_RE = re.compile(r"^([0-9]{4,5}|[0-9]{3}[A-Z][0-9]?)$")
 
 # 日付: YYYYMMDD または YYYY-MM-DD
 _DATE_RE = re.compile(r"^\d{4}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$")
@@ -70,8 +72,8 @@ def validate_code(code: str | None, param: str = "code") -> str | None:
         return None
     if not _CODE_RE.match(code):
         return (
-            f"'{param}' must be a 4- or 5-digit J-Quants code (e.g. '7203', '72030', "
-            f"or alphanumeric '130A0'). Got: '{code}'"
+            f"'{param}' must be a 4- or 5-character J-Quants code "
+            f"(e.g. '7203', '72030', '130A', '130A0'). Got: '{code}'"
         )
     return None
 

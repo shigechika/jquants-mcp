@@ -389,6 +389,27 @@ class TestRenderCandlestickEdgeCases:
         )
         assert _is_real_chart_png(png)
 
+    async def test_4char_alphanumeric_code_accepted_end_to_end(self, mock_env):
+        # Issue #153 regression — the 4-char display form (e.g. 130A)
+        # must also pass validate_code, get normalised to 130A0 by
+        # _normalize_code, and reach the rendering path. Cache stores
+        # under the 5-char form, so seeding with 130A0 and querying
+        # with 130A exercises the normalisation round-trip.
+        rows = []
+        for i in range(10):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("130A0", d))
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_candlestick",
+            code="130A",  # caller-supplied 4-char display form
+            from_date="2026-04-01",
+            to_date="2026-04-10",
+            indicators=["volume"],
+        )
+        assert _is_real_chart_png(png)
+
     async def test_malformed_row_skipped_not_crashing(self, mock_env):
         # Cache may carry rows missing OHLC fields (legacy / partial
         # imports). The chart loop catches these and continues; verify
