@@ -238,7 +238,11 @@ class TestDetect52wHighLow:
         assert r["new_high"] is True  # H == prior max → tie
         assert r["new_high_close"] is True  # C == prior max → tie
 
-    async def test_neither_signal_for_interior_day(self, mock_env):
+    async def test_flat_market_ties_high_intraday_only(self, mock_env):
+        # Every prior bar uses the _bar() defaults (H=110, C=105). Today's
+        # H=110 ties the prior max → new_high=True (>= convention). The
+        # close at 105 is below the prior max → new_high_close=False.
+        # Lows are also flat at 90, so today's L=90 ties → new_low=True.
         start = datetime(2026, 1, 5)
         rows = [
             _bar("27800", (start + timedelta(days=i * 7)).strftime("%Y-%m-%d")) for i in range(20)
@@ -253,8 +257,36 @@ class TestDetect52wHighLow:
             min_prior_sessions=1,
         )
         r = result["data"][0]
-        assert r["new_high"] is True  # tie at flat 110 default
-        assert r["new_high_close"] is False  # close 105 below max 110
+        assert r["new_high"] is True  # H ties prior max
+        assert r["new_high_close"] is False  # C below prior max
+        assert r["new_low"] is True  # L ties prior min
+        assert r["new_low_close"] is False  # C above prior min
+
+    async def test_inside_prior_range_returns_all_false(self, mock_env):
+        # Today's bar is strictly inside the prior range: nothing flags.
+        start = datetime(2026, 1, 5)
+        rows = []
+        for i in range(15):
+            d = (start + timedelta(days=i * 7)).strftime("%Y-%m-%d")
+            # prior: H climbs 200..214, L 100..114, C 150..164
+            rows.append(_bar("27800", d, h=200 + i, low=100 + i, c=150 + i))
+        # Today: well inside the prior range — H=180, L=120, C=160.
+        final_date = (start + timedelta(days=15 * 7)).strftime("%Y-%m-%d")
+        rows.append(_bar("27800", final_date, h=180, low=120, c=160))
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "detect_52w_high_low",
+            date=final_date,
+            code="27800",
+            window_sessions=20,
+            min_prior_sessions=1,
+        )
+        r = result["data"][0]
+        assert r["new_high"] is False
+        assert r["new_high_close"] is False
+        assert r["new_low"] is False
+        assert r["new_low_close"] is False
 
     async def test_cross_sectional_filters_to_hits(self, mock_env):
         date_today = "2026-04-10"
