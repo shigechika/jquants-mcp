@@ -5,6 +5,27 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ---
 
+## [0.6.0](https://github.com/shigechika/jquants-mcp/compare/v0.5.0...v0.6.0) (2026-04-25)
+
+
+### Features
+
+* add server.json manifest for MCP registry ([#130](https://github.com/shigechika/jquants-mcp/issues/130)) ([0c20096](https://github.com/shigechika/jquants-mcp/commit/0c20096ebaedcbc1b0adc20247fc174dbd09caea)), closes [#123](https://github.com/shigechika/jquants-mcp/issues/123) [#102](https://github.com/shigechika/jquants-mcp/issues/102)
+* **annotations:** declare MCP tool annotations on every registered tool ([#145](https://github.com/shigechika/jquants-mcp/issues/145)) ([2f86d9c](https://github.com/shigechika/jquants-mcp/commit/2f86d9cac726d0218cea73dce47c0d1f45e31712))
+* **charts:** add render_candlestick (opt-in [charts] extra) ([#134](https://github.com/shigechika/jquants-mcp/issues/134)) ([a2d1898](https://github.com/shigechika/jquants-mcp/commit/a2d1898d1b98d39776b3948e51ead7c26ad12033))
+* **charts:** JP SMA defaults + edge-case tests + addplot=None bug fix ([#147](https://github.com/shigechika/jquants-mcp/issues/147)) ([7c2676a](https://github.com/shigechika/jquants-mcp/commit/7c2676aed97f3f2073d88ff71ff791b1c6b7f030))
+* **charts:** render 寄らずストップ高/安 lock days as coloured horizontal bars ([#149](https://github.com/shigechika/jquants-mcp/issues/149)) ([6c0fb7f](https://github.com/shigechika/jquants-mcp/commit/6c0fb7fd03ddecd0830f6e656aa9c515f17656a6))
+* **screener:** add 5 offline screener tools (52w + YTD high/low) ([#133](https://github.com/shigechika/jquants-mcp/issues/133)) ([be7db8c](https://github.com/shigechika/jquants-mcp/commit/be7db8c4a5db3dfbcb79e5a9cdb1fbc753259d01))
+
+
+### Bug Fixes
+
+* **allowlist:** use OAuth email claim, not Google/GitHub sub ([#140](https://github.com/shigechika/jquants-mcp/issues/140)) ([d198901](https://github.com/shigechika/jquants-mcp/commit/d198901f6412d17b70d45a4a19f09ccea3a895da))
+* **charts:** collapse alphanumeric ordinary-share codes to 4-char display form ([#152](https://github.com/shigechika/jquants-mcp/issues/152)) ([ef0ff2b](https://github.com/shigechika/jquants-mcp/commit/ef0ff2b6fb20773d1611c869d542bddfa3f67649))
+* **docker:** include [charts] extra in Cloud Run image ([#144](https://github.com/shigechika/jquants-mcp/issues/144)) ([1e36f5b](https://github.com/shigechika/jquants-mcp/commit/1e36f5b41dee5aaf36ee4895aec21b016c5e9512))
+* **validators:** accept 4-character alphanumeric codes (e.g. 130A) for input symmetry ([#154](https://github.com/shigechika/jquants-mcp/issues/154)) ([b27c18d](https://github.com/shigechika/jquants-mcp/commit/b27c18dc7cd16448d5de8a7ef4e59b86712ea427))
+* **validators:** accept alphanumeric J-Quants codes (e.g. 130A0, 554A0) ([#151](https://github.com/shigechika/jquants-mcp/issues/151)) ([1e21cfc](https://github.com/shigechika/jquants-mcp/commit/1e21cfcf01dc5f384821d4793067b206a1eb141e))
+
 ## [0.5.0](https://github.com/shigechika/jquants-mcp/compare/v0.4.0...v0.5.0) (2026-04-19)
 
 
