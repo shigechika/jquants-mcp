@@ -88,8 +88,8 @@ def register(
     stdio profile skip the tool registration without raising.
     """
     try:
-        import mplfinance as mpf  # noqa: F401 — import side-effects
-        import pandas as pd  # noqa: F401
+        import mplfinance as mpf
+        import pandas as pd
     except ModuleNotFoundError:
         logger.info(
             "charts: mplfinance / matplotlib not installed; "
@@ -97,11 +97,6 @@ def register(
             "Install with: pip install 'jquants-mcp[charts]'"
         )
         return
-
-    # Keep the imports inside the closure so the type checker sees them
-    # as definitely-bound; the outer try only proves availability.
-    import mplfinance as mpf  # noqa: F811
-    import pandas as pd  # noqa: F811
 
     @mcp.tool()
     async def render_candlestick(
