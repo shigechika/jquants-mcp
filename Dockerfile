@@ -7,9 +7,12 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 
-# Install dependencies first (separate layer for caching)
+# Install dependencies first (separate layer for caching).
+# `charts` extra is included in the production image so the
+# `render_candlestick` MCP tool is registered (per #109). Adds ~60 MB
+# (matplotlib + mplfinance + transitive pandas) to the image.
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project --extra cloud-run
+RUN uv sync --frozen --no-dev --no-install-project --extra cloud-run --extra charts
 
 # Install the project itself
 COPY README.md ./
@@ -17,7 +20,7 @@ COPY src/ ./src/
 # hatch-vcs needs git tags; Docker build has no .git dir.
 # Fallback: set a placeholder version for the container build.
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0+docker
-RUN uv sync --frozen --no-dev --extra cloud-run
+RUN uv sync --frozen --no-dev --extra cloud-run --extra charts
 
 
 # Stage 2: Runtime image
