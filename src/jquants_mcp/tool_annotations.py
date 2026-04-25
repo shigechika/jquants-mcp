@@ -34,13 +34,12 @@ READ_ONLY_CACHE: dict[str, bool] = {
 }
 
 # Tools that READ purely server-local state (config, cache stats, health).
-# Same shape as READ_ONLY_CACHE but separated for clarity at call sites.
-READ_ONLY_LOCAL: dict[str, bool] = {
-    "readOnlyHint": True,
-    "destructiveHint": False,
-    "idempotentHint": True,
-    "openWorldHint": False,
-}
+# Trust profile is identical to READ_ONLY_CACHE (no external system hit,
+# no mutation), so we expose this as an alias rather than duplicating the
+# dict. The two names live separately so call sites read intentionally —
+# ``READ_ONLY_CACHE`` for cache reads, ``READ_ONLY_LOCAL`` for server-state
+# reads — even though the MCP wire payload is identical.
+READ_ONLY_LOCAL = READ_ONLY_CACHE
 
 # Tools that MUTATE server-local state (clear cache, register/delete
 # per-user API key). MCP clients should require confirmation per call.

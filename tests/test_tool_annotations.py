@@ -91,10 +91,11 @@ async def test_tool_has_expected_annotations(name: str, expected: dict[str, bool
             pytest.skip("[charts] extra not installed; render_candlestick not registered")
         pytest.fail(f"tool {name!r} not registered")
     tool = tools[name]
-    annotations = getattr(tool, "annotations", None)
+    annotations = tool.annotations
     assert annotations is not None, f"{name} has no annotations"
     # FastMCP normalises dict input into a ToolAnnotations model — compare
-    # the relevant fields rather than the whole object.
+    # the relevant fields rather than the whole object. ``getattr`` is
+    # necessary here because the field name is dynamic per loop iteration.
     for key, expected_value in expected.items():
         actual = getattr(annotations, key, None)
         assert actual == expected_value, f"{name}.{key} expected {expected_value!r}, got {actual!r}"

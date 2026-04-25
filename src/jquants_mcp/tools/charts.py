@@ -194,9 +194,10 @@ def _build_chart_title(code: str, company: str | None, norm_from: str, norm_to: 
     Yahoo! Finance Japan, JPX official pages, every JP brokerage chart,
     and TradingView all show the chart title without an explicit
     "adjusted" suffix. Adjusted is the universal default convention; a
-    suffix would be surprising rather than informative. Callers that
-    pass ``adjusted=False`` are doing so deliberately and should rely
-    on their own bookkeeping.
+    suffix would be surprising rather than informative. The
+    ``render_candlestick`` caller may pass ``adjusted=False`` to use
+    raw prices, but that's a deliberate choice and the title doesn't
+    advertise it.
 
     Extracted so the title format can be unit-tested without spinning
     up matplotlib.

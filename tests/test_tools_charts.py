@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import builtins
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -580,6 +581,40 @@ class TestChartTitleHelpers:
         assert "27800" not in title  # full 5-digit form must NOT appear
         assert "テスト株式会社" in title
 
+    async def test_render_title_uses_4char_form_for_alphanumeric(self, mock_env):
+        # Issue #153 / PR #154 follow-through: when the caller supplies
+        # the 4-char alphanumeric form (e.g. ``130A``), the cache stores
+        # the 5-char form (``130A0``) and the chart title must show the
+        # 4-char display form, matching JPX / Kabutan / Yahoo! Finance
+        # Japan / TradingView convention. This pins the round-trip:
+        # input 130A → normalise to 130A0 → cache hit → display 130A.
+        rows = [
+            _bar("130A0", (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d"))
+            for i in range(10)
+        ]
+        _seed(mock_env["cache"], rows)
+        _seed_master(mock_env["cache"], "130A0", "Veritas In Silico")
+
+        captured: dict = {}
+
+        def fake_plot(df, **kwargs):
+            captured.update(kwargs)
+            kwargs["savefig"]["fname"].write(_make_fake_png())
+
+        with patch("mplfinance.plot", side_effect=fake_plot):
+            await _call_image(
+                "render_candlestick",
+                code="130A",  # caller-supplied 4-char display form
+                from_date="2026-04-01",
+                to_date="2026-04-10",
+                indicators=["volume"],
+            )
+
+        title = captured.get("title", "")
+        assert title.startswith("130A ")
+        assert "130A0" not in title  # 5-char API form must NOT appear
+        assert "Veritas In Silico" in title
+
     async def test_get_company_name_from_master(self, mock_env):
         from jquants_mcp.tools.charts import _get_company_name
 
@@ -980,8 +1015,6 @@ class TestRenderCandlestickLockDayOverlay:
             captured.update(kwargs)
             # Return a minimal fig + axes triple. The first axis must accept
             # ``hlines`` and ``savefig``-able fig.
-            from unittest.mock import MagicMock
-
             fig = MagicMock()
             ax = MagicMock()
 
@@ -1048,8 +1081,6 @@ class TestRenderCandlestickLockDayOverlay:
         rows.append(lock_low)
         _seed(mock_env["cache"], rows)
 
-        from unittest.mock import MagicMock
-
         fig = MagicMock()
         ax = MagicMock()
 
@@ -1113,9 +1144,6 @@ def test_register_no_op_when_extras_missing():
     Simulated by patching the import to raise. Confirms the lean stdio
     profile (no [charts] extras) starts cleanly.
     """
-    import builtins
-    from unittest.mock import MagicMock
-
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
