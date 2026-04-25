@@ -18,6 +18,7 @@ from . import __version__
 from .cache.store import CacheStore
 from .client import JQuantsClient
 from .config import Settings
+from .tool_annotations import DESTRUCTIVE_LOCAL, READ_ONLY_LOCAL
 
 logger = logging.getLogger(__name__)
 
@@ -367,7 +368,7 @@ async def _get_user_client() -> JQuantsClient:
 # ------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_LOCAL)
 def health_check() -> dict[str, Any]:
     """Check server health and API key configuration.
 
@@ -407,7 +408,7 @@ def health_check() -> dict[str, Any]:
     }
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY_LOCAL)
 def cache_status() -> dict[str, Any]:
     """Show cache statistics.
 
@@ -431,7 +432,7 @@ def cache_status() -> dict[str, Any]:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE_LOCAL)
 def cache_clear(table: str | None = None) -> dict[str, Any]:
     """Clear cached data.
 
@@ -442,7 +443,7 @@ def cache_clear(table: str | None = None) -> dict[str, Any]:
     return {"cleared": result}
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE_LOCAL)
 async def register_api_key(api_key: str) -> dict[str, Any]:
     """Register or update your J-Quants API key (multi-user mode).
 
@@ -535,7 +536,7 @@ async def register_api_key(api_key: str) -> dict[str, Any]:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=DESTRUCTIVE_LOCAL)
 async def delete_api_key() -> dict[str, Any]:
     """Delete your registered J-Quants API key (multi-user mode).
 

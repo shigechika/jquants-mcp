@@ -17,6 +17,7 @@ from ..exceptions import (
     UserNotConfiguredError,
     format_api_error,
 )
+from ..tool_annotations import READ_ONLY_API
 from ..validators import (
     collect_errors,
     make_validation_error_response,
@@ -95,7 +96,7 @@ def register(
 ) -> None:
     """Register financial tools on the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_fins_summary(
         code: str | None = None,
         date: str | None = None,
@@ -150,7 +151,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_fins_details(
         code: str | None = None,
         date: str | None = None,
@@ -194,7 +195,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_fins_dividend(
         code: str | None = None,
         date: str | None = None,

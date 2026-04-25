@@ -17,6 +17,7 @@ from ..exceptions import (
     UserNotConfiguredError,
     format_api_error,
 )
+from ..tool_annotations import READ_ONLY_API
 from ..validators import (
     collect_errors,
     make_validation_error_response,
@@ -42,7 +43,7 @@ def register(
 ) -> None:
     """Register market tools on the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_margin_interest(
         code: str | None = None,
         date: str | None = None,
@@ -92,7 +93,7 @@ def register(
         # パラメータなし: Tier 2 フォールバック
         return await _tier2_fallback(client, cache, "/markets/margin-interest", {})
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_margin_alert(
         code: str | None = None,
         date: str | None = None,
@@ -141,7 +142,7 @@ def register(
 
         return await _tier2_fallback(client, cache, "/markets/margin-alert", {})
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_short_ratio(
         s33: str | None = None,
         date: str | None = None,
@@ -189,7 +190,7 @@ def register(
 
         return await _tier2_fallback(client, cache, "/markets/short-ratio", {})
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_short_sale_report(
         code: str | None = None,
         disc_date: str | None = None,
@@ -241,7 +242,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_breakdown(
         code: str | None = None,
         date: str | None = None,
@@ -280,7 +281,7 @@ def register(
 
         return await _tier2_fallback(client, cache, "/markets/breakdown", {})
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_calendar(
         hol_div: str | None = None,
         date_from: str | None = None,

@@ -32,6 +32,7 @@ from ..exceptions import (
     UserNotConfiguredError,
     format_api_error,
 )
+from ..tool_annotations import READ_ONLY_CACHE
 from ..validators import (
     collect_errors,
     validate_code,
@@ -203,7 +204,7 @@ def register(
         for alias, base in _STYLE_ALIASES.items()
     }
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_CACHE)
     async def render_candlestick(
         code: str,
         from_date: str,

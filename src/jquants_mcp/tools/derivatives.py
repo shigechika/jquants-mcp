@@ -17,6 +17,7 @@ from ..exceptions import (
     UserNotConfiguredError,
     format_api_error,
 )
+from ..tool_annotations import READ_ONLY_API
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ def register(
 ) -> None:
     """Register derivative tools on the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_derivatives_bars_daily_futures(
         date: str,
         category: str | None = None,
@@ -69,7 +70,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_derivatives_bars_daily_options(
         date: str,
         category: str | None = None,
@@ -117,7 +118,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_derivatives_bars_daily_options_225(
         date: str,
     ) -> dict[str, Any]:
