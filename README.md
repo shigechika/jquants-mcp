@@ -1,8 +1,10 @@
+<!-- mcp-name: io.github.shigechika/jquants-mcp -->
+
 # jquants-mcp
 
-An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that retrieves Japanese stock market data via [J-Quants API v2](https://jpx-jquants.com/).
+English | [日本語](README.ja.md)
 
-This is a companion to [j-quants-doc-mcp](https://github.com/knishioka/j-quants-doc-mcp) (documentation MCP) — while that server explains the API, this one actually **calls** it.
+An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that retrieves Japanese stock market data via [J-Quants API v2](https://jpx-jquants.com/).
 
 Release history and changelog: [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases).
 
@@ -10,7 +12,7 @@ Deployment shapes (stdio / self-hosted HTTP / Cloud Run) and how to pick between
 
 ## Features
 
-- **27 MCP tools** covering all J-Quants API v2 endpoints, plus 5 offline screener tools and an opt-in candlestick chart renderer
+- **33 MCP tools**: 22 covering all J-Quants API v2 endpoints, 5 utility, 5 offline screener, and 1 opt-in candlestick chart renderer
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -150,7 +152,7 @@ Linux/systemd and other init systems are not affected.
 
 ## Authentication
 
-jquants-mcp supports three authentication modes:
+jquants-mcp supports four authentication modes:
 
 | Mode | When to use |
 |---|---|
@@ -355,7 +357,7 @@ The `--scope` (`-s`) option controls where the configuration is stored:
 | `project` | Current project, shared with team | `.mcp.json` in project root |
 | `user` | All projects, current user only | `~/.claude.json` |
 
-API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `-e JQUANTS_API_KEY=...` only to override.
+API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `--env JQUANTS_API_KEY=...` only to override.
 
 ### Claude Desktop
 
@@ -491,7 +493,7 @@ Claude Desktop's **Connectors** feature provides a native OAuth 2.1 authenticati
 
 > **Requirements:**
 > - Server accessible over **HTTPS** (TLS certificate required)
-> - GitHub OAuth 2.1 configured (see [GitHub OAuth 2.1](#github-oauth-21))
+> - GitHub or Google OAuth 2.1 configured (see [GitHub OAuth 2.1](#github-oauth-21) / [Google OAuth 2.1](#google-oauth-21))
 > - `MCP_ENCRYPTION_KEY` set on the server (for per-user API key storage)
 
 **Server-side startup:**
@@ -520,7 +522,7 @@ jquants-mcp -t streamable-http --port 8080 \
 
 On first use, Claude Desktop opens a browser window for GitHub OAuth. After authentication, the token is stored automatically and subsequent connections use it silently.
 
-> **Note:** Claude Desktop Connectors support (`"type": "http"` with OAuth) is rolling out gradually. If it is not yet available in your version, use the [stdio proxy method](#claude-desktop-remote-via-stdio-proxy) as a fallback.
+> **Note:** Claude Desktop Connectors support (`"type": "http"` with OAuth) is rolling out gradually. If it is not yet available in your version, use the [stdio proxy method](#claude-desktop-remote-via-mcp-stdio) as a fallback.
 
 ## Available Tools
 

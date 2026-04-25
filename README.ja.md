@@ -1,8 +1,10 @@
+<!-- mcp-name: io.github.shigechika/jquants-mcp -->
+
 # jquants-mcp
 
-[J-Quants API v2](https://jpx-jquants.com/) を使って日本株市場データを取得する [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) サーバーです。
+[English](README.md) | 日本語
 
-[j-quants-doc-mcp](https://github.com/knishioka/j-quants-doc-mcp)（ドキュメント MCP）の対になるサーバーです。doc が API の仕様を説明するのに対し、dat は実際に **API を呼び出してデータを取得** します。
+[J-Quants API v2](https://jpx-jquants.com/) を使って日本株市場データを取得する [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) サーバーです。
 
 リリース履歴・変更履歴は [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases) を参照してください。
 
@@ -10,7 +12,7 @@
 
 ## 特徴
 
-- **27 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー + オフライン screener 5 ツール + opt-in ローソク足チャート描画
+- **33 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー（22）+ ユーティリティ（5）+ オフライン screener（5）+ opt-in ローソク足チャート描画（1）
 - **2層 SQLite キャッシュ** — 時系列データは行レベル、その他はレスポンスレベル（TTL付き）
 - **株式分割検知** — AdjFactor 変化時にキャッシュを自動無効化
 - **レート制限** — プラン別スライディングウィンドウ（Free: 5回/分, Light: 60, Standard: 120, Premium: 500）
@@ -150,7 +152,7 @@ Linux/systemd 等は影響を受けません。
 
 ## 認証
 
-jquants-mcp は 3 つの認証モードに対応しています:
+jquants-mcp は 4 つの認証モードに対応しています:
 
 | モード | 用途 |
 |---|---|
@@ -355,7 +357,7 @@ claude mcp add jquants-mcp \
 | `project` | 現在のプロジェクト、チーム共有 | プロジェクトルートの `.mcp.json` |
 | `user` | 全プロジェクト、現ユーザーのみ | `~/.claude.json` |
 
-API キーは `~/.jquants-api/jquants-api.toml` から自動検出されます。上書きが必要な場合のみ `-e JQUANTS_API_KEY=...` を指定してください。
+API キーは `~/.jquants-api/jquants-api.toml` から自動検出されます。上書きが必要な場合のみ `--env JQUANTS_API_KEY=...` を指定してください。
 
 ### Claude Desktop
 
@@ -491,7 +493,7 @@ Claude Desktop の **Connectors** 機能を使うと、ネイティブな OAuth 
 
 > **必要条件:**
 > - **HTTPS** でアクセス可能なサーバー（TLS 証明書が必要）
-> - GitHub OAuth 2.1 の設定済み（[GitHub OAuth 2.1](#github-oauth-21) を参照）
+> - GitHub または Google OAuth 2.1 の設定済み（[GitHub OAuth 2.1](#github-oauth-21) / [Google OAuth 2.1](#google-oauth-21) を参照）
 > - サーバー側で `MCP_ENCRYPTION_KEY` を設定済み（ユーザーごとの API キー保存に必要）
 
 **サーバー側の起動コマンド:**
@@ -520,7 +522,7 @@ jquants-mcp -t streamable-http --port 8080 \
 
 初回接続時に GitHub OAuth のブラウザウィンドウが開きます。認証後はトークンが自動保存され、以降の接続はサイレントに行われます。
 
-> **注意:** Claude Desktop の Connectors 対応（`"type": "http"` + OAuth）は段階的にロールアウト中です。まだ利用できない場合は [stdio プロキシ](#claude-desktop-stdio-プロキシ経由のリモート接続) をフォールバックとして使用してください。
+> **注意:** Claude Desktop の Connectors 対応（`"type": "http"` + OAuth）は段階的にロールアウト中です。まだ利用できない場合は、上記の **Claude Desktop（mcp-stdio 経由のリモート接続）** セクションをフォールバックとして使用してください。
 
 ## 提供ツール一覧
 
