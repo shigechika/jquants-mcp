@@ -45,6 +45,37 @@ def test_validate_code_custom_param_name():
     assert "instrument_code" in msg
 
 
+# DDDUD = 数字3 + 英大字 + 数字 — J-Quants の現行英数 5桁 code 形式。
+# jpx-tickers.csv で 340/4438 件 (7.6%) を占める。Issue #150 参照。
+def test_validate_code_alphanumeric_dddud():
+    assert validate_code("130A0") is None
+    assert validate_code("554A0") is None
+    assert validate_code("999Z9") is None
+
+
+def test_validate_code_rejects_pure_letters():
+    assert validate_code("ABCDE") is not None
+
+
+def test_validate_code_rejects_lowercase_letter():
+    # 仕様上 J-Quants は大文字のみ。lowercase は rejected。
+    assert validate_code("130a0") is not None
+
+
+def test_validate_code_rejects_letter_in_wrong_position():
+    # DDDUD 以外の英字配置 (e.g. ADDDU, DDUDD 等) は rejected。
+    # 将来 J-Quants が新パターンを採用したら _CODE_RE を拡張する。
+    assert validate_code("A1234") is not None
+    assert validate_code("12A34") is not None
+    assert validate_code("1234A") is not None
+    assert validate_code("13AA0") is not None  # 英字 2 文字
+
+
+def test_validate_code_rejects_4digit_with_letter():
+    # 4 桁形式は legacy の数字のみ受理 (e.g. 7203)。英字混入は rejected。
+    assert validate_code("130A") is not None
+
+
 # ---------------------------------------------------------------------------
 # validate_date
 # ---------------------------------------------------------------------------
