@@ -46,7 +46,7 @@ jobs:
               GCS_BUCKET=aikawa-dx-jquants-mcp,\
               JQUANTS_CACHE_DIR=/tmp,\
               OAUTH_PROVIDER=google,\
-              OAUTH_BASE_URL=https://jquants-mcp-29004083822.us-west1.run.app,\
+              OAUTH_BASE_URL=https://jquants-mcp.aikawa.jp,\
               OAUTH_REQUIRE_CONSENT=false,\
               GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }},\
               GITHUB_CLIENT_ID=${{ secrets.GH_OAUTH_CLIENT_ID }}" \
