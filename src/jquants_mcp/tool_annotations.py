@@ -39,7 +39,7 @@ READ_ONLY_CACHE: dict[str, bool] = {
 # dict. The two names live separately so call sites read intentionally —
 # ``READ_ONLY_CACHE`` for cache reads, ``READ_ONLY_LOCAL`` for server-state
 # reads — even though the MCP wire payload is identical.
-READ_ONLY_LOCAL: dict[str, bool] = READ_ONLY_CACHE
+READ_ONLY_LOCAL = READ_ONLY_CACHE
 
 # Tools that MUTATE server-local state (clear cache, register/delete
 # per-user API key). MCP clients should require confirmation per call.

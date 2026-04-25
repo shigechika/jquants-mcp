@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -1143,8 +1144,6 @@ def test_register_no_op_when_extras_missing():
     Simulated by patching the import to raise. Confirms the lean stdio
     profile (no [charts] extras) starts cleanly.
     """
-    import builtins
-
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
