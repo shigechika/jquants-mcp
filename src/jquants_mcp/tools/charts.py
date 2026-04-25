@@ -81,6 +81,47 @@ def _normalize_code(code: str) -> str:
     return code + "0" if len(code) == 4 else code
 
 
+def _get_company_name(cache: CacheStore, code: str) -> str | None:
+    """Best-effort lookup of the listed company name from the
+    ``equities_master`` cache.
+
+    Returns the most recent ``CoName`` (Japanese) or ``CoNameEn``
+    (English) for the code, or ``None`` if the cache has no entry —
+    a charting call must keep working even when the master cache is
+    empty or stale.
+
+    Note: J-Quants API v2 uses the short-form field names ``CoName`` /
+    ``CoNameEn``; the longer ``CompanyName`` / ``CompanyNameEnglish``
+    forms appear only in the API documentation, never in actual
+    responses.
+    """
+    try:
+        rows = cache.get_rows("equities_master", key_filter={"code": code})
+    except Exception:
+        return None
+    if not rows:
+        return None
+    rows.sort(key=lambda r: r.get("Date") or "", reverse=True)
+    latest = rows[0]
+    for key in ("CoName", "CoNameEn"):
+        name = latest.get(key)
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return None
+
+
+def _build_chart_title(
+    code: str, company: str | None, norm_from: str, norm_to: str, adjusted: bool
+) -> str:
+    """Compose the chart title used by ``mpf.plot``.
+
+    Extracted so the title format can be unit-tested without spinning
+    up matplotlib. Format: ``CODE [COMPANY ]FROM → TO (adjusted|raw)``.
+    """
+    name_part = f" {company}" if company else ""
+    return f"{code}{name_part}  {norm_from} → {norm_to} ({'adjusted' if adjusted else 'raw'})"
+
+
 def register(
     mcp: FastMCP,
     get_client: Any,  # noqa: ARG001 — signature parity with other tool modules
@@ -102,6 +143,33 @@ def register(
             "Install with: pip install 'jquants-mcp[charts]'"
         )
         return
+
+    # CJK-aware font fallback chain so the chart title (company name)
+    # renders in Japanese instead of tofu. mplfinance styles override
+    # matplotlib's global rcParams, so we build per-style ``mpf_style``
+    # objects with ``rc=`` injected and use those at render time.
+    # Cloud Run image installs ``fonts-noto-cjk`` (Dockerfile) so
+    # ``Noto Sans CJK JP`` is the production hit; the rest cover macOS
+    # / other Linux distros for local development.
+    _CJK_RC = {
+        "font.family": "sans-serif",
+        "font.sans-serif": [
+            "Noto Sans CJK JP",
+            "Noto Sans JP",
+            "Hiragino Sans",
+            "Hiragino Maru Gothic Pro",
+            "Yu Gothic",
+            "Meiryo",
+            "TakaoGothic",
+            "IPAexGothic",
+            "DejaVu Sans",
+        ],
+        "axes.unicode_minus": False,
+    }
+    _STYLES = {
+        alias: mpf.make_mpf_style(base_mpf_style=base, rc=_CJK_RC)
+        for alias, base in _STYLE_ALIASES.items()
+    }
 
     @mcp.tool()
     async def render_candlestick(
@@ -241,7 +309,8 @@ def register(
                     addplots.append(mpf.make_addplot(mid + 2 * std, width=0.8))
                     addplots.append(mpf.make_addplot(mid - 2 * std, width=0.8))
 
-        title = f"{code} {norm_from} → {norm_to} ({'adjusted' if adjusted else 'raw'})"
+        company = _get_company_name(cache, norm_code)
+        title = _build_chart_title(code, company, norm_from, norm_to, adjusted)
 
         buf = io.BytesIO()
         # mplfinance's addplot validator rejects ``None`` (only dict / list
@@ -249,7 +318,7 @@ def register(
         # overlay addplots — e.g. ``indicators=["volume"]`` only.
         plot_kwargs = {
             "type": "candle",
-            "style": _STYLE_ALIASES[style],
+            "style": _STYLES[style],
             "volume": "volume" in indicators,
             "title": title,
             "figsize": (_FIG_WIDTH, _FIG_HEIGHT),

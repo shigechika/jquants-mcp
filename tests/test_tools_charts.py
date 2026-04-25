@@ -410,6 +410,127 @@ class TestJpConventionDefaults:
         assert _is_real_chart_png(png)
 
 
+def _seed_master(cache: CacheStore, code: str, name: str | None, date: str = "2026-01-04") -> None:
+    """Seed an ``equities_master`` row so ``_get_company_name`` can find it.
+
+    J-Quants API v2 uses the short-form key ``CoName`` (not the longer
+    ``CompanyName`` shown in some doc pages); the cache stores the
+    response verbatim so the seed must use the same key.
+    """
+    row = {"Code": code, "Date": date, "CoName": name}
+    cache.put_rows("equities_master", [row], key_columns=["Code", "Date"])
+
+
+class TestChartTitleHelpers:
+    """Unit tests for ``_get_company_name`` and ``_build_chart_title``.
+
+    Title strings cannot easily be read back from a rendered PNG without
+    OCR, so the title-construction logic is extracted into pure helpers
+    that can be tested directly. The chart-rendering path then composes
+    the final title via these helpers.
+    """
+
+    def test_build_title_without_company(self):
+        from jquants_mcp.tools.charts import _build_chart_title
+
+        title = _build_chart_title("7203", None, "2026-01-05", "2026-01-30", True)
+        assert "7203" in title
+        assert "2026-01-05" in title
+        assert "2026-01-30" in title
+        assert "adjusted" in title
+
+    def test_build_title_with_company(self):
+        from jquants_mcp.tools.charts import _build_chart_title
+
+        title = _build_chart_title("7203", "トヨタ自動車", "2026-01-05", "2026-01-30", True)
+        assert "7203" in title
+        assert "トヨタ自動車" in title
+
+    def test_build_title_raw_mode(self):
+        from jquants_mcp.tools.charts import _build_chart_title
+
+        title = _build_chart_title("7203", None, "2026-01-05", "2026-01-30", False)
+        assert "raw" in title
+        assert "adjusted" not in title
+
+    async def test_get_company_name_from_master(self, mock_env):
+        from jquants_mcp.tools.charts import _get_company_name
+
+        _seed_master(mock_env["cache"], "27800", "テスト株式会社")
+        assert _get_company_name(mock_env["cache"], "27800") == "テスト株式会社"
+
+    async def test_get_company_name_returns_most_recent(self, mock_env):
+        from jquants_mcp.tools.charts import _get_company_name
+
+        # Older row + newer row with a different name; the newer should win.
+        _seed_master(mock_env["cache"], "27800", "旧社名", "2024-01-04")
+        _seed_master(mock_env["cache"], "27800", "新社名", "2026-01-04")
+        assert _get_company_name(mock_env["cache"], "27800") == "新社名"
+
+    async def test_get_company_name_falls_back_to_english(self, mock_env):
+        from jquants_mcp.tools.charts import _get_company_name
+
+        # Some master rows only have the English name (e.g. some new
+        # listings before the JP name is filled in). J-Quants uses the
+        # short-form key ``CoNameEn`` for the English name.
+        cache = mock_env["cache"]
+        cache.put_rows(
+            "equities_master",
+            [{"Code": "27800", "Date": "2026-01-04", "CoNameEn": "Toyota Motor"}],
+            key_columns=["Code", "Date"],
+        )
+        assert _get_company_name(cache, "27800") == "Toyota Motor"
+
+    async def test_get_company_name_returns_none_when_master_missing(self, mock_env):
+        from jquants_mcp.tools.charts import _get_company_name
+
+        # No master row at all → must return None, never raise.
+        assert _get_company_name(mock_env["cache"], "99999") is None
+
+    async def test_get_company_name_returns_none_for_blank_field(self, mock_env):
+        from jquants_mcp.tools.charts import _get_company_name
+
+        # Real cache sometimes has rows where CompanyName is None
+        # (observed for code 42880). Must not return the empty value.
+        _seed_master(mock_env["cache"], "27800", None)
+        assert _get_company_name(mock_env["cache"], "27800") is None
+
+    async def test_render_uses_company_name_when_available(self, mock_env):
+        # End-to-end: with a master row present, the rendered chart uses
+        # the company-name-bearing title. We can't OCR the PNG directly,
+        # so instead we patch mpf.plot to capture the title kwarg.
+        rows = [
+            _bar("27800", (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d"))
+            for i in range(10)
+        ]
+        _seed(mock_env["cache"], rows)
+        _seed_master(mock_env["cache"], "27800", "テスト株式会社")
+
+        captured: dict = {}
+
+        def fake_plot(df, **kwargs):
+            captured.update(kwargs)
+            # Still write a valid PNG to the buffer so the tool succeeds.
+            kwargs["savefig"]["fname"].write(
+                b"\x89PNG\r\n\x1a\n"
+                + b"\x00" * 8
+                + (1200).to_bytes(4, "big")
+                + (800).to_bytes(4, "big")
+                + b"\x00" * 100
+            )
+
+        with patch("mplfinance.plot", side_effect=fake_plot):
+            await _call_image(
+                "render_candlestick",
+                code="27800",
+                from_date="2026-04-01",
+                to_date="2026-04-10",
+                indicators=["volume"],
+            )
+
+        assert "テスト株式会社" in captured.get("title", "")
+
+
 def test_register_no_op_when_extras_missing():
     """register() should silently skip when mplfinance isn't importable.
 
