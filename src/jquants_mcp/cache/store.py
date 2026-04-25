@@ -138,6 +138,8 @@ class CacheStore:
         self,
         db_path: Path,
         default_plan: str = "free",
+        *,
+        check_integrity_async: bool = False,
     ):
         self._db_path = db_path
         self._default_plan = default_plan
@@ -150,6 +152,13 @@ class CacheStore:
         # a short error description.
         self._integrity_status: str = "not-checked"
         self._integrity_thread: threading.Thread | None = None
+        # When True, kick off the background SQLite integrity check at
+        # construction time so callers that read ``integrity_status``
+        # without first opening a connection (e.g. ``health_check``)
+        # see ``"pending"`` / ``"ok"`` instead of ``"not-checked"``.
+        # Defaults to False so test fixtures don't spawn extra threads.
+        if check_integrity_async and self._db_path.exists():
+            self._start_integrity_check()
 
     @property
     def default_plan(self) -> str:
