@@ -509,14 +509,16 @@ class TestChartTitleHelpers:
         assert _display_code("25935") == "25935"
         assert _display_code("99991") == "99991"
 
-    def test_display_code_keeps_alphanumeric_code(self):
-        # Newer J-Quants codes (DDDUD pattern, e.g. 130A0) end in '0' but
-        # the 4-character prefix (130A) is not a recognised ticker form
-        # — keep the 5-digit form intact. See Issue #150.
+    def test_display_code_collapses_alphanumeric_ordinary_share(self):
+        # JPX's 2024-introduced alphanumeric codes (DDDUD pattern, e.g.
+        # 130A0) follow the same display convention as legacy numeric
+        # codes: 5-char API form, 4-char display form. Kabutan / Yahoo!
+        # Finance Japan / JPX all show ``130A`` (not ``130A0``) for the
+        # ordinary share — match that.
         from jquants_mcp.tools.charts import _display_code
 
-        assert _display_code("130A0") == "130A0"
-        assert _display_code("554A0") == "554A0"
+        assert _display_code("130A0") == "130A"
+        assert _display_code("554A0") == "554A"
 
     async def test_render_title_uses_4_digit_form(self, mock_env):
         # 5-digit ordinary share input should appear as 4-digit in the
