@@ -10,7 +10,7 @@
 
 ## 特徴
 
-- **27 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー + オフライン screener 5 ツール
+- **27 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー + オフライン screener 5 ツール + opt-in ローソク足チャート描画
 - **2層 SQLite キャッシュ** — 時系列データは行レベル、その他はレスポンスレベル（TTL付き）
 - **株式分割検知** — AdjFactor 変化時にキャッシュを自動無効化
 - **レート制限** — プラン別スライディングウィンドウ（Free: 5回/分, Light: 60, Standard: 120, Premium: 500）
@@ -587,6 +587,24 @@ jquants-mcp -t streamable-http --port 8080 \
 | `detect_52w_high_low` | 52 週ローリング（≈252 営業日）の高値・安値更新を判定。Yahoo / Bloomberg / TradingView 慣習。`new_high` / `new_high_close` / `new_low` / `new_low_close` の 4 シグナル。 |
 | `detect_ytd_high_low` | 年初来高値・安値を判定。Kabutan / JPX / Yahoo!ファイナンス慣習。同じ 4 シグナルを当年 1 月 1 日以降の prior と比較して返す。 |
 | `detect_volume_surge` | 指定日の出来高が直近 20 営業日平均の `multiplier` 倍（既定 2.0）以上の銘柄を列挙。 |
+
+### チャート描画 (Charts) — 1 ツール（opt-in）
+
+[`mplfinance`](https://github.com/matplotlib/mplfinance) でローソク足チャートを PNG として返却。Claude Desktop / モバイルでチャットに直接表示されるので、Claude にチャートを視覚的に読み解かせる用途。
+
+インストール:
+
+```bash
+pip install "jquants-mcp[charts]"
+# uv の場合:
+uv sync --extra charts
+```
+
+extras 未インストール時はツール登録を silent skip するので、stdio lean プロファイルへの影響なし。
+
+| ツール名 | 説明 |
+|---|---|
+| `render_candlestick` | コード + 期間で OHLC ローソク足 PNG を生成。オーバーレイ: `volume`, `sma5` / `sma20` / `sma60` / `sma200`, `bb20`。スタイル: `default` / `dark` / `colorblind`。デフォルトで分割調整後 (`adjusted=True`)。 |
 
 ### ユーティリティ — 5ツール
 
