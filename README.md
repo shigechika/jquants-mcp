@@ -10,7 +10,7 @@ Deployment shapes (stdio / self-hosted HTTP / Cloud Run) and how to pick between
 
 ## Features
 
-- **27 MCP tools** covering all J-Quants API v2 endpoints, plus 5 offline screener tools
+- **27 MCP tools** covering all J-Quants API v2 endpoints, plus 5 offline screener tools and an opt-in candlestick chart renderer
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -587,6 +587,24 @@ Offline tools that compute signals directly from the cached `equities_bars_daily
 | `detect_52w_high_low` | New 52-week rolling high/low (Yahoo / Bloomberg / TradingView convention). Returns `new_high` / `new_high_close` / `new_low` / `new_low_close`. |
 | `detect_ytd_high_low` | New year-to-date (年初来) high/low (Kabutan / JPX / Yahoo!ファイナンス convention). Same four signals against the YTD prior window. |
 | `detect_volume_surge` | List stocks whose volume on `date` exceeds the trailing 20-day average by a configurable `multiplier` (default 2.0). |
+
+### Charts (1 tool, opt-in)
+
+Inline candlestick charts rendered as PNG via [`mplfinance`](https://github.com/matplotlib/mplfinance). Claude Desktop and Claude mobile display the image directly in chat, so you can ask Claude to read the chart visually.
+
+Install with:
+
+```bash
+pip install "jquants-mcp[charts]"
+# or with uv:
+uv sync --extra charts
+```
+
+The tool registration silently no-ops when the extras are not installed, so the lean stdio profile is unaffected.
+
+| Tool | Description |
+|---|---|
+| `render_candlestick` | OHLC candlestick PNG for a code + date range. Optional overlays: `volume`, `sma5` / `sma20` / `sma60` / `sma200`, `bb20`. Styles: `default` / `dark` / `colorblind`. Uses split-adjusted prices by default (`adjusted=True`). |
 
 ### Utility (5 tools)
 
