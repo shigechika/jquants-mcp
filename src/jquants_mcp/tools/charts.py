@@ -66,6 +66,23 @@ _STYLE_ALIASES: dict[str, str] = {
     "colorblind": "blueskies",
 }
 
+# matplotlib color names per style alias, keyed (up_color, down_color).
+# Used when overlaying lock-day horizontal bars: a 寄らずストップ高 is
+# drawn in the up-candle colour, 寄らずストップ安 in the down-candle
+# colour, so the visual matches how a non-lock day of the same direction
+# would have been coloured.
+_LOCK_COLORS: dict[str, tuple[str, str]] = {
+    "default": ("g", "r"),
+    "dark": ("lime", "red"),
+    "colorblind": ("blue", "orange"),
+}
+
+# Half-width of the lock-day horizontal overlay bar, in mplfinance's
+# integer date-index space. mplfinance draws daily candles at width
+# ~0.6, so 0.4 is roughly two-thirds of a candle — wide enough to read
+# at a glance, narrow enough not to overlap neighbouring bars.
+_LOCK_BAR_HALF_WIDTH = 0.4
+
 # PNG render dimensions: comfortable for Claude clients without bloating
 # the response payload (typical output well under 200 KB at this size).
 _FIG_WIDTH = 12.0
@@ -175,6 +192,67 @@ def _build_chart_title(
     return f"{code}{name_part} {norm_from} → {norm_to} ({'adjusted' if adjusted else 'raw'})"
 
 
+def _detect_lock_days(rows: list[dict], adjusted: bool) -> list[dict]:
+    """Find 寄らずストップ高/安 (lock-up / lock-down) days.
+
+    Lock days are bars where ``Open == High == Low == Close`` AND the
+    J-Quants ``UpperLimit`` / ``LowerLimit`` flag is set. mplfinance
+    draws these as a single-pixel horizontal line (degenerate doji)
+    that visually disappears into the axis even though the day itself
+    — a stock locked at the daily limit without trading — is usually
+    the most informative bar in the window.
+
+    Returns:
+        List of ``{"date": str, "direction": "high"|"low", "price": float}``
+        for each detected lock day. Empty list if none found.
+
+    Notes:
+        - The cache stores J-Quants ``UpperLimit`` / ``LowerLimit`` under
+          the short field names ``UL`` / ``LL`` (see
+          ``cache.store._LEGACY_FIELD_MAP``). Both the short and long
+          names are accepted here so callers passing raw API responses
+          also work. Values may be ``"0"`` / ``"1"`` strings, ints, or
+          bools.
+        - When ``adjusted=True`` the OHLC comparison uses the
+          ``AdjO`` / ``AdjH`` / ``AdjL`` / ``AdjC`` fields so a split
+          inside the window does not synthesise a fake non-lock bar.
+        - The limit flag itself is not adjusted by J-Quants — it
+          reflects the raw trading session.
+    """
+    prefix = "Adj" if adjusted else ""
+    o_key = f"{prefix}O" if adjusted else "O"
+    h_key = f"{prefix}H" if adjusted else "H"
+    l_key = f"{prefix}L" if adjusted else "L"
+    c_key = f"{prefix}C" if adjusted else "C"
+
+    out: list[dict] = []
+    for r in rows:
+        try:
+            o = float(r[o_key])
+            h = float(r[h_key])
+            low = float(r[l_key])
+            c = float(r[c_key])
+            date = r["Date"]
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (o == h == low == c):
+            continue
+        ul_raw = r.get("UL", r.get("UpperLimit", "0"))
+        ll_raw = r.get("LL", r.get("LowerLimit", "0"))
+        ul = str(ul_raw) == "1"
+        ll = str(ll_raw) == "1"
+        if not (ul or ll):
+            continue
+        out.append(
+            {
+                "date": date,
+                "direction": "high" if ul else "low",
+                "price": c,
+            }
+        )
+    return out
+
+
 def register(
     mcp: FastMCP,
     get_client: Any,  # noqa: ARG001 — signature parity with other tool modules
@@ -189,6 +267,7 @@ def register(
     try:
         import mplfinance as mpf
         import pandas as pd
+        from matplotlib import pyplot as plt
     except ModuleNotFoundError:
         logger.info(
             "charts: mplfinance / matplotlib not installed; "
@@ -349,6 +428,8 @@ def register(
         # actually refer to the stock.
         title = _build_chart_title(_display_code(norm_code), company, norm_from, norm_to, adjusted)
 
+        lock_days = _detect_lock_days(rows, adjusted)
+
         buf = io.BytesIO()
         # mplfinance's addplot validator rejects ``None`` (only dict / list
         # of dicts allowed), so omit the kwarg entirely when there are no
@@ -359,13 +440,38 @@ def register(
             "volume": "volume" in indicators,
             "title": title,
             "figsize": (_FIG_WIDTH, _FIG_HEIGHT),
-            "savefig": {"fname": buf, "dpi": _DPI, "format": "png"},
         }
         if addplots:
             plot_kwargs["addplot"] = addplots
 
         try:
-            mpf.plot(df, **plot_kwargs)
+            if lock_days:
+                # Lock days (O=H=L=C with UL/LL set) render as invisible
+                # doji lines under default mplfinance behaviour, so we
+                # take the ``returnfig`` path and overlay short coloured
+                # horizontal bars in the up/down candle colour.
+                plot_kwargs["returnfig"] = True
+                fig, axes = mpf.plot(df, **plot_kwargs)
+                price_ax = axes[0]
+                up_color, down_color = _LOCK_COLORS[style]
+                for lock in lock_days:
+                    date = pd.to_datetime(lock["date"])
+                    if date not in df.index:
+                        continue
+                    x_idx = df.index.get_loc(date)
+                    color = up_color if lock["direction"] == "high" else down_color
+                    price_ax.hlines(
+                        lock["price"],
+                        x_idx - _LOCK_BAR_HALF_WIDTH,
+                        x_idx + _LOCK_BAR_HALF_WIDTH,
+                        colors=color,
+                        linewidth=2.0,
+                    )
+                fig.savefig(buf, dpi=_DPI, format="png")
+                plt.close(fig)
+            else:
+                plot_kwargs["savefig"] = {"fname": buf, "dpi": _DPI, "format": "png"}
+                mpf.plot(df, **plot_kwargs)
         except Exception as exc:  # mplfinance / matplotlib runtime errors
             logger.warning("render_candlestick: rendering failed: %s", exc)
             return _error_image(f"Chart rendering failed: {exc}")

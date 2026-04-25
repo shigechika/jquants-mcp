@@ -598,6 +598,461 @@ class TestChartTitleHelpers:
         assert "テスト株式会社" in captured.get("title", "")
 
 
+class TestDetectLockDays:
+    """Unit tests for the pure ``_detect_lock_days`` helper."""
+
+    def test_empty_rows(self):
+        from jquants_mcp.tools.charts import _detect_lock_days
+
+        assert _detect_lock_days([], adjusted=True) == []
+
+    def test_lock_high_detected(self):
+        from jquants_mcp.tools.charts import _detect_lock_days
+
+        rows = [
+            {
+                "Date": "2026-04-24",
+                "Code": "42880",
+                "O": 940,
+                "H": 940,
+                "L": 940,
+                "C": 940,
+                "AdjO": 940,
+                "AdjH": 940,
+                "AdjL": 940,
+                "AdjC": 940,
+                "UpperLimit": "1",
+                "LowerLimit": "0",
+            }
+        ]
+        result = _detect_lock_days(rows, adjusted=True)
+        assert result == [{"date": "2026-04-24", "direction": "high", "price": 940.0}]
+
+    def test_lock_low_detected(self):
+        from jquants_mcp.tools.charts import _detect_lock_days
+
+        rows = [
+            {
+                "Date": "2026-04-24",
+                "Code": "74260",
+                "O": 500,
+                "H": 500,
+                "L": 500,
+                "C": 500,
+                "AdjO": 500,
+                "AdjH": 500,
+                "AdjL": 500,
+                "AdjC": 500,
+                "UpperLimit": "0",
+                "LowerLimit": "1",
+            }
+        ]
+        result = _detect_lock_days(rows, adjusted=True)
+        assert result == [{"date": "2026-04-24", "direction": "low", "price": 500.0}]
+
+    def test_limit_hit_with_volume_not_lock(self):
+        # 4288 アズジェント 4/24 — UL=1 かつ出来高あり (O≠H)。lock ではない
+        # ので marker 描画対象から除外されることを確認。
+        from jquants_mcp.tools.charts import _detect_lock_days
+
+        rows = [
+            {
+                "Date": "2026-04-24",
+                "Code": "42880",
+                "O": 800,
+                "H": 940,
+                "L": 760,
+                "C": 940,
+                "AdjO": 800,
+                "AdjH": 940,
+                "AdjL": 760,
+                "AdjC": 940,
+                "UpperLimit": "1",
+                "LowerLimit": "0",
+            }
+        ]
+        assert _detect_lock_days(rows, adjusted=True) == []
+
+    def test_flat_without_limit_flag_not_lock(self):
+        # O=H=L=C だが UpperLimit / LowerLimit ともに 0 — 低流動性の
+        # 普通の flat day で、lock ではない。
+        from jquants_mcp.tools.charts import _detect_lock_days
+
+        rows = [
+            {
+                "Date": "2026-04-24",
+                "Code": "99990",
+                "O": 500,
+                "H": 500,
+                "L": 500,
+                "C": 500,
+                "AdjO": 500,
+                "AdjH": 500,
+                "AdjL": 500,
+                "AdjC": 500,
+                "UpperLimit": "0",
+                "LowerLimit": "0",
+            }
+        ]
+        assert _detect_lock_days(rows, adjusted=True) == []
+
+    def test_adjusted_uses_adj_columns(self):
+        # Raw OHLC が flat だが Adj OHLC が non-flat（split-day）。
+        # adjusted=True なら lock 判定されない。
+        from jquants_mcp.tools.charts import _detect_lock_days
+
+        rows = [
+            {
+                "Date": "2026-04-24",
+                "Code": "27800",
+                "O": 100,
+                "H": 100,
+                "L": 100,
+                "C": 100,
+                "AdjO": 50,
+                "AdjH": 60,
+                "AdjL": 40,
+                "AdjC": 55,
+                "UpperLimit": "1",
+                "LowerLimit": "0",
+            }
+        ]
+        # adjusted=True: AdjOHLC が flat ではないので lock 判定なし
+        assert _detect_lock_days(rows, adjusted=True) == []
+        # adjusted=False: raw OHLC が flat + UL=1 なので lock 判定あり
+        result = _detect_lock_days(rows, adjusted=False)
+        assert len(result) == 1
+        assert result[0]["direction"] == "high"
+
+    def test_malformed_row_skipped(self):
+        # OHLC のどれかが欠損していたら crash せず skip。
+        from jquants_mcp.tools.charts import _detect_lock_days
+
+        rows = [
+            {"Date": "2026-04-24", "Code": "X", "UpperLimit": "1"},  # OHLC 全欠損
+            {
+                "Date": "2026-04-25",
+                "Code": "X",
+                "O": 100,
+                "H": 100,
+                "L": 100,
+                "C": 100,
+                "AdjO": 100,
+                "AdjH": 100,
+                "AdjL": 100,
+                "AdjC": 100,
+                "UpperLimit": "1",
+                "LowerLimit": "0",
+            },
+        ]
+        result = _detect_lock_days(rows, adjusted=True)
+        assert result == [{"date": "2026-04-25", "direction": "high", "price": 100.0}]
+
+    def test_int_one_also_recognised(self):
+        # 防御的: UpperLimit が int 1 で来ても文字列 "1" 同等に扱う。
+        from jquants_mcp.tools.charts import _detect_lock_days
+
+        rows = [
+            {
+                "Date": "2026-04-24",
+                "Code": "X",
+                "O": 100,
+                "H": 100,
+                "L": 100,
+                "C": 100,
+                "AdjO": 100,
+                "AdjH": 100,
+                "AdjL": 100,
+                "AdjC": 100,
+                "UpperLimit": 1,  # int, not str
+                "LowerLimit": 0,
+            }
+        ]
+        result = _detect_lock_days(rows, adjusted=True)
+        assert len(result) == 1
+        assert result[0]["direction"] == "high"
+
+    def test_short_form_ul_ll_recognised(self):
+        # cache.store rewrites ``UpperLimit`` → ``UL`` and
+        # ``LowerLimit`` → ``LL``, so rows pulled from the cache
+        # carry the short form. The detector must accept it.
+        from jquants_mcp.tools.charts import _detect_lock_days
+
+        rows = [
+            {
+                "Date": "2026-04-24",
+                "Code": "X",
+                "O": 100,
+                "H": 100,
+                "L": 100,
+                "C": 100,
+                "AdjO": 100,
+                "AdjH": 100,
+                "AdjL": 100,
+                "AdjC": 100,
+                "UL": "1",
+                "LL": "0",
+            }
+        ]
+        result = _detect_lock_days(rows, adjusted=True)
+        assert len(result) == 1
+        assert result[0]["direction"] == "high"
+
+    def test_multiple_lock_days_mixed(self):
+        from jquants_mcp.tools.charts import _detect_lock_days
+
+        rows = []
+        # day 1: lock high
+        rows.append(
+            {
+                "Date": "2026-04-01",
+                "Code": "X",
+                "O": 100,
+                "H": 100,
+                "L": 100,
+                "C": 100,
+                "AdjO": 100,
+                "AdjH": 100,
+                "AdjL": 100,
+                "AdjC": 100,
+                "UpperLimit": "1",
+                "LowerLimit": "0",
+            }
+        )
+        # day 2: ordinary (non-lock)
+        rows.append(
+            {
+                "Date": "2026-04-02",
+                "Code": "X",
+                "O": 100,
+                "H": 110,
+                "L": 90,
+                "C": 105,
+                "AdjO": 100,
+                "AdjH": 110,
+                "AdjL": 90,
+                "AdjC": 105,
+                "UpperLimit": "0",
+                "LowerLimit": "0",
+            }
+        )
+        # day 3: lock low
+        rows.append(
+            {
+                "Date": "2026-04-03",
+                "Code": "X",
+                "O": 80,
+                "H": 80,
+                "L": 80,
+                "C": 80,
+                "AdjO": 80,
+                "AdjH": 80,
+                "AdjL": 80,
+                "AdjC": 80,
+                "UpperLimit": "0",
+                "LowerLimit": "1",
+            }
+        )
+        result = _detect_lock_days(rows, adjusted=True)
+        assert len(result) == 2
+        assert result[0]["date"] == "2026-04-01" and result[0]["direction"] == "high"
+        assert result[1]["date"] == "2026-04-03" and result[1]["direction"] == "low"
+
+
+class TestRenderCandlestickLockDayOverlay:
+    """End-to-end smoke tests for the lock-day horizontal-bar overlay."""
+
+    async def test_render_with_lock_high_returns_real_chart(self, mock_env):
+        # Seed a normal-bar window with one 寄らずストップ高 day at the end.
+        rows = []
+        for i in range(10):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("42880", d, o=600, h=620, low=580, c=610))
+        # Lock day: O=H=L=C, UpperLimit=1
+        lock_day = _bar("42880", "2026-04-15", o=940, h=940, low=940, c=940)
+        lock_day["AdjO"] = lock_day["AdjH"] = lock_day["AdjL"] = lock_day["AdjC"] = 940
+        lock_day["UL"] = "1"
+        lock_day["LL"] = "0"
+        rows.append(lock_day)
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_candlestick",
+            code="42880",
+            from_date="2026-04-01",
+            to_date="2026-04-15",
+            indicators=["volume"],
+        )
+        # Must be a real chart PNG (not the error-image fallback).
+        assert _is_real_chart_png(png)
+
+    async def test_render_with_lock_low_returns_real_chart(self, mock_env):
+        rows = []
+        for i in range(10):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("74260", d, o=600, h=620, low=580, c=610))
+        lock_day = _bar("74260", "2026-04-15", o=400, h=400, low=400, c=400)
+        lock_day["AdjO"] = lock_day["AdjH"] = lock_day["AdjL"] = lock_day["AdjC"] = 400
+        lock_day["UL"] = "0"
+        lock_day["LL"] = "1"
+        rows.append(lock_day)
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_candlestick",
+            code="74260",
+            from_date="2026-04-01",
+            to_date="2026-04-15",
+            indicators=["volume"],
+        )
+        assert _is_real_chart_png(png)
+
+    async def test_lock_day_rendering_uses_returnfig_path(self, mock_env):
+        # Patch mpf.plot to capture how it was called when a lock day is present.
+        # The returnfig branch must be taken (returnfig=True, no savefig).
+        rows = []
+        for i in range(5):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("42880", d, o=600, h=620, low=580, c=610))
+        lock_day = _bar("42880", "2026-04-06", o=940, h=940, low=940, c=940)
+        lock_day["AdjO"] = lock_day["AdjH"] = lock_day["AdjL"] = lock_day["AdjC"] = 940
+        lock_day["UpperLimit"] = "1"
+        rows.append(lock_day)
+        _seed(mock_env["cache"], rows)
+
+        captured: dict = {}
+
+        def fake_plot(df, **kwargs):
+            captured.update(kwargs)
+            # Return a minimal fig + axes triple. The first axis must accept
+            # ``hlines`` and ``savefig``-able fig.
+            from unittest.mock import MagicMock
+
+            fig = MagicMock()
+            ax = MagicMock()
+
+            def fake_savefig(buf, **_kw):
+                buf.write(_make_fake_png())
+
+            fig.savefig.side_effect = fake_savefig
+            return fig, [ax]
+
+        with patch("mplfinance.plot", side_effect=fake_plot):
+            await _call_image(
+                "render_candlestick",
+                code="42880",
+                from_date="2026-04-01",
+                to_date="2026-04-06",
+                indicators=["volume"],
+            )
+
+        assert captured.get("returnfig") is True
+        assert "savefig" not in captured  # savefig must be omitted in this path
+
+    async def test_lock_day_with_sma_overlay(self, mock_env):
+        # SMA addplot + lock day must coexist on the returnfig path.
+        # This guards against an mplfinance regression where addplot +
+        # returnfig combos break, since the lock-day branch routes
+        # through the returnfig API instead of savefig.
+        rows = []
+        for i in range(30):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("42880", d, o=600, h=620, low=580, c=610))
+        lock_day = _bar("42880", "2026-05-01", o=940, h=940, low=940, c=940)
+        lock_day["AdjO"] = lock_day["AdjH"] = lock_day["AdjL"] = lock_day["AdjC"] = 940
+        lock_day["UL"] = "1"
+        lock_day["LL"] = "0"
+        rows.append(lock_day)
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_candlestick",
+            code="42880",
+            from_date="2026-04-01",
+            to_date="2026-05-01",
+            indicators=["volume", "sma5"],
+        )
+        assert _is_real_chart_png(png)
+
+    async def test_lock_day_uses_correct_color_per_direction(self, mock_env):
+        # Pin the colour-by-direction logic: lock-high → up colour
+        # (default style: 'g'); lock-low → down colour ('r'). Without
+        # this, swapping the two would silently render symmetrically.
+        rows = []
+        for i in range(5):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27801", d, o=600, h=620, low=580, c=610))
+        lock_high = _bar("27801", "2026-04-06", o=940, h=940, low=940, c=940)
+        lock_high["AdjO"] = lock_high["AdjH"] = lock_high["AdjL"] = lock_high["AdjC"] = 940
+        lock_high["UL"] = "1"
+        lock_high["LL"] = "0"
+        rows.append(lock_high)
+        lock_low = _bar("27801", "2026-04-07", o=400, h=400, low=400, c=400)
+        lock_low["AdjO"] = lock_low["AdjH"] = lock_low["AdjL"] = lock_low["AdjC"] = 400
+        lock_low["UL"] = "0"
+        lock_low["LL"] = "1"
+        rows.append(lock_low)
+        _seed(mock_env["cache"], rows)
+
+        from unittest.mock import MagicMock
+
+        fig = MagicMock()
+        ax = MagicMock()
+
+        def fake_savefig(buf, **_kw):
+            buf.write(_make_fake_png())
+
+        fig.savefig.side_effect = fake_savefig
+
+        def fake_plot(_df, **_kwargs):
+            return fig, [ax]
+
+        with patch("mplfinance.plot", side_effect=fake_plot):
+            await _call_image(
+                "render_candlestick",
+                code="27801",
+                from_date="2026-04-01",
+                to_date="2026-04-07",
+                indicators=["volume"],
+                style="default",
+            )
+
+        # Two lock days → two hlines calls.
+        assert ax.hlines.call_count == 2
+        colors = [call.kwargs["colors"] for call in ax.hlines.call_args_list]
+        # default style: up='g', down='r'
+        assert "g" in colors  # lock-high used the up colour
+        assert "r" in colors  # lock-low used the down colour
+
+    async def test_no_lock_day_uses_savefig_path(self, mock_env):
+        # Without any lock day, the existing savefig path must still run
+        # (no regression in the normal case).
+        rows = [
+            _bar("27800", (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d"))
+            for i in range(10)
+        ]
+        _seed(mock_env["cache"], rows)
+
+        captured: dict = {}
+
+        def fake_plot(df, **kwargs):
+            captured.update(kwargs)
+            kwargs["savefig"]["fname"].write(_make_fake_png())
+
+        with patch("mplfinance.plot", side_effect=fake_plot):
+            await _call_image(
+                "render_candlestick",
+                code="27800",
+                from_date="2026-04-01",
+                to_date="2026-04-10",
+                indicators=["volume"],
+            )
+
+        # savefig path was taken; returnfig was not requested.
+        assert "savefig" in captured
+        assert captured.get("returnfig") is None or captured.get("returnfig") is False
+
+
 def test_register_no_op_when_extras_missing():
     """register() should silently skip when mplfinance isn't importable.
 
