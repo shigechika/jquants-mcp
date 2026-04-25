@@ -139,7 +139,7 @@ def _build_chart_title(
     up matplotlib. Format: ``CODE [COMPANY ]FROM → TO (adjusted|raw)``.
     """
     name_part = f" {company}" if company else ""
-    return f"{code}{name_part}  {norm_from} → {norm_to} ({'adjusted' if adjusted else 'raw'})"
+    return f"{code}{name_part} {norm_from} → {norm_to} ({'adjusted' if adjusted else 'raw'})"
 
 
 def register(
