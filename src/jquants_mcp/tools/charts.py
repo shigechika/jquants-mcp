@@ -244,17 +244,22 @@ def register(
         title = f"{code} {norm_from} → {norm_to} ({'adjusted' if adjusted else 'raw'})"
 
         buf = io.BytesIO()
+        # mplfinance's addplot validator rejects ``None`` (only dict / list
+        # of dicts allowed), so omit the kwarg entirely when there are no
+        # overlay addplots — e.g. ``indicators=["volume"]`` only.
+        plot_kwargs = {
+            "type": "candle",
+            "style": _STYLE_ALIASES[style],
+            "volume": "volume" in indicators,
+            "title": title,
+            "figsize": (_FIG_WIDTH, _FIG_HEIGHT),
+            "savefig": {"fname": buf, "dpi": _DPI, "format": "png"},
+        }
+        if addplots:
+            plot_kwargs["addplot"] = addplots
+
         try:
-            mpf.plot(
-                df,
-                type="candle",
-                style=_STYLE_ALIASES[style],
-                volume="volume" in indicators,
-                addplot=addplots if addplots else None,
-                title=title,
-                figsize=(_FIG_WIDTH, _FIG_HEIGHT),
-                savefig={"fname": buf, "dpi": _DPI, "format": "png"},
-            )
+            mpf.plot(df, **plot_kwargs)
         except Exception as exc:  # mplfinance / matplotlib runtime errors
             logger.warning("render_candlestick: rendering failed: %s", exc)
             return _error_image(f"Chart rendering failed: {exc}")
