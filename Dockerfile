@@ -9,8 +9,9 @@ ENV UV_LINK_MODE=copy
 
 # Install dependencies first (separate layer for caching).
 # `charts` extra is included in the production image so the
-# `render_candlestick` MCP tool is registered (per #109). Adds ~60 MB
-# (matplotlib + mplfinance + transitive pandas) to the image.
+# `render_candlestick` MCP tool is registered (per #109). Adds
+# ~120 MB to the image (matplotlib 25 + mplfinance <1 + pandas 48
+# + numpy 27 + pillow 14 + transitive deps).
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project --extra cloud-run --extra charts
 

@@ -119,6 +119,13 @@ def register(
         [Optional dependency] ``mplfinance`` + ``matplotlib`` (install
         with ``pip install 'jquants-mcp[charts]'``)
 
+        **Call sequentially when rendering multiple charts** (one at a
+        time, not in parallel). Each render allocates ~50–500 MB of
+        matplotlib workspace depending on the date range and overlays;
+        firing N renders in parallel can exhaust the Cloud Run memory
+        budget and trigger OOM kills. For 2+ charts in a row, issue
+        the calls one after another.
+
         Args:
             code: 4- or 5-digit stock code (e.g. "72030" or "7203").
             from_date: Range start (YYYYMMDD or YYYY-MM-DD), inclusive.
