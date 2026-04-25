@@ -606,7 +606,7 @@ extras 未インストール時はツール登録を silent skip するので、
 
 | ツール名 | 説明 |
 |---|---|
-| `render_candlestick` | コード + 期間で OHLC ローソク足 PNG を生成。オーバーレイ: `volume`, `sma5` / `sma20` / `sma60` / `sma200`, `bb20`。スタイル: `default` / `dark` / `colorblind`。デフォルトで分割調整後 (`adjusted=True`)。 |
+| `render_candlestick` | コード + 期間で OHLC ローソク足 PNG を生成。デフォルトのオーバーレイは JP 慣習（`volume`, `sma5`, `sma25` = 短期/中期）。受け付ける値: `volume`, `sma5` / `sma20` / `sma25` / `sma60` / `sma75`（長期）/ `sma200`, `bb20`。スタイル: `default` / `dark` / `colorblind`。デフォルトで分割調整後 (`adjusted=True`)。 |
 
 ### ユーティリティ — 5ツール
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import logging
+import sqlite3
 from typing import Any
 
 from fastmcp import FastMCP
@@ -41,12 +42,17 @@ logger = logging.getLogger(__name__)
 
 
 # Indicator names accepted by ``render_candlestick``.
+# JP convention favours 5 / 25 / 75 (短期/中期/長期); US convention is
+# closer to 20 / 50 / 200. Accept both families so JP traders and
+# international users don't have to fight defaults.
 _VALID_INDICATORS: frozenset[str] = frozenset(
     {
         "volume",
         "sma5",
         "sma20",
+        "sma25",
         "sma60",
+        "sma75",
         "sma200",
         "bb20",
     }
@@ -66,6 +72,30 @@ _FIG_HEIGHT = 8.0
 _DPI = 100
 
 
+# CJK-aware font fallback chain so the chart title (company name)
+# renders in Japanese instead of tofu. mplfinance styles override
+# matplotlib's global rcParams, so register() builds per-style
+# ``mpf_style`` objects with this dict injected as ``rc=``.
+# Cloud Run image installs ``fonts-noto-cjk`` (Dockerfile) so
+# ``Noto Sans CJK JP`` is the production hit; the rest cover macOS
+# / other Linux distros for local development.
+_CJK_RC: dict[str, Any] = {
+    "font.family": "sans-serif",
+    "font.sans-serif": [
+        "Noto Sans CJK JP",
+        "Noto Sans JP",
+        "Hiragino Sans",
+        "Hiragino Maru Gothic Pro",
+        "Yu Gothic",
+        "Meiryo",
+        "TakaoGothic",
+        "IPAexGothic",
+        "DejaVu Sans",
+    ],
+    "axes.unicode_minus": False,
+}
+
+
 def _normalize_date(date: str) -> str:
     if "-" in date:
         return date
@@ -74,6 +104,74 @@ def _normalize_date(date: str) -> str:
 
 def _normalize_code(code: str) -> str:
     return code + "0" if len(code) == 4 else code
+
+
+def _display_code(code: str) -> str:
+    """Render a J-Quants stock code in the form Japanese investors read.
+
+    Historically JP stock codes were 4 digits. J-Quants moved to a
+    5-digit form (the 5th digit is ``0`` for ordinary shares,
+    non-zero for preferred / second-class shares). Most users still
+    think of "Toyota" as ``7203`` (not ``72030``), so collapse the
+    trailing ``0`` for ordinary shares; keep 5 digits when the suffix
+    encodes a non-ordinary share class.
+
+    Examples:
+        ``"7203"`` → ``"7203"`` (already 4-digit)
+        ``"72030"`` → ``"7203"`` (5-digit ordinary share)
+        ``"25935"`` → ``"25935"`` (5-digit non-ordinary, suffix ≠ 0)
+    """
+    if len(code) == 5 and code.endswith("0"):
+        return code[:4]
+    return code
+
+
+def _get_company_name(cache: CacheStore, code: str) -> str | None:
+    """Best-effort lookup of the listed company name from the
+    ``equities_master`` cache.
+
+    Returns the most recent ``CoName`` (Japanese) or ``CoNameEn``
+    (English) for the code, or ``None`` if the cache has no entry —
+    a charting call must keep working even when the master cache is
+    empty or stale.
+
+    Note: J-Quants API v2 uses the short-form field names ``CoName`` /
+    ``CoNameEn``; the longer ``CompanyName`` / ``CompanyNameEnglish``
+    forms appear only in the API documentation, never in actual
+    responses.
+    """
+    try:
+        rows = cache.get_rows("equities_master", key_filter={"code": code})
+    except (sqlite3.OperationalError, KeyError) as e:
+        # Missing table / corrupted index → render the chart without the
+        # company name rather than failing the whole call. Log so the
+        # cause is visible in operator debug output.
+        logger.debug("equities_master lookup failed for code=%s: %s", code, e)
+        return None
+    if not rows:
+        return None
+    # ``Date`` is the listing's master-record date; pick the most recent
+    # so renames are picked up. ``or ""`` keeps rows with a missing Date
+    # at the bottom (treat them as oldest) instead of raising on None.
+    rows.sort(key=lambda r: r.get("Date") or "", reverse=True)
+    latest = rows[0]
+    for key in ("CoName", "CoNameEn"):
+        name = latest.get(key)
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return None
+
+
+def _build_chart_title(
+    code: str, company: str | None, norm_from: str, norm_to: str, adjusted: bool
+) -> str:
+    """Compose the chart title used by ``mpf.plot``.
+
+    Extracted so the title format can be unit-tested without spinning
+    up matplotlib. Format: ``CODE [COMPANY ]FROM → TO (adjusted|raw)``.
+    """
+    name_part = f" {company}" if company else ""
+    return f"{code}{name_part} {norm_from} → {norm_to} ({'adjusted' if adjusted else 'raw'})"
 
 
 def register(
@@ -97,6 +195,13 @@ def register(
             "Install with: pip install 'jquants-mcp[charts]'"
         )
         return
+
+    # ``mpf_style`` objects built per alias with the module-level CJK
+    # rcParams so the title font falls back to a CJK-capable family.
+    _STYLES = {
+        alias: mpf.make_mpf_style(base_mpf_style=base, rc=_CJK_RC)
+        for alias, base in _STYLE_ALIASES.items()
+    }
 
     @mcp.tool()
     async def render_candlestick(
@@ -131,8 +236,9 @@ def register(
             from_date: Range start (YYYYMMDD or YYYY-MM-DD), inclusive.
             to_date: Range end (YYYYMMDD or YYYY-MM-DD), inclusive.
             indicators: List of overlays. Defaults to
-                ``["volume", "sma20", "sma60"]``. Accepted values:
-                ``volume``, ``sma5``, ``sma20``, ``sma60``, ``sma200``,
+                ``["volume", "sma5", "sma25"]`` (Japanese 短期/中期
+                convention). Accepted values: ``volume``, ``sma5``,
+                ``sma20``, ``sma25``, ``sma60``, ``sma75``, ``sma200``,
                 ``bb20`` (20-session Bollinger band).
             style: ``default`` (Yahoo-like), ``dark``, or ``colorblind``.
             adjusted: When ``True`` (default) use split-adjusted prices
@@ -141,7 +247,7 @@ def register(
                 Set ``False`` to render unadjusted prices.
         """
         if indicators is None:
-            indicators = ["volume", "sma20", "sma60"]
+            indicators = ["volume", "sma5", "sma25"]
 
         errors = collect_errors(
             validate_code(code),
@@ -235,20 +341,30 @@ def register(
                     addplots.append(mpf.make_addplot(mid + 2 * std, width=0.8))
                     addplots.append(mpf.make_addplot(mid - 2 * std, width=0.8))
 
-        title = f"{code} {norm_from} → {norm_to} ({'adjusted' if adjusted else 'raw'})"
+        company = _get_company_name(cache, norm_code)
+        # Cache lookups always use the 5-digit form, but display the
+        # conventional 4-digit form (``72030`` → ``7203``) for
+        # ordinary shares so the title matches how JP investors
+        # actually refer to the stock.
+        title = _build_chart_title(_display_code(norm_code), company, norm_from, norm_to, adjusted)
 
         buf = io.BytesIO()
+        # mplfinance's addplot validator rejects ``None`` (only dict / list
+        # of dicts allowed), so omit the kwarg entirely when there are no
+        # overlay addplots — e.g. ``indicators=["volume"]`` only.
+        plot_kwargs = {
+            "type": "candle",
+            "style": _STYLES[style],
+            "volume": "volume" in indicators,
+            "title": title,
+            "figsize": (_FIG_WIDTH, _FIG_HEIGHT),
+            "savefig": {"fname": buf, "dpi": _DPI, "format": "png"},
+        }
+        if addplots:
+            plot_kwargs["addplot"] = addplots
+
         try:
-            mpf.plot(
-                df,
-                type="candle",
-                style=_STYLE_ALIASES[style],
-                volume="volume" in indicators,
-                addplot=addplots if addplots else None,
-                title=title,
-                figsize=(_FIG_WIDTH, _FIG_HEIGHT),
-                savefig={"fname": buf, "dpi": _DPI, "format": "png"},
-            )
+            mpf.plot(df, **plot_kwargs)
         except Exception as exc:  # mplfinance / matplotlib runtime errors
             logger.warning("render_candlestick: rendering failed: %s", exc)
             return _error_image(f"Chart rendering failed: {exc}")
