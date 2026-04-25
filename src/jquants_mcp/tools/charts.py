@@ -185,16 +185,24 @@ def _get_company_name(cache: CacheStore, code: str) -> str | None:
     return None
 
 
-def _build_chart_title(
-    code: str, company: str | None, norm_from: str, norm_to: str, adjusted: bool
-) -> str:
+def _build_chart_title(code: str, company: str | None, norm_from: str, norm_to: str) -> str:
     """Compose the chart title used by ``mpf.plot``.
 
+    Format: ``CODE [COMPANY ]FROM → TO``.
+
+    The adjusted/raw distinction is intentionally omitted — Kabutan,
+    Yahoo! Finance Japan, JPX official pages, every JP brokerage chart,
+    and TradingView all show the chart title without an explicit
+    "adjusted" suffix. Adjusted is the universal default convention; a
+    suffix would be surprising rather than informative. Callers that
+    pass ``adjusted=False`` are doing so deliberately and should rely
+    on their own bookkeeping.
+
     Extracted so the title format can be unit-tested without spinning
-    up matplotlib. Format: ``CODE [COMPANY ]FROM → TO (adjusted|raw)``.
+    up matplotlib.
     """
     name_part = f" {company}" if company else ""
-    return f"{code}{name_part} {norm_from} → {norm_to} ({'adjusted' if adjusted else 'raw'})"
+    return f"{code}{name_part} {norm_from} → {norm_to}"
 
 
 def _detect_lock_days(rows: list[dict], adjusted: bool) -> list[dict]:
@@ -431,7 +439,7 @@ def register(
         # conventional 4-digit form (``72030`` → ``7203``) for
         # ordinary shares so the title matches how JP investors
         # actually refer to the stock.
-        title = _build_chart_title(_display_code(norm_code), company, norm_from, norm_to, adjusted)
+        title = _build_chart_title(_display_code(norm_code), company, norm_from, norm_to)
 
         lock_days = _detect_lock_days(rows, adjusted)
 
