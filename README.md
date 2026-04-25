@@ -606,7 +606,7 @@ The tool registration silently no-ops when the extras are not installed, so the 
 
 | Tool | Description |
 |---|---|
-| `render_candlestick` | OHLC candlestick PNG for a code + date range. Optional overlays: `volume`, `sma5` / `sma20` / `sma60` / `sma200`, `bb20`. Styles: `default` / `dark` / `colorblind`. Uses split-adjusted prices by default (`adjusted=True`). |
+| `render_candlestick` | OHLC candlestick PNG for a code + date range. Default overlays follow JP convention (`volume`, `sma5`, `sma25`). Accepted: `volume`, `sma5` / `sma20` / `sma25` / `sma60` / `sma75` / `sma200`, `bb20`. Styles: `default` / `dark` / `colorblind`. Uses split-adjusted prices by default (`adjusted=True`). |
 
 ### Utility (5 tools)
 

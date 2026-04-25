@@ -41,12 +41,17 @@ logger = logging.getLogger(__name__)
 
 
 # Indicator names accepted by ``render_candlestick``.
+# JP convention favours 5 / 25 / 75 (短期/中期/長期); US convention is
+# closer to 20 / 50 / 200. Accept both families so JP traders and
+# international users don't have to fight defaults.
 _VALID_INDICATORS: frozenset[str] = frozenset(
     {
         "volume",
         "sma5",
         "sma20",
+        "sma25",
         "sma60",
+        "sma75",
         "sma200",
         "bb20",
     }
@@ -131,8 +136,9 @@ def register(
             from_date: Range start (YYYYMMDD or YYYY-MM-DD), inclusive.
             to_date: Range end (YYYYMMDD or YYYY-MM-DD), inclusive.
             indicators: List of overlays. Defaults to
-                ``["volume", "sma20", "sma60"]``. Accepted values:
-                ``volume``, ``sma5``, ``sma20``, ``sma60``, ``sma200``,
+                ``["volume", "sma5", "sma25"]`` (Japanese 短期/中期
+                convention). Accepted values: ``volume``, ``sma5``,
+                ``sma20``, ``sma25``, ``sma60``, ``sma75``, ``sma200``,
                 ``bb20`` (20-session Bollinger band).
             style: ``default`` (Yahoo-like), ``dark``, or ``colorblind``.
             adjusted: When ``True`` (default) use split-adjusted prices
@@ -141,7 +147,7 @@ def register(
                 Set ``False`` to render unadjusted prices.
         """
         if indicators is None:
-            indicators = ["volume", "sma20", "sma60"]
+            indicators = ["volume", "sma5", "sma25"]
 
         errors = collect_errors(
             validate_code(code),
