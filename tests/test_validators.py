@@ -74,9 +74,9 @@ def test_validate_code_rejects_letter_in_wrong_position():
 def test_validate_code_alphanumeric_4char_dddu():
     # Issue #153 — JPX 公式 display 形式 (Kabutan / Yahoo! ファイナンス
     # 等で表示される 4 桁英数 ticker、e.g. 130A) も受理。
-    # _normalize_code が 4桁→5桁化 (130A → 130A0) するので cache lookup
-    # も自然に動く。これにより PR #151 で書いた
-    # `test_validate_code_rejects_4digit_with_letter` の前提は逆転した。
+    # _normalize_code が 4 桁→5 桁化 (130A → 130A0) するので cache lookup
+    # も自然に動く。PR #151 では 4 桁英数を reject していたが、本ケースで
+    # 受理に方針転換した（input/output 対称性確保のため）。
     assert validate_code("130A") is None
     assert validate_code("554A") is None
     assert validate_code("999Z") is None
