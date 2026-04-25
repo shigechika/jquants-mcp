@@ -949,6 +949,81 @@ class TestRenderCandlestickLockDayOverlay:
         assert captured.get("returnfig") is True
         assert "savefig" not in captured  # savefig must be omitted in this path
 
+    async def test_lock_day_with_sma_overlay(self, mock_env):
+        # SMA addplot + lock day must coexist on the returnfig path.
+        # This guards against an mplfinance regression where addplot +
+        # returnfig combos break, since the lock-day branch routes
+        # through the returnfig API instead of savefig.
+        rows = []
+        for i in range(30):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("42880", d, o=600, h=620, low=580, c=610))
+        lock_day = _bar("42880", "2026-05-01", o=940, h=940, low=940, c=940)
+        lock_day["AdjO"] = lock_day["AdjH"] = lock_day["AdjL"] = lock_day["AdjC"] = 940
+        lock_day["UL"] = "1"
+        lock_day["LL"] = "0"
+        rows.append(lock_day)
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_candlestick",
+            code="42880",
+            from_date="2026-04-01",
+            to_date="2026-05-01",
+            indicators=["volume", "sma5"],
+        )
+        assert _is_real_chart_png(png)
+
+    async def test_lock_day_uses_correct_color_per_direction(self, mock_env):
+        # Pin the colour-by-direction logic: lock-high → up colour
+        # (default style: 'g'); lock-low → down colour ('r'). Without
+        # this, swapping the two would silently render symmetrically.
+        rows = []
+        for i in range(5):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27801", d, o=600, h=620, low=580, c=610))
+        lock_high = _bar("27801", "2026-04-06", o=940, h=940, low=940, c=940)
+        lock_high["AdjO"] = lock_high["AdjH"] = lock_high["AdjL"] = lock_high["AdjC"] = 940
+        lock_high["UL"] = "1"
+        lock_high["LL"] = "0"
+        rows.append(lock_high)
+        lock_low = _bar("27801", "2026-04-07", o=400, h=400, low=400, c=400)
+        lock_low["AdjO"] = lock_low["AdjH"] = lock_low["AdjL"] = lock_low["AdjC"] = 400
+        lock_low["UL"] = "0"
+        lock_low["LL"] = "1"
+        rows.append(lock_low)
+        _seed(mock_env["cache"], rows)
+
+        from unittest.mock import MagicMock
+
+        fig = MagicMock()
+        ax = MagicMock()
+
+        def fake_savefig(buf, **_kw):
+            buf.write(_make_fake_png())
+
+        fig.savefig.side_effect = fake_savefig
+
+        def fake_plot(_df, **_kwargs):
+            return fig, [ax]
+
+        with patch("mplfinance.plot", side_effect=fake_plot):
+            await _call_image(
+                "render_candlestick",
+                code="27801",
+                from_date="2026-04-01",
+                to_date="2026-04-07",
+                indicators=["volume"],
+                style="default",
+            )
+
+        # Two lock days → two hlines calls.
+        assert ax.hlines.call_count == 2
+        colors = [call.kwargs["colors"] for call in ax.hlines.call_args_list]
+        # default style: up='g', down='r'
+        assert "g" in colors  # lock-high used the up colour
+        assert "r" in colors  # lock-low used the down colour
+
     async def test_no_lock_day_uses_savefig_path(self, mock_env):
         # Without any lock day, the existing savefig path must still run
         # (no regression in the normal case).

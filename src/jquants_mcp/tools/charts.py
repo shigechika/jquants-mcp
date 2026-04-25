@@ -77,6 +77,12 @@ _LOCK_COLORS: dict[str, tuple[str, str]] = {
     "colorblind": ("blue", "orange"),
 }
 
+# Half-width of the lock-day horizontal overlay bar, in mplfinance's
+# integer date-index space. mplfinance draws daily candles at width
+# ~0.6, so 0.4 is roughly two-thirds of a candle — wide enough to read
+# at a glance, narrow enough not to overlap neighbouring bars.
+_LOCK_BAR_HALF_WIDTH = 0.4
+
 # PNG render dimensions: comfortable for Claude clients without bloating
 # the response payload (typical output well under 200 KB at this size).
 _FIG_WIDTH = 12.0
@@ -261,6 +267,7 @@ def register(
     try:
         import mplfinance as mpf
         import pandas as pd
+        from matplotlib import pyplot as plt
     except ModuleNotFoundError:
         logger.info(
             "charts: mplfinance / matplotlib not installed; "
@@ -447,7 +454,6 @@ def register(
                 fig, axes = mpf.plot(df, **plot_kwargs)
                 price_ax = axes[0]
                 up_color, down_color = _LOCK_COLORS[style]
-                bar_half_width = 0.4  # half a candle width in mpf index space
                 for lock in lock_days:
                     date = pd.to_datetime(lock["date"])
                     if date not in df.index:
@@ -456,14 +462,12 @@ def register(
                     color = up_color if lock["direction"] == "high" else down_color
                     price_ax.hlines(
                         lock["price"],
-                        x_idx - bar_half_width,
-                        x_idx + bar_half_width,
+                        x_idx - _LOCK_BAR_HALF_WIDTH,
+                        x_idx + _LOCK_BAR_HALF_WIDTH,
                         colors=color,
                         linewidth=2.0,
                     )
                 fig.savefig(buf, dpi=_DPI, format="png")
-                import matplotlib.pyplot as plt
-
                 plt.close(fig)
             else:
                 plot_kwargs["savefig"] = {"fname": buf, "dpi": _DPI, "format": "png"}
