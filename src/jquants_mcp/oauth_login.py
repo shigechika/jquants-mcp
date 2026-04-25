@@ -7,7 +7,7 @@ callback → code exchange for an ID token → POST to
 ``{JQUANTS_BASE_URL}/cli/api-key`` → API key (refresh-token equivalent).
 
 Everything here is public information, verified against the CLI source.
-Used both by the ``jquants-dat-mcp login`` subcommand and (optionally) by
+Used both by the ``jquants-mcp login`` subcommand and (optionally) by
 a future /settings UI helper.
 """
 

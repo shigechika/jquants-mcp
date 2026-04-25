@@ -12,7 +12,7 @@
 # Recent Firestore errors
 gcloud logging read \
   'resource.type="cloud_run_revision"
-   resource.labels.service_name="jquants-dat-mcp"
+   resource.labels.service_name="jquants-mcp"
    (textPayload:"firestore" OR jsonPayload.message:"firestore")
    severity>=ERROR' \
   --project=aikawa-dx --limit=20 --freshness=1h
@@ -25,7 +25,7 @@ gcloud firestore documents list --database='(default)' \
 # Service account IAM
 gcloud projects get-iam-policy aikawa-dx \
   --flatten=bindings \
-  --filter='bindings.members=serviceAccount:jquants-dat-mcp@aikawa-dx.iam.gserviceaccount.com' \
+  --filter='bindings.members=serviceAccount:jquants-mcp@aikawa-dx.iam.gserviceaccount.com' \
   --format='value(bindings.role)'
 # Expected: datastore.user (and objectViewer, secretmanager.secretAccessor)
 ```
@@ -39,7 +39,7 @@ gcloud projects get-iam-policy aikawa-dx \
 
 ## Recovery
 
-- **IAM**: `gcloud projects add-iam-policy-binding aikawa-dx --member=serviceAccount:jquants-dat-mcp@aikawa-dx.iam.gserviceaccount.com --role=roles/datastore.user`
+- **IAM**: `gcloud projects add-iam-policy-binding aikawa-dx --member=serviceAccount:jquants-mcp@aikawa-dx.iam.gserviceaccount.com --role=roles/datastore.user`
 - **Quota**: request an increase in the Quotas page; for this workload the quota limit should not be hit without abuse — investigate rate-limit logs first
 - **Regional outage**: wait; no action. Server degrades gracefully — tool calls that don't need user lookup still work.
 

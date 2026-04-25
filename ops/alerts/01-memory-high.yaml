@@ -14,7 +14,7 @@ conditions:
     conditionThreshold:
       filter: |
         resource.type = "cloud_run_revision" AND
-        resource.labels.service_name = "jquants-dat-mcp" AND
+        resource.labels.service_name = "jquants-mcp" AND
         metric.type = "run.googleapis.com/container/memory/utilizations"
       aggregations:
         - alignmentPeriod: 60s
