@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from jquants_mcp.allowlist import (
+    get_user_email,
+    is_email_allowed,
     is_user_allowed,
     parse_allowed_emails,
     unauthorized_message,
@@ -56,6 +60,87 @@ class TestIsUserAllowed:
         # OAuth providers sometimes return mixed-case email domains; match must
         # be case-insensitive so the allowlist does not become accidentally strict.
         assert is_user_allowed("Alice@Example.COM", ["alice@example.com"]) is True
+
+
+class TestGetUserEmail:
+    def test_returns_email_from_claims(self):
+        # FastMCP's GoogleProvider populates token.claims["email"].
+        token = SimpleNamespace(
+            client_id="100526143775213853355",  # Google sub (numeric)
+            claims={"sub": "100526143775213853355", "email": "alice@example.com"},
+        )
+        assert get_user_email(token) == "alice@example.com"
+
+    def test_lowercases(self):
+        # Google occasionally returns mixed-case email; the allowlist
+        # comparison is case-insensitive so normalize here too.
+        token = SimpleNamespace(claims={"email": "Alice@Example.COM"})
+        assert get_user_email(token) == "alice@example.com"
+
+    def test_missing_claims_attr_returns_none(self):
+        # The base SDK AccessToken (without FastMCP's subclass) has no
+        # `claims` attribute. Defensive: should not crash.
+        token = SimpleNamespace(client_id="bearer")
+        assert get_user_email(token) is None
+
+    def test_missing_email_claim_returns_none(self):
+        token = SimpleNamespace(claims={"sub": "12345"})
+        assert get_user_email(token) is None
+
+    def test_empty_email_returns_none(self):
+        token = SimpleNamespace(claims={"email": ""})
+        assert get_user_email(token) is None
+
+    def test_email_verified_false_drops_email(self):
+        # Defense-in-depth: an explicitly unverified email is dropped so
+        # an attacker cannot claim someone else's address by signing up
+        # with email verification disabled.
+        token = SimpleNamespace(claims={"email": "alice@example.com", "email_verified": False})
+        assert get_user_email(token) is None
+
+    def test_email_verified_missing_still_returns_email(self):
+        # GitHub does not populate `email_verified`. Treat absence as
+        # "trust the email" so GitHub users are not blanket-blocked.
+        token = SimpleNamespace(claims={"email": "alice@example.com"})
+        assert get_user_email(token) == "alice@example.com"
+
+    def test_email_verified_true_returns_email(self):
+        token = SimpleNamespace(claims={"email": "alice@example.com", "email_verified": True})
+        assert get_user_email(token) == "alice@example.com"
+
+
+class TestIsEmailAllowed:
+    def test_empty_allowlist_allows_any(self):
+        assert is_email_allowed("alice@x.com", []) is True
+        assert is_email_allowed(None, []) is True
+
+    def test_allowed_returns_true(self):
+        assert is_email_allowed("alice@x.com", ["alice@x.com", "bob@y.com"]) is True
+
+    def test_unallowed_returns_false(self):
+        assert is_email_allowed("mallory@x.com", ["alice@x.com"]) is False
+
+    def test_case_insensitive(self):
+        assert is_email_allowed("Alice@Example.COM", ["alice@example.com"]) is True
+
+    def test_none_email_with_nonempty_allowlist_fails_closed(self):
+        # If the OAuth token did not carry an email but the deployment
+        # has an allowlist configured, deny rather than allow. Without
+        # an email claim we cannot prove the user is on the list.
+        assert is_email_allowed(None, ["alice@x.com"]) is False
+        assert is_email_allowed("", ["alice@x.com"]) is False
+
+
+class TestRegressionGoogleSubVsEmail:
+    """Pre-fix regression: the gate was passing the Google sub (numeric)
+    as if it were the email, so allowlist always rejected."""
+
+    def test_numeric_sub_is_not_treated_as_email(self):
+        google_sub = "100526143775213853355"
+        # The new check returns False for the sub against an email
+        # allowlist, but combined with the email extraction the call
+        # site no longer passes the sub at all.
+        assert is_email_allowed(google_sub, ["shige@aikawa.jp"]) is False
 
 
 class TestUnauthorizedMessage:
