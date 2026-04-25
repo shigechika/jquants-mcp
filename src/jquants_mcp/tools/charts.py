@@ -81,6 +81,26 @@ def _normalize_code(code: str) -> str:
     return code + "0" if len(code) == 4 else code
 
 
+def _display_code(code: str) -> str:
+    """Render a J-Quants stock code in the form Japanese investors read.
+
+    Historically JP stock codes were 4 digits. J-Quants moved to a
+    5-digit form (the 5th digit is ``0`` for ordinary shares,
+    non-zero for preferred / second-class shares). Most users still
+    think of "Toyota" as ``7203`` (not ``72030``), so collapse the
+    trailing ``0`` for ordinary shares; keep 5 digits when the suffix
+    encodes a non-ordinary share class.
+
+    Examples:
+        ``"7203"`` → ``"7203"`` (already 4-digit)
+        ``"72030"`` → ``"7203"`` (5-digit ordinary share)
+        ``"25935"`` → ``"25935"`` (5-digit non-ordinary, suffix ≠ 0)
+    """
+    if len(code) == 5 and code.endswith("0"):
+        return code[:4]
+    return code
+
+
 def _get_company_name(cache: CacheStore, code: str) -> str | None:
     """Best-effort lookup of the listed company name from the
     ``equities_master`` cache.
@@ -310,7 +330,11 @@ def register(
                     addplots.append(mpf.make_addplot(mid - 2 * std, width=0.8))
 
         company = _get_company_name(cache, norm_code)
-        title = _build_chart_title(code, company, norm_from, norm_to, adjusted)
+        # Cache lookups always use the 5-digit form, but display the
+        # conventional 4-digit form (``72030`` → ``7203``) for
+        # ordinary shares so the title matches how JP investors
+        # actually refer to the stock.
+        title = _build_chart_title(_display_code(norm_code), company, norm_from, norm_to, adjusted)
 
         buf = io.BytesIO()
         # mplfinance's addplot validator rejects ``None`` (only dict / list

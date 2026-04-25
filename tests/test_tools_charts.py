@@ -453,6 +453,65 @@ class TestChartTitleHelpers:
         assert "raw" in title
         assert "adjusted" not in title
 
+    def test_display_code_keeps_4_digit(self):
+        from jquants_mcp.tools.charts import _display_code
+
+        assert _display_code("7203") == "7203"
+
+    def test_display_code_collapses_5_digit_ordinary(self):
+        from jquants_mcp.tools.charts import _display_code
+
+        # 5-digit ending in 0 = ordinary share → display 4-digit.
+        assert _display_code("72030") == "7203"
+        assert _display_code("13010") == "1301"
+
+    def test_display_code_keeps_5_digit_non_ordinary(self):
+        from jquants_mcp.tools.charts import _display_code
+
+        # 5-digit not ending in 0 = preferred / second-class share.
+        assert _display_code("25935") == "25935"
+        assert _display_code("99991") == "99991"
+
+    async def test_render_title_uses_4_digit_form(self, mock_env):
+        # 5-digit ordinary share input should appear as 4-digit in the
+        # title, paired with the company name.
+        rows = [
+            _bar(
+                "27800",
+                (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d"),
+            )
+            for i in range(10)
+        ]
+        _seed(mock_env["cache"], rows)
+        _seed_master(mock_env["cache"], "27800", "テスト株式会社")
+
+        captured: dict = {}
+
+        def fake_plot(df, **kwargs):
+            captured.update(kwargs)
+            kwargs["savefig"]["fname"].write(
+                b"\x89PNG\r\n\x1a\n"
+                + b"\x00" * 8
+                + (1200).to_bytes(4, "big")
+                + (800).to_bytes(4, "big")
+                + b"\x00" * 100
+            )
+
+        with patch("mplfinance.plot", side_effect=fake_plot):
+            await _call_image(
+                "render_candlestick",
+                code="27800",  # caller-supplied 5-digit form
+                from_date="2026-04-01",
+                to_date="2026-04-10",
+                indicators=["volume"],
+            )
+
+        # 27800 is an ordinary share → display as "2780" (drops the 0).
+        title = captured.get("title", "")
+        assert "2780 " in title or title.startswith("2780")
+        assert "27800" not in title  # full 5-digit form must NOT appear
+        assert "テスト株式会社" in title
+
     async def test_get_company_name_from_master(self, mock_env):
         from jquants_mcp.tools.charts import _get_company_name
 
