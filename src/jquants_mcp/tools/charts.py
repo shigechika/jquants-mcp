@@ -134,12 +134,20 @@ def _display_code(code: str) -> str:
     trailing ``0`` for ordinary shares; keep 5 digits when the suffix
     encodes a non-ordinary share class.
 
+    Newer alphanumeric codes (e.g. ``130A0`` — 3 digits + uppercase
+    letter + digit) are kept as-is, since the leading 4 characters
+    are not a meaningful "ticker" form on JPX displays.
+
     Examples:
         ``"7203"`` → ``"7203"`` (already 4-digit)
         ``"72030"`` → ``"7203"`` (5-digit ordinary share)
         ``"25935"`` → ``"25935"`` (5-digit non-ordinary, suffix ≠ 0)
+        ``"130A0"`` → ``"130A0"`` (alphanumeric — kept as 5-digit)
     """
-    if len(code) == 5 and code.endswith("0"):
+    # Only collapse purely numeric 5-digit codes — alphanumeric ones
+    # like ``130A0`` would become ``130A`` which is not a recognised
+    # ticker form.
+    if len(code) == 5 and code.endswith("0") and code[:4].isdigit():
         return code[:4]
     return code
 

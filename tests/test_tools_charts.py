@@ -370,6 +370,25 @@ class TestRenderCandlestickEdgeCases:
         assert _is_real_chart_png(png_raw)
         assert png_adj != png_raw
 
+    async def test_alphanumeric_code_accepted_end_to_end(self, mock_env):
+        # Issue #150 regression — alphanumeric codes like 130A0 must
+        # pass validate_code, reach the rendering path, and produce
+        # a real chart PNG (not the validator-error fallback image).
+        rows = []
+        for i in range(10):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("130A0", d))
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_candlestick",
+            code="130A0",
+            from_date="2026-04-01",
+            to_date="2026-04-10",
+            indicators=["volume"],
+        )
+        assert _is_real_chart_png(png)
+
     async def test_malformed_row_skipped_not_crashing(self, mock_env):
         # Cache may carry rows missing OHLC fields (legacy / partial
         # imports). The chart loop catches these and continues; verify
@@ -489,6 +508,15 @@ class TestChartTitleHelpers:
         # 5-digit not ending in 0 = preferred / second-class share.
         assert _display_code("25935") == "25935"
         assert _display_code("99991") == "99991"
+
+    def test_display_code_keeps_alphanumeric_code(self):
+        # Newer J-Quants codes (DDDUD pattern, e.g. 130A0) end in '0' but
+        # the 4-character prefix (130A) is not a recognised ticker form
+        # — keep the 5-digit form intact. See Issue #150.
+        from jquants_mcp.tools.charts import _display_code
+
+        assert _display_code("130A0") == "130A0"
+        assert _display_code("554A0") == "554A0"
 
     async def test_render_title_uses_4_digit_form(self, mock_env):
         # 5-digit ordinary share input should appear as 4-digit in the
