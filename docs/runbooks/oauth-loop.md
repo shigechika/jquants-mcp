@@ -12,7 +12,7 @@
 # POST /token and userinfo status in the last hour
 gcloud logging read \
   'resource.type="cloud_run_revision"
-   resource.labels.service_name="jquants-dat-mcp"
+   resource.labels.service_name="jquants-mcp"
    (textPayload:"POST /token" OR textPayload:"/oauth/callback")' \
   --project=aikawa-dx --limit=30 --freshness=1h --format=json \
   | jq -r '.[] | "\(.timestamp) \(.httpRequest.status) \(.httpRequest.requestUrl // .textPayload)"'

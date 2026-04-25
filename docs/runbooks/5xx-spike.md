@@ -11,13 +11,13 @@
 # Top error in the last hour
 gcloud logging read \
   'resource.type="cloud_run_revision"
-   resource.labels.service_name="jquants-dat-mcp"
+   resource.labels.service_name="jquants-mcp"
    severity>=ERROR' \
   --project=aikawa-dx --limit=20 --format=json --freshness=1h \
   | jq -r '.[].textPayload // .[].jsonPayload.message' | sort | uniq -c | sort -rn
 
 # Recent deploys (look for the one right before the spike)
-gcloud run revisions list --service=jquants-dat-mcp \
+gcloud run revisions list --service=jquants-mcp \
   --region=us-west1 --project=aikawa-dx --limit=5
 
 # Firestore and J-Quants API status
@@ -37,7 +37,7 @@ curl -sI https://api.jquants.com/v2/token/auth_refresh | head -1
 **Rollback to previous revision** (if correlated with a deploy):
 
 ```sh
-gcloud run services update-traffic jquants-dat-mcp \
+gcloud run services update-traffic jquants-mcp \
   --region=us-west1 --project=aikawa-dx \
   --to-revisions=<PREVIOUS_REVISION>=100
 ```

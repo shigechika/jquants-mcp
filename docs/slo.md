@@ -35,7 +35,7 @@ All via Cloud Monitoring on resource `cloud_run_revision` filtered to
 ```
 fetch cloud_run_revision
 | metric 'run.googleapis.com/request_count'
-| filter resource.service_name == 'jquants-dat-mcp'
+| filter resource.service_name == 'jquants-mcp'
 | align rate(1m)
 | {
     total: group_by [], sum(val());
@@ -55,7 +55,7 @@ well before the 99.5% / 30-day budget is fully burned.
 ```
 fetch cloud_run_revision
 | metric 'run.googleapis.com/request_latencies'
-| filter resource.service_name == 'jquants-dat-mcp'
+| filter resource.service_name == 'jquants-mcp'
 | align percentile(95, 1m)   # or percentile(99, 1m)
 | group_by [], max(val())
 | every 1m

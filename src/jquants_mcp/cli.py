@@ -1,4 +1,4 @@
-"""CLI entry point for jquants-dat-mcp."""
+"""CLI entry point for jquants-mcp."""
 
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ def _config_ini_path() -> Path:
     import os
 
     xdg = os.environ.get("XDG_CONFIG_HOME")
-    base = Path(xdg) / "jquants-dat-mcp" if xdg else Path.home() / ".config" / "jquants-dat-mcp"
+    base = Path(xdg) / "jquants-mcp" if xdg else Path.home() / ".config" / "jquants-mcp"
     return base / "config.ini"
 
 
 def _write_api_key(api_key: str) -> Path:
-    """Persist the API key to ``~/.config/jquants-dat-mcp/config.ini``.
+    """Persist the API key to ``~/.config/jquants-mcp/config.ini``.
 
     Creates the file if missing, preserves existing sections/keys. Sets
     mode 0600 on POSIX so the secret is not world-readable.
