@@ -127,27 +127,24 @@ def _normalize_code(code: str) -> str:
 def _display_code(code: str) -> str:
     """Render a J-Quants stock code in the form Japanese investors read.
 
-    Historically JP stock codes were 4 digits. J-Quants moved to a
-    5-digit form (the 5th digit is ``0`` for ordinary shares,
-    non-zero for preferred / second-class shares). Most users still
-    think of "Toyota" as ``7203`` (not ``72030``), so collapse the
-    trailing ``0`` for ordinary shares; keep 5 digits when the suffix
-    encodes a non-ordinary share class.
+    JP stock codes have a 4-character "display" form and a 5-character
+    "J-Quants API" form. The 5th character is ``0`` for ordinary
+    shares, non-zero for preferred / second-class shares. JPX, Kabutan,
+    Yahoo! Finance Japan and the rest of the JP equity ecosystem all
+    show ordinary shares in the 4-character form (``7203`` not
+    ``72030``, ``130A`` not ``130A0``).
 
-    Newer alphanumeric codes (e.g. ``130A0`` — 3 digits + uppercase
-    letter + digit) are kept as-is, since the leading 4 characters
-    are not a meaningful "ticker" form on JPX displays.
+    The alphanumeric codes (e.g. ``130A``) were introduced by JPX in
+    2024 to extend the ticker space — they follow the same 4-char
+    display / 5-char API duality as the legacy numeric codes.
 
     Examples:
-        ``"7203"`` → ``"7203"`` (already 4-digit)
-        ``"72030"`` → ``"7203"`` (5-digit ordinary share)
-        ``"25935"`` → ``"25935"`` (5-digit non-ordinary, suffix ≠ 0)
-        ``"130A0"`` → ``"130A0"`` (alphanumeric — kept as 5-digit)
+        ``"7203"`` → ``"7203"`` (already 4-char display form)
+        ``"72030"`` → ``"7203"`` (5-char ordinary share → 4-char)
+        ``"25935"`` → ``"25935"`` (5-char non-ordinary, suffix ≠ 0)
+        ``"130A0"`` → ``"130A"`` (5-char alphanumeric ordinary share)
     """
-    # Only collapse purely numeric 5-digit codes — alphanumeric ones
-    # like ``130A0`` would become ``130A`` which is not a recognised
-    # ticker form.
-    if len(code) == 5 and code.endswith("0") and code[:4].isdigit():
+    if len(code) == 5 and code.endswith("0"):
         return code[:4]
     return code
 
