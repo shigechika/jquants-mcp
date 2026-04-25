@@ -17,6 +17,7 @@ from ..exceptions import (
     UserNotConfiguredError,
     format_api_error,
 )
+from ..tool_annotations import READ_ONLY_API
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ def register(
 ) -> None:
     """Register bulk download tools on the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_bulk_list(
         endpoint: str,
     ) -> dict[str, Any]:
@@ -104,7 +105,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_bulk_download_url(
         key: str,
     ) -> dict[str, Any]:

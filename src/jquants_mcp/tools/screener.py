@@ -42,6 +42,7 @@ from ..exceptions import (
     UserNotConfiguredError,
     format_api_error,
 )
+from ..tool_annotations import READ_ONLY_CACHE
 from ..validators import (
     collect_errors,
     make_validation_error_response,
@@ -107,7 +108,7 @@ def register(
 ) -> None:
     """Register screener tools on the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_CACHE)
     async def detect_price_limit(
         date: str,
         code: str | None = None,
@@ -183,7 +184,7 @@ def register(
 
         return {"count": len(matches), "data": matches}
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_CACHE)
     async def compare_close_vs_vwap(
         code: str,
         date: str | None = None,
@@ -271,7 +272,7 @@ def register(
             )
         return {"count": len(out), "data": out}
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_CACHE)
     async def detect_52w_high_low(
         date: str,
         code: str | None = None,
@@ -341,7 +342,7 @@ def register(
             mode_label="52w",
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_CACHE)
     async def detect_ytd_high_low(
         date: str,
         code: str | None = None,
@@ -407,7 +408,7 @@ def register(
             mode_label="ytd",
         )
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_CACHE)
     async def detect_volume_surge(
         date: str,
         multiplier: float = 2.0,

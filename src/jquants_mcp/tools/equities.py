@@ -17,6 +17,7 @@ from ..exceptions import (
     UserNotConfiguredError,
     format_api_error,
 )
+from ..tool_annotations import READ_ONLY_API
 from ..validators import (
     collect_errors,
     make_validation_error_response,
@@ -35,7 +36,7 @@ def register(
 ) -> None:
     """Register equity tools on the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_equities_master(
         code: str | None = None,
         date: str | None = None,
@@ -78,7 +79,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_equities_bars_daily(
         code: str | None = None,
         date: str | None = None,
@@ -151,7 +152,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_equities_bars_minute(
         code: str | None = None,
         date: str | None = None,
@@ -203,7 +204,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_equities_bars_daily_am(
         code: str | None = None,
     ) -> dict[str, Any]:
@@ -238,7 +239,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_equities_investor_types(
         section: str | None = None,
         date_from: str | None = None,
@@ -289,7 +290,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_equities_earnings_calendar(
         date: str | None = None,
         code: str | None = None,
