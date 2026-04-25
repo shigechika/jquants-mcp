@@ -91,6 +91,23 @@ class TestGetUserEmail:
         token = SimpleNamespace(claims={"email": ""})
         assert get_user_email(token) is None
 
+    def test_email_verified_false_drops_email(self):
+        # Defense-in-depth: an explicitly unverified email is dropped so
+        # an attacker cannot claim someone else's address by signing up
+        # with email verification disabled.
+        token = SimpleNamespace(claims={"email": "alice@example.com", "email_verified": False})
+        assert get_user_email(token) is None
+
+    def test_email_verified_missing_still_returns_email(self):
+        # GitHub does not populate `email_verified`. Treat absence as
+        # "trust the email" so GitHub users are not blanket-blocked.
+        token = SimpleNamespace(claims={"email": "alice@example.com"})
+        assert get_user_email(token) == "alice@example.com"
+
+    def test_email_verified_true_returns_email(self):
+        token = SimpleNamespace(claims={"email": "alice@example.com", "email_verified": True})
+        assert get_user_email(token) == "alice@example.com"
+
 
 class TestIsEmailAllowed:
     def test_empty_allowlist_allows_any(self):

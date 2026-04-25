@@ -28,12 +28,22 @@ def get_user_email(token: Any) -> str | None:
 
     Both the Google and GitHub providers populate ``token.claims["email"]``
     when the corresponding scope was requested at authorization time.
-    Falls back to ``None`` for any token that does not carry an email
-    claim — typically the static bearer-token mode, which already
-    bypasses the allowlist gate via the ``client_id == "bearer"`` check
-    upstream of the call sites here.
+
+    Defense-in-depth: when ``claims["email_verified"]`` is **explicitly
+    ``False``** the email is dropped (returns ``None``) — Google sets
+    this flag, and an unverified email could in principle be claimed by
+    a different account. GitHub does not populate the field; ``is False``
+    (rather than the looser ``not ...``) keeps GitHub users working when
+    the claim is simply absent.
+
+    Returns ``None`` for any token that does not carry an email claim —
+    typically the static bearer-token mode, which already bypasses the
+    allowlist gate via the ``client_id == "bearer"`` check upstream of
+    the call sites here.
     """
     claims = getattr(token, "claims", None) or {}
+    if claims.get("email_verified") is False:
+        return None
     email = claims.get("email")
     return email.lower() if isinstance(email, str) and email else None
 
