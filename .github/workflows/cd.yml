@@ -7,12 +7,25 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Cancel an in-progress CD when a newer one starts on the same branch.
+# Prevents wasted Actions minutes on rapid back-to-back merges (e.g. PR
+# trains, release-please rebase loops).
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Skip release-please's own merge commit ("chore(main): release X.Y.Z")
+    # because it only updates CHANGELOG.md / .release-please-manifest.json
+    # — the deployable artifact is identical to the previous deploy.
     if: >
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (
+        github.event.workflow_run.conclusion == 'success' &&
+        !startsWith(github.event.workflow_run.display_title, 'chore(main): release')
+      )
 
     permissions:
       contents: read
@@ -20,16 +33,54 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # Need the parent commit so paths-filter can diff against it
+          # for workflow_run-triggered runs.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+
+      # Filter on paths the deployable image depends on. Test-only,
+      # docs-only, .claude/-only, etc. changes will short-circuit the
+      # remaining steps and save ~5–7 minutes of Cloud Run build time.
+      - id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          base: HEAD~1
+          filters: |
+            code:
+              - 'src/**'
+              - 'Dockerfile'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'scripts/entrypoint.sh'
+              - '.github/workflows/cd.yml'
+
+      - name: Decide whether to deploy
+        id: gate
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Deploying because event_name=workflow_dispatch"
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ steps.changes.outputs.code }}" == "true" ]]; then
+            echo "Deploying because deploy-relevant files changed"
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No deploy-relevant files changed; skipping Cloud Run deploy."
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - id: auth
+        if: steps.gate.outputs.should_deploy == 'true'
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v3
+      - if: steps.gate.outputs.should_deploy == 'true'
+        uses: google-github-actions/setup-gcloud@v3
 
       - name: Deploy to Cloud Run
+        if: steps.gate.outputs.should_deploy == 'true'
         run: |
           gcloud run deploy jquants-mcp \
             --project aikawa-dx \
