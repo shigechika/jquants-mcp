@@ -296,13 +296,14 @@ async def _get_user_client() -> JQuantsClient:
 
     # Allowlist: reject before rate limiter so untrusted traffic cannot
     # consume our shared bucket capacity.
-    from .allowlist import is_user_allowed
+    from .allowlist import get_user_email, is_email_allowed
     from .exceptions import UserNotAllowedError
 
     allowed = _get_settings().get_allowed_emails()
-    if not is_user_allowed(user_id, allowed):
-        audit("allowlist_rejected", user_id=user_id, where="tool")
-        raise UserNotAllowedError(user_id)
+    email = get_user_email(token)
+    if not is_email_allowed(email, allowed):
+        audit("allowlist_rejected", user_id=user_id, email=email, where="tool")
+        raise UserNotAllowedError(email or user_id)
 
     try:
         await _get_rate_limiter().acquire(user_id)
@@ -486,12 +487,15 @@ async def register_api_key(api_key: str) -> dict[str, Any]:
     user_id = token.client_id
 
     # Allowlist check — prevent unauthorized users from registering keys.
-    from .allowlist import is_user_allowed, unauthorized_message
+    from .allowlist import get_user_email, is_email_allowed, unauthorized_message
     from .audit import audit as _audit_allowlist
 
-    if not is_user_allowed(user_id, _get_settings().get_allowed_emails()):
-        _audit_allowlist("allowlist_rejected", user_id=user_id, where="register_api_key")
-        return {"error": True, "message": unauthorized_message(user_id)}
+    email = get_user_email(token)
+    if not is_email_allowed(email, _get_settings().get_allowed_emails()):
+        _audit_allowlist(
+            "allowlist_rejected", user_id=user_id, email=email, where="register_api_key"
+        )
+        return {"error": True, "message": unauthorized_message(email or user_id)}
 
     # Save with a temporary plan that will be overwritten by auto-detection below.
     plan = "free"
@@ -556,14 +560,15 @@ async def delete_api_key() -> dict[str, Any]:
             "message": "Multi-user mode is not enabled (MCP_ENCRYPTION_KEY not set).",
         }
 
-    from .allowlist import is_user_allowed, unauthorized_message
+    from .allowlist import get_user_email, is_email_allowed, unauthorized_message
     from .audit import audit
 
     user_id = token.client_id
+    email = get_user_email(token)
 
-    if not is_user_allowed(user_id, _get_settings().get_allowed_emails()):
-        audit("allowlist_rejected", user_id=user_id, where="delete_api_key")
-        return {"error": True, "message": unauthorized_message(user_id)}
+    if not is_email_allowed(email, _get_settings().get_allowed_emails()):
+        audit("allowlist_rejected", user_id=user_id, email=email, where="delete_api_key")
+        return {"error": True, "message": unauthorized_message(email or user_id)}
 
     deleted = user_db.delete_user(user_id)
     _user_clients.pop(user_id, None)
