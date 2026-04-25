@@ -491,25 +491,28 @@ class TestChartTitleHelpers:
     def test_build_title_without_company(self):
         from jquants_mcp.tools.charts import _build_chart_title
 
-        title = _build_chart_title("7203", None, "2026-01-05", "2026-01-30", True)
+        title = _build_chart_title("7203", None, "2026-01-05", "2026-01-30")
         assert "7203" in title
         assert "2026-01-05" in title
         assert "2026-01-30" in title
-        assert "adjusted" in title
 
     def test_build_title_with_company(self):
         from jquants_mcp.tools.charts import _build_chart_title
 
-        title = _build_chart_title("7203", "トヨタ自動車", "2026-01-05", "2026-01-30", True)
+        title = _build_chart_title("7203", "トヨタ自動車", "2026-01-05", "2026-01-30")
         assert "7203" in title
         assert "トヨタ自動車" in title
 
-    def test_build_title_raw_mode(self):
+    def test_build_title_omits_adjusted_suffix(self):
+        # Industry convention (Kabutan / Yahoo! Finance Japan / TradingView /
+        # JP brokerages) — chart titles never carry an "(adjusted)" or
+        # "(raw)" suffix. Pin this so the suffix doesn't sneak back in.
         from jquants_mcp.tools.charts import _build_chart_title
 
-        title = _build_chart_title("7203", None, "2026-01-05", "2026-01-30", False)
-        assert "raw" in title
+        title = _build_chart_title("7203", None, "2026-01-05", "2026-01-30")
         assert "adjusted" not in title
+        assert "raw" not in title
+        assert "(" not in title  # no parenthesised suffix at all
 
     def test_display_code_keeps_4_digit(self):
         from jquants_mcp.tools.charts import _display_code
