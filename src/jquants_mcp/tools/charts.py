@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import logging
+import sqlite3
 from typing import Any
 
 from fastmcp import FastMCP
@@ -71,6 +72,30 @@ _FIG_HEIGHT = 8.0
 _DPI = 100
 
 
+# CJK-aware font fallback chain so the chart title (company name)
+# renders in Japanese instead of tofu. mplfinance styles override
+# matplotlib's global rcParams, so register() builds per-style
+# ``mpf_style`` objects with this dict injected as ``rc=``.
+# Cloud Run image installs ``fonts-noto-cjk`` (Dockerfile) so
+# ``Noto Sans CJK JP`` is the production hit; the rest cover macOS
+# / other Linux distros for local development.
+_CJK_RC: dict[str, Any] = {
+    "font.family": "sans-serif",
+    "font.sans-serif": [
+        "Noto Sans CJK JP",
+        "Noto Sans JP",
+        "Hiragino Sans",
+        "Hiragino Maru Gothic Pro",
+        "Yu Gothic",
+        "Meiryo",
+        "TakaoGothic",
+        "IPAexGothic",
+        "DejaVu Sans",
+    ],
+    "axes.unicode_minus": False,
+}
+
+
 def _normalize_date(date: str) -> str:
     if "-" in date:
         return date
@@ -117,10 +142,17 @@ def _get_company_name(cache: CacheStore, code: str) -> str | None:
     """
     try:
         rows = cache.get_rows("equities_master", key_filter={"code": code})
-    except Exception:
+    except (sqlite3.OperationalError, KeyError) as e:
+        # Missing table / corrupted index → render the chart without the
+        # company name rather than failing the whole call. Log so the
+        # cause is visible in operator debug output.
+        logger.debug("equities_master lookup failed for code=%s: %s", code, e)
         return None
     if not rows:
         return None
+    # ``Date`` is the listing's master-record date; pick the most recent
+    # so renames are picked up. ``or ""`` keeps rows with a missing Date
+    # at the bottom (treat them as oldest) instead of raising on None.
     rows.sort(key=lambda r: r.get("Date") or "", reverse=True)
     latest = rows[0]
     for key in ("CoName", "CoNameEn"):
@@ -164,28 +196,8 @@ def register(
         )
         return
 
-    # CJK-aware font fallback chain so the chart title (company name)
-    # renders in Japanese instead of tofu. mplfinance styles override
-    # matplotlib's global rcParams, so we build per-style ``mpf_style``
-    # objects with ``rc=`` injected and use those at render time.
-    # Cloud Run image installs ``fonts-noto-cjk`` (Dockerfile) so
-    # ``Noto Sans CJK JP`` is the production hit; the rest cover macOS
-    # / other Linux distros for local development.
-    _CJK_RC = {
-        "font.family": "sans-serif",
-        "font.sans-serif": [
-            "Noto Sans CJK JP",
-            "Noto Sans JP",
-            "Hiragino Sans",
-            "Hiragino Maru Gothic Pro",
-            "Yu Gothic",
-            "Meiryo",
-            "TakaoGothic",
-            "IPAexGothic",
-            "DejaVu Sans",
-        ],
-        "axes.unicode_minus": False,
-    }
+    # ``mpf_style`` objects built per alias with the module-level CJK
+    # rcParams so the title font falls back to a CJK-capable family.
     _STYLES = {
         alias: mpf.make_mpf_style(base_mpf_style=base, rc=_CJK_RC)
         for alias, base in _STYLE_ALIASES.items()

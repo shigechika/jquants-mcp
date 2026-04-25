@@ -137,6 +137,24 @@ def _is_error_image_png(data: bytes) -> bool:
     return width <= 1000
 
 
+def _make_fake_png(width: int = 1200, height: int = 800) -> bytes:
+    """Build a minimal PNG-looking byte string with the requested dimensions.
+
+    Used by tests that patch ``mpf.plot`` to capture kwargs: the patched
+    callable still has to write *something* PNG-shaped to the buffer for
+    the tool to surface a successful Image. Encodes width/height into
+    the IHDR slot so ``_is_real_chart_png`` / ``_is_error_image_png``
+    keep working against the fake.
+    """
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + b"\x00" * 8
+        + width.to_bytes(4, "big")
+        + height.to_bytes(4, "big")
+        + b"\x00" * 100
+    )
+
+
 class TestRenderCandlestick:
     async def test_returns_png_image(self, mock_env):
         rows = []
@@ -489,13 +507,7 @@ class TestChartTitleHelpers:
 
         def fake_plot(df, **kwargs):
             captured.update(kwargs)
-            kwargs["savefig"]["fname"].write(
-                b"\x89PNG\r\n\x1a\n"
-                + b"\x00" * 8
-                + (1200).to_bytes(4, "big")
-                + (800).to_bytes(4, "big")
-                + b"\x00" * 100
-            )
+            kwargs["savefig"]["fname"].write(_make_fake_png())
 
         with patch("mplfinance.plot", side_effect=fake_plot):
             await _call_image(
@@ -507,8 +519,10 @@ class TestChartTitleHelpers:
             )
 
         # 27800 is an ordinary share → display as "2780" (drops the 0).
+        # ``_build_chart_title`` puts the company name after a single
+        # space, so "2780 " is always the prefix in this case.
         title = captured.get("title", "")
-        assert "2780 " in title or title.startswith("2780")
+        assert title.startswith("2780 ")
         assert "27800" not in title  # full 5-digit form must NOT appear
         assert "テスト株式会社" in title
 
@@ -570,13 +584,7 @@ class TestChartTitleHelpers:
         def fake_plot(df, **kwargs):
             captured.update(kwargs)
             # Still write a valid PNG to the buffer so the tool succeeds.
-            kwargs["savefig"]["fname"].write(
-                b"\x89PNG\r\n\x1a\n"
-                + b"\x00" * 8
-                + (1200).to_bytes(4, "big")
-                + (800).to_bytes(4, "big")
-                + b"\x00" * 100
-            )
+            kwargs["savefig"]["fname"].write(_make_fake_png())
 
         with patch("mplfinance.plot", side_effect=fake_plot):
             await _call_image(
