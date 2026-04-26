@@ -5,6 +5,20 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ---
 
+## [0.7.0](https://github.com/shigechika/jquants-mcp/compare/v0.6.0...v0.7.0) (2026-04-26)
+
+
+### Features
+
+* **screener:** pre-compute cross-sectional results + multi-date range tools ([#142](https://github.com/shigechika/jquants-mcp/issues/142), [#143](https://github.com/shigechika/jquants-mcp/issues/143)) ([#161](https://github.com/shigechika/jquants-mcp/issues/161)) ([cd5eef3](https://github.com/shigechika/jquants-mcp/commit/cd5eef3923e44c7b9dc900fd8b1ce859ff83e103))
+* **screener:** refuse out-of-cache dates with OutOfCacheRange error ([#162](https://github.com/shigechika/jquants-mcp/issues/162)) ([d74bc63](https://github.com/shigechika/jquants-mcp/commit/d74bc639bff8fef86541666470c51096696b47f8))
+
+
+### Bug Fixes
+
+* **cache:** kick off integrity check at construction time so health_check sees pending/ok ([#157](https://github.com/shigechika/jquants-mcp/issues/157)) ([424d53c](https://github.com/shigechika/jquants-mcp/commit/424d53c004bf4b9290df6cd0307115e487161612))
+* **cd:** replace dorny/paths-filter with native git diff to fix HEAD~1 refspec error ([#160](https://github.com/shigechika/jquants-mcp/issues/160)) ([017bc85](https://github.com/shigechika/jquants-mcp/commit/017bc851160078b3022b7f8af2fa36fdd426039d))
+
 ## [0.6.0](https://github.com/shigechika/jquants-mcp/compare/v0.5.0...v0.6.0) (2026-04-25)
 
 
