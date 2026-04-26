@@ -941,6 +941,21 @@ class TestOutOfCacheRange:
         assert result.get("error") is None
         assert result.get("mode") == "52w"
 
+    async def test_exactly_52w_boundary_is_in_window(self, mock_env):
+        # The cutoff uses strict ``<``, so today - 52 weeks exactly is
+        # still in window. Pins the inclusive boundary so future
+        # refactors don't accidentally flip ``<`` to ``<=``.
+        d = (date.today() - timedelta(weeks=52)).isoformat()
+        result = await _call("detect_52w_high_low", date=d, code="27800")
+        assert result.get("error_type") != "OutOfCacheRange"
+        assert result.get("mode") == "52w"
+
+    async def test_one_day_past_52w_is_out_of_window(self, mock_env):
+        d = (date.today() - timedelta(weeks=52, days=1)).isoformat()
+        result = await _call("detect_52w_high_low", date=d)
+        assert result.get("error") is True
+        assert result.get("error_type") == "OutOfCacheRange"
+
 
 class TestScreenerComputeHelpers:
     def test_params_hash_is_deterministic(self):

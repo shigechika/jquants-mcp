@@ -27,6 +27,13 @@ from typing import Any
 DEFAULT_FIFTY_TWO_WEEK_SESSIONS = 252
 DEFAULT_MIN_PRIOR_SESSIONS = 60
 
+# Rolling lookback shared by the daily prune (writer side) and the
+# tool-side rejection of out-of-cache queries (reader side). The two
+# must move together — pruning to 52 weeks while accepting queries
+# 53 weeks deep would force the slow on-demand path that the
+# rejection was introduced to avoid.
+SCREENER_CACHE_LOOKBACK_WEEKS = 52
+
 # Tool names used as the primary-key ``tool_name`` column in
 # ``screener_results``. Externalised so that the populate scripts and
 # the MCP tools can not drift apart.
@@ -251,7 +258,7 @@ def upsert_screener_result(
     )
 
 
-def prune_old_results(conn: Any, *, retention_weeks: int = 52) -> int:
+def prune_old_results(conn: Any, *, retention_weeks: int = SCREENER_CACHE_LOOKBACK_WEEKS) -> int:
     """Drop ``screener_results`` rows older than ``retention_weeks``.
 
     Returns the number of rows deleted. The cutoff is computed in
