@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -881,6 +881,65 @@ class TestDetectYtdRange:
         )
         assert result["count"] == 2
         assert result["mode"] == "ytd"
+
+
+class TestOutOfCacheRange:
+    """Dates older than the 52-week cache window must error immediately.
+
+    Cross-sectional on-demand compute for these dates can exceed client
+    tool-call timeouts (Desktop hit 3-min timeout in PR #161 verification),
+    so the screener tools refuse them with ``error_type=OutOfCacheRange``.
+    """
+
+    def _old_date(self) -> str:
+        """Return an ISO date guaranteed to be outside the 52-week window."""
+        return (date.today() - timedelta(weeks=60)).isoformat()
+
+    async def test_detect_52w_rejects_old_date(self, mock_env):
+        result = await _call("detect_52w_high_low", date=self._old_date())
+        assert result.get("error") is True
+        assert result.get("error_type") == "OutOfCacheRange"
+        assert "cache_from" in result
+        assert "hint" in result
+
+    async def test_detect_52w_rejects_old_date_with_code(self, mock_env):
+        # Even with explicit code: out-of-window is uniformly refused so
+        # the rule is simple to remember and match in tool description.
+        result = await _call("detect_52w_high_low", date=self._old_date(), code="72030")
+        assert result.get("error") is True
+        assert result.get("error_type") == "OutOfCacheRange"
+
+    async def test_detect_ytd_rejects_old_date(self, mock_env):
+        result = await _call("detect_ytd_high_low", date=self._old_date())
+        assert result.get("error") is True
+        assert result.get("error_type") == "OutOfCacheRange"
+
+    async def test_range_rejects_old_date_from(self, mock_env):
+        result = await _call(
+            "detect_52w_high_low_range",
+            date_from=self._old_date(),
+            date_to=date.today().isoformat(),
+        )
+        assert result.get("error") is True
+        assert result.get("error_type") == "OutOfCacheRange"
+
+    async def test_ytd_range_rejects_old_date_from(self, mock_env):
+        result = await _call(
+            "detect_ytd_high_low_range",
+            date_from=self._old_date(),
+            date_to=date.today().isoformat(),
+        )
+        assert result.get("error") is True
+        assert result.get("error_type") == "OutOfCacheRange"
+
+    async def test_within_window_still_works(self, mock_env):
+        # Sanity: a date inside the window goes through the normal path,
+        # returning the standard (count, mode, data) shape (count=0 here
+        # because no bars are seeded).
+        d = (date.today() - timedelta(days=7)).isoformat()
+        result = await _call("detect_52w_high_low", date=d, code="27800")
+        assert result.get("error") is None
+        assert result.get("mode") == "52w"
 
 
 class TestScreenerComputeHelpers:
