@@ -36,7 +36,7 @@ date-range gating applied by the cache layer.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastmcp import FastMCP
@@ -76,6 +76,14 @@ _DEFAULT_VOLUME_BASELINE = 20
 # Per-code mode bypasses this filter — the caller asked explicitly.
 _DEFAULT_MIN_PRIOR_SESSIONS = 60
 
+# Maximum lookback (in weeks) supported by the high/low detectors.
+# Mirrors the daily prune retention on ``screener_results``: rows older
+# than this are deleted, so accepting older queries would force the
+# slow on-demand fall-through which can take minutes on Cloud Run's
+# 1-vCPU runtime and exceed client tool-call timeouts. We refuse such
+# queries immediately and point the caller at a supported date.
+_CACHE_LOOKBACK_WEEKS = 52
+
 
 def _normalize_date(date: str) -> str:
     """Normalize a date string to ``YYYY-MM-DD``.
@@ -96,6 +104,38 @@ def _normalize_code(code: str) -> str:
     (5th digit = 0).
     """
     return code + "0" if len(code) == 4 else code
+
+
+def _cache_window_cutoff() -> str:
+    """ISO date for the oldest date covered by the screener cache.
+
+    Computed at call time from the host's local date so the boundary
+    follows JST on m1.local rather than drifting on UTC servers.
+    """
+    return (date.today() - timedelta(weeks=_CACHE_LOOKBACK_WEEKS)).isoformat()
+
+
+def _out_of_cache_error(norm_date: str) -> dict[str, Any]:
+    """Error response for a date older than the supported cache window.
+
+    Cross-sectional on-demand computation for these dates can take
+    several minutes on Cloud Run's 1-vCPU runtime — long enough to
+    exceed client-side tool-call timeouts (Desktop verification of
+    PR #161 hit a 3-minute timeout on a 53-week-old date). Refusing
+    immediately with a clear error keeps the user out of the
+    timeout-or-wait limbo.
+    """
+    cutoff = _cache_window_cutoff()
+    return {
+        "error": True,
+        "error_type": "OutOfCacheRange",
+        "message": (
+            f"{norm_date} is outside the {_CACHE_LOOKBACK_WEEKS}-week cache "
+            f"window. On-demand computation for older dates is not supported."
+        ),
+        "cache_from": cutoff,
+        "hint": f"Use a date >= {cutoff}.",
+    }
 
 
 def _calendar_window_start(end_date: str, trading_days: int) -> str:
@@ -310,20 +350,26 @@ def register(
         results for default parameters are pre-computed nightly and
         served from ``screener_results``).
 
-        Performance:
+        **Lookback limit:** ``date`` must fall within the past 52 weeks.
+        Older dates are rejected with ``error_type=OutOfCacheRange``;
+        their on-demand cross-sectional compute can take minutes on the
+        Cloud Run 1-vCPU runtime and exceed client tool-call timeouts.
+
+        Performance (within the 52-week window):
         - Cross-sectional default-params calls (``code=None``,
           ``window_sessions=252``, ``min_prior_sessions=60``) hit the
           pre-computed cache and return in sub-second.
-        - Other shapes (custom params, ``code`` filter, dates outside
-          the 52-week cache window) compute on-demand and may take
-          10–30 seconds for cross-sectional scans.
+        - Custom params or ``code`` filter compute on-demand. Single-code
+          queries are fast (~10 ms); custom-param cross-sectional scans
+          take 10–30 seconds.
 
         **For multi-date scans use ``detect_52w_high_low_range``** —
         firing this single-date tool N times in parallel multiplies
         server load and risks client-side tool-call timeouts.
 
         Args:
-            date: Trading date (YYYYMMDD or YYYY-MM-DD).
+            date: Trading date (YYYYMMDD or YYYY-MM-DD). Must be within
+                the past 52 weeks.
             code: Optional 4- or 5-digit code. If omitted, scans every
                 code with a row on ``date`` (cross-sectional).
             window_sessions: Trailing trading-day window including today.
@@ -343,6 +389,9 @@ def register(
 
         cache: CacheStore = get_cache()
         norm_date = _normalize_date(date)
+
+        if norm_date < _cache_window_cutoff():
+            return _out_of_cache_error(norm_date)
 
         # The pre-computed cache only stores cross-sectional payloads,
         # which were built with min_prior_sessions=60 active. An explicit
@@ -401,20 +450,26 @@ def register(
         results for default parameters are pre-computed nightly and
         served from ``screener_results``).
 
-        Performance:
+        **Lookback limit:** ``date`` must fall within the past 52 weeks.
+        Older dates are rejected with ``error_type=OutOfCacheRange`` to
+        avoid the slow cross-sectional on-demand path that can exceed
+        client tool-call timeouts.
+
+        Performance (within the 52-week window):
         - Cross-sectional default-params calls (``code=None``,
           ``min_prior_sessions=60``) hit the pre-computed cache and
           return in sub-second.
-        - Other shapes (custom params, ``code`` filter, dates outside
-          the 52-week cache window) compute on-demand. Late in the
-          year (~December) this approaches ~1M rows.
+        - Custom params or ``code`` filter compute on-demand. Single-code
+          queries are fast; custom-param cross-sectional scans approach
+          ~1M rows late in the year.
 
         **For multi-date scans use ``detect_ytd_high_low_range``** —
         firing this single-date tool N times in parallel multiplies
         server load and risks client-side tool-call timeouts.
 
         Args:
-            date: Trading date (YYYYMMDD or YYYY-MM-DD).
+            date: Trading date (YYYYMMDD or YYYY-MM-DD). Must be within
+                the past 52 weeks.
             code: Optional 4- or 5-digit code. If omitted, scans every
                 code with a row on ``date`` (cross-sectional).
             min_prior_sessions: Cross-sectional only — drop codes whose
@@ -430,6 +485,9 @@ def register(
 
         cache: CacheStore = get_cache()
         norm_date = _normalize_date(date)
+
+        if norm_date < _cache_window_cutoff():
+            return _out_of_cache_error(norm_date)
 
         # See note in detect_52w_high_low: cache payload omits codes that
         # the cross-sectional min_prior_sessions filter dropped, but the
@@ -572,10 +630,14 @@ def register(
         N parallel ``detect_52w_high_low`` calls — the single-date tool
         is CPU-heavy and parallel dispatch causes client-side timeouts.
 
-        For default parameters and dates inside the past 52 weeks every
-        date is a pre-computed cache hit and the entire range completes
-        in sub-second. Out-of-cache dates fall through to on-demand
-        computation; a 10-day out-of-cache range can take ~3 minutes.
+        **Lookback limit:** ``date_from`` must fall within the past 52
+        weeks. Older ranges are rejected with
+        ``error_type=OutOfCacheRange``.
+
+        For default parameters every trading day in range is a
+        pre-computed cache hit and the full window completes in
+        sub-second. Custom params or ``code`` filter compute on-demand
+        per date.
 
         **Issue one range call per query.** Splitting the range into
         several non-overlapping ``detect_52w_high_low_range`` calls
@@ -585,6 +647,7 @@ def register(
 
         Args:
             date_from: Range start (inclusive, YYYYMMDD or YYYY-MM-DD).
+                Must be within the past 52 weeks.
             date_to: Range end (inclusive, YYYYMMDD or YYYY-MM-DD).
             code: Optional 4- or 5-digit code. When set, the
                 pre-computed cache is bypassed (it omits codes the
@@ -610,6 +673,8 @@ def register(
         d_to = _normalize_date(date_to)
         if d_from > d_to:
             return make_validation_error_response(["`date_from` must be <= `date_to`."])
+        if d_from < _cache_window_cutoff():
+            return _out_of_cache_error(d_from)
 
         async def _compute_one(d: str) -> dict[str, Any]:
             start = _calendar_window_start(d, window_sessions)
@@ -651,10 +716,14 @@ def register(
         N parallel ``detect_ytd_high_low`` calls — the single-date tool
         is CPU-heavy and parallel dispatch causes client-side timeouts.
 
-        For default parameters and dates inside the past 52 weeks every
-        date is a pre-computed cache hit and the entire range completes
-        in sub-second. Out-of-cache dates fall through to on-demand
-        computation.
+        **Lookback limit:** ``date_from`` must fall within the past 52
+        weeks. Older ranges are rejected with
+        ``error_type=OutOfCacheRange``.
+
+        For default parameters every trading day in range is a
+        pre-computed cache hit and the full window completes in
+        sub-second. Custom params or ``code`` filter compute on-demand
+        per date.
 
         **Issue one range call per query.** Splitting the range into
         several non-overlapping ``detect_ytd_high_low_range`` calls
@@ -664,6 +733,7 @@ def register(
 
         Args:
             date_from: Range start (inclusive, YYYYMMDD or YYYY-MM-DD).
+                Must be within the past 52 weeks.
             date_to: Range end (inclusive, YYYYMMDD or YYYY-MM-DD).
             code: Optional 4- or 5-digit code. When set, the
                 pre-computed cache is bypassed (it omits codes the
@@ -686,6 +756,8 @@ def register(
         d_to = _normalize_date(date_to)
         if d_from > d_to:
             return make_validation_error_response(["`date_from` must be <= `date_to`."])
+        if d_from < _cache_window_cutoff():
+            return _out_of_cache_error(d_from)
 
         async def _compute_one(d: str) -> dict[str, Any]:
             year_start = d[:4] + "-01-01"
