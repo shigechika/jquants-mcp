@@ -40,9 +40,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from jquants_mcp.cache.schema import (  # noqa: E402
     RESPONSE_CACHE_DDL,
+    SCREENER_RESULTS_DDL,
+    SCREENER_RESULTS_INDEX_DDL,
     TIER1_TABLES,
     generate_ddl,
 )
+from jquants_mcp.cache import screener_compute  # noqa: E402  # stdlib-only
 
 import jquantsapi  # noqa: E402
 
@@ -124,6 +127,8 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     for name in _DAILY_FETCH_TABLES:
         conn.execute(generate_ddl(name, TIER1_TABLES[name]))
     conn.execute(RESPONSE_CACHE_DDL)
+    conn.execute(SCREENER_RESULTS_DDL)
+    conn.execute(SCREENER_RESULTS_INDEX_DDL)
     conn.commit()
     _migrate_drop_plan(conn)
 
@@ -622,6 +627,85 @@ def fetch_breakdown(
     )
 
 
+# ------------------------------------------------------------------
+# Screener result pre-compute (Issue #142)
+# ------------------------------------------------------------------
+
+
+_SCREENER_RETENTION_WEEKS = 52
+
+
+def _screener_default_jobs() -> list[tuple[str, str, dict]]:
+    """Return the (tool_name, params_hash, kwargs) triples to pre-compute.
+
+    Kwargs match the ``screener_compute.compute_for_date`` signature
+    (excluding ``conn`` / ``norm_date`` / ``tool_name``).
+    """
+    return [
+        (
+            screener_compute.TOOL_DETECT_52W,
+            screener_compute.default_params_hash_52w(),
+            {
+                "window_sessions": screener_compute.DEFAULT_FIFTY_TWO_WEEK_SESSIONS,
+                "min_prior_sessions": screener_compute.DEFAULT_MIN_PRIOR_SESSIONS,
+                "mode_label": "52w",
+            },
+        ),
+        (
+            screener_compute.TOOL_DETECT_YTD,
+            screener_compute.default_params_hash_ytd(),
+            {
+                "window_sessions": None,
+                "min_prior_sessions": screener_compute.DEFAULT_MIN_PRIOR_SESSIONS,
+                "mode_label": "ytd",
+            },
+        ),
+    ]
+
+
+def populate_screener_results(conn: sqlite3.Connection) -> int:
+    """Pre-compute and cache screener payloads for the latest session.
+
+    Computes ``detect_52w_high_low`` and ``detect_ytd_high_low`` with
+    default parameters for the most recent date in
+    ``equities_bars_daily`` and ``INSERT OR REPLACE``s the rows.
+    Then prunes rows older than 52 weeks. Returns the number of new
+    or replaced rows.
+    """
+    latest = screener_compute.latest_session_date(conn)
+    if latest is None:
+        print("  equities_bars_daily が空のためスキップ")
+        return 0
+
+    print(f"  対象日: {latest}")
+    written = 0
+    for tool_name, params_hash, kwargs in _screener_default_jobs():
+        t0 = time.time()
+        payload = screener_compute.compute_for_date(
+            conn,
+            tool_name=tool_name,
+            norm_date=latest,
+            **kwargs,
+        )
+        screener_compute.upsert_screener_result(
+            conn,
+            tool_name=tool_name,
+            params_hash_value=params_hash,
+            norm_date=latest,
+            payload=payload,
+            computed_at=time.time(),
+        )
+        written += 1
+        elapsed = time.time() - t0
+        print(f"    {tool_name}: count={payload.get('count')} ({elapsed:.1f}s)")
+
+    pruned = screener_compute.prune_old_results(conn, retention_weeks=_SCREENER_RETENTION_WEEKS)
+    conn.commit()
+    if pruned:
+        print(f"  保持期間外 ({_SCREENER_RETENTION_WEEKS} 週) の {pruned} 行を削除")
+    return written
+
+
 def fetch_calendar(
     cli: jquantsapi.ClientV2,
     conn: sqlite3.Connection,
@@ -814,6 +898,11 @@ def main() -> None:
         help="過去N日分のバックフィル（Markets系 Tier 1 対象）",
     )
     parser.add_argument(
+        "--skip-screener-results",
+        action="store_true",
+        help="末尾の screener_results 事前計算をスキップ",
+    )
+    parser.add_argument(
         "--db",
         type=Path,
         default=DEFAULT_DB_PATH,
@@ -872,9 +961,21 @@ def main() -> None:
                 n = 0
             print(f"  完了: {n} 件 ({time.time() - t0:.1f}秒)")
 
+    # 最新営業日の screener_results を事前計算（Issue #142）
+    # backfill モードでは過去日付向けに populate_history を別途使うので skip
+    if not args.backfill and not args.skip_screener_results:
+        print("screener_results を事前計算中...")
+        t0 = time.time()
+        try:
+            n = populate_screener_results(conn)
+        except Exception as e:
+            print(f"  エラー: {e}")
+            n = 0
+        print(f"  完了: {n} 件 ({time.time() - t0:.1f}秒)")
+
     # 結果サマリー
     print("--- テーブル件数 ---")
-    for table in _TIER1_TABLES:
+    for table in _TIER1_TABLES + ["screener_results"]:
         try:
             row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
             print(f"  {table}: {row[0]:,} 行")

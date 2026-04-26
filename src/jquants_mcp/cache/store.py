@@ -14,6 +14,8 @@ from typing import Any
 from jquants_mcp.cache.schema import (
     ALL_TABLE_NAMES as _ALL_TABLE_NAMES,
     RESPONSE_CACHE_DDL as _RESPONSE_CACHE_DDL,
+    SCREENER_RESULTS_DDL as _SCREENER_RESULTS_DDL,
+    SCREENER_RESULTS_INDEX_DDL as _SCREENER_RESULTS_INDEX_DDL,
     TIER1_KEY_COLUMNS as _TIER1_KEY_COLUMNS,
     TIER1_TABLES as _TIER1_TABLES,
     generate_ddl,
@@ -314,6 +316,10 @@ class CacheStore:
 
         # Tier 2 テーブル
         conn.execute(_RESPONSE_CACHE_DDL)
+
+        # Screener result cache（事前計算結果、PK = tool/params/date）
+        conn.execute(_SCREENER_RESULTS_DDL)
+        conn.execute(_SCREENER_RESULTS_INDEX_DDL)
         conn.commit()
 
         # 既存テーブルのマイグレーション
@@ -792,6 +798,119 @@ class CacheStore:
         conn.commit()
 
     # ----------------------------------------------------------------
+    # Screener result cache (pre-computed cross-sectional outputs)
+    # Read-only on Cloud Run; writes happen on m1.local via daily_fetch
+    # and the one-off populate-history script.
+    # ----------------------------------------------------------------
+
+    def screener_result_get(
+        self,
+        tool_name: str,
+        params_hash: str,
+        date: str,
+    ) -> dict[str, Any] | None:
+        """Return the cached payload for ``(tool_name, params_hash, date)``.
+
+        Returns ``None`` on miss or when the cache DB is not ready.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return None
+        row = conn.execute(
+            "SELECT payload_json FROM screener_results "
+            "WHERE tool_name = ? AND params_hash = ? AND date = ?",
+            (tool_name, params_hash, date),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(row["payload_json"])
+        except (TypeError, ValueError):
+            return None
+
+    def screener_result_get_range(
+        self,
+        tool_name: str,
+        params_hash: str,
+        date_from: str,
+        date_to: str,
+    ) -> dict[str, dict[str, Any]]:
+        """Return all cached payloads in [date_from, date_to] keyed by date."""
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        rows = conn.execute(
+            "SELECT date, payload_json FROM screener_results "
+            "WHERE tool_name = ? AND params_hash = ? "
+            "AND date >= ? AND date <= ? ORDER BY date",
+            (tool_name, params_hash, date_from, date_to),
+        ).fetchall()
+        out: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            try:
+                out[str(r["date"])] = json.loads(r["payload_json"])
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def screener_result_put(
+        self,
+        tool_name: str,
+        params_hash: str,
+        date: str,
+        payload: dict[str, Any],
+    ) -> None:
+        """INSERT OR REPLACE one row. Caller must own write rights.
+
+        The MCP tool layer never calls this — Cloud Run instances run on
+        ephemeral ``/tmp`` storage, so any tool-side write would be lost
+        on cold start. The on-disk cache is owned by the m1.local daily
+        fetch pipeline.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return
+        conn.execute(
+            "INSERT OR REPLACE INTO screener_results "
+            "(tool_name, params_hash, date, payload_json, computed_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                tool_name,
+                params_hash,
+                date,
+                json.dumps(payload, ensure_ascii=False),
+                time.time(),
+            ),
+        )
+        conn.commit()
+
+    def screener_result_prune(self, retention_weeks: int = 52) -> int:
+        """Delete ``screener_results`` rows older than ``retention_weeks``.
+
+        Returns the number of rows deleted. SQLite's ``date()`` modifier
+        does not support a ``weeks`` unit, so we convert to days.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return 0
+        days = int(retention_weeks) * 7
+        cursor = conn.execute(
+            "DELETE FROM screener_results WHERE date < date('now', ?)",
+            (f"-{days} days",),
+        )
+        deleted = cursor.rowcount if cursor.rowcount is not None else 0
+        conn.commit()
+        return deleted
+
+    def screener_result_count(self) -> int:
+        """Return the row count in ``screener_results`` (0 when not ready)."""
+        conn = self._ensure_connection()
+        if conn is None:
+            return 0
+        row = conn.execute("SELECT COUNT(*) FROM screener_results").fetchone()
+        return int(row[0]) if row else 0
+
+    # ----------------------------------------------------------------
     # ユーティリティ
     # ----------------------------------------------------------------
 
@@ -837,6 +956,13 @@ class CacheStore:
         )
         conn.commit()
 
+        # Pre-computed screener results
+        try:
+            row = conn.execute("SELECT COUNT(*) as cnt FROM screener_results").fetchone()
+            stats["screener_results"] = row["cnt"] if row else 0
+        except sqlite3.OperationalError:
+            stats["screener_results"] = 0
+
         # DB ファイルサイズ
         if self._db_path.exists():
             stats["db_size_mb"] = round(self._db_path.stat().st_size / (1024 * 1024), 2)
@@ -862,7 +988,11 @@ class CacheStore:
 
         result: dict[str, int] = {}
 
-        tables = [table] if table else list(_TIER1_TABLES.keys()) + ["response_cache"]
+        tables = (
+            [table]
+            if table
+            else list(_TIER1_TABLES.keys()) + ["response_cache", "screener_results"]
+        )
         for t in tables:
             cursor = conn.execute(f"DELETE FROM {t}")
             result[t] = cursor.rowcount

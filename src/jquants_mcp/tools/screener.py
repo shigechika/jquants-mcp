@@ -19,6 +19,14 @@ Exposed tools:
   the convention used by Kabutan, JPX, and most JP retail-broker UIs.
 - ``detect_volume_surge`` — list stocks whose volume on a given date is
   at least ``multiplier`` times the trailing ``baseline_days`` average.
+- ``detect_52w_high_low_range`` / ``detect_ytd_high_low_range`` —
+  multi-date variants of the high/low detectors. Use these when
+  scanning more than one date to avoid parallel-dispatch timeouts.
+
+The 52w/YTD detectors are also backed by the ``screener_results``
+pre-compute cache (default-params cross-sectional outputs are
+populated nightly by ``scripts/daily_fetch.py`` on m1.local), so
+default-params calls return in sub-second.
 
 Plan note: the underlying table is available from the Free plan onwards,
 so these tools impose no extra plan restriction beyond the normal
@@ -33,6 +41,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from ..cache import screener_compute
 from ..cache.store import CacheStore
 from ..exceptions import (
     APIError,
@@ -297,18 +306,21 @@ def register(
         also flag, matching standard market-data convention.
 
         [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily Tier 1 cache
+        [Source] equities_bars_daily Tier 1 cache (cross-sectional
+        results for default parameters are pre-computed nightly and
+        served from ``screener_results``).
 
-        Performance: cross-sectional mode (``code=None``) with the default
-        252-session window scans roughly 1M rows on a populated cache and
-        can take 10–30 seconds. Specify ``code`` for sub-second response,
-        or shrink ``window_sessions`` for cross-sectional scans.
+        Performance:
+        - Cross-sectional default-params calls (``code=None``,
+          ``window_sessions=252``, ``min_prior_sessions=60``) hit the
+          pre-computed cache and return in sub-second.
+        - Other shapes (custom params, ``code`` filter, dates outside
+          the 52-week cache window) compute on-demand and may take
+          10–30 seconds for cross-sectional scans.
 
-        **Call sequentially when scanning multiple dates** (one date per
-        tool call, not in parallel). Cross-sectional scans are CPU-heavy;
-        firing N dates in parallel multiplies server load and risks
-        client-side tool-call timeouts. A native multi-date batch
-        endpoint is on the roadmap.
+        **For multi-date scans use ``detect_52w_high_low_range``** —
+        firing this single-date tool N times in parallel multiplies
+        server load and risks client-side tool-call timeouts.
 
         Args:
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
@@ -331,6 +343,17 @@ def register(
 
         cache: CacheStore = get_cache()
         norm_date = _normalize_date(date)
+
+        cached = _try_screener_cache_52w(
+            cache,
+            norm_date=norm_date,
+            code=code,
+            window_sessions=window_sessions,
+            min_prior_sessions=min_prior_sessions,
+        )
+        if cached is not None:
+            return cached
+
         start = _calendar_window_start(norm_date, window_sessions)
         return await _high_low_signals(
             cache=cache,
@@ -368,17 +391,21 @@ def register(
         definition; "新年最初" is not a meaningful screening signal).
 
         [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily Tier 1 cache
+        [Source] equities_bars_daily Tier 1 cache (cross-sectional
+        results for default parameters are pre-computed nightly and
+        served from ``screener_results``).
 
-        Performance: cross-sectional mode (``code=None``) loads year-to-
-        date rows for every listed stock. Late in the year (~December)
-        this approaches ~1M rows; in January it is essentially free.
+        Performance:
+        - Cross-sectional default-params calls (``code=None``,
+          ``min_prior_sessions=60``) hit the pre-computed cache and
+          return in sub-second.
+        - Other shapes (custom params, ``code`` filter, dates outside
+          the 52-week cache window) compute on-demand. Late in the
+          year (~December) this approaches ~1M rows.
 
-        **Call sequentially when scanning multiple dates** (one date per
-        tool call, not in parallel). Cross-sectional scans are CPU-heavy;
-        firing N dates in parallel multiplies server load and risks
-        client-side tool-call timeouts. A native multi-date batch
-        endpoint is on the roadmap.
+        **For multi-date scans use ``detect_ytd_high_low_range``** —
+        firing this single-date tool N times in parallel multiplies
+        server load and risks client-side tool-call timeouts.
 
         Args:
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
@@ -397,6 +424,16 @@ def register(
 
         cache: CacheStore = get_cache()
         norm_date = _normalize_date(date)
+
+        cached = _try_screener_cache_ytd(
+            cache,
+            norm_date=norm_date,
+            code=code,
+            min_prior_sessions=min_prior_sessions,
+        )
+        if cached is not None:
+            return cached
+
         year_start = norm_date[:4] + "-01-01"
         return await _high_low_signals(
             cache=cache,
@@ -510,6 +547,143 @@ def register(
             "data": matches,
         }
 
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def detect_52w_high_low_range(
+        date_from: str,
+        date_to: str,
+        code: str | None = None,
+        window_sessions: int = _FIFTY_TWO_WEEK_SESSIONS,
+        min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
+    ) -> dict[str, Any]:
+        """Multi-date variant of ``detect_52w_high_low``.
+
+        Returns the union of single-date results across the inclusive
+        ``[date_from, date_to]`` range. Use this instead of firing
+        N parallel ``detect_52w_high_low`` calls — the single-date tool
+        is CPU-heavy and parallel dispatch causes client-side timeouts.
+
+        For default parameters and dates inside the past 52 weeks every
+        date is a pre-computed cache hit and the entire range completes
+        in sub-second. Out-of-cache dates fall through to on-demand
+        computation; a 10-day out-of-cache range can take ~3 minutes.
+
+        Args:
+            date_from: Range start (inclusive, YYYYMMDD or YYYY-MM-DD).
+            date_to: Range end (inclusive, YYYYMMDD or YYYY-MM-DD).
+            code: Optional 4- or 5-digit code (post-filter).
+            window_sessions: See ``detect_52w_high_low``.
+            min_prior_sessions: See ``detect_52w_high_low``.
+        """
+        errors = collect_errors(
+            validate_date(date_from),
+            validate_date(date_to),
+            validate_code(code),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+        if window_sessions < 2:
+            return make_validation_error_response(["`window_sessions` must be >= 2."])
+        if min_prior_sessions < 1:
+            return make_validation_error_response(["`min_prior_sessions` must be >= 1."])
+
+        cache: CacheStore = get_cache()
+        d_from = _normalize_date(date_from)
+        d_to = _normalize_date(date_to)
+        if d_from > d_to:
+            return make_validation_error_response(["`date_from` must be <= `date_to`."])
+
+        async def _compute_one(d: str) -> dict[str, Any]:
+            start = _calendar_window_start(d, window_sessions)
+            return await _high_low_signals(
+                cache=cache,
+                norm_date=d,
+                range_start=start,
+                code=code,
+                window_sessions=window_sessions,
+                min_prior_sessions=min_prior_sessions,
+                mode_label="52w",
+            )
+
+        return await _high_low_range(
+            cache=cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash_value=screener_compute.default_params_hash_52w(
+                window_sessions=window_sessions,
+                min_prior_sessions=min_prior_sessions,
+            ),
+            date_from=d_from,
+            date_to=d_to,
+            code=code,
+            mode_label="52w",
+            on_demand=_compute_one,
+        )
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def detect_ytd_high_low_range(
+        date_from: str,
+        date_to: str,
+        code: str | None = None,
+        min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
+    ) -> dict[str, Any]:
+        """Multi-date variant of ``detect_ytd_high_low``.
+
+        Returns the union of single-date results across the inclusive
+        ``[date_from, date_to]`` range. Use this instead of firing
+        N parallel ``detect_ytd_high_low`` calls — the single-date tool
+        is CPU-heavy and parallel dispatch causes client-side timeouts.
+
+        For default parameters and dates inside the past 52 weeks every
+        date is a pre-computed cache hit and the entire range completes
+        in sub-second. Out-of-cache dates fall through to on-demand
+        computation.
+
+        Args:
+            date_from: Range start (inclusive, YYYYMMDD or YYYY-MM-DD).
+            date_to: Range end (inclusive, YYYYMMDD or YYYY-MM-DD).
+            code: Optional 4- or 5-digit code (post-filter).
+            min_prior_sessions: See ``detect_ytd_high_low``.
+        """
+        errors = collect_errors(
+            validate_date(date_from),
+            validate_date(date_to),
+            validate_code(code),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+        if min_prior_sessions < 1:
+            return make_validation_error_response(["`min_prior_sessions` must be >= 1."])
+
+        cache: CacheStore = get_cache()
+        d_from = _normalize_date(date_from)
+        d_to = _normalize_date(date_to)
+        if d_from > d_to:
+            return make_validation_error_response(["`date_from` must be <= `date_to`."])
+
+        async def _compute_one(d: str) -> dict[str, Any]:
+            year_start = d[:4] + "-01-01"
+            return await _high_low_signals(
+                cache=cache,
+                norm_date=d,
+                range_start=year_start,
+                code=code,
+                window_sessions=None,
+                min_prior_sessions=min_prior_sessions,
+                mode_label="ytd",
+            )
+
+        return await _high_low_range(
+            cache=cache,
+            tool_name=screener_compute.TOOL_DETECT_YTD,
+            params_hash_value=screener_compute.default_params_hash_ytd(
+                min_prior_sessions=min_prior_sessions,
+            ),
+            date_from=d_from,
+            date_to=d_to,
+            code=code,
+            mode_label="ytd",
+            on_demand=_compute_one,
+        )
+
 
 # ----------------------------------------------------------------
 # helpers
@@ -546,13 +720,10 @@ async def _high_low_signals(
 ) -> dict[str, Any]:
     """Shared implementation for ``detect_52w_high_low`` / ``detect_ytd_high_low``.
 
-    Loads bars between ``range_start`` and ``norm_date`` (inclusive), groups
-    by code, and computes new-high / new-low signals against the prior
-    sessions in the window. ``window_sessions`` caps the trailing window
-    (52w mode); pass ``None`` to use the full range (YTD mode).
-
-    Returns the standard ``{"count": N, "data": [...], "mode": ...}``
-    response shape.
+    Loads bars between ``range_start`` and ``norm_date`` (inclusive) via
+    the cache, then delegates to the pure-Python compute helper in
+    ``cache.screener_compute`` so that the populate scripts share the
+    exact same logic.
     """
     key_filter: dict[str, str] = {}
     if code:
@@ -574,62 +745,147 @@ async def _high_low_signals(
     ) as e:
         return format_api_error(e)
 
-    by_code: dict[str, list[dict[str, Any]]] = {}
-    for row in rows:
-        c = str(row.get("Code") or "")
-        if not c:
-            continue
-        by_code.setdefault(c, []).append(row)
+    return screener_compute.compute_high_low_signals(
+        rows,
+        norm_date=norm_date,
+        code=code,
+        window_sessions=window_sessions,
+        min_prior_sessions=min_prior_sessions,
+        mode_label=mode_label,
+    )
 
-    matches: list[dict[str, Any]] = []
-    for c, sessions in sorted(by_code.items()):
-        sessions.sort(key=lambda r: r.get("Date") or "")
-        window = sessions if window_sessions is None else sessions[-window_sessions:]
-        if not window or window[-1].get("Date") != norm_date:
-            # Stock didn't trade on the requested date.
-            continue
-        today = window[-1]
-        prior = window[:-1]
 
-        prior_highs = [_as_float(s.get("AdjH")) for s in prior]
-        prior_highs = [h for h in prior_highs if h is not None]
-        prior_lows = [_as_float(s.get("AdjL")) for s in prior]
-        prior_lows = [low for low in prior_lows if low is not None]
-        if not prior_highs or not prior_lows:
-            continue
-        if code is None and len(prior) < min_prior_sessions:
-            # Cross-sectional noise filter for IPOs / January.
-            continue
+def _filter_payload_by_code(
+    payload: dict[str, Any],
+    norm_code: str,
+) -> dict[str, Any]:
+    """Post-filter a cross-sectional cache payload to a single code."""
+    data = [row for row in payload.get("data", []) if str(row.get("Code")) == norm_code]
+    return {"count": len(data), "mode": payload.get("mode"), "data": data}
 
-        today_high = _as_float(today.get("AdjH"))
-        today_low = _as_float(today.get("AdjL"))
-        today_close = _as_float(today.get("AdjC"))
 
-        prior_high = max(prior_highs)
-        prior_low = min(prior_lows)
+def _try_screener_cache_52w(
+    cache: CacheStore,
+    *,
+    norm_date: str,
+    code: str | None,
+    window_sessions: int,
+    min_prior_sessions: int,
+) -> dict[str, Any] | None:
+    """Look up a pre-computed 52w-high/low payload, post-filter on code.
 
-        new_high = today_high is not None and today_high >= prior_high
-        new_low = today_low is not None and today_low <= prior_low
-        new_high_close = today_close is not None and today_close >= prior_high
-        new_low_close = today_close is not None and today_close <= prior_low
+    Returns ``None`` on miss. Hits are returned as a fresh dict so the
+    caller can mutate without touching the cached object.
+    """
+    params_hash = screener_compute.default_params_hash_52w(
+        window_sessions=window_sessions,
+        min_prior_sessions=min_prior_sessions,
+    )
+    payload = cache.screener_result_get(screener_compute.TOOL_DETECT_52W, params_hash, norm_date)
+    if payload is None:
+        return None
+    if code:
+        return _filter_payload_by_code(payload, _normalize_code(code))
+    # Defensive copy so callers can mutate the response.
+    return {
+        "count": payload.get("count", 0),
+        "mode": payload.get("mode", "52w"),
+        "data": list(payload.get("data", [])),
+    }
 
-        if code is None and not (new_high or new_low or new_high_close or new_low_close):
-            continue
 
-        matches.append(
-            {
-                "Code": c,
-                "Date": norm_date,
-                "prior_sessions": len(prior),
-                "AdjH": today_high,
-                "AdjL": today_low,
-                "AdjC": today_close,
-                "prior_high": prior_high,
-                "prior_low": prior_low,
-                "new_high": new_high,
-                "new_low": new_low,
-                "new_high_close": new_high_close,
-                "new_low_close": new_low_close,
-            }
-        )
-    return {"count": len(matches), "mode": mode_label, "data": matches}
+def _try_screener_cache_ytd(
+    cache: CacheStore,
+    *,
+    norm_date: str,
+    code: str | None,
+    min_prior_sessions: int,
+) -> dict[str, Any] | None:
+    """Look up a pre-computed YTD-high/low payload, post-filter on code."""
+    params_hash = screener_compute.default_params_hash_ytd(
+        min_prior_sessions=min_prior_sessions,
+    )
+    payload = cache.screener_result_get(screener_compute.TOOL_DETECT_YTD, params_hash, norm_date)
+    if payload is None:
+        return None
+    if code:
+        return _filter_payload_by_code(payload, _normalize_code(code))
+    return {
+        "count": payload.get("count", 0),
+        "mode": payload.get("mode", "ytd"),
+        "data": list(payload.get("data", [])),
+    }
+
+
+async def _high_low_range(
+    *,
+    cache: CacheStore,
+    tool_name: str,
+    params_hash_value: str,
+    date_from: str,
+    date_to: str,
+    code: str | None,
+    mode_label: str,
+    on_demand,
+) -> dict[str, Any]:
+    """Range scan: bulk cache lookup + on-demand fallback per missing day.
+
+    Trading-day enumeration uses ``equities_bars_daily`` (the dense
+    source of truth). For each trading day:
+      * cache hit → use payload directly
+      * cache miss → call ``on_demand(date)`` (single-date compute)
+
+    Code filtering is applied uniformly after lookup/compute.
+    """
+    cached_by_date = cache.screener_result_get_range(
+        tool_name, params_hash_value, date_from, date_to
+    )
+
+    # Determine the trading days in range. Prefer the screener cache
+    # itself when it covers the whole range; otherwise discover trading
+    # days from the bar table to handle out-of-cache dates.
+    trading_days = sorted(cached_by_date.keys())
+    if not trading_days or trading_days[0] > date_from or trading_days[-1] < date_to:
+        trading_days = _distinct_trading_days(cache, date_from, date_to) or trading_days
+
+    norm_code = _normalize_code(code) if code else None
+    aggregated: list[dict[str, Any]] = []
+    for d in sorted(set(trading_days)):
+        if d in cached_by_date:
+            payload = cached_by_date[d]
+            rows = payload.get("data", [])
+        else:
+            payload = await on_demand(d)
+            if payload.get("error"):
+                # Validation/API error mid-range: surface immediately.
+                return payload
+            rows = payload.get("data", [])
+        if norm_code is not None:
+            rows = [row for row in rows if str(row.get("Code")) == norm_code]
+        aggregated.extend(rows)
+
+    return {
+        "count": len(aggregated),
+        "mode": mode_label,
+        "date_from": date_from,
+        "date_to": date_to,
+        "data": aggregated,
+    }
+
+
+def _distinct_trading_days(cache: CacheStore, date_from: str, date_to: str) -> list[str]:
+    """Distinct ``equities_bars_daily`` dates in [date_from, date_to].
+
+    Goes through ``CacheStore._ensure_connection`` to respect the
+    cache's not-ready / reload state, but executes a direct
+    ``SELECT DISTINCT`` because the public ``get_cached_dates`` API
+    requires a key filter.
+    """
+    conn = cache._ensure_connection()  # noqa: SLF001 — internal helper, contract-stable
+    if conn is None:
+        return []
+    rows = conn.execute(
+        "SELECT DISTINCT date FROM equities_bars_daily WHERE date >= ? AND date <= ? ORDER BY date",
+        (date_from, date_to),
+    ).fetchall()
+    return [str(r[0])[:10] for r in rows]

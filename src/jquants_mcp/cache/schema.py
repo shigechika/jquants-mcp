@@ -9,6 +9,8 @@ Public API (stable contract):
                           schemas keyed by table name.
     BULK_TABLES        — dict[str, dict[str, str]] : Bulk-only table schemas.
     RESPONSE_CACHE_DDL — str : DDL for the response-level Tier 2 cache table.
+    SCREENER_RESULTS_DDL / SCREENER_RESULTS_INDEX_DDL — DDL for the
+                          pre-computed screener result cache.
     generate_ddl(name, schema) — Build CREATE TABLE DDL from a schema dict.
     all_ddl()          — dict[str, str] : {table_name: DDL} for all
                           row-level tables (TIER1_TABLES + BULK_TABLES).
@@ -28,6 +30,8 @@ __all__ = [
     "ALL_TABLE_NAMES",
     "BULK_TABLES",
     "RESPONSE_CACHE_DDL",
+    "SCREENER_RESULTS_DDL",
+    "SCREENER_RESULTS_INDEX_DDL",
     "TIER1_KEY_COLUMNS",
     "TIER1_TABLES",
     "all_bulk_ddl",
@@ -131,6 +135,28 @@ CREATE TABLE IF NOT EXISTS response_cache (
 """
 
 # ----------------------------------------------------------------
+# Screener result cache: pre-computed cross-sectional screener
+# outputs keyed by (tool, params, date). Populated by daily_fetch on
+# m1.local (Cloud Run instances are read-only because /tmp is
+# ephemeral). Rolling 52-week retention.
+# ----------------------------------------------------------------
+
+SCREENER_RESULTS_DDL = """
+CREATE TABLE IF NOT EXISTS screener_results (
+    tool_name TEXT NOT NULL,
+    params_hash TEXT NOT NULL,
+    date TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    computed_at REAL NOT NULL,
+    PRIMARY KEY (tool_name, params_hash, date)
+)
+"""
+
+SCREENER_RESULTS_INDEX_DDL = (
+    "CREATE INDEX IF NOT EXISTS idx_screener_results_date ON screener_results(date)"
+)
+
+# ----------------------------------------------------------------
 # Derived constants
 # ----------------------------------------------------------------
 
@@ -139,7 +165,9 @@ TIER1_KEY_COLUMNS: dict[str, frozenset[str]] = {
     for table, schema in TIER1_TABLES.items()
 }
 
-ALL_TABLE_NAMES: frozenset[str] = frozenset(TIER1_TABLES.keys()) | frozenset(["response_cache"])
+ALL_TABLE_NAMES: frozenset[str] = frozenset(TIER1_TABLES.keys()) | frozenset(
+    ["response_cache", "screener_results"]
+)
 
 # ----------------------------------------------------------------
 # DDL generation

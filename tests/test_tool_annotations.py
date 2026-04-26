@@ -59,6 +59,8 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     "detect_52w_high_low": READ_ONLY_CACHE,
     "detect_ytd_high_low": READ_ONLY_CACHE,
     "detect_volume_surge": READ_ONLY_CACHE,
+    "detect_52w_high_low_range": READ_ONLY_CACHE,
+    "detect_ytd_high_low_range": READ_ONLY_CACHE,
     # tools/charts.py — cache only, returns Image (when [charts] extra installed)
     "render_candlestick": READ_ONLY_CACHE,
     # server.py utilities — pure server-local read
