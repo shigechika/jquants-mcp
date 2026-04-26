@@ -205,6 +205,6 @@ class TestCoverage:
             assert actual_keys == expected_keys
 
     def test_all_table_names_complete(self):
-        """ALL_TABLE_NAMES includes all Tier 1 tables + response_cache."""
-        expected = frozenset(TIER1_TABLES.keys()) | {"response_cache"}
+        """ALL_TABLE_NAMES includes all Tier 1 tables + response_cache + screener_results."""
+        expected = frozenset(TIER1_TABLES.keys()) | {"response_cache", "screener_results"}
         assert ALL_TABLE_NAMES == expected

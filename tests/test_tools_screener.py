@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 import jquants_mcp.server as server_module
+from jquants_mcp.cache import screener_compute
 from jquants_mcp.cache.store import CacheStore
 from jquants_mcp.client import JQuantsClient
 from jquants_mcp.config import Settings
@@ -451,3 +452,465 @@ class TestDetectVolumeSurge:
         result = await _call("detect_volume_surge", date="2026-04-01", baseline_days=1)
         assert result.get("error") is True
         assert result.get("error_type") == "ValidationError"
+
+
+# ----------------------------------------------------------------
+# Screener result cache (Issue #142)
+# ----------------------------------------------------------------
+
+
+def _put_cache_payload(
+    cache: CacheStore,
+    *,
+    tool_name: str,
+    params_hash: str,
+    date: str,
+    payload: dict,
+) -> None:
+    """Direct cache write — used in tests to simulate the populate step."""
+    cache.screener_result_put(tool_name, params_hash, date, payload)
+
+
+def _stub_payload_52w(date: str, codes_with_high: list[str]) -> dict:
+    return {
+        "count": len(codes_with_high),
+        "mode": "52w",
+        "data": [
+            {
+                "Code": c,
+                "Date": date,
+                "prior_sessions": 250,
+                "AdjH": 1234.0,
+                "AdjL": 1000.0,
+                "AdjC": 1234.0,
+                "prior_high": 1200.0,
+                "prior_low": 950.0,
+                "new_high": True,
+                "new_low": False,
+                "new_high_close": True,
+                "new_low_close": False,
+            }
+            for c in codes_with_high
+        ],
+    }
+
+
+def _stub_payload_ytd(date: str, codes_with_high: list[str]) -> dict:
+    payload = _stub_payload_52w(date, codes_with_high)
+    payload["mode"] = "ytd"
+    return payload
+
+
+class TestScreenerCachePersistence:
+    """Direct CacheStore tests — the populate scripts depend on these."""
+
+    def test_get_returns_none_on_miss(self, mock_env):
+        assert (
+            mock_env["cache"].screener_result_get("detect_52w_high_low", "h", "2026-04-01") is None
+        )
+
+    def test_put_then_get_round_trip(self, mock_env):
+        cache = mock_env["cache"]
+        cache.screener_result_put(
+            "detect_52w_high_low",
+            "h-default",
+            "2026-04-01",
+            {"count": 1, "mode": "52w", "data": [{"Code": "12340"}]},
+        )
+        got = cache.screener_result_get("detect_52w_high_low", "h-default", "2026-04-01")
+        assert got is not None
+        assert got["count"] == 1
+        assert got["data"][0]["Code"] == "12340"
+
+    def test_put_replaces_existing(self, mock_env):
+        cache = mock_env["cache"]
+        cache.screener_result_put("t", "p", "d", {"count": 1, "data": [1]})
+        cache.screener_result_put("t", "p", "d", {"count": 2, "data": [1, 2]})
+        got = cache.screener_result_get("t", "p", "d")
+        assert got["count"] == 2
+
+    def test_get_range_returns_dict_keyed_by_date(self, mock_env):
+        cache = mock_env["cache"]
+        for d, n in [("2026-04-01", 1), ("2026-04-02", 2), ("2026-04-03", 3)]:
+            cache.screener_result_put("t", "p", d, {"count": n, "data": []})
+        got = cache.screener_result_get_range("t", "p", "2026-04-01", "2026-04-02")
+        assert set(got.keys()) == {"2026-04-01", "2026-04-02"}
+        assert got["2026-04-02"]["count"] == 2
+
+    def test_prune_drops_old_rows_only(self, mock_env, monkeypatch):
+        cache = mock_env["cache"]
+        # Fixed "today" via SQLite default — drop weeks=0 means delete all
+        # rows older than today; only future / today rows survive.
+        cache.screener_result_put("t", "p", "1900-01-01", {"count": 0, "data": []})
+        cache.screener_result_put("t", "p", "2999-12-31", {"count": 0, "data": []})
+        deleted = cache.screener_result_prune(retention_weeks=0)
+        assert deleted == 1
+        assert cache.screener_result_count() == 1
+
+
+class TestDetect52wCacheRead:
+    async def test_cache_hit_short_circuits(self, mock_env):
+        cache = mock_env["cache"]
+        params_hash = screener_compute.default_params_hash_52w()
+        payload = _stub_payload_52w("2026-04-01", ["12340", "67890"])
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash=params_hash,
+            date="2026-04-01",
+            payload=payload,
+        )
+        # Note: no equities_bars_daily seeded — cache hit must be the
+        # only reason the tool returns non-empty data.
+        result = await _call("detect_52w_high_low", date="2026-04-01")
+        assert result["count"] == 2
+        assert {row["Code"] for row in result["data"]} == {"12340", "67890"}
+
+    async def test_cache_miss_falls_through_to_compute(self, mock_env):
+        # No cache row, but seeded bars: tool computes on-demand.
+        start = datetime(2026, 1, 5)
+        rows = []
+        for i in range(20):
+            d = (start + timedelta(days=i * 7)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, h=100 + i, low=80, c=95 + i))
+        final_date = (start + timedelta(days=20 * 7)).strftime("%Y-%m-%d")
+        rows.append(_bar("27800", final_date, h=200, low=180, c=200))
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "detect_52w_high_low",
+            date=final_date,
+            code="27800",
+            window_sessions=30,
+            min_prior_sessions=1,
+        )
+        assert result["count"] == 1
+        assert result["data"][0]["new_high"] is True
+
+    async def test_non_default_params_bypass_cache(self, mock_env):
+        # Cached payload for default params; tool called with custom
+        # window_sessions ⇒ params_hash differs ⇒ cache miss ⇒ falls
+        # through to compute (which has no bars seeded, returns empty).
+        cache = mock_env["cache"]
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash=screener_compute.default_params_hash_52w(),
+            date="2026-04-01",
+            payload=_stub_payload_52w("2026-04-01", ["99999"]),
+        )
+        result = await _call(
+            "detect_52w_high_low",
+            date="2026-04-01",
+            window_sessions=20,  # different from default 252
+            min_prior_sessions=1,
+        )
+        # Cache populated for defaults only; non-default => empty compute.
+        assert result["count"] == 0
+
+    async def test_code_specified_skips_cache(self, mock_env):
+        """Cache is cross-sectional only (built with min_prior_sessions
+        active). An explicit code must bypass the cache and recompute
+        from bars, otherwise IPO codes that the cross-sectional filter
+        dropped would silently disappear from per-code queries.
+        """
+        cache = mock_env["cache"]
+
+        # Cache says the cross-sectional payload is empty for 2026-04-15.
+        params_hash = screener_compute.default_params_hash_52w(
+            window_sessions=20, min_prior_sessions=1
+        )
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash=params_hash,
+            date="2026-04-15",
+            payload={"count": 0, "mode": "52w", "data": []},
+        )
+
+        # But the bars clearly show a new high for 27800 on that date.
+        rows = []
+        start = datetime(2026, 1, 5)
+        for i in range(20):
+            d = (start + timedelta(days=i * 5)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, h=100 + i, low=80, c=95 + i))
+        rows.append(_bar("27800", "2026-04-15", h=300, low=280, c=300))
+        _seed(cache, rows)
+
+        # Explicit code → cache bypassed → bars-driven result wins.
+        result = await _call(
+            "detect_52w_high_low",
+            date="2026-04-15",
+            code="27800",
+            window_sessions=20,
+            min_prior_sessions=1,
+        )
+        assert result["count"] == 1
+        assert result["data"][0]["Code"] == "27800"
+        assert result["data"][0]["new_high"] is True
+
+    async def test_code_specified_with_ipo_recovers_signal(self, mock_env):
+        """Regression: an IPO with < 60 prior sessions is dropped from
+        the cross-sectional cache (correct, suppresses noise), but
+        ``detect_52w_high_low(code='X')`` for that IPO must still fire
+        because per-code mode bypasses the IPO filter on the on-demand
+        path.
+        """
+        cache = mock_env["cache"]
+
+        # The populate path would have called the tool with code=None
+        # and filtered out IPO 99990 (only 5 prior sessions). Simulate
+        # that by storing a payload that does NOT contain 99990.
+        params_hash = screener_compute.default_params_hash_52w()
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash=params_hash,
+            date="2026-04-10",
+            payload=_stub_payload_52w("2026-04-10", ["12340"]),  # IPO not here
+        )
+
+        # Real bars exist for the IPO with a clear new high.
+        rows = []
+        for i in range(5):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("99990", d, h=100 + i, low=90, c=95 + i))
+        rows.append(_bar("99990", "2026-04-10", h=300, low=200, c=300))
+        _seed(cache, rows)
+
+        result = await _call(
+            "detect_52w_high_low",
+            date="2026-04-10",
+            code="99990",
+            min_prior_sessions=1,  # bypass IPO filter on on-demand path
+        )
+        assert result["count"] == 1
+        assert result["data"][0]["Code"] == "99990"
+        assert result["data"][0]["new_high"] is True
+
+
+class TestDetectYtdCacheRead:
+    async def test_cache_hit_returns_cached_payload(self, mock_env):
+        cache = mock_env["cache"]
+        params_hash = screener_compute.default_params_hash_ytd()
+        payload = _stub_payload_ytd("2026-04-01", ["12340"])
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_YTD,
+            params_hash=params_hash,
+            date="2026-04-01",
+            payload=payload,
+        )
+        result = await _call("detect_ytd_high_low", date="2026-04-01")
+        assert result["mode"] == "ytd"
+        assert result["count"] == 1
+
+
+class TestDetect52wRange:
+    async def test_full_range_cache_hit_skips_bar_table(self, mock_env):
+        cache = mock_env["cache"]
+        # Seed only enough bars to drive trading-day discovery; their
+        # content is irrelevant because every date is a cache hit.
+        bars = [_bar("00000", d) for d in ("2026-04-01", "2026-04-02")]
+        _seed(cache, bars)
+        params_hash = screener_compute.default_params_hash_52w()
+        for d, codes in [("2026-04-01", ["12340"]), ("2026-04-02", ["67890"])]:
+            _put_cache_payload(
+                cache,
+                tool_name=screener_compute.TOOL_DETECT_52W,
+                params_hash=params_hash,
+                date=d,
+                payload=_stub_payload_52w(d, codes),
+            )
+        result = await _call(
+            "detect_52w_high_low_range",
+            date_from="2026-04-01",
+            date_to="2026-04-02",
+        )
+        assert result["count"] == 2
+        codes = {row["Code"] for row in result["data"]}
+        assert codes == {"12340", "67890"}
+        assert result["mode"] == "52w"
+
+    async def test_partial_hit_falls_through_for_misses(self, mock_env):
+        cache = mock_env["cache"]
+        # Hash must match the (window_sessions, min_prior_sessions) the
+        # tool is called with — otherwise the lookup misses for trivially
+        # different reasons than the test intends.
+        params_hash = screener_compute.default_params_hash_52w(
+            window_sessions=60, min_prior_sessions=1
+        )
+        # Day 1 cached; day 2 must be computed from bars.
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash=params_hash,
+            date="2026-04-01",
+            payload=_stub_payload_52w("2026-04-01", ["00010"]),
+        )
+        # Build per-code histories long enough that on-demand compute
+        # produces a non-empty payload on day 2.
+        rows = []
+        start = datetime(2026, 1, 5)
+        for i in range(60):
+            d = (start + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("00020", d, h=100 + i, low=80, c=95 + i))
+        rows.append(_bar("00020", "2026-04-02", h=300, low=200, c=300))
+        # Also drop a stub bar on day 1 so trading-day enumeration sees
+        # both calendar days.
+        rows.append(_bar("00020", "2026-04-01", h=160, low=130, c=158))
+        _seed(cache, rows)
+
+        result = await _call(
+            "detect_52w_high_low_range",
+            date_from="2026-04-01",
+            date_to="2026-04-02",
+            window_sessions=60,
+            min_prior_sessions=1,
+        )
+        codes_by_date: dict[str, set[str]] = {}
+        for row in result["data"]:
+            codes_by_date.setdefault(row["Date"], set()).add(row["Code"])
+        assert "00010" in codes_by_date["2026-04-01"]  # from cache
+        assert "00020" in codes_by_date["2026-04-02"]  # on-demand
+
+    async def test_full_miss_outside_cache(self, mock_env):
+        # No cached rows. Range tool falls through to on-demand for every
+        # trading day discovered from equities_bars_daily.
+        rows = []
+        start = datetime(2026, 1, 5)
+        for i in range(60):
+            d = (start + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("12340", d, h=100 + i, low=80, c=95 + i))
+        rows.append(_bar("12340", "2026-04-10", h=200, low=180, c=200))
+        _seed(mock_env["cache"], rows)
+        result = await _call(
+            "detect_52w_high_low_range",
+            date_from="2026-04-10",
+            date_to="2026-04-10",
+            window_sessions=60,
+            min_prior_sessions=1,
+        )
+        assert result["count"] == 1
+        assert result["data"][0]["Code"] == "12340"
+
+    async def test_single_date_range_works(self, mock_env):
+        cache = mock_env["cache"]
+        params_hash = screener_compute.default_params_hash_52w()
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash=params_hash,
+            date="2026-04-01",
+            payload=_stub_payload_52w("2026-04-01", ["12340"]),
+        )
+        result = await _call(
+            "detect_52w_high_low_range",
+            date_from="2026-04-01",
+            date_to="2026-04-01",
+        )
+        assert result["count"] == 1
+
+    async def test_range_validates_order(self, mock_env):
+        result = await _call(
+            "detect_52w_high_low_range",
+            date_from="2026-04-10",
+            date_to="2026-04-01",
+        )
+        assert result.get("error") is True
+        assert result.get("error_type") == "ValidationError"
+
+    async def test_range_with_code_skips_cache(self, mock_env):
+        """Range + ``code`` must bypass the cross-sectional cache for
+        the same reason ``detect_52w_high_low`` does: stored payloads
+        omit IPO codes, and a per-code query must surface the IPO's
+        bars-driven signal even when the cache says nothing.
+        """
+        cache = mock_env["cache"]
+        params_hash = screener_compute.default_params_hash_52w(
+            window_sessions=20, min_prior_sessions=1
+        )
+        # Cache claims 2026-04-01 has no signal — must NOT win for code='27800'.
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash=params_hash,
+            date="2026-04-01",
+            payload={"count": 0, "mode": "52w", "data": []},
+        )
+        # Bars say 27800 hit a new high on 2026-04-01.
+        rows = []
+        start = datetime(2026, 1, 5)
+        for i in range(20):
+            d = (start + timedelta(days=i * 4)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, h=100 + i, low=80, c=95 + i))
+        rows.append(_bar("27800", "2026-04-01", h=300, low=280, c=300))
+        _seed(cache, rows)
+
+        result = await _call(
+            "detect_52w_high_low_range",
+            date_from="2026-04-01",
+            date_to="2026-04-01",
+            code="27800",
+            window_sessions=20,
+            min_prior_sessions=1,
+        )
+        assert result["count"] == 1
+        assert result["data"][0]["Code"] == "27800"
+        assert result["data"][0]["new_high"] is True
+
+
+class TestDetectYtdRange:
+    async def test_full_range_cache_hit(self, mock_env):
+        cache = mock_env["cache"]
+        bars = [_bar("00000", d) for d in ("2026-04-01", "2026-04-02")]
+        _seed(cache, bars)
+        params_hash = screener_compute.default_params_hash_ytd()
+        for d, codes in [("2026-04-01", ["12340"]), ("2026-04-02", ["67890"])]:
+            _put_cache_payload(
+                cache,
+                tool_name=screener_compute.TOOL_DETECT_YTD,
+                params_hash=params_hash,
+                date=d,
+                payload=_stub_payload_ytd(d, codes),
+            )
+        result = await _call(
+            "detect_ytd_high_low_range",
+            date_from="2026-04-01",
+            date_to="2026-04-02",
+        )
+        assert result["count"] == 2
+        assert result["mode"] == "ytd"
+
+
+class TestScreenerComputeHelpers:
+    def test_params_hash_is_deterministic(self):
+        h1 = screener_compute.params_hash({"a": 1, "b": 2})
+        h2 = screener_compute.params_hash({"b": 2, "a": 1})
+        assert h1 == h2
+        assert len(h1) == 16
+
+    def test_default_hashes_differ_per_tool(self):
+        # 52w default-hash inputs (window_sessions, min_prior_sessions)
+        # vs YTD inputs (min_prior_sessions only) must not collide.
+        assert (
+            screener_compute.default_params_hash_52w() != screener_compute.default_params_hash_ytd()
+        )
+
+    def test_compute_high_low_signals_matches_inline_logic(self):
+        rows = [
+            _bar("12340", "2026-01-05", h=100, low=80, c=95),
+            _bar("12340", "2026-01-12", h=110, low=85, c=105),
+            _bar("12340", "2026-01-19", h=200, low=180, c=200),
+        ]
+        result = screener_compute.compute_high_low_signals(
+            rows,
+            norm_date="2026-01-19",
+            code=None,
+            window_sessions=10,
+            min_prior_sessions=1,
+            mode_label="52w",
+        )
+        assert result["count"] == 1
+        assert result["data"][0]["new_high"] is True
+        assert result["data"][0]["new_high_close"] is True
