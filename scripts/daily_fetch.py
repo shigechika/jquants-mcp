@@ -683,7 +683,6 @@ def populate_screener_results(conn: sqlite3.Connection) -> int:
         t0 = time.time()
         payload = screener_compute.compute_for_date(
             conn,
-            tool_name=tool_name,
             norm_date=latest,
             **kwargs,
         )

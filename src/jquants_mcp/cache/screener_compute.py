@@ -199,7 +199,6 @@ def fetch_daily_bars(
 def compute_for_date(
     conn: Any,
     *,
-    tool_name: str,
     norm_date: str,
     window_sessions: int | None,
     min_prior_sessions: int,
@@ -208,7 +207,9 @@ def compute_for_date(
     """Fetch the right window of bars and compute the screener payload.
 
     Bridges the SQL fetch + pure-Python compute for callers that hold
-    a raw connection (daily_fetch / populate scripts).
+    a raw connection (daily_fetch / populate scripts). Callers
+    determine the target ``tool_name`` independently when storing the
+    result via :func:`upsert_screener_result`.
     """
     if window_sessions is None:
         # YTD mode: from Jan 1 of the same year through ``norm_date``.
@@ -253,14 +254,17 @@ def upsert_screener_result(
 def prune_old_results(conn: Any, *, retention_weeks: int = 52) -> int:
     """Drop ``screener_results`` rows older than ``retention_weeks``.
 
-    Returns the number of rows deleted. SQLite's ``date()`` modifier
-    does not accept a ``weeks`` unit (it silently returns NULL), so we
-    convert to days here.
+    Returns the number of rows deleted. The cutoff is computed in
+    Python (host local time) so the boundary follows JST on m1.local
+    rather than SQLite's UTC ``date('now')`` (avoids a ~9 h drift on
+    JST evenings).
     """
-    days = int(retention_weeks) * 7
+    from datetime import date, timedelta
+
+    cutoff = (date.today() - timedelta(weeks=int(retention_weeks))).isoformat()
     cursor = conn.execute(
-        "DELETE FROM screener_results WHERE date < date('now', ?)",
-        (f"-{days} days",),
+        "DELETE FROM screener_results WHERE date < ?",
+        (cutoff,),
     )
     return cursor.rowcount if cursor.rowcount is not None else 0
 

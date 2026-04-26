@@ -608,21 +608,85 @@ class TestDetect52wCacheRead:
         # Cache populated for defaults only; non-default => empty compute.
         assert result["count"] == 0
 
-    async def test_code_filter_post_filters_cached_payload(self, mock_env):
+    async def test_code_specified_skips_cache(self, mock_env):
+        """Cache is cross-sectional only (built with min_prior_sessions
+        active). An explicit code must bypass the cache and recompute
+        from bars, otherwise IPO codes that the cross-sectional filter
+        dropped would silently disappear from per-code queries.
+        """
         cache = mock_env["cache"]
-        params_hash = screener_compute.default_params_hash_52w()
-        payload = _stub_payload_52w("2026-04-01", ["12340", "67890"])
+
+        # Cache says the cross-sectional payload is empty for 2026-04-15.
+        params_hash = screener_compute.default_params_hash_52w(
+            window_sessions=20, min_prior_sessions=1
+        )
         _put_cache_payload(
             cache,
             tool_name=screener_compute.TOOL_DETECT_52W,
             params_hash=params_hash,
-            date="2026-04-01",
-            payload=payload,
+            date="2026-04-15",
+            payload={"count": 0, "mode": "52w", "data": []},
         )
-        result = await _call("detect_52w_high_low", date="2026-04-01", code="1234")
-        # 4-char code is normalized to 5-char "12340"
+
+        # But the bars clearly show a new high for 27800 on that date.
+        rows = []
+        start = datetime(2026, 1, 5)
+        for i in range(20):
+            d = (start + timedelta(days=i * 5)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, h=100 + i, low=80, c=95 + i))
+        rows.append(_bar("27800", "2026-04-15", h=300, low=280, c=300))
+        _seed(cache, rows)
+
+        # Explicit code → cache bypassed → bars-driven result wins.
+        result = await _call(
+            "detect_52w_high_low",
+            date="2026-04-15",
+            code="27800",
+            window_sessions=20,
+            min_prior_sessions=1,
+        )
         assert result["count"] == 1
-        assert result["data"][0]["Code"] == "12340"
+        assert result["data"][0]["Code"] == "27800"
+        assert result["data"][0]["new_high"] is True
+
+    async def test_code_specified_with_ipo_recovers_signal(self, mock_env):
+        """Regression: an IPO with < 60 prior sessions is dropped from
+        the cross-sectional cache (correct, suppresses noise), but
+        ``detect_52w_high_low(code='X')`` for that IPO must still fire
+        because per-code mode bypasses the IPO filter on the on-demand
+        path.
+        """
+        cache = mock_env["cache"]
+
+        # The populate path would have called the tool with code=None
+        # and filtered out IPO 99990 (only 5 prior sessions). Simulate
+        # that by storing a payload that does NOT contain 99990.
+        params_hash = screener_compute.default_params_hash_52w()
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash=params_hash,
+            date="2026-04-10",
+            payload=_stub_payload_52w("2026-04-10", ["12340"]),  # IPO not here
+        )
+
+        # Real bars exist for the IPO with a clear new high.
+        rows = []
+        for i in range(5):
+            d = (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("99990", d, h=100 + i, low=90, c=95 + i))
+        rows.append(_bar("99990", "2026-04-10", h=300, low=200, c=300))
+        _seed(cache, rows)
+
+        result = await _call(
+            "detect_52w_high_low",
+            date="2026-04-10",
+            code="99990",
+            min_prior_sessions=1,  # bypass IPO filter on on-demand path
+        )
+        assert result["count"] == 1
+        assert result["data"][0]["Code"] == "99990"
+        assert result["data"][0]["new_high"] is True
 
 
 class TestDetectYtdCacheRead:
@@ -756,24 +820,44 @@ class TestDetect52wRange:
         assert result.get("error") is True
         assert result.get("error_type") == "ValidationError"
 
-    async def test_range_post_filters_by_code(self, mock_env):
+    async def test_range_with_code_skips_cache(self, mock_env):
+        """Range + ``code`` must bypass the cross-sectional cache for
+        the same reason ``detect_52w_high_low`` does: stored payloads
+        omit IPO codes, and a per-code query must surface the IPO's
+        bars-driven signal even when the cache says nothing.
+        """
         cache = mock_env["cache"]
-        params_hash = screener_compute.default_params_hash_52w()
+        params_hash = screener_compute.default_params_hash_52w(
+            window_sessions=20, min_prior_sessions=1
+        )
+        # Cache claims 2026-04-01 has no signal — must NOT win for code='27800'.
         _put_cache_payload(
             cache,
             tool_name=screener_compute.TOOL_DETECT_52W,
             params_hash=params_hash,
             date="2026-04-01",
-            payload=_stub_payload_52w("2026-04-01", ["12340", "67890"]),
+            payload={"count": 0, "mode": "52w", "data": []},
         )
+        # Bars say 27800 hit a new high on 2026-04-01.
+        rows = []
+        start = datetime(2026, 1, 5)
+        for i in range(20):
+            d = (start + timedelta(days=i * 4)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, h=100 + i, low=80, c=95 + i))
+        rows.append(_bar("27800", "2026-04-01", h=300, low=280, c=300))
+        _seed(cache, rows)
+
         result = await _call(
             "detect_52w_high_low_range",
             date_from="2026-04-01",
             date_to="2026-04-01",
-            code="6789",  # 4-char → 5-char "67890"
+            code="27800",
+            window_sessions=20,
+            min_prior_sessions=1,
         )
         assert result["count"] == 1
-        assert result["data"][0]["Code"] == "67890"
+        assert result["data"][0]["Code"] == "27800"
+        assert result["data"][0]["new_high"] is True
 
 
 class TestDetectYtdRange:

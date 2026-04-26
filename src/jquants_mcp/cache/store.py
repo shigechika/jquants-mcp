@@ -562,6 +562,28 @@ class CacheStore:
             return [_normalize_fields(json.loads(row["data"])) for row in rows]
         return [json.loads(row["data"]) for row in rows]
 
+    def iter_session_dates(
+        self,
+        date_from: str,
+        date_to: str,
+    ) -> list[str]:
+        """Return distinct trading dates in ``equities_bars_daily``.
+
+        Used by the screener range tools to enumerate trading days
+        without round-tripping through ``get_cached_dates`` (which
+        requires a key_filter and would touch every code's row to
+        deduplicate). The returned list is ordered ascending.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return []
+        rows = conn.execute(
+            "SELECT DISTINCT date FROM equities_bars_daily "
+            "WHERE date >= ? AND date <= ? ORDER BY date",
+            (date_from, date_to),
+        ).fetchall()
+        return [str(r[0])[:10] for r in rows]
+
     def get_cached_dates(
         self,
         table: str,
@@ -887,16 +909,21 @@ class CacheStore:
     def screener_result_prune(self, retention_weeks: int = 52) -> int:
         """Delete ``screener_results`` rows older than ``retention_weeks``.
 
-        Returns the number of rows deleted. SQLite's ``date()`` modifier
-        does not support a ``weeks`` unit, so we convert to days.
+        Returns the number of rows deleted. The cutoff is computed in
+        Python (``date.today()``) rather than via SQLite's
+        ``date('now')`` so the boundary follows the local timezone of
+        the writing host (m1.local = JST). SQLite ``date('now')`` is
+        UTC and would shift the cutoff by ~9 hours during the JST
+        evening window — harmless on rolling 52-week retention but
+        avoidably ambiguous.
         """
         conn = self._ensure_connection()
         if conn is None:
             return 0
-        days = int(retention_weeks) * 7
+        cutoff = (date.today() - timedelta(weeks=int(retention_weeks))).isoformat()
         cursor = conn.execute(
-            "DELETE FROM screener_results WHERE date < date('now', ?)",
-            (f"-{days} days",),
+            "DELETE FROM screener_results WHERE date < ?",
+            (cutoff,),
         )
         deleted = cursor.rowcount if cursor.rowcount is not None else 0
         conn.commit()
@@ -958,8 +985,7 @@ class CacheStore:
 
         # Pre-computed screener results
         try:
-            row = conn.execute("SELECT COUNT(*) as cnt FROM screener_results").fetchone()
-            stats["screener_results"] = row["cnt"] if row else 0
+            stats["screener_results"] = self.screener_result_count()
         except sqlite3.OperationalError:
             stats["screener_results"] = 0
 

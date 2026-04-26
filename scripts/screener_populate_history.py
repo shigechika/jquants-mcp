@@ -59,6 +59,14 @@ def _existing_dates(
     tool_name: str,
     params_hash: str,
 ) -> set[str]:
+    """Dates already cached for the given (tool_name, params_hash) tuple.
+
+    Looked up once per job before iterating sessions because we only
+    cache one ``params_hash`` per tool today (the default-params
+    cross-sectional output). If a future change starts caching multiple
+    parameter shapes per tool, this lookup will need a per-iteration
+    refresh or a (tool_name, params_hash) batch query rebuild.
+    """
     rows = conn.execute(
         "SELECT date FROM screener_results WHERE tool_name = ? AND params_hash = ?",
         (tool_name, params_hash),
@@ -166,7 +174,6 @@ def main() -> None:
                 continue
             payload = screener_compute.compute_for_date(
                 conn,
-                tool_name=tool_name,
                 norm_date=d,
                 **kwargs,
             )

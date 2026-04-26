@@ -344,15 +344,21 @@ def register(
         cache: CacheStore = get_cache()
         norm_date = _normalize_date(date)
 
-        cached = _try_screener_cache_52w(
-            cache,
-            norm_date=norm_date,
-            code=code,
-            window_sessions=window_sessions,
-            min_prior_sessions=min_prior_sessions,
-        )
-        if cached is not None:
-            return cached
+        # The pre-computed cache only stores cross-sectional payloads,
+        # which were built with min_prior_sessions=60 active. An explicit
+        # ``code`` argument bypasses that filter on the on-demand path
+        # (e.g. so newly-listed stocks still return their signal), so
+        # serving code-specific calls from the cross-sectional payload
+        # would silently drop IPO codes. Skip the cache when code is set.
+        if code is None:
+            cached = _try_screener_cache_52w(
+                cache,
+                norm_date=norm_date,
+                window_sessions=window_sessions,
+                min_prior_sessions=min_prior_sessions,
+            )
+            if cached is not None:
+                return cached
 
         start = _calendar_window_start(norm_date, window_sessions)
         return await _high_low_signals(
@@ -425,14 +431,18 @@ def register(
         cache: CacheStore = get_cache()
         norm_date = _normalize_date(date)
 
-        cached = _try_screener_cache_ytd(
-            cache,
-            norm_date=norm_date,
-            code=code,
-            min_prior_sessions=min_prior_sessions,
-        )
-        if cached is not None:
-            return cached
+        # See note in detect_52w_high_low: cache payload omits codes that
+        # the cross-sectional min_prior_sessions filter dropped, but the
+        # on-demand path bypasses that filter when ``code`` is set. Skip
+        # the cache for explicit-code calls to avoid losing IPO rows.
+        if code is None:
+            cached = _try_screener_cache_ytd(
+                cache,
+                norm_date=norm_date,
+                min_prior_sessions=min_prior_sessions,
+            )
+            if cached is not None:
+                return cached
 
         year_start = norm_date[:4] + "-01-01"
         return await _high_low_signals(
@@ -567,10 +577,19 @@ def register(
         in sub-second. Out-of-cache dates fall through to on-demand
         computation; a 10-day out-of-cache range can take ~3 minutes.
 
+        **Issue one range call per query.** Splitting the range into
+        several non-overlapping ``detect_52w_high_low_range`` calls
+        fired in parallel re-introduces the dispatch problem this tool
+        exists to prevent — pass the full window in a single invocation
+        instead.
+
         Args:
             date_from: Range start (inclusive, YYYYMMDD or YYYY-MM-DD).
             date_to: Range end (inclusive, YYYYMMDD or YYYY-MM-DD).
-            code: Optional 4- or 5-digit code (post-filter).
+            code: Optional 4- or 5-digit code. When set, the
+                pre-computed cache is bypassed (it omits codes the
+                cross-sectional IPO filter dropped) and every date is
+                computed on-demand.
             window_sessions: See ``detect_52w_high_low``.
             min_prior_sessions: See ``detect_52w_high_low``.
         """
@@ -637,10 +656,19 @@ def register(
         in sub-second. Out-of-cache dates fall through to on-demand
         computation.
 
+        **Issue one range call per query.** Splitting the range into
+        several non-overlapping ``detect_ytd_high_low_range`` calls
+        fired in parallel re-introduces the dispatch problem this tool
+        exists to prevent — pass the full window in a single invocation
+        instead.
+
         Args:
             date_from: Range start (inclusive, YYYYMMDD or YYYY-MM-DD).
             date_to: Range end (inclusive, YYYYMMDD or YYYY-MM-DD).
-            code: Optional 4- or 5-digit code (post-filter).
+            code: Optional 4- or 5-digit code. When set, the
+                pre-computed cache is bypassed (it omits codes the
+                cross-sectional IPO filter dropped) and every date is
+                computed on-demand.
             min_prior_sessions: See ``detect_ytd_high_low``.
         """
         errors = collect_errors(
@@ -755,27 +783,20 @@ async def _high_low_signals(
     )
 
 
-def _filter_payload_by_code(
-    payload: dict[str, Any],
-    norm_code: str,
-) -> dict[str, Any]:
-    """Post-filter a cross-sectional cache payload to a single code."""
-    data = [row for row in payload.get("data", []) if str(row.get("Code")) == norm_code]
-    return {"count": len(data), "mode": payload.get("mode"), "data": data}
-
-
 def _try_screener_cache_52w(
     cache: CacheStore,
     *,
     norm_date: str,
-    code: str | None,
     window_sessions: int,
     min_prior_sessions: int,
 ) -> dict[str, Any] | None:
-    """Look up a pre-computed 52w-high/low payload, post-filter on code.
+    """Look up a pre-computed cross-sectional 52w-high/low payload.
 
-    Returns ``None`` on miss. Hits are returned as a fresh dict so the
-    caller can mutate without touching the cached object.
+    Caller must guarantee ``code is None`` — payloads were built with
+    the cross-sectional IPO filter active and are not safe to serve to
+    code-specific queries. Returns ``None`` on miss; hits are returned
+    as a fresh dict so the caller can mutate without touching the
+    cached object.
     """
     params_hash = screener_compute.default_params_hash_52w(
         window_sessions=window_sessions,
@@ -784,9 +805,6 @@ def _try_screener_cache_52w(
     payload = cache.screener_result_get(screener_compute.TOOL_DETECT_52W, params_hash, norm_date)
     if payload is None:
         return None
-    if code:
-        return _filter_payload_by_code(payload, _normalize_code(code))
-    # Defensive copy so callers can mutate the response.
     return {
         "count": payload.get("count", 0),
         "mode": payload.get("mode", "52w"),
@@ -798,18 +816,18 @@ def _try_screener_cache_ytd(
     cache: CacheStore,
     *,
     norm_date: str,
-    code: str | None,
     min_prior_sessions: int,
 ) -> dict[str, Any] | None:
-    """Look up a pre-computed YTD-high/low payload, post-filter on code."""
+    """Look up a pre-computed cross-sectional YTD-high/low payload.
+
+    See ``_try_screener_cache_52w`` for the ``code is None`` invariant.
+    """
     params_hash = screener_compute.default_params_hash_ytd(
         min_prior_sessions=min_prior_sessions,
     )
     payload = cache.screener_result_get(screener_compute.TOOL_DETECT_YTD, params_hash, norm_date)
     if payload is None:
         return None
-    if code:
-        return _filter_payload_by_code(payload, _normalize_code(code))
     return {
         "count": payload.get("count", 0),
         "mode": payload.get("mode", "ytd"),
@@ -830,38 +848,39 @@ async def _high_low_range(
 ) -> dict[str, Any]:
     """Range scan: bulk cache lookup + on-demand fallback per missing day.
 
-    Trading-day enumeration uses ``equities_bars_daily`` (the dense
-    source of truth). For each trading day:
-      * cache hit → use payload directly
-      * cache miss → call ``on_demand(date)`` (single-date compute)
-
-    Code filtering is applied uniformly after lookup/compute.
+    When ``code is None`` the pre-computed cross-sectional cache is
+    consulted in bulk and only missing days call ``on_demand(date)``.
+    When ``code`` is given the cache is skipped entirely (the stored
+    payloads were built with the cross-sectional IPO filter, so serving
+    them to a code-specific query would silently drop newly-listed
+    stocks). The ``on_demand`` callable already has ``code`` bound by
+    closure, so its result is naturally code-filtered.
     """
-    cached_by_date = cache.screener_result_get_range(
-        tool_name, params_hash_value, date_from, date_to
-    )
+    if code is None:
+        cached_by_date = cache.screener_result_get_range(
+            tool_name, params_hash_value, date_from, date_to
+        )
+    else:
+        cached_by_date = {}
 
     # Determine the trading days in range. Prefer the screener cache
     # itself when it covers the whole range; otherwise discover trading
-    # days from the bar table to handle out-of-cache dates.
+    # days from the bar table to handle out-of-cache dates and the
+    # code-given case.
     trading_days = sorted(cached_by_date.keys())
     if not trading_days or trading_days[0] > date_from or trading_days[-1] < date_to:
-        trading_days = _distinct_trading_days(cache, date_from, date_to) or trading_days
+        trading_days = cache.iter_session_dates(date_from, date_to) or trading_days
 
-    norm_code = _normalize_code(code) if code else None
     aggregated: list[dict[str, Any]] = []
     for d in sorted(set(trading_days)):
         if d in cached_by_date:
-            payload = cached_by_date[d]
-            rows = payload.get("data", [])
+            rows = cached_by_date[d].get("data", [])
         else:
             payload = await on_demand(d)
             if payload.get("error"):
                 # Validation/API error mid-range: surface immediately.
                 return payload
             rows = payload.get("data", [])
-        if norm_code is not None:
-            rows = [row for row in rows if str(row.get("Code")) == norm_code]
         aggregated.extend(rows)
 
     return {
@@ -871,21 +890,3 @@ async def _high_low_range(
         "date_to": date_to,
         "data": aggregated,
     }
-
-
-def _distinct_trading_days(cache: CacheStore, date_from: str, date_to: str) -> list[str]:
-    """Distinct ``equities_bars_daily`` dates in [date_from, date_to].
-
-    Goes through ``CacheStore._ensure_connection`` to respect the
-    cache's not-ready / reload state, but executes a direct
-    ``SELECT DISTINCT`` because the public ``get_cached_dates`` API
-    requires a key filter.
-    """
-    conn = cache._ensure_connection()  # noqa: SLF001 — internal helper, contract-stable
-    if conn is None:
-        return []
-    rows = conn.execute(
-        "SELECT DISTINCT date FROM equities_bars_daily WHERE date >= ? AND date <= ? ORDER BY date",
-        (date_from, date_to),
-    ).fetchall()
-    return [str(r[0])[:10] for r in rows]
