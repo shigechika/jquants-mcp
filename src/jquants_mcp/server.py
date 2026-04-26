@@ -128,7 +128,17 @@ def _get_cache() -> CacheStore:
     if _cache is None:
         settings = _get_settings()
         db_path = settings.get_cache_db_path()
-        _cache = CacheStore(db_path, default_plan=settings.jquants_plan)
+        # ``check_integrity_async=True`` so ``health_check`` returns
+        # ``"pending"`` / ``"ok"`` on first call instead of
+        # ``"not-checked"`` — without this, the first ``health_check``
+        # against a fresh server reads ``integrity_status`` before any
+        # connection-establishing call has triggered the background
+        # check.
+        _cache = CacheStore(
+            db_path,
+            default_plan=settings.jquants_plan,
+            check_integrity_async=True,
+        )
     return _cache
 
 
