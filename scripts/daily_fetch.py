@@ -632,7 +632,10 @@ def fetch_breakdown(
 # ------------------------------------------------------------------
 
 
-_SCREENER_RETENTION_WEEKS = 52
+# Re-exported so the print message below has a stable name even if the
+# upstream constant is renamed; the source of truth lives in
+# ``screener_compute`` so reader/writer can never drift apart.
+_SCREENER_RETENTION_WEEKS = screener_compute.SCREENER_CACHE_LOOKBACK_WEEKS
 
 
 def _screener_default_jobs() -> list[tuple[str, str, dict]]:

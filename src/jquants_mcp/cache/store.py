@@ -20,6 +20,9 @@ from jquants_mcp.cache.schema import (
     TIER1_TABLES as _TIER1_TABLES,
     generate_ddl,
 )
+from jquants_mcp.cache.screener_compute import (
+    SCREENER_CACHE_LOOKBACK_WEEKS as _SCREENER_CACHE_LOOKBACK_WEEKS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -906,7 +909,7 @@ class CacheStore:
         )
         conn.commit()
 
-    def screener_result_prune(self, retention_weeks: int = 52) -> int:
+    def screener_result_prune(self, retention_weeks: int = _SCREENER_CACHE_LOOKBACK_WEEKS) -> int:
         """Delete ``screener_results`` rows older than ``retention_weeks``.
 
         Returns the number of rows deleted. The cutoff is computed in

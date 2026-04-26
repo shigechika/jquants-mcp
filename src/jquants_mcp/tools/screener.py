@@ -42,6 +42,7 @@ from typing import Any
 from fastmcp import FastMCP
 
 from ..cache import screener_compute
+from ..cache.screener_compute import SCREENER_CACHE_LOOKBACK_WEEKS
 from ..cache.store import CacheStore
 from ..exceptions import (
     APIError,
@@ -77,12 +78,9 @@ _DEFAULT_VOLUME_BASELINE = 20
 _DEFAULT_MIN_PRIOR_SESSIONS = 60
 
 # Maximum lookback (in weeks) supported by the high/low detectors.
-# Mirrors the daily prune retention on ``screener_results``: rows older
-# than this are deleted, so accepting older queries would force the
-# slow on-demand fall-through which can take minutes on Cloud Run's
-# 1-vCPU runtime and exceed client tool-call timeouts. We refuse such
-# queries immediately and point the caller at a supported date.
-_CACHE_LOOKBACK_WEEKS = 52
+# Sourced from ``cache.screener_compute`` so the writer-side prune
+# retention and the reader-side rejection cutoff cannot drift apart.
+_CACHE_LOOKBACK_WEEKS = SCREENER_CACHE_LOOKBACK_WEEKS
 
 
 def _normalize_date(date: str) -> str:
@@ -109,8 +107,11 @@ def _normalize_code(code: str) -> str:
 def _cache_window_cutoff() -> str:
     """ISO date for the oldest date covered by the screener cache.
 
-    Computed at call time from the host's local date so the boundary
-    follows JST on m1.local rather than drifting on UTC servers.
+    Computed at call time from the host's local date. m1.local runs in
+    JST so the cutoff tracks Asia/Tokyo trading days; Cloud Run runs in
+    UTC so on a JST-evening request its cutoff is up to ~9 hours behind
+    m1's. The 1-day worst-case drift is acceptable for a 52-week
+    rolling window and avoids depending on system tz configuration.
     """
     return (date.today() - timedelta(weeks=_CACHE_LOOKBACK_WEEKS)).isoformat()
 
