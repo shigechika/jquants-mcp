@@ -39,21 +39,26 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 2
 
-      # Filter on paths the deployable image depends on. Test-only,
-      # docs-only, .claude/-only, etc. changes will short-circuit the
-      # remaining steps and save ~5–7 minutes of Cloud Run build time.
-      - id: changes
-        uses: dorny/paths-filter@v3
-        with:
-          base: HEAD~1
-          filters: |
-            code:
-              - 'src/**'
-              - 'Dockerfile'
-              - 'pyproject.toml'
-              - 'uv.lock'
-              - 'scripts/entrypoint.sh'
-              - '.github/workflows/cd.yml'
+      # Detect whether the deployable Cloud Run image actually depends
+      # on any file in this commit. Test-only, docs-only, .claude/-only,
+      # etc. changes are skipped and save ~5–7 minutes of Cloud Run
+      # build time. ``git diff`` is used instead of the dorny/paths-filter
+      # action because the latter rejects ``HEAD~1`` as an invalid
+      # refspec when it tries to ``git fetch`` the base — we already
+      # have HEAD~1 locally thanks to ``fetch-depth: 2``.
+      - name: Detect deploy-relevant changes
+        id: changes
+        if: github.event_name == 'workflow_run'
+        run: |
+          set -eu
+          changed=$(git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$changed"
+          if echo "$changed" | grep -qE '^(src/|Dockerfile$|pyproject\.toml$|uv\.lock$|scripts/entrypoint\.sh$|\.github/workflows/cd\.yml$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Decide whether to deploy
         id: gate
