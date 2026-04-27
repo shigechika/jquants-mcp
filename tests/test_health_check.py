@@ -105,6 +105,47 @@ class TestHealthCheck:
 
         assert result["plan"] == "premium"
 
+    async def test_cache_ready_true_when_ok(self, mock_env):
+        """cache_ready is True only when cache_integrity is 'ok'."""
+        with (
+            patch("fastmcp.server.dependencies.get_access_token", return_value=None),
+            patch.object(
+                type(mock_env["cache"]),
+                "integrity_status",
+                new_callable=lambda: property(lambda self: "ok"),
+            ),
+        ):
+            result = await _call("health_check")
+        assert result["cache_ready"] is True
+        assert result["cache_integrity"] == "ok"
+
+    async def test_cache_ready_false_when_pending(self, mock_env):
+        """cache_ready is False when cache_integrity is 'pending'."""
+        with (
+            patch("fastmcp.server.dependencies.get_access_token", return_value=None),
+            patch.object(
+                type(mock_env["cache"]),
+                "integrity_status",
+                new_callable=lambda: property(lambda self: "pending"),
+            ),
+        ):
+            result = await _call("health_check")
+        assert result["cache_ready"] is False
+
+    async def test_cache_ready_false_when_failed(self, mock_env):
+        """cache_ready is False when cache_integrity starts with 'failed'."""
+        with (
+            patch("fastmcp.server.dependencies.get_access_token", return_value=None),
+            patch.object(
+                type(mock_env["cache"]),
+                "integrity_status",
+                new_callable=lambda: property(lambda self: "failed: checksum mismatch"),
+            ),
+        ):
+            result = await _call("health_check")
+        assert result["cache_ready"] is False
+        assert result["status"] == "degraded"
+
 
 class TestCacheStatus:
     async def test_single_user_returns_settings_plan(self, mock_env):
