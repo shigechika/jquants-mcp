@@ -41,9 +41,9 @@ def register(
         code: str | None = None,
         date: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve listed issue information.
+        """Listed stock master: company name, industry code, market segment (上場銘柄マスタ). Free.
 
-        Returns information on listed stocks including company name, industry, and market segment.
+        Use for 銘柄名, 会社名, 業種, 市場区分, 上場銘柄一覧, S17/S33 sector code, ticker lookup.
         When parameters are omitted, returns all listed stocks for today.
 
         [Supported plans] Free / Light / Standard / Premium
@@ -86,21 +86,19 @@ def register(
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve daily stock prices (OHLC).
+        """Per-stock or per-day OHLC bars (日足株価). Free / all plans.
 
-        Returns daily OHLC data for stocks. Includes adjusted prices (AdjO/AdjC, etc.)
-        and morning/afternoon session breakdown.
+        Use for 株価, 日足, OHLC, 終値, 出来高, 調整株価 (AdjClose / AdjOpen etc.).
+        For multi-stock date-range downloads, use get_bulk_list instead (date_from/date_to
+        without code returns thousands of rows per day and is very slow).
 
-        At least one of 'code' or 'date' (or 'date_from'/'date_to') must be specified.
+        Includes adjusted prices (AdjO/AdjH/AdjL/AdjC/AdjV) and morning/afternoon breakdown.
+        At least one of 'code' or 'date'/'date_from'/'date_to' must be specified.
         Query patterns:
-        - code only: all history for that issue (up to the plan's retention limit,
-          e.g. Light returns ~5 years, Standard ~10 years). Response can be large
-          (>1000 rows per issue).
-        - date only: all issues traded on that date (thousands of rows).
-        - code + date: single row.
-        - code + date_from/date_to: range for one issue.
-        - date_from/date_to without code: all issues in the range (very large;
-          prefer bulk endpoints).
+        - code only: full history (Light ~5y, Standard ~10y; >1000 rows)
+        - date only: all issues on that date (thousands of rows)
+        - code + date: single row
+        - code + date_from/date_to: range for one issue
 
         [Supported plans] Free / Light / Standard / Premium
         Retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all.
@@ -159,9 +157,9 @@ def register(
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve minute-level stock prices (OHLC).
+        """Per-stock 1-minute OHLC bars (分足株価). Light+ with tick add-on.
 
-        Returns 1-minute OHLC, volume, and trading value for stocks.
+        Use for 分足, 1分足, 分足データ, minute-level price, intraday OHLC.
         Data is available for up to 2 years in the past.
 
         [Supported plans] Light / Standard / Premium (requires minute/tick data add-on)
@@ -208,11 +206,11 @@ def register(
     async def get_equities_bars_daily_am(
         code: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve morning session stock prices (OHLC).
+        """Today's morning session OHLC bars (前場株価). Premium only.
 
-        Returns today's morning session OHLC and volume.
-        Updated around 12:00 JST and available until around 6:00 JST the next day.
-        Historical morning session data (MO/MH/ML/MC columns) is available via get_equities_bars_daily.
+        Use for 前場, 前場終値, 午前の株価, morning session OHLC, 前場引け.
+        Updated around 12:00 JST; expires around 6:00 JST next day.
+        For historical morning session data (MO/MH/ML/MC columns), use get_equities_bars_daily instead.
 
         [Supported plans] Premium
 
@@ -245,11 +243,11 @@ def register(
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve trading data by type of investors.
+        """Weekly trading value by investor type (投資家別売買動向). Light+.
 
-        Returns weekly trading value broken down by investor type
-        (proprietary, brokered, foreign investors, individuals, trust banks, etc.).
-        Updated weekly, typically on Thursdays.
+        Use for 投資家別売買, 外国人買い, 個人投資家動向, 信託銀行売買, investor flow.
+        Updated weekly (typically Thursdays). Covers proprietary, brokered,
+        foreign investors, individuals, trust banks, etc.
 
         [Supported plans] Light / Standard / Premium
 
@@ -295,11 +293,12 @@ def register(
         date: str | None = None,
         code: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve earnings announcement schedule.
+        """Find upcoming/past earnings announcement dates (決算発表日). Free / all plans.
 
-        Returns up to ~3 months of accumulated earnings announcement schedule.
-        Specify date for announcements on that day, or code to search upcoming earnings dates.
-        Covers March and September fiscal year companies (REITs excluded).
+        Use for 決算発表, 決算日, 決算スケジュール, earnings calendar, 今週決算がある銘柄,
+        〇〇の次の決算はいつ, days to earnings, 決算前銘柄スクリーニング.
+        Pair with get_markets_short_sale_report for 決算またぎ空売り残 / 踏み上げリスク screening.
+        Covers March/September fiscal year companies (REITs excluded); ~3 months accumulated.
 
         [Supported plans] Free / Light / Standard / Premium
 
