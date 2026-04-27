@@ -380,11 +380,17 @@ async def _get_user_client() -> JQuantsClient:
 
 @mcp.tool(annotations=READ_ONLY_LOCAL)
 def health_check() -> dict[str, Any]:
-    """Check server health and API key configuration.
+    """Check server health, API key configuration, and cache readiness.
 
-    Returns server version, API key status, and active plan.
-    In multi-user mode, returns the authenticated user's plan
-    instead of the global default.
+    Call this at session start to confirm cache.db has finished loading
+    before issuing detect_* or cache_status — the first call after server
+    start may take 10–60 seconds while the cache initialises lazily.
+    After a tool-call timeout, use this to distinguish a transient
+    cache-loading delay from a permanent failure.
+
+    Returns server version, API key status, active plan, and
+    ``cache_integrity`` (ok / pending / failed / not-checked).
+    In multi-user mode, returns the authenticated user's plan.
     """
     from fastmcp.server.dependencies import get_access_token
 

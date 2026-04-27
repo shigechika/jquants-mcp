@@ -306,12 +306,12 @@ def register(
         style: str = "default",
         adjusted: bool = True,
     ) -> Image:
-        """Render an OHLC candlestick chart as a PNG.
+        """Render a stock candlestick chart as a PNG (ローソク足チャート). All plans.
 
-        Reads daily bars from the local cache and draws a chart with
-        optional moving-average / volume / Bollinger-band overlays.
-        The image is returned inline; Claude Desktop and Claude mobile
-        display it directly in chat.
+        Use for チャート, ローソク足, 株価チャート, 日足チャート, chart, candlestick,
+        テクニカルチャート, price chart.
+        Reads daily bars from the local cache (no API call). The image is returned
+        inline; Claude Desktop and Claude mobile display it directly in chat.
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily Tier 1 cache (no API call)
@@ -333,7 +333,7 @@ def register(
                 ``["volume", "sma5", "sma25"]`` (Japanese 短期/中期
                 convention). Accepted values: ``volume``, ``sma5``,
                 ``sma20``, ``sma25``, ``sma60``, ``sma75``, ``sma200``,
-                ``bb20`` (20-session Bollinger band).
+                ``bb20`` (20-session Bollinger band ボリンジャーバンド).
             style: ``default`` (Yahoo-like), ``dark``, or ``colorblind``.
             adjusted: When ``True`` (default) use split-adjusted prices
                 (``AdjO`` / ``AdjH`` / ``AdjL`` / ``AdjC``) so corporate
