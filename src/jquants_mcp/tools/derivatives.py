@@ -44,10 +44,8 @@ def register(
 
         Args:
             date: Date (YYYYMMDD or YYYY-MM-DD) (required)
-            category: Product category. Accepted values:
-                Futures225 (日経225先物), FuturesTOPIX (TOPIX先物),
-                FuturesMothers (マザーズ先物), FuturesMini225 (日経mini),
-                FuturesMiniTOPIX (TOPIXmini). Omit for all.
+            category: Product category (e.g. Futures225 (日経225先物), FuturesTOPIX (TOPIX先物)).
+                Omit for all categories.
             contract_flag: Contract month flag (0 = all, 1 = front month, 2 = back month)
         """
         client: JQuantsClient = await get_client()
@@ -90,9 +88,8 @@ def register(
 
         Args:
             date: Date (YYYYMMDD or YYYY-MM-DD) (required)
-            category: Product category. Accepted values:
-                Options225 (日経225オプション), OptionsTOPIX (TOPIXオプション).
-                Omit for all.
+            category: Product category (e.g. Options225 (日経225オプション), OptionsTOPIX (TOPIXオプション)).
+                Omit for all categories.
             code: Issue code
             contract_flag: Contract month flag (0 = all, 1 = front month, 2 = back month)
         """
