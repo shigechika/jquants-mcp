@@ -50,15 +50,15 @@ def register(
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve margin trading interest data.
+        """Per-stock margin balance: 買残・売残・貸借倍率 (信用残). Standard+ only.
 
-        Returns margin trading balance data including loan balance, short balance,
-        and lending rate (contango/backwardation) per issue.
+        Use for 信用残, 買い残, 売り残, 貸借倍率, margin loan/short balance.
+        For margin trading restrictions (追証・増担保規制), use get_markets_margin_alert instead.
 
         [Supported plans] Standard / Premium
 
         Args:
-            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            code: Stock code (5 digits, e.g. 27800)
             date: Date (YYYYMMDD or YYYY-MM-DD)
             date_from: Start date for range query
             date_to: End date for range query
@@ -100,15 +100,15 @@ def register(
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve margin trading alert data.
+        """Per-stock margin trading restriction status: 増担保規制・信用規制. Standard+ only.
 
-        Returns margin trading restriction information (additional collateral requirements),
-        including restriction status (started/lifted) and restriction category per issue.
+        Use for 追証, 規制銘柄, 増担保規制, 信用規制, margin restriction/alert.
+        For margin balances (買残・売残・貸借倍率), use get_markets_margin_interest instead.
 
         [Supported plans] Standard / Premium
 
         Args:
-            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            code: Stock code (5 digits, e.g. 27800)
             date: Date (YYYYMMDD or YYYY-MM-DD)
             date_from: Start date for range query
             date_to: End date for range query
@@ -149,10 +149,11 @@ def register(
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve short selling ratio data.
+        """TSE 33-sector short selling ratio (業種別空売り比率). Standard+ only.
 
-        Returns short selling ratio by TSE 33-sector classification,
-        including actual sell ratio, short sell ratio, and margin short sell ratio.
+        Use for 業種別空売り比率, sector-level 空売り動向, industry short selling trends.
+        Keyed by s33 sector code — not per stock. For per-stock institutional short
+        positions (大量空売り残高), use get_markets_short_sale_report instead.
 
         [Supported plans] Standard / Premium
 
@@ -198,15 +199,16 @@ def register(
         disc_date_to: str | None = None,
         calc_date: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve short sale position report data.
+        """Per-stock institutional short sale positions (大量空売り残高). Standard+ only.
 
-        Returns reportable short sale position data per issue,
-        including disclosure date, calculation date, and position ratio.
+        Use for 大量空売り残高, 空売り残, institutional short positions, short squeeze screening.
+        Positions disclosed weekly per institution. For sector-level short ratios
+        (業種別空売り比率), use get_markets_short_ratio instead.
 
         [Supported plans] Standard / Premium
 
         Args:
-            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            code: Stock code (5 digits, e.g. 27800)
             disc_date: Disclosure date (YYYYMMDD or YYYY-MM-DD)
             disc_date_from: Start disclosure date for range query
             disc_date_to: End disclosure date for range query
