@@ -163,13 +163,16 @@ def register(
         date: str,
         code: str | None = None,
     ) -> dict[str, Any]:
-        """Detect stocks that hit the daily upper/lower price limit (ストップ高/安).
+        """Find stocks that hit the daily price limit (ストップ高/安) on a given trading day.
 
-        Uses the ``UL`` / ``LL`` flags in the cached daily bars.
-        ``UL == 1`` means the upper limit was touched intraday at
-        least once; ``LL == 1`` means the lower limit was touched.
-        When ``C == H`` and ``UL == 1``, the close is effectively at
-        the upper limit (ストップ高引け); analogous for lower.
+        Use this when the user asks about ストップ高、ストップ安、値幅制限 (daily price
+        bands), or stocks that couldn't trade freely because of limit moves. Call with
+        ``code=None`` to get a cross-sectional list of all limit-hit stocks on a date.
+
+        ``UL == 1`` means the upper limit was touched intraday at least once;
+        ``LL == 1`` means the lower limit was touched. When ``C == H`` and
+        ``UL == 1``, the close is at the upper limit (ストップ高引け); analogous for
+        lower.
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily Tier 1 cache (no API call)
@@ -241,7 +244,12 @@ def register(
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        """Compare each session's close against the daily VWAP.
+        """Measure VWAP deviation (乖離率) for a stock — a proxy for buy/sell pressure (買い圧力・売り圧力).
+
+        Use this when the user asks how a stock's close compares to its daily VWAP,
+        whether buying or selling dominated a session, or to screen for unusual
+        close-vs-VWAP gaps. A positive deviation (close > VWAP) suggests 買い圧力 was
+        strong into the close; negative suggests 売り圧力.
 
         Daily VWAP is ``Va / Vo`` (turnover value divided by volume).
         When volume is zero (suspended / non-trading day) the VWAP is
@@ -329,7 +337,11 @@ def register(
         window_sessions: int = _FIFTY_TWO_WEEK_SESSIONS,
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
     ) -> dict[str, Any]:
-        """Flag stocks making a new 52-week rolling high or low.
+        """Identify stocks making a new 52-week rolling high or low (52週高値/安値 ブレイク).
+
+        Use this when the user asks about 52週高値、52週安値、年間高値、年間安値, stocks
+        breaking to new one-year highs or lows, or momentum screeners based on 52-week
+        price extremes. For multi-date queries call ``detect_52w_high_low_range`` instead.
 
         Convention used by Yahoo Finance, Bloomberg, TradingView, JPX
         official 52週高値/安値. Today's bar is compared against the
@@ -427,7 +439,11 @@ def register(
         code: str | None = None,
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
     ) -> dict[str, Any]:
-        """Flag stocks making a new year-to-date (年初来) high or low.
+        """Identify stocks making a new year-to-date high or low (年初来高値/安値 更新).
+
+        Use this when the user asks about 年初来高値、年初来安値, YTD price extremes, or
+        stocks setting new records since the start of the current calendar year.
+        For multi-date queries call ``detect_ytd_high_low_range`` instead.
 
         Convention used by Kabutan (株探), Yahoo!ファイナンス JP, JPX
         official 年初来高値/安値, and most JP retail-broker UIs. Today's
@@ -521,7 +537,11 @@ def register(
         baseline_days: int = _DEFAULT_VOLUME_BASELINE,
         code: str | None = None,
     ) -> dict[str, Any]:
-        """List stocks whose volume on ``date`` exceeds a trailing average.
+        """Identify stocks with abnormally high trading volume (出来高急増) on a given day.
+
+        Use this when the user asks about 出来高急増、出来高異常、unusual trading activity,
+        or volume-driven momentum. Stocks are flagged when today's volume exceeds the
+        trailing ``baseline_days``-day average by at least ``multiplier`` times.
 
         For each stock with a row on ``date``:
 
@@ -624,12 +644,14 @@ def register(
         window_sessions: int = _FIFTY_TWO_WEEK_SESSIONS,
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
     ) -> dict[str, Any]:
-        """Multi-date variant of ``detect_52w_high_low``.
+        """Scan 52-week high/low signals (52週高値/安値 ブレイク) across a date range.
+
+        Use this — not repeated ``detect_52w_high_low`` calls — when the user asks for
+        52-week high/low signals over multiple days, a week, or a month.
 
         Returns the union of single-date results across the inclusive
-        ``[date_from, date_to]`` range. Use this instead of firing
-        N parallel ``detect_52w_high_low`` calls — the single-date tool
-        is CPU-heavy and parallel dispatch causes client-side timeouts.
+        ``[date_from, date_to]`` range. The single-date tool is CPU-heavy and
+        parallel dispatch causes client-side timeouts.
 
         **Lookback limit:** ``date_from`` must fall within the past 52
         weeks. Older ranges are rejected with
@@ -710,12 +732,14 @@ def register(
         code: str | None = None,
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
     ) -> dict[str, Any]:
-        """Multi-date variant of ``detect_ytd_high_low``.
+        """Scan year-to-date high/low signals (年初来高値/安値 更新) across a date range.
+
+        Use this — not repeated ``detect_ytd_high_low`` calls — when the user asks for
+        YTD high/low signals over multiple days, a week, or a month.
 
         Returns the union of single-date results across the inclusive
-        ``[date_from, date_to]`` range. Use this instead of firing
-        N parallel ``detect_ytd_high_low`` calls — the single-date tool
-        is CPU-heavy and parallel dispatch causes client-side timeouts.
+        ``[date_from, date_to]`` range. The single-date tool is CPU-heavy and
+        parallel dispatch causes client-side timeouts.
 
         **Lookback limit:** ``date_from`` must fall within the past 52
         weeks. Older ranges are rejected with

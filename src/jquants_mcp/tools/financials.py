@@ -101,11 +101,12 @@ def register(
         code: str | None = None,
         date: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve financial summary data.
+        """Use this first for any financial metric query (EPS, BPS, 売上, 利益, 配当, 業績予想).
 
-        Returns quarterly financial data including revenue, operating profit, net income,
-        EPS, BPS, cash flow, dividends, and earnings forecasts.
-        Either 'code' or 'date' must be specified.
+        Returns per-stock quarterly financials: revenue (売上), operating profit (営業利益),
+        net income (純利益), EPS (一株利益), BPS (一株純資産), dividends (配当), and earnings
+        forecasts (業績予想). Adjusted EPS/BPS (AdjEPS/AdjBPS) are included when split data
+        is available. Either 'code' or 'date' must be specified.
 
         [Supported plans] Free / Light / Standard / Premium
         Note: Free plan data is delayed by 12 weeks.
@@ -156,10 +157,13 @@ def register(
         code: str | None = None,
         date: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve detailed financial statements (BS/PL/CF).
+        """Use only when individual BS/PL/CF line items are needed (Premium plan only).
 
-        Returns detailed financial statement data including balance sheet (BS) and income
-        statement (PL) line items, supporting both Japanese GAAP and IFRS.
+        For common financial metrics (EPS, BPS, revenue, profit, dividends, 業績予想), use
+        ``get_fins_summary`` instead — it is faster (cached) and available to all plans.
+
+        Returns detailed financial statement line items: balance sheet (BS), income
+        statement (PL), and cash flow (CF), supporting both Japanese GAAP and IFRS.
         Either 'code' or 'date' must be specified.
 
         [Supported plans] Premium
