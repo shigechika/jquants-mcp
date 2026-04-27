@@ -244,12 +244,15 @@ def register(
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        """Measure VWAP deviation (乖離率) for a stock — a proxy for buy/sell pressure (買い圧力・売り圧力).
+        """Compare a single stock's close against its daily VWAP to gauge buy/sell pressure (買い圧力・売り圧力).
 
-        Use this when the user asks how a stock's close compares to its daily VWAP,
-        whether buying or selling dominated a session, or to screen for unusual
-        close-vs-VWAP gaps. A positive deviation (close > VWAP) suggests 買い圧力 was
-        strong into the close; negative suggests 売り圧力.
+        Use this when the user asks how a specific stock's close compares to its VWAP,
+        or whether 買い圧力 or 売り圧力 dominated a session. A close above VWAP suggests
+        buying was strong into the close; below suggests selling. Requires ``code`` —
+        this tool is per-stock only, not a cross-sectional screener.
+
+        Returns ``close_above_vwap`` (bool) and raw ``vwap`` / ``C`` values per session;
+        does not compute a deviation percentage.
 
         Daily VWAP is ``Va / Vo`` (turnover value divided by volume).
         When volume is zero (suspended / non-trading day) the VWAP is

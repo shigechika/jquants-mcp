@@ -423,9 +423,10 @@ def cache_status() -> dict[str, Any]:
     """Show database metadata: table row counts, file size, and detected plan.
 
     This tool returns cache metadata — it does NOT query screener signals. To detect
-    52-week highs/lows use ``detect_52w_high_low``; for volume spikes use
-    ``detect_volume_surge``; for price limits use ``detect_price_limit``. Do not call
-    this tool to look up market data or screener results.
+    52-week highs/lows use ``detect_52w_high_low``; for YTD highs/lows use
+    ``detect_ytd_high_low``; for volume spikes use ``detect_volume_surge``; for price
+    limits use ``detect_price_limit``. Do not call this tool to look up market data or
+    screener results.
 
     In multi-user mode, returns the authenticated user's plan instead of the global
     default.

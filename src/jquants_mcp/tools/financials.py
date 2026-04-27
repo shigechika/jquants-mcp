@@ -104,9 +104,10 @@ def register(
         """Use this first for any financial metric query (EPS, BPS, 売上, 利益, 配当, 業績予想).
 
         Returns per-stock quarterly financials: revenue (売上), operating profit (営業利益),
-        net income (純利益), EPS (一株利益), BPS (一株純資産), dividends (配当), and earnings
-        forecasts (業績予想). Adjusted EPS/BPS (AdjEPS/AdjBPS) are included when split data
-        is available. Either 'code' or 'date' must be specified.
+        net income (純利益), EPS (一株利益), BPS (一株純資産), cash flow (CF: OperatingCF /
+        InvestingCF / FinancingCF), dividends (配当), and earnings forecasts (業績予想).
+        Adjusted EPS/BPS (AdjEPS/AdjBPS) are included when split data is available.
+        Either 'code' or 'date' must be specified.
 
         [Supported plans] Free / Light / Standard / Premium
         Note: Free plan data is delayed by 12 weeks.
