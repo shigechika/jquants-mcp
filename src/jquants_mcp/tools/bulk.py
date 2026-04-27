@@ -55,12 +55,12 @@ def register(
     async def get_bulk_list(
         endpoint: str,
     ) -> dict[str, Any]:
-        """Retrieve list of downloadable CSV files.
+        """Step 1 of bulk CSV download: list available files for a dataset (一括DL). Light+.
 
-        Returns a list of downloadable CSV files for the specified dataset endpoint,
-        including the download key (Key), last modified time, and file size.
+        Use for 全データ一括ダウンロード, bulk download, CSV ダウンロード, 全銘柄データ取得.
+        Workflow: get_bulk_list → get_bulk_download_url(Key) → download URL within 5 minutes.
 
-        Use the returned Key with get_bulk_download_url to obtain a signed download URL.
+        Returns file keys (Key), last-modified timestamps, and file sizes.
 
         [Supported plans] Light / Standard / Premium
 
@@ -109,10 +109,10 @@ def register(
     async def get_bulk_download_url(
         key: str,
     ) -> dict[str, Any]:
-        """Retrieve a signed URL for downloading a CSV file.
+        """Step 2 of bulk CSV download: get a signed URL for a specific file. Light+.
 
-        Specify a Key obtained from get_bulk_list to get a signed URL for CSV download.
-        The URL expires in approximately 5 minutes.
+        Use after get_bulk_list; pass the Key returned there to get a time-limited download URL.
+        The URL expires in approximately 5 minutes — download immediately after calling.
 
         [Supported plans] Light / Standard / Premium
 
