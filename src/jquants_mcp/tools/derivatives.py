@@ -35,17 +35,20 @@ def register(
         category: str | None = None,
         contract_flag: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve daily futures bars (OHLC).
+        """Daily futures OHLC bars (先物日足). Premium only.
 
-        Returns daily OHLC, volume, and open interest for futures contracts
-        including Nikkei 225 futures, TOPIX futures, and Mothers futures.
+        Use for 先物, 日経先物, TOPIX先物, マザーズ先物, futures OHLC, 先物建玉.
+        Returns OHLC, volume, and open interest for futures contracts.
 
         [Supported plans] Premium
 
         Args:
             date: Date (YYYYMMDD or YYYY-MM-DD) (required)
-            category: Product category (e.g. Futures225, FuturesTOPIX)
-            contract_flag: Contract month flag (e.g. 0 = all, 1 = front month, 2 = back month)
+            category: Product category. Accepted values:
+                Futures225 (日経225先物), FuturesTOPIX (TOPIX先物),
+                FuturesMothers (マザーズ先物), FuturesMini225 (日経mini),
+                FuturesMiniTOPIX (TOPIXmini). Omit for all.
+            contract_flag: Contract month flag (0 = all, 1 = front month, 2 = back month)
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -77,18 +80,21 @@ def register(
         code: str | None = None,
         contract_flag: str | None = None,
     ) -> dict[str, Any]:
-        """Retrieve daily options bars (OHLC).
+        """Daily options OHLC bars with IV (オプション日足). Premium only.
 
-        Returns daily OHLC, volume, open interest, and implied volatility for options
-        including Nikkei 225 options and TOPIX options.
+        Use for オプション, 日経オプション, TOPIXオプション, IV, implied volatility,
+        オプション建玉. Returns OHLC, volume, open interest, and implied volatility.
+        For Nikkei 225 options only (Standard+), use get_derivatives_bars_daily_options_225.
 
         [Supported plans] Premium
 
         Args:
             date: Date (YYYYMMDD or YYYY-MM-DD) (required)
-            category: Product category (e.g. Options225, OptionsTOPIX)
+            category: Product category. Accepted values:
+                Options225 (日経225オプション), OptionsTOPIX (TOPIXオプション).
+                Omit for all.
             code: Issue code
-            contract_flag: Contract month flag (e.g. 0 = all, 1 = front month, 2 = back month)
+            contract_flag: Contract month flag (0 = all, 1 = front month, 2 = back month)
         """
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
@@ -122,10 +128,11 @@ def register(
     async def get_derivatives_bars_daily_options_225(
         date: str,
     ) -> dict[str, Any]:
-        """Retrieve daily Nikkei 225 options bars (OHLC).
+        """Daily Nikkei 225 options OHLC bars (日経225オプション). Standard+.
 
-        Returns daily OHLC, volume, and open interest for Nikkei 225 options.
-        This is a simplified endpoint available from the Standard plan.
+        Use for 日経225オプション, オプション日足 (simplified). Standard plan accessible.
+        For full options data including TOPIX options and IV, use
+        get_derivatives_bars_daily_options (Premium only) instead.
 
         [Supported plans] Standard / Premium
 
