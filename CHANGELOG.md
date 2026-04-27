@@ -5,6 +5,13 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ---
 
+## [0.8.0](https://github.com/shigechika/jquants-mcp/compare/v0.7.0...v0.8.0) (2026-04-27)
+
+
+### Features
+
+* **health_check:** add cache_ready boolean field to response ([#168](https://github.com/shigechika/jquants-mcp/issues/168)) ([8174243](https://github.com/shigechika/jquants-mcp/commit/8174243c90608fc4692258dbe56e6adfbd841d2f))
+
 ## [0.7.0](https://github.com/shigechika/jquants-mcp/compare/v0.6.0...v0.7.0) (2026-04-26)
 
 
