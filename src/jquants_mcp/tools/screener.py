@@ -542,9 +542,14 @@ def register(
     ) -> dict[str, Any]:
         """Identify stocks with abnormally high trading volume (出来高急増) on a given day.
 
-        Use this when the user asks about 出来高急増、出来高異常、unusual trading activity,
-        or volume-driven momentum. Stocks are flagged when today's volume exceeds the
-        trailing ``baseline_days``-day average by at least ``multiplier`` times.
+        Use this when the user asks about 出来高急増、出来高異常、売買活況、出来高ランキング、
+        活発に売買された銘柄、取引量が増えた銘柄、unusual trading activity, volume spikes,
+        or volume-driven momentum screeners. Stocks are flagged when today's volume
+        exceeds the trailing ``baseline_days``-day average by at least ``multiplier`` times.
+
+        For 52-week price extremes use ``detect_52w_high_low``; for YTD highs/lows use
+        ``detect_ytd_high_low``; for price-limit events (ストップ高/安) use
+        ``detect_price_limit``; for VWAP buy/sell pressure use ``compare_close_vs_vwap``.
 
         For each stock with a row on ``date``:
 
