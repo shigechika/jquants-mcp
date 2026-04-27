@@ -202,8 +202,9 @@ def register(
         """Per-stock institutional short sale positions (大量空売り残高). Standard+ only.
 
         Use for 大量空売り残高, 空売り残, institutional short positions, short squeeze screening.
-        Positions disclosed weekly per institution. For sector-level short ratios
-        (業種別空売り比率), use get_markets_short_ratio instead.
+        Positions disclosed weekly per institution.
+        Pair with get_equities_earnings_calendar for 決算またぎ空売り残 / 踏み上げリスク screening.
+        For sector-level short ratios (業種別空売り比率), use get_markets_short_ratio instead.
 
         [Supported plans] Standard / Premium
 

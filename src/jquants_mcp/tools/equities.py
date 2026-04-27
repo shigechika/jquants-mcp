@@ -88,7 +88,7 @@ def register(
     ) -> dict[str, Any]:
         """Per-stock or per-day OHLC bars (日足株価). Free / all plans.
 
-        Use for 株価, 日足, OHLC, 終値, 出来高, 調整株価 (AdjClose / AdjOpen etc.).
+        Use for 株価, 日足, OHLC, 終値, 出来高, 調整株価 (AdjC / AdjO etc.).
         For multi-stock date-range downloads, use get_bulk_list instead (date_from/date_to
         without code returns thousands of rows per day and is very slow).
 
