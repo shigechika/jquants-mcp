@@ -176,6 +176,9 @@ def register(
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily Tier 1 cache (no API call)
+        **Data availability:** Today's data is not available until the daily
+        cache update completes (~17:15 JST on trading days). Requests for
+        today before that time return empty results.
 
         Args:
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
@@ -260,6 +263,9 @@ def register(
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily Tier 1 cache
+        **Data availability:** Today's data is not available until the daily
+        cache update completes (~17:15 JST on trading days). Requests for
+        today before that time return empty results.
 
         Args:
             code: 4- or 5-digit code (required).
@@ -365,6 +371,9 @@ def register(
         [Source] equities_bars_daily Tier 1 cache (cross-sectional
         results for default parameters are pre-computed nightly and
         served from ``screener_results``).
+        **Data availability:** Today's data is not available until the daily
+        cache update completes (~17:15 JST on trading days). Requests for
+        today before that time return empty results.
 
         **Lookback limit:** ``date`` must fall within the past 52 weeks.
         Older dates are rejected with ``error_type=OutOfCacheRange``;
@@ -469,6 +478,9 @@ def register(
         [Source] equities_bars_daily Tier 1 cache (cross-sectional
         results for default parameters are pre-computed nightly and
         served from ``screener_results``).
+        **Data availability:** Today's data is not available until the daily
+        cache update completes (~17:15 JST on trading days). Requests for
+        today before that time return empty results.
 
         **Lookback limit:** ``date`` must fall within the past 52 weeks.
         Older dates are rejected with ``error_type=OutOfCacheRange`` to
@@ -561,6 +573,9 @@ def register(
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily Tier 1 cache
+        **Data availability:** Today's data is not available until the daily
+        cache update completes (~17:15 JST on trading days). Requests for
+        today before that time return empty results.
 
         Args:
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
@@ -665,6 +680,10 @@ def register(
         weeks. Older ranges are rejected with
         ``error_type=OutOfCacheRange``.
 
+        **Data availability:** Today's data is not available until the daily
+        cache update completes (~17:15 JST on trading days). Including today
+        in the range before that time returns empty results for today's date.
+
         For default parameters every trading day in range is a
         pre-computed cache hit and the full window completes in
         sub-second. Custom params or ``code`` filter compute on-demand
@@ -752,6 +771,10 @@ def register(
         **Lookback limit:** ``date_from`` must fall within the past 52
         weeks. Older ranges are rejected with
         ``error_type=OutOfCacheRange``.
+
+        **Data availability:** Today's data is not available until the daily
+        cache update completes (~17:15 JST on trading days). Including today
+        in the range before that time returns empty results for today's date.
 
         For default parameters every trading day in range is a
         pre-computed cache hit and the full window completes in
