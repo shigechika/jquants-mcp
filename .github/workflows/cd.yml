@@ -88,10 +88,10 @@ jobs:
       - name: Deploy to Cloud Run
         if: steps.gate.outputs.should_deploy == 'true'
         run: |
-          gcloud run deploy jquants-mcp \
-            --project aikawa-dx \
-            --region us-west1 \
-            --service-account jquants-mcp@aikawa-dx.iam.gserviceaccount.com \
+          gcloud run deploy ${{ vars.CLOUDRUN_SERVICE }} \
+            --project ${{ vars.GCP_PROJECT }} \
+            --region ${{ vars.GCP_REGION }} \
+            --service-account ${{ vars.GCP_SERVICE_ACCOUNT }} \
             --source . \
             --execution-environment gen2 \
             --memory 4Gi \
@@ -100,13 +100,13 @@ jobs:
             --clear-volumes --clear-volume-mounts \
             --cpu-boost \
             --set-env-vars "\
-              GOOGLE_CLOUD_PROJECT=aikawa-dx,\
-              GCS_BUCKET=aikawa-dx-jquants-mcp,\
-              PUBSUB_INVOKER_SA=pubsub-invoker@aikawa-dx.iam.gserviceaccount.com,\
-              PUBSUB_AUDIENCE=https://jquants-mcp.aikawa.jp/internal/reload,\
+              GOOGLE_CLOUD_PROJECT=${{ vars.GCP_PROJECT }},\
+              GCS_BUCKET=${{ vars.GCS_BUCKET }},\
+              PUBSUB_INVOKER_SA=${{ vars.PUBSUB_INVOKER_SA }},\
+              PUBSUB_AUDIENCE=${{ vars.OAUTH_BASE_URL }}/internal/reload,\
               JQUANTS_CACHE_DIR=/tmp,\
               OAUTH_PROVIDER=google,\
-              OAUTH_BASE_URL=https://jquants-mcp.aikawa.jp,\
+              OAUTH_BASE_URL=${{ vars.OAUTH_BASE_URL }},\
               OAUTH_REQUIRE_CONSENT=false,\
               GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }},\
               GITHUB_CLIENT_ID=${{ secrets.GH_OAUTH_CLIENT_ID }}" \
@@ -133,5 +133,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ghcr.io/shigechika/jquants-mcp:latest
-            ghcr.io/shigechika/jquants-mcp:${{ github.event.workflow_run.head_sha || github.sha }}
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.event.workflow_run.head_sha || github.sha }}
