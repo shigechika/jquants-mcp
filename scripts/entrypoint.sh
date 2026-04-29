@@ -10,11 +10,13 @@
 set -euo pipefail
 
 PORT="${PORT:-8000}"
+ENABLE_DAILY_FETCH="${ENABLE_DAILY_FETCH:-}"
 
 echo "=== jquants-mcp startup ==="
 echo "PORT=${PORT}"
 echo "GCS_BUCKET=${GCS_BUCKET:-<not set>}"
 echo "JQUANTS_CACHE_DIR=${JQUANTS_CACHE_DIR:-/tmp}"
+echo "ENABLE_DAILY_FETCH=${ENABLE_DAILY_FETCH:-false}"
 
 # Step 1: Download auth databases from GCS (small, needed for auth)
 if [ -n "${GCS_BUCKET:-}" ]; then
@@ -28,6 +30,7 @@ fi
 GCS_DAEMON_PID=""
 MCP_PID=""
 CACHE_DL_PID=""
+SUPERCRONIC_PID=""
 
 _shutdown() {
     echo "Received shutdown signal"
@@ -52,6 +55,13 @@ _shutdown() {
         wait "${GCS_DAEMON_PID}" 2>/dev/null || true
     fi
 
+    # Stop supercronic if running
+    if [ -n "${SUPERCRONIC_PID:-}" ]; then
+        echo "Stopping supercronic (PID=${SUPERCRONIC_PID})..."
+        kill -TERM "${SUPERCRONIC_PID}" 2>/dev/null || true
+        wait "${SUPERCRONIC_PID}" 2>/dev/null || true
+    fi
+
     echo "Shutdown complete"
     exit 0
 }
@@ -63,6 +73,14 @@ echo "Starting MCP server on port ${PORT}..."
 jquants-mcp --transport streamable-http --host 0.0.0.0 --port "${PORT}" &
 MCP_PID=$!
 echo "MCP server started (PID=${MCP_PID})"
+
+# Step 3b: Start supercronic for scheduled daily fetch (opt-in)
+if [ "${ENABLE_DAILY_FETCH}" = "true" ] || [ "${ENABLE_DAILY_FETCH}" = "1" ]; then
+    echo "Starting supercronic for daily cache fetch..."
+    supercronic /app/scripts/daily-fetch.crontab &
+    SUPERCRONIC_PID=$!
+    echo "supercronic started (PID=${SUPERCRONIC_PID})"
+fi
 
 # Step 4: Download cache.db in background, then signal MCP server to reload
 if [ -n "${GCS_BUCKET:-}" ]; then
@@ -96,6 +114,10 @@ fi
 if [ -n "${GCS_DAEMON_PID:-}" ]; then
     kill -TERM "${GCS_DAEMON_PID}" 2>/dev/null || true
     wait "${GCS_DAEMON_PID}" 2>/dev/null || true
+fi
+if [ -n "${SUPERCRONIC_PID:-}" ]; then
+    kill -TERM "${SUPERCRONIC_PID}" 2>/dev/null || true
+    wait "${SUPERCRONIC_PID}" 2>/dev/null || true
 fi
 
 exit "${MCP_EXIT}"

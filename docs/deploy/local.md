@@ -91,16 +91,21 @@ Run a full historical fetch (takes 1–3 hours depending on your J-Quants plan):
 docker compose exec jquants-mcp python /app/scripts/daily_fetch.py --all
 ```
 
-Subsequent daily updates (run manually or via cron):
+**Automatic daily updates:** Set `ENABLE_DAILY_FETCH=true` to run incremental updates
+automatically inside the container on weekdays at 17:30 JST (08:30 UTC):
+
+```bash
+JQUANTS_API_KEY=xxx ENABLE_DAILY_FETCH=true docker compose up -d
+```
+
+This starts [supercronic](https://github.com/aptible/supercronic) alongside the MCP server.
+No host-side cron or launchd configuration is needed.
+
+**Manual updates** (without `ENABLE_DAILY_FETCH`):
 
 ```bash
 docker compose exec jquants-mcp python /app/scripts/daily_fetch.py
 ```
-
-> **Note:** The Cloud Run deployment receives automatic cache updates via
-> GCS → Pub/Sub → `/internal/reload`.  Local Docker has no Pub/Sub integration;
-> schedule `daily_fetch.py` yourself (e.g. a daily cron or launchd timer that
-> runs `docker compose exec jquants-mcp python /app/scripts/daily_fetch.py`).
 
 ### 5. Useful commands
 

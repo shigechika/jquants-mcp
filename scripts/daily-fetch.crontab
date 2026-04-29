@@ -1,0 +1,2 @@
+# Daily incremental fetch — weekdays at 17:30 JST (08:30 UTC)
+30 8 * * 1-5 python /app/scripts/daily_fetch.py

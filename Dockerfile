@@ -32,8 +32,13 @@ WORKDIR /app
 # Install Noto CJK JP font so matplotlib can render company names in
 # render_candlestick chart titles. ~10 MB; without this Japanese
 # characters render as tofu (□).
+ARG SUPERCRONIC_VERSION=0.2.33
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends fonts-noto-cjk \
+    && apt-get install -y --no-install-recommends fonts-noto-cjk curl \
+    && curl -fsSL "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-amd64" \
+       -o /usr/local/bin/supercronic \
+    && chmod +x /usr/local/bin/supercronic \
+    && apt-get remove -y --autoremove curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

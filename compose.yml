@@ -8,20 +8,13 @@
 #
 # With Bearer token auth (recommended if exposed beyond localhost):
 #   JQUANTS_API_KEY=xxx MCP_BEARER_TOKEN=yyy docker compose up -d
+#
+# With automatic daily cache fetch (weekdays 17:30 JST):
+#   JQUANTS_API_KEY=xxx ENABLE_DAILY_FETCH=true docker compose up -d
 
 services:
   jquants-mcp:
     image: ghcr.io/shigechika/jquants-mcp:latest
-    # Bypass the Cloud Run entrypoint; invoke jquants-mcp directly.
-    entrypoint: []
-    command:
-      - jquants-mcp
-      - --transport
-      - streamable-http
-      - --host
-      - "0.0.0.0"
-      - --port
-      - "8080"
     ports:
       - "127.0.0.1:8080:8080"
     environment:
@@ -29,6 +22,9 @@ services:
       MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:-}
       # Override the Cloud Run default (/tmp) so the cache persists in the volume.
       JQUANTS_CACHE_DIR: /home/appuser/.cache/jquants-mcp
+      PORT: "8080"
+      # Set ENABLE_DAILY_FETCH=true to run daily_fetch.py on weekdays at 17:30 JST.
+      ENABLE_DAILY_FETCH: ${ENABLE_DAILY_FETCH:-}
     volumes:
       - cache:/home/appuser/.cache/jquants-mcp
     restart: unless-stopped
