@@ -17,7 +17,7 @@ class AuthenticationError(JQuantsDatMCPError):
 class RateLimitError(JQuantsDatMCPError):
     """Rate limit exceeded (after exhausting retries)."""
 
-    def __init__(self, message: str = "レート制限に達しました", retry_after: float | None = None):
+    def __init__(self, message: str = "Rate limit exceeded", retry_after: float | None = None):
         super().__init__(message)
         self.retry_after = retry_after
 
@@ -135,9 +135,9 @@ def format_api_error(error: JQuantsDatMCPError) -> dict:
     d = error.to_dict()
     if isinstance(error, PlanRestrictionError):
         d["hint"] = (
-            "このエンドポイントは現在のプランでは利用できません。"
-            "J-Quants のプラン比較ページで必要なプランをご確認ください。"
+            "This endpoint requires a higher J-Quants plan. "
+            "See the J-Quants plan comparison page for the required plan."
         )
     elif isinstance(error, RateLimitError):
-        d["hint"] = "しばらく待ってから再試行してください。"
+        d["hint"] = "Please wait a moment and try again."
     return d

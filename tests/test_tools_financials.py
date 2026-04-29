@@ -264,7 +264,7 @@ class TestGetFinsDetails:
         ):
             result = await _call("get_fins_details", code="72030")
             assert result["error"] is True
-            assert "プラン" in result["hint"]
+            assert "plan" in result["hint"].lower()
 
 
 class TestGetFinsDividend:

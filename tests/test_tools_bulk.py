@@ -97,7 +97,7 @@ class TestGetBulkList:
         ):
             result = await _call("get_bulk_list", endpoint="/equities/bars/daily")
             assert result["error"] is True
-            assert "プラン" in result["hint"]
+            assert "plan" in result["hint"].lower()
 
     async def test_api_error(self, mock_env):
         with patch.object(
