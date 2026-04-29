@@ -5,6 +5,13 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ---
 
+## [0.10.1](https://github.com/shigechika/jquants-mcp/compare/v0.10.0...v0.10.1) (2026-04-29)
+
+
+### Bug Fixes
+
+* **cd:** add GOOGLE_CLOUD_PROJECT env var for Cloud Run Firestore backend ([#197](https://github.com/shigechika/jquants-mcp/issues/197)) ([9a7e463](https://github.com/shigechika/jquants-mcp/commit/9a7e4634f21aa05b0ad9c7d8ff4dc709c79a4ee8))
+
 ## [0.10.0](https://github.com/shigechika/jquants-mcp/compare/v0.9.0...v0.10.0) (2026-04-29)
 
 
