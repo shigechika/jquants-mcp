@@ -88,7 +88,7 @@ gcloud pubsub subscriptions create jquants-mcp-cache-updated-push \
   --push-endpoint=${PUSH_URL} \
   --push-auth-service-account=${PUBSUB_SA} \
   --ack-deadline=30 \
-  --message-retention-duration=1h \
+  --message-retention-duration=6h \
   --project=${PROJECT}
 ```
 

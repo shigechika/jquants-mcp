@@ -259,7 +259,7 @@ async def _reload_cache_background() -> None:
     _reload_in_progress = True
     try:
         if os.environ.get("GCS_BUCKET"):
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, _download_cache_db_from_gcs)
         else:
             logger.info("GCS_BUCKET not set; skipping download, flagging lazy reconnect only")
@@ -299,7 +299,7 @@ async def _handle_pubsub_reload(request: Request) -> Response:
         audience = os.environ.get("PUBSUB_AUDIENCE", str(request.url))
 
         try:
-            await asyncio.get_event_loop().run_in_executor(
+            await asyncio.get_running_loop().run_in_executor(
                 None, _verify_pubsub_oidc_token, raw_token, expected_sa, audience
             )
         except ValueError as exc:
