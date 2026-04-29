@@ -8,7 +8,7 @@ An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that 
 
 Release history and changelog: [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases).
 
-Deployment shapes (stdio / self-hosted HTTP / Cloud Run) and how to pick between them: see [docs/deploy/overview.md](docs/deploy/overview.md).
+Deployment shapes (stdio / Docker Compose / self-hosted HTTP / Cloud Run) and how to pick between them: see [docs/deploy/overview.md](docs/deploy/overview.md).
 
 ## Features
 

@@ -1,19 +1,24 @@
 # Deployment Overview
 
-jquants-mcp can be deployed in three shapes. Pick the one that matches your usage pattern.
+jquants-mcp can be deployed in four shapes. Pick the one that matches your usage pattern.
 
 | Shape | Who runs it | Cost | Setup effort | Best for |
 |---|---|---|---|---|
-| **stdio** (local) | One user, one machine | Free | < 5 min | Single-user desktop use via Claude Code / Claude Desktop |
-| **self-hosted HTTP** | One or a few trusted users, one host | Host + J-Quants plan | ~1 hour | Homelab / always-on server reachable from mobile or laptop |
-| **Cloud Run** (GCP) | Multiple users, OAuth auth | GCP (~\$0–\$10/mo for low traffic) + J-Quants plan | 2–4 hours first time | Family / team, mobile clients, remote auth |
+| **stdio** (local) | One user, one machine | Free | < 5 min | Single-user desktop via Claude Code / Claude Desktop; no persistent cache needed |
+| **Docker Compose** (local) | One user, one machine | Free | < 10 min | Local HTTP server without installing Python; cache persists across restarts |
+| **Self-hosted HTTP** | One or a few trusted users, one host | Host + J-Quants plan | ~1 hour | Homelab / always-on server reachable from mobile or other machines |
+| **Cloud Run** (GCP) | Multiple users, OAuth auth | GCP (~\$0–\$10/mo for low traffic) + J-Quants plan | 2–4 hours first time | Family / team, mobile clients, OAuth login per user |
 
 ## stdio
 
 ```mermaid
-graph LR
-    A["Claude Code<br/>Claude Desktop"] -->|stdio| B["jquants-mcp<br/>(local)"]
-    B -->|HTTPS| C["J-Quants<br/>API v2"]
+graph BT
+    C["J-Quants API v2"]
+    B["jquants-mcp (local)"]
+    A["Claude Code / Claude Desktop"]
+
+    A -->|stdio| B
+    B -->|HTTPS| C
 ```
 
 - Launched by the MCP client as a subprocess (`uvx jquants-mcp` or `claude mcp add`)
@@ -23,31 +28,62 @@ graph LR
 
 Set up: see the main [README](../../README.md#installation).
 
+## Docker Compose
+
+```mermaid
+graph BT
+    C["J-Quants API v2"]
+    B["jquants-mcp (Docker container)"]
+    A["Claude Code / Claude Desktop"]
+
+    A -->|"HTTP localhost:8080"| B
+    B -->|HTTPS| C
+```
+
+- No Python installation required — just Docker
+- Runs as a persistent local HTTP server on `http://localhost:8080/mcp`
+- Cache stored in a named Docker volume; survives container restarts
+- Optional: set `ENABLE_DAILY_FETCH=true` for automatic weekday cache updates
+
+Set up: see [local.md](local.md) (Option A).
+
 ## Self-hosted HTTP
 
 ```mermaid
-graph LR
-    A["Claude Code<br/>Claude Desktop"] -->|stdio| B["mcp-stdio<br/>(proxy)"]
-    B -->|"HTTPS + Bearer"| C["jquants-mcp<br/>(your host)"]
-    C -->|HTTPS| D["J-Quants<br/>API v2"]
+graph BT
+    D["J-Quants API v2"]
+    C["jquants-mcp (your host)"]
+    B["mcp-stdio (proxy)"]
+    A["Claude Code / Claude Desktop"]
+
+    A -->|stdio| B
+    B -->|"HTTPS + Bearer"| C
+    C -->|HTTPS| D
 ```
 
 - Runs on any host that can hold a TLS cert (laptop at home, NUC, VPS)
-- Streamable HTTP transport, Bearer token or OAuth authentication
+- Streamable HTTP transport, Bearer token authentication
 - One SQLite cache on the host, shared between invocations
 - Mobile clients work via `mcp-stdio` proxy (Claude Code header bug workaround)
 
-Set up: see [local.md](local.md).
+Set up: see [local.md](local.md) (Option B).
 
 ## Cloud Run (GCP)
 
 ```mermaid
-graph LR
-    A["Claude mobile<br/>Claude Desktop<br/>Claude Code"] -->|"OAuth 2.1"| B["Cloud Run<br/>jquants-mcp"]
-    B -->|HTTPS| C["J-Quants<br/>API v2"]
-    B -->|read| D["GCS<br/>(cache.db)"]
-    B <-->|read/write| E["Firestore<br/>(users, oauth_state)"]
-    F["Self-hosted<br/>publisher<br/>(cron)"] -->|write| D
+graph BT
+    C["J-Quants API v2"]
+    D["GCS (cache.db)"]
+    E["Firestore\n(users, oauth_state)"]
+    B["Cloud Run jquants-mcp"]
+    A["Claude mobile / Claude Desktop / Claude Code"]
+    F["Self-hosted publisher (cron)"]
+
+    A -->|"OAuth 2.1"| B
+    B -->|HTTPS| C
+    B -->|read| D
+    B <-->|read/write| E
+    F -->|write| D
 
     style F fill:#4a5,stroke:#333,color:#fff
 ```
@@ -68,11 +104,14 @@ flowchart TD
     Q1 -->|No| Q2["Does your mobile or another<br/>machine need to reach it?"]
     Q1 -->|Yes| Q3["Do you want OAuth login so<br/>users bring their own<br/>J-Quants API keys?"]
 
-    Q2 -->|No| R1["stdio"]
-    Q2 -->|Yes| R2["self-hosted HTTP"]
+    Q2 -->|No| Q4["Do you have Docker and want<br/>a persistent local HTTP server?"]
+    Q2 -->|Yes| R3["self-hosted HTTP"]
 
-    Q3 -->|Yes| R3["Cloud Run"]
-    Q3 -->|No| R4["self-hosted HTTP<br/>(shared Bearer token)"]
+    Q4 -->|Yes| R1["Docker Compose"]
+    Q4 -->|No| R2["stdio"]
+
+    Q3 -->|Yes| R4["Cloud Run"]
+    Q3 -->|No| R3
 
     style R1 fill:#4a5,stroke:#333,color:#fff
     style R2 fill:#4a5,stroke:#333,color:#fff
