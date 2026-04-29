@@ -5,6 +5,20 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ---
 
+## [0.9.0](https://github.com/shigechika/jquants-mcp/compare/v0.8.0...v0.9.0) (2026-04-29)
+
+
+### Features
+
+* **cache:** add Tier 1 cache table for equities_earnings_calendar ([#182](https://github.com/shigechika/jquants-mcp/issues/182)) ([d336edc](https://github.com/shigechika/jquants-mcp/commit/d336edca29526d75bc59697037e05a61a197645c))
+* **scripts:** add verify_cache_completeness.py CLI ([#183](https://github.com/shigechika/jquants-mcp/issues/183)) ([c7a4cf6](https://github.com/shigechika/jquants-mcp/commit/c7a4cf6e0eb1c2356a46a6e460e98d515381482e))
+* **v0.8:** cache freshness fields in health_check + screener cache_not_ready guard ([#181](https://github.com/shigechika/jquants-mcp/issues/181)) ([6552eac](https://github.com/shigechika/jquants-mcp/commit/6552eaca94bad048606469076739de6dfc2407b3))
+
+
+### Bug Fixes
+
+* pd.Timestamp.replace()の誤呼び出しを修正（決算発表予定キャッシュ蓄積不全 [#177](https://github.com/shigechika/jquants-mcp/issues/177)） ([#178](https://github.com/shigechika/jquants-mcp/issues/178)) ([f50326c](https://github.com/shigechika/jquants-mcp/commit/f50326ccbc64eff87d0d4d9e5b8ec18627e6f8d4))
+
 ## [0.8.0](https://github.com/shigechika/jquants-mcp/compare/v0.7.0...v0.8.0) (2026-04-27)
 
 
