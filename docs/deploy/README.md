@@ -100,11 +100,11 @@ Set up: see [gcp.md](gcp.md).
 
 ```mermaid
 flowchart TD
-    Q1["Will anyone other than you use it?"]
-    Q1 -->|No| Q2["Does your mobile or another<br/>machine need to reach it?"]
-    Q1 -->|Yes| Q3["Do you want OAuth login so<br/>users bring their own<br/>J-Quants API keys?"]
+    Q1{"Will anyone other than you use it?"}
+    Q1 -->|No| Q2{"Does your mobile or another<br/>machine need to reach it?"}
+    Q1 -->|Yes| Q3{"Do you want OAuth login so<br/>users bring their own<br/>J-Quants API keys?"}
 
-    Q2 -->|No| Q4["Do you have Docker and want<br/>a persistent local HTTP server?"]
+    Q2 -->|No| Q4{"Do you have Docker and want<br/>a persistent local HTTP server?"}
     Q2 -->|Yes| R3["self-hosted HTTP"]
 
     Q4 -->|Yes| R1["Docker Compose"]

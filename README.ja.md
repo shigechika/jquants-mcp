@@ -8,7 +8,7 @@
 
 リリース履歴・変更履歴は [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases) を参照してください。
 
-デプロイ形態（stdio / Docker Compose / セルフホスト HTTP / Cloud Run）の選び方は [docs/deploy/overview.ja.md](docs/deploy/overview.md) を参照。
+デプロイ形態（stdio / Docker Compose / セルフホスト HTTP / Cloud Run）の選び方は [docs/deploy/README.ja.md](docs/deploy/README.ja.md) を参照。
 
 ## 特徴
 

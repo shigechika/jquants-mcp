@@ -45,7 +45,7 @@ graph BT
 - キャッシュは Docker named volume に保存 → コンテナ再起動後も維持
 - `ENABLE_DAILY_FETCH=true` で平日の自動キャッシュ更新が有効になる
 
-セットアップ: [local.md](local.md)（Option A）を参照。
+セットアップ: [local.ja.md](local.ja.md)（Option A）を参照。
 
 ## セルフホスト HTTP
 
@@ -66,7 +66,7 @@ graph BT
 - ホスト上の SQLite キャッシュを複数セッションで共有
 - Claude Code のヘッダーバグ回避のため `mcp-stdio` プロキシ経由でモバイルからも接続可能
 
-セットアップ: [local.md](local.md)（Option B）を参照。
+セットアップ: [local.ja.md](local.ja.md)（Option B）を参照。
 
 ## Cloud Run（GCP）
 
@@ -100,11 +100,11 @@ graph BT
 
 ```mermaid
 flowchart TD
-    Q1["自分以外も使う？"]
-    Q1 -->|いいえ| Q2["モバイルや他の端末から<br/>アクセスする必要がある？"]
-    Q1 -->|はい| Q3["ユーザーごとに OAuth ログインで<br/>自分の J-Quants API キーを<br/>使えるようにしたい？"]
+    Q1{"自分以外も使う？"}
+    Q1 -->|いいえ| Q2{"モバイルや他の端末から<br/>アクセスする必要がある？"}
+    Q1 -->|はい| Q3{"ユーザーごとに OAuth ログインで<br/>自分の J-Quants API キーを<br/>使えるようにしたい？"}
 
-    Q2 -->|いいえ| Q4["Docker があって<br/>永続的なローカル HTTP<br/>サーバーが欲しい？"]
+    Q2 -->|いいえ| Q4{"Docker があって<br/>永続的なローカル HTTP<br/>サーバーが欲しい？"}
     Q2 -->|はい| R3["セルフホスト HTTP"]
 
     Q4 -->|はい| R1["Docker Compose"]
