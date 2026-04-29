@@ -100,6 +100,8 @@ jobs:
             --cpu-boost \
             --set-env-vars "\
               GCS_BUCKET=aikawa-dx-jquants-mcp,\
+              PUBSUB_INVOKER_SA=pubsub-invoker@aikawa-dx.iam.gserviceaccount.com,\
+              PUBSUB_AUDIENCE=https://jquants-mcp.aikawa.jp/internal/reload,\
               JQUANTS_CACHE_DIR=/tmp,\
               OAUTH_PROVIDER=google,\
               OAUTH_BASE_URL=https://jquants-mcp.aikawa.jp,\
