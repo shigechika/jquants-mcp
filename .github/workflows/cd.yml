@@ -100,6 +100,7 @@ jobs:
             --clear-volumes --clear-volume-mounts \
             --cpu-boost \
             --set-env-vars "\
+              GOOGLE_CLOUD_PROJECT=aikawa-dx,\
               GCS_BUCKET=aikawa-dx-jquants-mcp,\
               PUBSUB_INVOKER_SA=pubsub-invoker@aikawa-dx.iam.gserviceaccount.com,\
               PUBSUB_AUDIENCE=https://jquants-mcp.aikawa.jp/internal/reload,\
