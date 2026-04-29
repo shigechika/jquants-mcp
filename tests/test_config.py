@@ -199,6 +199,7 @@ def test_jquants_api_toml_path_env_with_tilde(tmp_path, monkeypatch):
     toml_file.write_bytes(b'[jquants-api-client]\napi_key = "tilde-key"\n')
 
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "home"))  # Windows uses USERPROFILE
     monkeypatch.setenv("JQUANTS_API_TOML_PATH", "~/custom.toml")
     with patch("jquants_mcp.config._load_config_files") as mock_load:
         mock_load.return_value = configparser.ConfigParser()
