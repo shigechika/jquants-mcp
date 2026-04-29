@@ -3,6 +3,7 @@
 # jquants-mcp
 
 English | [日本語](README.ja.md)
+<!-- pre-public review -->
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that retrieves Japanese stock market data via [J-Quants API v2](https://jpx-jquants.com/).
 
