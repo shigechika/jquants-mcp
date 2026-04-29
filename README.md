@@ -853,7 +853,7 @@ When running the MCP server as a local service (e.g. launchd on macOS), SIGHUP t
 
 ```bash
 # macOS launchd
-launchctl kill SIGHUP system/jp.aikawa.jquants-mcp
+launchctl kill SIGHUP system/<YOUR_LAUNCHD_LABEL>
 # or directly
 kill -HUP <MCP_PID>
 ```
