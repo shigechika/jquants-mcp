@@ -14,6 +14,12 @@ dependencies = [
     "tomli>=2.0.0; python_version < '3.11'",
 ]
 
+[project.urls]
+Homepage = "https://github.com/shigechika/jquants-mcp"
+Repository = "https://github.com/shigechika/jquants-mcp"
+Documentation = "https://github.com/shigechika/jquants-mcp/tree/main/docs"
+"Bug Tracker" = "https://github.com/shigechika/jquants-mcp/issues"
+
 [project.optional-dependencies]
 cloud-run = [
     "google-cloud-storage>=2.0.0",
