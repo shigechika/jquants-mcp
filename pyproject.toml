@@ -5,6 +5,7 @@ description = "MCP server for retrieving Japanese stock market data via J-Quants
 readme = "README.md"
 authors = [{ name = "shige" }]
 license = { text = "MIT" }
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 
 dependencies = [
