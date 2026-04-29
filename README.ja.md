@@ -628,6 +628,15 @@ extras 未インストール時はツール登録を silent skip するので、
 
 キャッシュの保存先はデフォルトで `~/.cache/jquants-mcp/cache.db` です。
 
+**過去データをフル取得した後の想定ディスク使用量**（概算値、市場データの取得可能範囲により変動）:
+
+| プラン | 保持期間 | 概算サイズ |
+|---|---|---|
+| Free | 2 年 | ~500 MB |
+| Light | 5 年 | ~1.5 GB |
+| Standard | 10 年 | ~3 GB |
+| Premium | 全期間 | ~3.5 GB+ |
+
 ### バルクデータ一括取得
 
 `scripts/bulk_fetch_all.py` は J-Quants Bulk API から CSV データを一括ダウンロードし、SQLite キャッシュにインポートするスクリプトです。過去データを効率的にローカルキャッシュに蓄積できます。
@@ -750,6 +759,8 @@ gcloud run deploy jquants-mcp \
 | `JQUANTS_API_KEY` | はい | — | J-Quants API キー（Secret Manager 推奨） |
 | `JQUANTS_PLAN` | いいえ | 自動検出 | プラン: `free` / `light` / `standard` / `premium`（API キーから自動検出、明示設定はオーバーライド） |
 | `MCP_BEARER_TOKEN` | いいえ | — | HTTP 認証用 Bearer トークン（単一ユーザーモードのみ） |
+| `PUBSUB_INVOKER_SA` | いいえ | — | Pub/Sub push 認証用サービスアカウントメール。設定時は `/internal/reload` エンドポイントで Google 署名 OIDC トークンを検証。Pub/Sub 自動リロードを使う場合に必須。 |
+| `PUBSUB_AUDIENCE` | いいえ | リクエスト URL | OIDC 検証時の audience（デフォルトはリクエスト URL） |
 | `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | いいえ | — | マルチユーザーモード時の OAuth 設定 |
 
 Firestore は Cloud Run サービスアカウントの Application Default Credentials を使うため、プロジェクト ID の環境変数設定は不要です。
