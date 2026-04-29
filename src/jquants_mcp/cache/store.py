@@ -828,8 +828,8 @@ class CacheStore:
 
     # ----------------------------------------------------------------
     # Screener result cache (pre-computed cross-sectional outputs)
-    # Read-only on Cloud Run; writes happen on m1.local via daily_fetch
-    # and the one-off populate-history script.
+    # Read-only on Cloud Run; writes happen on the self-hosted publisher
+    # via daily_fetch and the one-off populate-history script.
     # ----------------------------------------------------------------
 
     def screener_result_get(
@@ -893,8 +893,8 @@ class CacheStore:
 
         The MCP tool layer never calls this — Cloud Run instances run on
         ephemeral ``/tmp`` storage, so any tool-side write would be lost
-        on cold start. The on-disk cache is owned by the m1.local daily
-        fetch pipeline.
+        on cold start. The on-disk cache is owned by the self-hosted publisher
+        daily fetch pipeline.
         """
         conn = self._ensure_connection()
         if conn is None:
@@ -919,7 +919,7 @@ class CacheStore:
         Returns the number of rows deleted. The cutoff is computed in
         Python (``date.today()``) rather than via SQLite's
         ``date('now')`` so the boundary follows the local timezone of
-        the writing host (m1.local = JST). SQLite ``date('now')`` is
+        the writing host (JST). SQLite ``date('now')`` is
         UTC and would shift the cutoff by ~9 hours during the JST
         evening window — harmless on rolling 52-week retention but
         avoidably ambiguous.

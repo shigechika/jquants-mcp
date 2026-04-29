@@ -10,14 +10,14 @@ Procedures for rotating the two load-bearing secrets.
    ```sh
    NEW=$(openssl rand -base64 48)
    printf "%s" "$NEW" | gcloud secrets versions add mcp-encryption-key \
-     --data-file=- --project=aikawa-dx
+     --data-file=- --project=${PROJECT}
    ```
 2. **Capture the previous value** for the dual-key window:
    ```sh
-   OLD=$(gcloud secrets versions access latest --secret=mcp-encryption-key --project=aikawa-dx)
+   OLD=$(gcloud secrets versions access latest --secret=mcp-encryption-key --project=${PROJECT})
    # Then add the previous value as a separate secret, or pass it directly to CD
    printf "%s" "<previous value>" | gcloud secrets versions add mcp-encryption-key-previous \
-     --data-file=- --project=aikawa-dx
+     --data-file=- --project=${PROJECT}
    ```
 3. **Deploy Cloud Run with both keys** — update `.github/workflows/cd.yml` to
    pass `MCP_ENCRYPTION_KEY_PREVIOUS=mcp-encryption-key-previous:latest` in
@@ -26,14 +26,14 @@ Procedures for rotating the two load-bearing secrets.
    fresh writes with the primary.
 4. **Run the rotation script** to re-encrypt all existing blobs:
    ```sh
-   OLD=$(gcloud secrets versions access 1 --secret=mcp-encryption-key-previous --project=aikawa-dx)
-   NEW=$(gcloud secrets versions access latest --secret=mcp-encryption-key --project=aikawa-dx)
+   OLD=$(gcloud secrets versions access 1 --secret=mcp-encryption-key-previous --project=${PROJECT})
+   NEW=$(gcloud secrets versions access latest --secret=mcp-encryption-key --project=${PROJECT})
    uv run python scripts/rotate_encryption_key.py \
-     --project=aikawa-dx \
+     --project=${PROJECT} \
      --old-key "$OLD" --new-key "$NEW" --dry-run
    # Review dry-run output, then run for real
    uv run python scripts/rotate_encryption_key.py \
-     --project=aikawa-dx \
+     --project=${PROJECT} \
      --old-key "$OLD" --new-key "$NEW"
    ```
 5. **Remove the previous key** once the script reports all success: edit
@@ -61,7 +61,7 @@ operational cost is acceptable.
    ```sh
    openssl rand -base64 48 \
      | gcloud secrets versions add OAUTH_JWT_SIGNING_KEY \
-         --data-file=- --project=aikawa-dx
+         --data-file=- --project=${PROJECT}
    ```
 2. **Redeploy via CD** — `workflow_dispatch` on the CD workflow, or push
    any main commit. The new revision picks up `OAUTH_JWT_SIGNING_KEY:latest`.
@@ -87,6 +87,6 @@ outage.
 - [ ] Audit log shows no decrypt failures (`action=rate_limited` aside)
 - [ ] Old secret version disabled (not deleted — keep for forensics):
       ```sh
-      gcloud secrets versions disable <OLD_VERSION> --secret=<SECRET> --project=aikawa-dx
+      gcloud secrets versions disable <OLD_VERSION> --secret=<SECRET> --project=${PROJECT}
       ```
 - [ ] Incident notes saved to memory if the rotation was leak-driven

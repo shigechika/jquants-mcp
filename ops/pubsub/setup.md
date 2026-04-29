@@ -1,29 +1,30 @@
 # Pub/Sub Auto-Reload Setup
 
 Triggers a cache.db reload in Cloud Run whenever the self-hosted publisher
-uploads a new snapshot to GCS (`gs://aikawa-dx-jquants-mcp/jquants-mcp/cache.db`).
+uploads a new snapshot to GCS.
 
 ## Architecture
 
 ```
 Self-hosted publisher
   └─ gcs_export_cache.py
-        └─ gs://aikawa-dx-jquants-mcp/jquants-mcp/cache.db (GCS object.finalize)
-              └─ Pub/Sub topic: jquants-mcp-cache-updated
-                    └─ Push subscription → https://jquants-mcp.aikawa.jp/internal/reload
+        └─ gs://${BUCKET}/jquants-mcp/cache.db (GCS object.finalize)
+              └─ Pub/Sub topic: ${TOPIC}
+                    └─ Push subscription → ${PUSH_URL}
                           └─ Cloud Run: download cache.db + lazy SQLite reconnect
 ```
 
 ## Prerequisites
 
 ```bash
-PROJECT=aikawa-dx
+PROJECT=your-gcp-project
 REGION=us-west1
-BUCKET=aikawa-dx-jquants-mcp
+BUCKET=your-gcp-project-jquants-mcp  # must be globally unique
 SERVICE=jquants-mcp
 SA=jquants-mcp@${PROJECT}.iam.gserviceaccount.com
 TOPIC=jquants-mcp-cache-updated
-PUSH_URL=https://jquants-mcp.aikawa.jp/internal/reload
+SERVICE_URL=https://your-service.example.com  # Cloud Run custom domain or run.app URL
+PUSH_URL=${SERVICE_URL}/internal/reload
 ```
 
 ## Step 1 — Create Pub/Sub topic
@@ -97,8 +98,8 @@ gcloud pubsub subscriptions create jquants-mcp-cache-updated-push \
 Add to the CD workflow (`cd.yml`) under `--set-env-vars`:
 
 ```
-PUBSUB_INVOKER_SA=pubsub-invoker@aikawa-dx.iam.gserviceaccount.com
-PUBSUB_AUDIENCE=https://jquants-mcp.aikawa.jp/internal/reload
+PUBSUB_INVOKER_SA=pubsub-invoker@${PROJECT}.iam.gserviceaccount.com
+PUBSUB_AUDIENCE=${PUSH_URL}
 ```
 
 These two variables activate OIDC verification in the `/internal/reload` endpoint.
@@ -111,7 +112,7 @@ After publishing a new cache.db snapshot:
 1. Check Pub/Sub subscription metrics in Cloud Console for message delivery.
 2. Check Cloud Run logs for:
    ```
-   Downloading gs://aikawa-dx-jquants-mcp/jquants-mcp/cache.db ...
+   Downloading gs://${BUCKET}/jquants-mcp/cache.db ...
    Downloaded cache.db from GCS (NNN.N MB)
    Cache reload scheduled (last_reload_at=...)
    ```

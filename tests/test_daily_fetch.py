@@ -1,8 +1,7 @@
 """Tests for scripts/daily_fetch.py.
 
-daily_fetch.py は jpx-short-report の .venv（pandas + jquantsapi 入り）で
-動くスクリプトだが、テストは jquants-dat-mcp の .venv で実行する。
-pandas を使わず、DataFrame 互換の軽量 mock で API レスポンスを再現する。
+daily_fetch.py does not depend on pandas at runtime; tests use a
+lightweight DataFrame-compatible mock to simulate API responses.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 import sys
 
-# daily_fetch.py は jquantsapi に依存するが、jquants-dat-mcp の .venv には入っていない。
+# daily_fetch.py は jquantsapi に依存するが、jquants-mcp の .venv には入っていない。
 # テスト用に mock モジュールを差し込む。
 _jquantsapi_mock = MagicMock()
 sys.modules.setdefault("jquantsapi", _jquantsapi_mock)

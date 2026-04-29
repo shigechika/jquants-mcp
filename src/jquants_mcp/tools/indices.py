@@ -1,4 +1,4 @@
-"""Index-related tools for jquants-dat-mcp."""
+"""Index-related tools for jquants-mcp."""
 
 from __future__ import annotations
 

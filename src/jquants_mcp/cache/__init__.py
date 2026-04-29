@@ -1,1 +1,1 @@
-"""Cache layer for jquants-dat-mcp using SQLite."""
+"""Cache layer for jquants-mcp using SQLite."""

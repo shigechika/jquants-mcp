@@ -25,7 +25,7 @@ Exposed tools:
 
 The 52w/YTD detectors are also backed by the ``screener_results``
 pre-compute cache (default-params cross-sectional outputs are
-populated nightly by ``scripts/daily_fetch.py`` on m1.local), so
+populated nightly by ``scripts/daily_fetch.py`` on the self-hosted publisher), so
 default-params calls return in sub-second.
 
 Plan note: the underlying table is available from the Free plan onwards,
@@ -107,10 +107,10 @@ def _normalize_code(code: str) -> str:
 def _cache_window_cutoff() -> str:
     """ISO date for the oldest date covered by the screener cache.
 
-    Computed at call time from the host's local date. m1.local runs in
-    JST so the cutoff tracks Asia/Tokyo trading days; Cloud Run runs in
-    UTC so on a JST-evening request its cutoff is up to ~9 hours behind
-    m1's. The 1-day worst-case drift is acceptable for a 52-week
+    Computed at call time from the host's local date. The self-hosted
+    publisher runs in JST so the cutoff tracks Asia/Tokyo trading days;
+    Cloud Run runs in UTC so on a JST-evening request its cutoff is up
+    to ~9 hours behind. The 1-day worst-case drift is acceptable for a 52-week
     rolling window and avoids depending on system tz configuration.
     """
     return (date.today() - timedelta(weeks=_CACHE_LOOKBACK_WEEKS)).isoformat()

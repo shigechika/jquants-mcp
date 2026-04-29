@@ -1,1 +1,1 @@
-"""Data models for jquants-dat-mcp."""
+"""Data models for jquants-mcp."""

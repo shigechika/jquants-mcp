@@ -36,7 +36,6 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# schema.py は stdlib のみ依存 — jpx-short-report の venv でもインポート可能
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from jquants_mcp.cache.schema import (  # noqa: E402
     RESPONSE_CACHE_DDL,

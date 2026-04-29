@@ -225,7 +225,7 @@ fork したリポジトリの **Settings → Secrets and variables → Actions**
 
 ## 11. CD ワークフローの修正
 
-同梱の [`.github/workflows/cd.yml`](../../.github/workflows/cd.yml) は上流プロジェクト（`PROJECT_ID=aikawa-dx`）向けに設定されています。fork 内の `gcloud run deploy` 行を自分の環境に合わせて編集してください:
+同梱の [`.github/workflows/cd.yml`](../../.github/workflows/cd.yml) は上流プロジェクトの GCP リソース向けに設定されています。fork 内の `gcloud run deploy` 行を自分の環境に合わせて編集してください:
 
 ```yaml
 gcloud run deploy ${SERVICE} \

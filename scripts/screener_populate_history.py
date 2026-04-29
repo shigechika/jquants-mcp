@@ -4,7 +4,7 @@ Companion to ``scripts/daily_fetch.py``. ``daily_fetch`` only computes
 the latest finalized session each night; this script back-fills the
 prior 52 weeks (or any custom window) so the cache is dense from day 1.
 
-Run on m1.local after deploying the Issue #142 schema migration:
+Run on the self-hosted publisher after deploying the Issue #142 schema migration:
 
     uv run python3 scripts/screener_populate_history.py
     uv run python3 scripts/screener_populate_history.py --weeks 8

@@ -14,16 +14,16 @@ gcloud logging read \
   'resource.type="cloud_run_revision"
    resource.labels.service_name="jquants-mcp"
    (textPayload:"POST /token" OR textPayload:"/oauth/callback")' \
-  --project=aikawa-dx --limit=30 --freshness=1h --format=json \
+  --project=${PROJECT} --limit=30 --freshness=1h --format=json \
   | jq -r '.[] | "\(.timestamp) \(.httpRequest.status) \(.httpRequest.requestUrl // .textPayload)"'
 
 # oauth_state collection size
 gcloud firestore documents list --database='(default)' \
-  --collection=oauth_state --limit=5 --project=aikawa-dx
+  --collection=oauth_state --limit=5 --project=${PROJECT}
 
 # Secrets present
-gcloud secrets versions access latest --secret=OAUTH_JWT_SIGNING_KEY --project=aikawa-dx | head -c 20
-gcloud secrets versions access latest --secret=google-oauth-client-secret --project=aikawa-dx | head -c 20
+gcloud secrets versions access latest --secret=OAUTH_JWT_SIGNING_KEY --project=${PROJECT} | head -c 20
+gcloud secrets versions access latest --secret=google-oauth-client-secret --project=${PROJECT} | head -c 20
 ```
 
 ## Root cause options

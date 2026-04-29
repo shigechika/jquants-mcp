@@ -15,17 +15,17 @@ gcloud logging read \
    resource.labels.service_name="jquants-mcp"
    (textPayload:"firestore" OR jsonPayload.message:"firestore")
    severity>=ERROR' \
-  --project=aikawa-dx --limit=20 --freshness=1h
+  --project=${PROJECT} --limit=20 --freshness=1h
 
 # Firestore health via SA
-gcloud firestore databases list --project=aikawa-dx
+gcloud firestore databases list --project=${PROJECT}
 gcloud firestore documents list --database='(default)' \
-  --collection=users --limit=1 --project=aikawa-dx
+  --collection=users --limit=1 --project=${PROJECT}
 
 # Service account IAM
-gcloud projects get-iam-policy aikawa-dx \
+gcloud projects get-iam-policy ${PROJECT} \
   --flatten=bindings \
-  --filter='bindings.members=serviceAccount:jquants-mcp@aikawa-dx.iam.gserviceaccount.com' \
+  --filter='bindings.members=serviceAccount:jquants-mcp@${PROJECT}.iam.gserviceaccount.com' \
   --format='value(bindings.role)'
 # Expected: datastore.user (and objectViewer, secretmanager.secretAccessor)
 ```
@@ -39,7 +39,7 @@ gcloud projects get-iam-policy aikawa-dx \
 
 ## Recovery
 
-- **IAM**: `gcloud projects add-iam-policy-binding aikawa-dx --member=serviceAccount:jquants-mcp@aikawa-dx.iam.gserviceaccount.com --role=roles/datastore.user`
+- **IAM**: `gcloud projects add-iam-policy-binding ${PROJECT} --member=serviceAccount:jquants-mcp@${PROJECT}.iam.gserviceaccount.com --role=roles/datastore.user`
 - **Quota**: request an increase in the Quotas page; for this workload the quota limit should not be hit without abuse — investigate rate-limit logs first
 - **Regional outage**: wait; no action. Server degrades gracefully — tool calls that don't need user lookup still work.
 

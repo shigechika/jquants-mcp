@@ -1,1 +1,1 @@
-"""Tool implementations for jquants-dat-mcp."""
+"""Tool implementations for jquants-mcp."""

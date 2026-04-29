@@ -7,7 +7,7 @@ nine-nines reliability.
 ## TL;DR
 
 - **Region**: `us-west1` only. All three main components (Cloud Run,
-  Firestore, GCS bucket `aikawa-dx-jquants-mcp`) live there.
+  Firestore, GCS bucket `${BUCKET}`) live there.
 - **RTO** (time to recover from a regional outage): **hours** — requires
   manual redeploy to a standby region plus DNS / OAuth redirect updates.
 - **RPO** (data loss on catastrophic failure): **0** for `users` and
@@ -37,7 +37,7 @@ shows `locationId: us-west1` (single-region, **not** `nam5` multi-region).
 | Accidental collection delete | Data loss | Daily + weekly managed backups (#84) |
 | Quota exceeded | Auth errors | See [firestore-outage runbook](runbooks/firestore-outage.md) |
 
-### cache.db on GCS (`gs://aikawa-dx-jquants-mcp`)
+### cache.db on GCS (`gs://${BUCKET}`)
 
 | Risk | Impact | Mitigation today |
 |---|---|---|
@@ -63,7 +63,7 @@ If `us-west1` is down for extended period and we decide to fail over:
 2. **Deploy Cloud Run** from the same source via a one-off workflow_dispatch:
    ```sh
    gcloud run deploy jquants-mcp \
-     --project=aikawa-dx --region=<STANDBY> --source=. ...
+     --project=${PROJECT} --region=<STANDBY> --source=. ...
    ```
    Reuse the CD workflow as the spec — copy `.github/workflows/cd.yml`
    verbatim with `--region=<STANDBY>`.

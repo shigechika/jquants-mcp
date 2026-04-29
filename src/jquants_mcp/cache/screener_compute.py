@@ -262,8 +262,9 @@ def prune_old_results(conn: Any, *, retention_weeks: int = SCREENER_CACHE_LOOKBA
     """Drop ``screener_results`` rows older than ``retention_weeks``.
 
     Returns the number of rows deleted. The cutoff is computed in
-    Python (host local time) so the boundary follows JST on m1.local
-    rather than SQLite's UTC ``date('now')`` (avoids a ~9 h drift on
+    Python (host local time) so the boundary follows the self-hosted
+    publisher's timezone (JST) rather than SQLite's UTC ``date('now')``
+    (avoids a ~9 h drift on
     JST evenings).
     """
     from datetime import date, timedelta

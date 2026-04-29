@@ -20,7 +20,7 @@ Usage:
   NEW_KEY=$(gcloud secrets versions access latest --secret=mcp-encryption-key)
 
   uv run python scripts/rotate_encryption_key.py \\
-      --project aikawa-dx \\
+      --project ${PROJECT} \\
       --old-key "$OLD_KEY" \\
       --new-key "$NEW_KEY" \\
       [--dry-run]

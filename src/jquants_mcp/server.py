@@ -374,7 +374,7 @@ def _get_user_db():
     if os.environ.get("K_SERVICE"):
         from .db.users_firestore import FirestoreUserStore
 
-        project = os.environ.get("GOOGLE_CLOUD_PROJECT", "aikawa-dx")
+        project = os.environ["GOOGLE_CLOUD_PROJECT"]
         _user_db = FirestoreUserStore(project=project, encrypt_fn=enc, decrypt_fn=dec)
         logger.info("UserStore backend: Firestore (project=%s)", project)
     else:
