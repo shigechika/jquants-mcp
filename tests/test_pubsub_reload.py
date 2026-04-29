@@ -197,6 +197,16 @@ class TestVerifyPubsubOidcToken:
                 "https://example.com/internal/reload",
             )
 
+    def test_empty_audience_raises(self, mock_google_auth):
+        with pytest.raises(ValueError, match="audience must not be empty"):
+            server_module._verify_pubsub_oidc_token(
+                "fake-jwt",
+                "pubsub@project.iam.gserviceaccount.com",
+                "",
+            )
+        # verify_oauth2_token must NOT have been called (audience check is pre-flight)
+        mock_google_auth["id_token"].verify_oauth2_token.assert_not_called()
+
     def test_missing_google_auth_raises(self, monkeypatch):
         # Ensure google modules are NOT in sys.modules so the ImportError path is hit
         for key in list(sys.modules):

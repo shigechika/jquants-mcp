@@ -181,10 +181,13 @@ def _verify_pubsub_oidc_token(token: str, expected_email: str, audience: str) ->
     except ImportError as exc:
         raise ValueError("google-auth not installed; install [cloud-run] extras") from exc
 
+    if not audience:
+        raise ValueError("audience must not be empty")
+
     request = google.auth.transport.requests.Request()
     try:
         claims: dict[str, Any] = google.oauth2.id_token.verify_oauth2_token(
-            token, request, audience=audience or None
+            token, request, audience=audience
         )
     except Exception as exc:
         raise ValueError(f"OIDC token verification failed: {exc}") from exc
