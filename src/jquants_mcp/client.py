@@ -39,14 +39,12 @@ class RateLimiter:
         """Wait until a request slot is available."""
         async with self._lock:
             now = time.monotonic()
-            # ウィンドウ外のタイムスタンプを除去
             self._timestamps = [t for t in self._timestamps if now - t < self._window]
 
             if len(self._timestamps) >= self._max_requests:
-                # 最も古いリクエストがウィンドウ外になるまで待機
                 wait_time = self._timestamps[0] + self._window - now
                 if wait_time > 0:
-                    logger.info("レート制限: %.1f秒待機します", wait_time)
+                    logger.info("Rate limiter: waiting %.1fs", wait_time)
                     await asyncio.sleep(wait_time)
 
             self._timestamps.append(time.monotonic())
@@ -68,8 +66,8 @@ class JQuantsClient:
         if self._client is None:
             if not self._settings.jquants_api_key:
                 raise AuthenticationError(
-                    "JQUANTS_API_KEY が設定されていません。"
-                    "環境変数または .env ファイルで設定してください。"
+                    "JQUANTS_API_KEY is not set. "
+                    "Please configure it via environment variable or .env file."
                 )
             self._client = httpx.AsyncClient(
                 base_url=self._settings.jquants_base_url,
@@ -107,10 +105,13 @@ class JQuantsClient:
             try:
                 response = await client.get(path, params=params)
             except httpx.HTTPError as e:
-                last_error = APIError(f"HTTP 通信エラー: {e}", status_code=0)
+                last_error = APIError(f"HTTP communication error: {e}", status_code=0)
                 wait = self._settings.retry_base_delay * (2**attempt)
                 logger.warning(
-                    "通信エラー (試行 %d/%d): %s", attempt + 1, self._settings.max_retries, e
+                    "Communication error (attempt %d/%d): %s",
+                    attempt + 1,
+                    self._settings.max_retries,
+                    e,
                 )
                 await asyncio.sleep(wait)
                 continue
@@ -119,13 +120,11 @@ class JQuantsClient:
                 return response.json()
 
             if response.status_code == 401:
-                raise AuthenticationError(
-                    "API キーが無効です。JQUANTS_API_KEY を確認してください。"
-                )
+                raise AuthenticationError("API key is invalid. Please check JQUANTS_API_KEY.")
 
             if response.status_code == 403:
                 raise PlanRestrictionError(
-                    "このエンドポイントは現在のプランでは利用できません。",
+                    "This endpoint is not available on your current plan.",
                     status_code=403,
                     body=response.text,
                 )
@@ -138,7 +137,7 @@ class JQuantsClient:
                     else self._settings.retry_base_delay * (2**attempt)
                 )
                 logger.warning(
-                    "レート制限 (試行 %d/%d): %.1f秒待機",
+                    "Rate limited (attempt %d/%d): waiting %.1fs",
                     attempt + 1,
                     self._settings.max_retries,
                     wait,
@@ -147,16 +146,15 @@ class JQuantsClient:
                 await asyncio.sleep(wait)
                 continue
 
-            # その他のエラー
             last_error = APIError(
-                f"API エラー (HTTP {response.status_code})",
+                f"API error (HTTP {response.status_code})",
                 status_code=response.status_code,
                 body=response.text,
             )
             if response.status_code >= 500:
                 wait = self._settings.retry_base_delay * (2**attempt)
                 logger.warning(
-                    "サーバーエラー (試行 %d/%d): %d",
+                    "Server error (attempt %d/%d): %d",
                     attempt + 1,
                     self._settings.max_retries,
                     response.status_code,
@@ -164,11 +162,9 @@ class JQuantsClient:
                 await asyncio.sleep(wait)
                 continue
 
-            # 4xx (401, 403, 429 以外) はリトライしない
             raise last_error
 
-        # リトライ上限到達
-        raise last_error or APIError("リトライ上限に達しました", status_code=0)
+        raise last_error or APIError("Max retries exceeded", status_code=0)
 
     async def get_all_pages(
         self,
@@ -200,7 +196,7 @@ class JQuantsClient:
             if not pagination_key or pages_fetched >= self._settings.max_pages:
                 if pagination_key:
                     logger.info(
-                        "ページネーション上限 (%d ページ) に到達。残りデータあり。",
+                        "Pagination limit reached (%d pages); more data available.",
                         self._settings.max_pages,
                     )
                 break

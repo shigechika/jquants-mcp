@@ -48,7 +48,7 @@ class TestAuthentication:
     @respx.mock
     async def test_invalid_api_key_raises_error(self, client):
         respx.get("https://api.example.com/v2/equities/master").respond(401)
-        with pytest.raises(AuthenticationError, match="無効"):
+        with pytest.raises(AuthenticationError, match="invalid"):
             await client.get("/equities/master")
 
 
