@@ -1,0 +1,102 @@
+name: Release to PyPI
+
+# Fires when release-please publishes the GitHub Release after its PR is merged.
+# release-please creates tags via the RELEASE_PLEASE_TOKEN PAT (not the default
+# GITHUB_TOKEN) so the tag → Release handoff triggers this workflow automatically.
+on:
+  release:
+    types: [published]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        include:
+          # Smoke-test on Windows to guard against stdio newline regressions.
+          - os: windows-latest
+            python-version: "3.12"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # hatch-vcs needs full history for version
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: py${{ matrix.python-version }}
+      - run: uv python install ${{ matrix.python-version }}
+      - run: uv sync --dev --extra charts --python ${{ matrix.python-version }}
+      - run: uv run pytest -v
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # hatch-vcs derives version from git tag
+      - uses: astral-sh/setup-uv@v7
+      - run: uv build
+      - uses: actions/upload-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+  testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish:
+    needs: testpypi
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  mcp-registry:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Patch server.json version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.tmp && mv server.tmp server.json
+          if jq -e '.version == "0.0.0" or .packages[0].version == "0.0.0"' server.json > /dev/null; then
+            echo "::error::server.json still contains placeholder 0.0.0 after patching"
+            exit 1
+          fi
+          echo "Patched server.json to version $VERSION"
+
+      - name: Install mcp-publisher
+        run: |
+          curl -sL https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz | tar xz
+          sudo mv mcp-publisher /usr/local/bin/
+
+      - name: Publish to MCP Registry
+        run: |
+          mcp-publisher login github-oidc
+          mcp-publisher publish

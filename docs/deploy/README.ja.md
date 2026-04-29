@@ -19,6 +19,8 @@ graph BT
 
     A -->|stdio| B
     B -->|HTTPS| C
+
+    style B fill:#4a5,stroke:#333,color:#fff
 ```
 
 - MCP クライアントがサブプロセスとして起動（`uvx jquants-mcp` または `claude mcp add`）
@@ -38,6 +40,8 @@ graph BT
 
     A -->|"HTTP localhost:8080"| B
     B -->|HTTPS| C
+
+    style B fill:#4a5,stroke:#333,color:#fff
 ```
 
 - Python インストール不要 — Docker だけで動く
@@ -59,8 +63,9 @@ graph BT
     A -->|stdio| B
     B -->|"HTTPS + Bearer"| C
     C -->|HTTPS| D
-```
 
+    style C fill:#4a5,stroke:#333,color:#fff
+```
 - TLS 証明書を取得できるホスト（自宅ラップトップ・NUC・VPS）で動作
 - Streamable HTTP トランスポート、Bearer トークン認証
 - ホスト上の SQLite キャッシュを複数セッションで共有
@@ -85,7 +90,7 @@ graph BT
     B <-->|read/write| E
     F -->|write| D
 
-    style F fill:#4a5,stroke:#333,color:#fff
+    style B fill:#4a5,stroke:#333,color:#fff
 ```
 
 - Google Cloud Run によるマネージド運用、オートスケーリング、HTTPS 標準対応

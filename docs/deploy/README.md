@@ -19,6 +19,8 @@ graph BT
 
     A -->|stdio| B
     B -->|HTTPS| C
+
+    style B fill:#4a5,stroke:#333,color:#fff
 ```
 
 - Launched by the MCP client as a subprocess (`uvx jquants-mcp` or `claude mcp add`)
@@ -38,6 +40,8 @@ graph BT
 
     A -->|"HTTP localhost:8080"| B
     B -->|HTTPS| C
+
+    style B fill:#4a5,stroke:#333,color:#fff
 ```
 
 - No Python installation required — just Docker
@@ -59,6 +63,8 @@ graph BT
     A -->|stdio| B
     B -->|"HTTPS + Bearer"| C
     C -->|HTTPS| D
+
+    style C fill:#4a5,stroke:#333,color:#fff
 ```
 
 - Runs on any host that can hold a TLS cert (laptop at home, NUC, VPS)
@@ -85,7 +91,7 @@ graph BT
     B <-->|read/write| E
     F -->|write| D
 
-    style F fill:#4a5,stroke:#333,color:#fff
+    style B fill:#4a5,stroke:#333,color:#fff
 ```
 
 - Managed by Google Cloud Run, autoscaling, HTTPS out-of-the-box
