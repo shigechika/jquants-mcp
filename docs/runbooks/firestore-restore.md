@@ -51,7 +51,7 @@ Copy the full resource name (`projects/${PROJECT}/locations/<loc>/backups/<id>`)
 ### 2. Restore into a scratch database
 
 ```sh
-BACKUP='projects/${PROJECT}/locations/nam5/backups/<id>'
+BACKUP='projects/${PROJECT}/locations/<LOCATION>/backups/<id>'
 
 gcloud firestore databases restore \
   --source-backup="$BACKUP" \
