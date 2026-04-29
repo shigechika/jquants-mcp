@@ -330,6 +330,41 @@ class TestFetchEarningsCalendar:
         assert row_dated is not None
         assert row_dated[1] == TTL_90D
 
+    def test_tier1_rows_written(self, db_conn):
+        """Tier 1 equities_earnings_calendar rows are written alongside Tier 2."""
+        df = FakeDataFrame(
+            [
+                {"Code": "72030", "Date": "2026-03-01", "FQ": "3Q"},
+                {"Code": "99830", "Date": "2026-03-01", "FQ": "1Q"},
+            ]
+        )
+        cli = _mock_cli(get_eq_earnings_cal=df)
+        fetch_earnings_calendar(cli, db_conn, "light")
+
+        rows = db_conn.execute(
+            "SELECT code, date FROM equities_earnings_calendar ORDER BY code"
+        ).fetchall()
+        assert len(rows) == 2
+        assert rows[0][0] == "72030"  # code column
+        assert rows[0][1] == "2026-03-01"  # date column
+        assert rows[1][0] == "99830"
+
+    def test_tier1_data_json_stored(self, db_conn):
+        """Each Tier 1 row stores the full record as JSON in data column."""
+        import json
+
+        df = FakeDataFrame([{"Code": "72030", "Date": "2026-03-01", "FQ": "3Q"}])
+        cli = _mock_cli(get_eq_earnings_cal=df)
+        fetch_earnings_calendar(cli, db_conn, "light")
+
+        row = db_conn.execute(
+            "SELECT data FROM equities_earnings_calendar WHERE code=? AND date=?",
+            ("72030", "2026-03-01"),
+        ).fetchone()
+        assert row is not None
+        rec = json.loads(row[0])  # data column
+        assert rec["FQ"] == "3Q"
+
     def test_empty_response(self, db_conn):
         cli = _mock_cli(get_eq_earnings_cal=FakeDataFrame())
         n = fetch_earnings_calendar(cli, db_conn, "light")

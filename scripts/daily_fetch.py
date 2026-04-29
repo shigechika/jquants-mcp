@@ -119,6 +119,7 @@ _DAILY_FETCH_TABLES = [
     "markets_short_ratio",
     "markets_breakdown",
     "markets_calendar",
+    "equities_earnings_calendar",
 ]
 
 
@@ -394,6 +395,18 @@ def fetch_earnings_calendar(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
         ("/equities/earnings-calendar", response_data, now, TTL_90D),
     )
+
+    # Tier 1: store each record by (code, date) for efficient cross-sectional queries
+    for rec in records:
+        code = str(rec.get("Code", ""))
+        ann_date = str(rec.get("Date", ""))[:10]  # normalize to YYYY-MM-DD
+        if not code or not ann_date or ann_date == "nan":
+            continue
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_earnings_calendar "
+            "(code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (code, ann_date, json.dumps(rec, ensure_ascii=False, default=str), now),
+        )
 
     conn.commit()
 

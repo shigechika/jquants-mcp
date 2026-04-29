@@ -192,6 +192,14 @@ class TestGetEquitiesInvestorTypes:
 
 
 class TestGetEquitiesEarningsCalendar:
+    def _seed_tier1(self, cache: CacheStore, records: list[dict]) -> None:
+        """Seed equities_earnings_calendar Tier 1 table."""
+        cache.put_rows(
+            "equities_earnings_calendar",
+            records,
+            key_columns=["Code", "Date"],
+        )
+
     async def test_returns_data(self, mock_env):
         mock_data = [
             {"Date": "2024-01-12", "Code": "72030", "CoName": "トヨタ自動車", "FQ": "3Q"},
@@ -202,3 +210,111 @@ class TestGetEquitiesEarningsCalendar:
             result = await _call("get_equities_earnings_calendar")
             assert result["count"] == 1
             assert result["data"][0]["FQ"] == "3Q"
+
+    async def test_code_query_uses_tier1(self, mock_env):
+        """code= query returns Tier 1 data without hitting the API."""
+        cache = mock_env["cache"]
+        self._seed_tier1(
+            cache,
+            [
+                {"Code": "72030", "Date": "2026-05-10", "FQ": "3Q"},
+                {"Code": "72030", "Date": "2026-08-10", "FQ": "4Q"},
+                {"Code": "99830", "Date": "2026-05-15", "FQ": "1Q"},
+            ],
+        )
+        with patch.object(mock_env["client"], "get_all_pages", new_callable=AsyncMock) as mock_api:
+            result = await _call("get_equities_earnings_calendar", code="72030")
+        mock_api.assert_not_called()
+        assert result["count"] == 2
+        codes = {r["Code"] for r in result["data"]}
+        assert codes == {"72030"}
+
+    async def test_code_query_sorted_descending(self, mock_env):
+        """code= results are sorted by Date descending."""
+        cache = mock_env["cache"]
+        self._seed_tier1(
+            cache,
+            [
+                {"Code": "72030", "Date": "2026-05-10", "FQ": "3Q"},
+                {"Code": "72030", "Date": "2026-08-10", "FQ": "4Q"},
+            ],
+        )
+        result = await _call("get_equities_earnings_calendar", code="72030")
+        dates = [r["Date"] for r in result["data"]]
+        assert dates == sorted(dates, reverse=True)
+
+    async def test_date_query_uses_tier1(self, mock_env):
+        """date= query returns Tier 1 data when available."""
+        cache = mock_env["cache"]
+        self._seed_tier1(
+            cache,
+            [
+                {"Code": "72030", "Date": "2026-05-10", "FQ": "3Q"},
+                {"Code": "99830", "Date": "2026-05-10", "FQ": "1Q"},
+                {"Code": "11110", "Date": "2026-05-11", "FQ": "2Q"},
+            ],
+        )
+        result = await _call("get_equities_earnings_calendar", date="2026-05-10")
+        assert result["count"] == 2
+        dates = {r["Date"] for r in result["data"]}
+        assert dates == {"2026-05-10"}
+
+    async def test_date_query_yyyymmdd_format(self, mock_env):
+        """date= accepts YYYYMMDD format and normalizes to YYYY-MM-DD for Tier 1 lookup."""
+        cache = mock_env["cache"]
+        self._seed_tier1(
+            cache,
+            [
+                {"Code": "72030", "Date": "2026-05-10", "FQ": "3Q"},
+            ],
+        )
+        result = await _call("get_equities_earnings_calendar", date="20260510")
+        assert result["count"] == 1
+
+    async def test_date_query_no_tier1_falls_back_to_tier2(self, mock_env):
+        """date= falls back to Tier 2 response_cache when Tier 1 is empty."""
+        cache = mock_env["cache"]
+        from jquants_mcp.cache.store import TTL_90D, make_cache_key
+
+        tier2_data = [{"Code": "72030", "Date": "2026-05-10", "FQ": "3Q"}]
+        ck = make_cache_key("/equities/earnings-calendar", {"date": "20260510"})
+        cache.put_response(ck, tier2_data, ttl_seconds=TTL_90D)
+        result = await _call("get_equities_earnings_calendar", date="2026-05-10")
+        assert result["count"] == 1
+
+    async def test_date_query_no_data_returns_empty(self, mock_env):
+        """date= returns empty result when neither Tier 1 nor Tier 2 has data."""
+        result = await _call("get_equities_earnings_calendar", date="2026-05-10")
+        assert result["count"] == 0
+        assert result["data"] == []
+
+    async def test_code_query_empty_tier1_falls_back_to_tier2(self, mock_env):
+        """code= falls back to Tier 2 LIKE scan when Tier 1 is empty."""
+        import json as _json
+        import time
+
+        cache = mock_env["cache"]
+        conn = cache._ensure_connection()
+        now = time.time()
+        tier2_data = [{"Code": "72030", "Date": "2026-05-10", "FQ": "3Q"}]
+        conn.execute(
+            "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                "/equities/earnings-calendar?date=20260510",
+                _json.dumps(tier2_data),
+                now,
+                90 * 24 * 3600,
+            ),
+        )
+        conn.commit()
+        result = await _call("get_equities_earnings_calendar", code="72030")
+        assert result["count"] == 1
+        assert result["data"][0]["FQ"] == "3Q"
+
+    async def test_4digit_code_padded(self, mock_env):
+        """4-digit code is padded to 5 digits before querying."""
+        cache = mock_env["cache"]
+        self._seed_tier1(cache, [{"Code": "72030", "Date": "2026-05-10", "FQ": "3Q"}])
+        result = await _call("get_equities_earnings_calendar", code="7203")
+        assert result["count"] == 1
