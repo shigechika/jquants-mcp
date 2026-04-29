@@ -1,4 +1,4 @@
-# Self-hosted HTTP Deployment
+# Local Deployment
 
 Run jquants-mcp on a host you control and connect from Claude Desktop or Claude Code.
 
@@ -47,6 +47,8 @@ Edit your Claude Desktop MCP config (`~/Library/Application Support/Claude/claud
         "run", "--rm", "-i",
         "--entrypoint", "jquants-mcp",
         "-e", "JQUANTS_API_KEY=xxx",
+        "-e", "JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp",
+        "-v", "jquants-mcp_cache:/home/appuser/.cache/jquants-mcp",
         "ghcr.io/shigechika/jquants-mcp:latest"
       ]
     }
@@ -55,6 +57,8 @@ Edit your Claude Desktop MCP config (`~/Library/Application Support/Claude/claud
 ```
 
 No TLS or Bearer token needed; the container exits when the session ends.
+The named volume `jquants-mcp_cache` is shared with the compose stack, so cache populated
+via `docker compose exec ... daily_fetch.py --all` is also available in stdio sessions.
 
 ### 3. Connect from Claude Code (HTTP)
 
@@ -190,7 +194,7 @@ sudo systemctl enable --now jquants-mcp
 
 ### 4. Connect from Claude clients
 
-### Claude Code / Claude Desktop via mcp-stdio
+#### Claude Code / Claude Desktop via mcp-stdio
 
 Claude Code has a bug that drops the `Authorization` header on HTTP transports ([claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)). Use [mcp-stdio](https://pypi.org/project/mcp-stdio/) as a proxy:
 
@@ -202,7 +206,7 @@ claude mcp add jquants-mcp --env MCP_BEARER_TOKEN=<TOKEN> \
 
 For Claude Desktop, edit the MCP config to spawn `mcp-stdio` with the same env var.
 
-### Claude Code (direct HTTP)
+#### Claude Code (direct HTTP)
 
 Once the header bug is fixed, direct HTTP transport will work:
 
