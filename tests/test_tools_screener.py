@@ -957,6 +957,90 @@ class TestOutOfCacheRange:
         assert result.get("error_type") == "OutOfCacheRange"
 
 
+class TestCacheNotReady:
+    """Guard that fires when the requested date is beyond the latest cached date."""
+
+    def _seed_yesterday(self, cache: CacheStore) -> str:
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        _seed(cache, [_bar("10000", yesterday)])
+        return yesterday
+
+    async def test_detect_price_limit_returns_cache_not_ready(self, mock_env):
+        self._seed_yesterday(mock_env["cache"])
+        today = date.today().isoformat()
+        result = await _call("detect_price_limit", date=today)
+        assert result.get("error") is True
+        assert result.get("error_type") == "cache_not_ready"
+        assert today in result["message"]
+
+    async def test_detect_price_limit_passes_when_date_equals_latest(self, mock_env):
+        yesterday = self._seed_yesterday(mock_env["cache"])
+        result = await _call("detect_price_limit", date=yesterday)
+        assert result.get("error_type") != "cache_not_ready"
+
+    async def test_detect_price_limit_no_guard_when_cache_empty(self, mock_env):
+        # No rows seeded → latest_date is None → guard must not fire
+        today = date.today().isoformat()
+        result = await _call("detect_price_limit", date=today)
+        assert result.get("error_type") != "cache_not_ready"
+
+    async def test_compare_close_vs_vwap_single_date_guard(self, mock_env):
+        self._seed_yesterday(mock_env["cache"])
+        today = date.today().isoformat()
+        result = await _call("compare_close_vs_vwap", code="10000", date=today)
+        assert result.get("error") is True
+        assert result.get("error_type") == "cache_not_ready"
+
+    async def test_compare_close_vs_vwap_open_range_no_guard(self, mock_env):
+        # date_from only (no date_to) → end is None → guard must not fire
+        self._seed_yesterday(mock_env["cache"])
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
+        result = await _call("compare_close_vs_vwap", code="10000", date_from=yesterday)
+        # Should return normally (empty or data), not cache_not_ready
+        assert result.get("error_type") != "cache_not_ready"
+
+    async def test_detect_52w_high_low_returns_cache_not_ready(self, mock_env):
+        self._seed_yesterday(mock_env["cache"])
+        today = date.today().isoformat()
+        result = await _call("detect_52w_high_low", date=today)
+        assert result.get("error") is True
+        assert result.get("error_type") == "cache_not_ready"
+
+    async def test_detect_ytd_high_low_returns_cache_not_ready(self, mock_env):
+        self._seed_yesterday(mock_env["cache"])
+        today = date.today().isoformat()
+        result = await _call("detect_ytd_high_low", date=today)
+        assert result.get("error") is True
+        assert result.get("error_type") == "cache_not_ready"
+
+    async def test_detect_volume_surge_returns_cache_not_ready(self, mock_env):
+        self._seed_yesterday(mock_env["cache"])
+        today = date.today().isoformat()
+        result = await _call("detect_volume_surge", date=today)
+        assert result.get("error") is True
+        assert result.get("error_type") == "cache_not_ready"
+
+    async def test_detect_52w_range_returns_cache_not_ready_when_to_beyond_latest(self, mock_env):
+        yesterday = self._seed_yesterday(mock_env["cache"])
+        today = date.today().isoformat()
+        result = await _call("detect_52w_high_low_range", date_from=yesterday, date_to=today)
+        assert result.get("error") is True
+        assert result.get("error_type") == "cache_not_ready"
+
+    async def test_detect_ytd_range_returns_cache_not_ready_when_to_beyond_latest(self, mock_env):
+        yesterday = self._seed_yesterday(mock_env["cache"])
+        today = date.today().isoformat()
+        result = await _call("detect_ytd_high_low_range", date_from=yesterday, date_to=today)
+        assert result.get("error") is True
+        assert result.get("error_type") == "cache_not_ready"
+
+    async def test_hint_mentions_retry_time(self, mock_env):
+        self._seed_yesterday(mock_env["cache"])
+        today = date.today().isoformat()
+        result = await _call("detect_price_limit", date=today)
+        assert "17:15" in result.get("hint", "")
+
+
 class TestScreenerComputeHelpers:
     def test_params_hash_is_deterministic(self):
         h1 = screener_compute.params_hash({"a": 1, "b": 2})
