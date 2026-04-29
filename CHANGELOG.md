@@ -17,7 +17,7 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ### Bug Fixes
 
-* pd.Timestamp.replace()の誤呼び出しを修正（決算発表予定キャッシュ蓄積不全 [#177](https://github.com/shigechika/jquants-mcp/issues/177)） ([#178](https://github.com/shigechika/jquants-mcp/issues/178)) ([f50326c](https://github.com/shigechika/jquants-mcp/commit/f50326ccbc64eff87d0d4d9e5b8ec18627e6f8d4))
+* fix incorrect pd.Timestamp.replace() call causing earnings calendar cache to stop accumulating ([#177](https://github.com/shigechika/jquants-mcp/issues/177)) ([#178](https://github.com/shigechika/jquants-mcp/issues/178)) ([f50326c](https://github.com/shigechika/jquants-mcp/commit/f50326ccbc64eff87d0d4d9e5b8ec18627e6f8d4))
 
 ## [0.8.0](https://github.com/shigechika/jquants-mcp/compare/v0.7.0...v0.8.0) (2026-04-27)
 
