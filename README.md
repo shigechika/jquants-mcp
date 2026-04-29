@@ -628,15 +628,6 @@ The server uses a two-tier SQLite cache:
 
 Cache is stored at `~/.cache/jquants-mcp/cache.db` by default.
 
-**Expected disk usage after a full historical fetch:**
-
-| Plan | Retention | Approx. size |
-|---|---|---|
-| Free | 2 years | ~500 MB |
-| Light | 5 years | ~1.5 GB |
-| Standard | 10 years | ~3 GB |
-| Premium | All available | ~3.5 GB+ |
-
 ### Bulk Data Import
 
 The `scripts/bulk_fetch_all.py` script downloads all available bulk CSV data from the J-Quants Bulk API and imports it into the SQLite cache. This is the fastest way to populate the local cache with historical data.
@@ -759,8 +750,6 @@ Memory sizing notes are in [Memory requirements](#memory-requirements) below.
 | `JQUANTS_API_KEY` | Yes | — | J-Quants API key (use Secret Manager) |
 | `JQUANTS_PLAN` | No | auto-detect | Plan: `free` / `light` / `standard` / `premium` (auto-detected from the API key unless overridden) |
 | `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication (single-user mode only) |
-| `PUBSUB_INVOKER_SA` | No | — | Service account email for Pub/Sub push authentication. When set, `/internal/reload` verifies the Google-signed OIDC token. Required if using Pub/Sub auto-reload; leave unset otherwise. |
-| `PUBSUB_AUDIENCE` | No | request URL | OIDC audience to verify against (defaults to the incoming request URL) |
 | `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | No | — | OAuth configuration for multi-user mode |
 
 Firestore uses Application Default Credentials from the Cloud Run service account — no explicit project ID env var is needed.
