@@ -16,7 +16,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from verify_cache_completeness import (  # noqa: E402
     _check_daily_table,
     _check_earnings_calendar,
-    _check_fins_summary,
     _check_markets_calendar,
     _check_screener_results,
     _latest_trading_day,
@@ -204,24 +203,24 @@ def test_check_daily_table_missing(conn):
 
 
 # ---------------------------------------------------------------------------
-# _check_fins_summary
+# fins_summary (uses _check_daily_table with disc_date column)
 # ---------------------------------------------------------------------------
 
 
 def test_check_fins_summary_ok(conn):
     _insert(conn, "fins_summary", code="10000", disc_date=TODAY)
-    result = _check_fins_summary(conn, TODAY)
+    result = _check_daily_table(conn, "fins_summary", "disc_date", TODAY)
     assert result["status"] == "ok"
 
 
 def test_check_fins_summary_stale(conn):
     _insert(conn, "fins_summary", code="10000", disc_date=OLD_DATE)
-    result = _check_fins_summary(conn, TODAY)
+    result = _check_daily_table(conn, "fins_summary", "disc_date", TODAY)
     assert result["status"] == "stale"
 
 
 def test_check_fins_summary_empty(conn):
-    result = _check_fins_summary(conn, TODAY)
+    result = _check_daily_table(conn, "fins_summary", "disc_date", TODAY)
     assert result["status"] == "empty"
 
 
@@ -356,12 +355,11 @@ def test_check_all_overall_ok_when_all_tables_current(conn):
     assert "trading_day" in result
 
 
-def test_check_all_overall_error_when_any_missing(conn):
-    """overall=error when a table is missing_table."""
+def test_check_all_overall_degraded_when_tables_empty(conn):
+    """overall=degraded when all tables are present but empty."""
     result = check_all(conn, "free")
-    # equities_bars_daily is empty → not missing_table, but status is 'empty'
-    # which maps to 'error' via overall logic
-    assert result["overall"] in ("error", "degraded")
+    # All tables exist but are empty → 'empty' status → overall='degraded'
+    assert result["overall"] == "degraded"
 
 
 def test_check_all_standard_tables_excluded_for_light(conn):

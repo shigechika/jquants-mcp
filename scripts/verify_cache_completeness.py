@@ -30,29 +30,12 @@ from pathlib import Path
 
 PLAN_LEVELS: dict[str, int] = {"free": 0, "light": 1, "standard": 2, "premium": 3}
 
-# Minimum plan required per Tier 1 table
-_TABLE_MIN_PLAN: dict[str, str] = {
-    "equities_bars_daily": "free",
-    "equities_master": "free",
-    "fins_summary": "free",
-    "equities_earnings_calendar": "free",
-    "markets_calendar": "free",
-    "indices_bars_daily_topix": "light",
-    "investor_types": "light",
-    "markets_short_ratio": "standard",
-    "markets_margin_interest": "standard",
-    "markets_margin_alert": "standard",
-    "markets_breakdown": "premium",
-    "screener_results": "free",
-}
-
 # Tolerated staleness in days per table (how many days behind is still "ok")
 _STALE_THRESHOLD: dict[str, int] = {
     "equities_bars_daily": 3,  # weekend + holiday gap
     "equities_master": 7,  # updated less frequently
-    "fins_summary": 30,  # quarterly releases
+    "fins_summary": 30,  # quarterly releases; uses disc_date column
     "indices_bars_daily_topix": 3,
-    "markets_calendar": 3,
     "investor_types": 10,  # published weekly
     "markets_short_ratio": 10,  # published weekly
     "markets_margin_interest": 7,
@@ -171,31 +154,6 @@ def _check_daily_table(
     }
 
 
-def _check_fins_summary(conn: sqlite3.Connection, trading_day: str) -> dict:
-    """fins_summary uses disc_date (quarterly); tolerate up to 30-day lag."""
-    if not _table_exists(conn, "fins_summary"):
-        return {"status": "missing_table", "count": 0}
-    try:
-        row = conn.execute(
-            "SELECT COUNT(*) AS cnt, MAX(disc_date) AS latest FROM fins_summary"
-        ).fetchone()
-    except sqlite3.OperationalError as e:
-        return {"status": "error", "count": 0, "detail": str(e)}
-    count, latest = row["cnt"], row["latest"]
-    if count == 0:
-        return {"status": "empty", "count": 0, "latest_date": None}
-    latest_str = str(latest)[:10]
-    gap = (date.fromisoformat(trading_day) - date.fromisoformat(latest_str)).days
-    status = "ok" if gap <= 30 else "stale"
-    return {
-        "status": status,
-        "count": count,
-        "latest_date": latest_str,
-        "expected_latest": trading_day,
-        "gap_days": gap,
-    }
-
-
 def _check_markets_calendar(conn: sqlite3.Connection) -> dict:
     """markets_calendar should have thousands of trading day entries."""
     if not _table_exists(conn, "markets_calendar"):
@@ -284,7 +242,7 @@ def check_all(conn: sqlite3.Connection, plan: str) -> dict:
         conn, "equities_bars_daily", "date", trading_day
     )
     tables["equities_master"] = _check_daily_table(conn, "equities_master", "date", trading_day)
-    tables["fins_summary"] = _check_fins_summary(conn, trading_day)
+    tables["fins_summary"] = _check_daily_table(conn, "fins_summary", "disc_date", trading_day)
     tables["equities_earnings_calendar"] = _check_earnings_calendar(conn)
     tables["markets_calendar"] = _check_markets_calendar(conn)
     tables["screener_results"] = _check_screener_results(conn)
@@ -321,10 +279,8 @@ def check_all(conn: sqlite3.Connection, plan: str) -> dict:
         overall = "ok"
     elif any(s in ("error", "missing_table") for s in statuses):
         overall = "error"
-    elif any(s in ("empty", "stale", "partial") for s in statuses):
-        overall = "degraded"
     else:
-        overall = "ok"
+        overall = "degraded"
 
     return {
         "overall": overall,
