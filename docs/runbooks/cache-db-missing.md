@@ -13,17 +13,17 @@ mode, not an outage.
 
 ```sh
 # GCS object exists and is recent?
-gcloud storage ls -l gs://aikawa-dx-jquants-mcp/cache.db
+gcloud storage ls -l gs://${BUCKET}/cache.db
 
 # entrypoint.sh download logs
 gcloud logging read \
   'resource.type="cloud_run_revision"
    resource.labels.service_name="jquants-mcp"
    (textPayload:"cache.db" OR textPayload:"gcs_sync")' \
-  --project=aikawa-dx --limit=30 --freshness=1h
+  --project=${PROJECT} --limit=30 --freshness=1h
 
 # SA has objectViewer on the bucket?
-gcloud storage buckets get-iam-policy gs://aikawa-dx-jquants-mcp \
+gcloud storage buckets get-iam-policy gs://${BUCKET} \
   --format=json | jq '.bindings[] | select(.members[] | contains("jquants-mcp@"))'
 ```
 
@@ -44,11 +44,11 @@ gcloud storage buckets get-iam-policy gs://aikawa-dx-jquants-mcp \
   uv run python scripts/daily_fetch.py
   uv run python scripts/gcs_export_cache.py
   ```
-- **IAM**: `gcloud projects add-iam-policy-binding aikawa-dx --member=serviceAccount:jquants-mcp@aikawa-dx.iam.gserviceaccount.com --role=roles/storage.objectViewer`
+- **IAM**: `gcloud projects add-iam-policy-binding ${PROJECT} --member=serviceAccount:jquants-mcp@${PROJECT}.iam.gserviceaccount.com --role=roles/storage.objectViewer`
 - **Force a retry**: send SIGHUP or deploy a new revision
   ```sh
   gcloud run services update jquants-mcp --region=us-west1 \
-    --project=aikawa-dx --update-labels=kick=$(date +%s)
+    --project=${PROJECT} --update-labels=kick=$(date +%s)
   ```
 
 ## Post-incident

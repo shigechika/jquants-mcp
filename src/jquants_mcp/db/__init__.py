@@ -1,1 +1,1 @@
-"""Database layer for jquants-dat-mcp."""
+"""Database layer for jquants-mcp."""

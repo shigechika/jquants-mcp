@@ -1,6 +1,6 @@
 # Firestore restore runbook
 
-Restore the `(default)` Firestore database on `aikawa-dx` from a managed backup.
+Restore the `(default)` Firestore database on `${PROJECT}` from a managed backup.
 
 ## When you need this
 
@@ -25,13 +25,13 @@ List schedules:
 
 ```sh
 gcloud firestore backups schedules list \
-  --database='(default)' --project=aikawa-dx
+  --database='(default)' --project=${PROJECT}
 ```
 
 List backups:
 
 ```sh
-gcloud firestore backups list --project=aikawa-dx
+gcloud firestore backups list --project=${PROJECT}
 ```
 
 ## Restore procedure
@@ -42,21 +42,21 @@ overwrite `(default)` in place. Recovery is a two-step swap.
 ### 1. Pick a backup
 
 ```sh
-gcloud firestore backups list --project=aikawa-dx \
+gcloud firestore backups list --project=${PROJECT} \
   --format="table(name,snapshotTime,state,database,expireTime)"
 ```
 
-Copy the full resource name (`projects/aikawa-dx/locations/<loc>/backups/<id>`).
+Copy the full resource name (`projects/${PROJECT}/locations/<loc>/backups/<id>`).
 
 ### 2. Restore into a scratch database
 
 ```sh
-BACKUP='projects/aikawa-dx/locations/nam5/backups/<id>'
+BACKUP='projects/${PROJECT}/locations/<LOCATION>/backups/<id>'
 
 gcloud firestore databases restore \
   --source-backup="$BACKUP" \
   --destination-database='restore-YYYYMMDD' \
-  --project=aikawa-dx
+  --project=${PROJECT}
 ```
 
 Wait for the operation to finish (`gcloud firestore operations list`).
@@ -67,7 +67,7 @@ Wait for the operation to finish (`gcloud firestore operations list`).
 # Spot-check a known user record exists
 gcloud firestore documents list \
   --database=restore-YYYYMMDD \
-  --collection=users --limit=3 --project=aikawa-dx
+  --collection=users --limit=3 --project=${PROJECT}
 ```
 
 ### 4. Swap
@@ -83,7 +83,7 @@ of records) it is fastest to:
 ### 5. Clean up
 
 ```sh
-gcloud firestore databases delete restore-YYYYMMDD --project=aikawa-dx
+gcloud firestore databases delete restore-YYYYMMDD --project=${PROJECT}
 ```
 
 ## Dry-run drill
@@ -94,5 +94,5 @@ Delete the scratch database at the end.
 
 ## Cost
 
-Managed backups are charged per GiB-month of storage. For `aikawa-dx`
+Managed backups are charged per GiB-month of storage. For `${PROJECT}`
 the data is small (< 1 MiB) so the cost is negligible.

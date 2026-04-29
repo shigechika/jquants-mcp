@@ -140,7 +140,7 @@ class TestRegressionGoogleSubVsEmail:
         # The new check returns False for the sub against an email
         # allowlist, but combined with the email extraction the call
         # site no longer passes the sub at all.
-        assert is_email_allowed(google_sub, ["shige@aikawa.jp"]) is False
+        assert is_email_allowed(google_sub, ["user@example.com"]) is False
 
 
 class TestUnauthorizedMessage:

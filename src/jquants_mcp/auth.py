@@ -85,7 +85,7 @@ def _create_oauth_client_storage(settings: Settings):
     if os.environ.get("K_SERVICE"):
         from key_value.aio.stores.firestore import FirestoreStore
 
-        project = os.environ.get("GOOGLE_CLOUD_PROJECT", "aikawa-dx")
+        project = os.environ["GOOGLE_CLOUD_PROJECT"]
         storage = FirestoreStore(project=project)
         logger.info("OAuth client_storage: Firestore (project=%s)", project)
         return storage

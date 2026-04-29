@@ -22,9 +22,9 @@ you want to be paged when the service is idle longer than expected.
 
 ```sh
 # find or create the notification channel
-gcloud beta monitoring channels list --project aikawa-dx --format='table(displayName,type,name)'
+gcloud beta monitoring channels list --project ${PROJECT} --format='table(displayName,type,name)'
 
-CHANNEL="projects/aikawa-dx/notificationChannels/<ID>" ./ops/alerts/deploy.sh
+CHANNEL="projects/${PROJECT}/notificationChannels/<ID>" ./ops/alerts/deploy.sh
 ```
 
 The script is idempotent: existing policies matched by `displayName` are

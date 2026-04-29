@@ -230,7 +230,7 @@ In your fork, go to **Settings → Secrets and variables → Actions** and add:
 
 ## 11. Adjust the CD workflow
 
-The included [`.github/workflows/cd.yml`](../../.github/workflows/cd.yml) is wired to the upstream project (`PROJECT_ID=aikawa-dx`, `SERVICE=jquants-dat-mcp`). Edit the `gcloud run deploy` line in your fork to match your environment:
+The included [`.github/workflows/cd.yml`](../../.github/workflows/cd.yml) is wired to the upstream project's GCP resources. Edit the `gcloud run deploy` line in your fork to match your environment:
 
 ```yaml
 gcloud run deploy ${SERVICE} \

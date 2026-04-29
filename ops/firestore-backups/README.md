@@ -1,7 +1,7 @@
 # Firestore backup schedules
 
 Managed backup schedules for the `(default)` Firestore database on
-`aikawa-dx`. Set up once; Firestore runs them server-side.
+`${PROJECT}`. Set up once; Firestore runs them server-side.
 
 ## Active schedules
 
@@ -15,14 +15,14 @@ Managed backup schedules for the `(default)` Firestore database on
 ```sh
 # Daily, 7-day retention
 gcloud firestore backups schedules create \
-  --project=aikawa-dx \
+  --project=${PROJECT} \
   --database='(default)' \
   --recurrence=daily \
   --retention=7d
 
 # Weekly (Sunday), 14-week retention
 gcloud firestore backups schedules create \
-  --project=aikawa-dx \
+  --project=${PROJECT} \
   --database='(default)' \
   --recurrence=weekly \
   --retention=14w \
@@ -33,9 +33,9 @@ gcloud firestore backups schedules create \
 
 ```sh
 gcloud firestore backups schedules list \
-  --project=aikawa-dx --database='(default)'
+  --project=${PROJECT} --database='(default)'
 
-gcloud firestore backups list --project=aikawa-dx
+gcloud firestore backups list --project=${PROJECT}
 ```
 
 ## Restore

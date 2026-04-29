@@ -392,7 +392,7 @@ class TestHandlePubsubReload:
 
         req = _mock_request(
             auth_header="Bearer tok",
-            url="https://jquants-mcp.aikawa.jp/internal/reload",
+            url="https://jquants-mcp.example.com/internal/reload",
         )
 
         captured_audience: list[str] = []
@@ -408,7 +408,7 @@ class TestHandlePubsubReload:
         await asyncio.sleep(0)
 
         assert response.status_code == 200
-        assert captured_audience == ["https://jquants-mcp.aikawa.jp/internal/reload"]
+        assert captured_audience == ["https://jquants-mcp.example.com/internal/reload"]
 
 
 # ---------------------------------------------------------------------------

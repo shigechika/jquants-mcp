@@ -142,8 +142,8 @@ CREATE TABLE IF NOT EXISTS response_cache (
 # ----------------------------------------------------------------
 # Screener result cache: pre-computed cross-sectional screener
 # outputs keyed by (tool, params, date). Populated by daily_fetch on
-# m1.local (Cloud Run instances are read-only because /tmp is
-# ephemeral). Rolling 52-week retention.
+# the self-hosted publisher (Cloud Run instances are read-only because
+# /tmp is ephemeral). Rolling 52-week retention.
 # ----------------------------------------------------------------
 
 SCREENER_RESULTS_DDL = """
