@@ -96,6 +96,11 @@ TIER1_TABLES: dict[str, dict[str, str]] = {
         "primary_key": "date",
         "extra_columns": "",
     },
+    "equities_earnings_calendar": {
+        "key_columns": "code TEXT NOT NULL, date TEXT NOT NULL",
+        "primary_key": "code, date",
+        "extra_columns": "",
+    },
 }
 
 # ----------------------------------------------------------------

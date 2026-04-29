@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import sqlite3
 from typing import Any
 
 from fastmcp import FastMCP
@@ -314,14 +316,18 @@ def register(
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
-        # 銘柄コード検索: 蓄積データから該当銘柄を抽出
+        # Stock code query: Tier 1 O(log n) lookup, fallback to Tier 2 LIKE scan
         if code is not None:
             if len(code) == 4:
                 code = code + "0"
             return _search_earnings_by_code(cache, code)
 
-        # 日付指定: 蓄積データから取得
+        # Date filter: Tier 1 first, fallback to Tier 2 response cache
         if date is not None:
+            norm_date = date if "-" in date else f"{date[:4]}-{date[4:6]}-{date[6:]}"
+            t1_rows = _get_earnings_by_date_tier1(cache, norm_date)
+            if t1_rows:
+                return {"count": len(t1_rows), "data": t1_rows}
             date_key = date.replace("-", "")
             cache_key = make_cache_key("/equities/earnings-calendar", {"date": date_key})
             cached = cache.get_response(cache_key)
@@ -329,13 +335,12 @@ def register(
                 if isinstance(cached, list):
                     cached = {"count": len(cached), "data": cached}
                 return cached
-            return {"count": 0, "data": [], "message": f"日付 {date} のデータなし"}
+            return {"count": 0, "data": [], "message": f"No data for date {date}."}
 
-        # パラメータなし: 最新データ
+        # No filter: use Tier 2 response cache (latest accumulated data)
         cache_key = make_cache_key("/equities/earnings-calendar")
         cached = cache.get_response(cache_key)
         if cached is not None:
-            # daily_fetch.py が生リストで保存した場合を吸収
             if isinstance(cached, list):
                 cached = {"count": len(cached), "data": cached}
             return cached
@@ -355,36 +360,70 @@ def register(
             return format_api_error(e)
 
     def _search_earnings_by_code(cache: CacheStore, code: str) -> dict[str, Any]:
-        """Search accumulated earnings calendar data for a specific stock code."""
-        import json
+        """Search accumulated earnings calendar data for a specific stock code.
 
+        Queries the Tier 1 equities_earnings_calendar table first (O(log n) index
+        lookup). Falls back to the legacy Tier 2 response_cache LIKE scan when Tier 1
+        is empty (e.g. before the first daily_fetch run after upgrading).
+        """
         conn = cache._ensure_connection()
-        # cache_key format: "/equities/earnings-calendar|date=YYYYMMDD|plan=<plan>"
-        plan = cache.default_plan
-        rows = conn.execute(
-            "SELECT data FROM response_cache WHERE cache_key LIKE ? AND cache_key LIKE ?",
-            (
-                "/equities/earnings-calendar|date=%",
-                f"%|plan={plan}",
-            ),
-        ).fetchall()
+        if conn is None:
+            return {"count": 0, "data": []}
+
+        try:
+            rows = conn.execute(
+                "SELECT data FROM equities_earnings_calendar WHERE code = ? ORDER BY date",
+                (code,),
+            ).fetchall()
+            if rows:
+                matches = sorted(
+                    [json.loads(r["data"]) for r in rows],
+                    key=lambda r: r.get("Date", ""),
+                    reverse=True,
+                )
+                return {"count": len(matches), "data": matches}
+        except sqlite3.OperationalError:
+            pass
+
+        # Tier 2 fallback: scan date-keyed response_cache entries
+        try:
+            t2_rows = conn.execute(
+                "SELECT data FROM response_cache WHERE cache_key LIKE ?",
+                ("/equities/earnings-calendar?date=%",),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            t2_rows = []
 
         matches = []
-        seen_dates = set()
-        for row in rows:
+        seen_dates: set[str] = set()
+        for row in t2_rows:
             records = json.loads(row["data"])
             if isinstance(records, dict):
                 records = records.get("data", [])
             for rec in records:
                 rec_code = str(rec.get("Code", ""))
                 if rec_code == code:
-                    date = rec.get("Date", "")
-                    if date not in seen_dates:
-                        seen_dates.add(date)
+                    ann_date = str(rec.get("Date", ""))
+                    if ann_date not in seen_dates:
+                        seen_dates.add(ann_date)
                         matches.append(rec)
 
         matches.sort(key=lambda r: r.get("Date", ""), reverse=True)
         return {"count": len(matches), "data": matches}
+
+    def _get_earnings_by_date_tier1(cache: CacheStore, norm_date: str) -> list[dict[str, Any]]:
+        """Query equities_earnings_calendar Tier 1 for all entries on a specific date."""
+        conn = cache._ensure_connection()
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT data FROM equities_earnings_calendar WHERE date = ? ORDER BY code",
+                (norm_date,),
+            ).fetchall()
+            return [json.loads(r["data"]) for r in rows]
+        except sqlite3.OperationalError:
+            return []
 
 
 # ------------------------------------------------------------------
