@@ -5,6 +5,13 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ---
 
+## [0.10.2](https://github.com/shigechika/jquants-mcp/compare/v0.10.1...v0.10.2) (2026-04-29)
+
+
+### Bug Fixes
+
+* **test:** set USERPROFILE for Windows in tilde-expansion test ([#201](https://github.com/shigechika/jquants-mcp/issues/201)) ([b6e866f](https://github.com/shigechika/jquants-mcp/commit/b6e866f44b863f49d82e2fb620b359c2eb5a5c9d))
+
 ## [0.10.1](https://github.com/shigechika/jquants-mcp/compare/v0.10.0...v0.10.1) (2026-04-29)
 
 
