@@ -83,7 +83,7 @@ uv run ruff format src/ tests/  # Format
 ## Cache Plan Scoping
 
 - All Tier 1 cache tables have `plan` column (data stored as `plan='standard'`)
-- `daily_fetch.py` and `import_csv_to_cache.py` must include `plan` in all INSERTs
+- `daily_fetch.py` must include `plan` in all INSERTs
 - `_build_where_clause` enforces plan-based date restrictions at query time
 - Plan data retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all
 - `sync_plans.py` is removed — no longer copy data between plans

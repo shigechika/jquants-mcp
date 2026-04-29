@@ -27,7 +27,6 @@ sys.modules.setdefault("jquantsapi", MagicMock())
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from daily_fetch import _DAILY_FETCH_TABLES, _ensure_tables as df_ensure_tables  # noqa: E402
-from import_csv_to_cache import _ensure_tables as csv_ensure_tables  # noqa: E402
 
 
 # ============================================================
@@ -155,22 +154,6 @@ class TestSchemaConsistency:
             expected = _get_table_schema(ref_conn, name)
             actual = _get_table_schema(test_conn, name)
             assert actual == expected, f"daily_fetch schema mismatch for {name!r}"
-        test_conn.close()
-
-    def test_import_csv_matches_schema_py(self, tmp_path: Path):
-        """import_csv._ensure_tables creates tables identical to schema.py."""
-        ref_conn = sqlite3.connect(":memory:")
-        for name in ("equities_bars_daily", "equities_master"):
-            ref_conn.execute(generate_ddl(name, TIER1_TABLES[name]))
-
-        test_conn = sqlite3.connect(str(tmp_path / "csv_test.db"))
-        test_conn.execute("PRAGMA journal_mode=WAL")
-        csv_ensure_tables(test_conn)
-
-        for name in ("equities_bars_daily", "equities_master"):
-            expected = _get_table_schema(ref_conn, name)
-            actual = _get_table_schema(test_conn, name)
-            assert actual == expected, f"import_csv schema mismatch for {name!r}"
         test_conn.close()
 
 
