@@ -763,7 +763,7 @@ Memory sizing notes are in [Memory requirements](#memory-requirements) below.
 | `PUBSUB_AUDIENCE` | No | request URL | OIDC audience to verify against (defaults to the incoming request URL) |
 | `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | No | — | OAuth configuration for multi-user mode |
 
-Firestore uses Application Default Credentials from the Cloud Run service account — no explicit project ID env var is needed.
+Firestore uses Application Default Credentials from the Cloud Run service account. The `GOOGLE_CLOUD_PROJECT` env var must be set to the GCP project ID (included in the CD workflow via `vars.GCP_PROJECT`).
 
 ### GCS and Firestore integration
 
@@ -803,6 +803,56 @@ Notes:
 - `cache.db` is ~3.5 GiB and takes 1–2 minutes to download. Requests during that window hit the live J-Quants API, so they work but are slower and count against rate limits.
 - During the cold-start window `cache_status` returns a minimal payload (`db_path` + `plan` only). A full payload with row counts and `db_size_mb` indicates the cache is loaded.
 - Firestore is strongly consistent, so multiple Cloud Run instances can run concurrently without data races. There is no `maxScale: 1` restriction — scale as needed.
+
+#### Daily cache refresh
+
+After startup, `cache.db` is refreshed daily by the publisher. The mechanism differs by deployment target.
+
+**Cloud Run — Pub/Sub push**
+
+SIGHUP cannot reliably target a specific process across Cloud Run's multi-instance model. Instead, the publisher triggers a reload via a Pub/Sub push to the `/internal/reload` endpoint, which re-downloads `cache.db` from GCS in the background.
+
+```mermaid
+sequenceDiagram
+    participant P as Publisher (daily_fetch.py<br/>+ gcs_export_cache.py)
+    participant G as GCS
+    participant PS as Pub/Sub
+    participant CR as Cloud Run<br/>(/internal/reload)
+    participant C as CacheStore
+
+    P->>G: upload new cache.db snapshot
+    G->>PS: GCS object notification
+    PS->>CR: POST /internal/reload<br/>(Google-signed OIDC token)
+    CR->>CR: verify OIDC token<br/>(PUBSUB_INVOKER_SA)
+    CR-->>PS: 200 OK (immediate ACK)
+    CR->>G: download new cache.db to /tmp
+    G-->>CR: ~3.5 GiB
+    CR->>C: request_reload()<br/>(lazy reconnect on next query)
+```
+
+`PUBSUB_INVOKER_SA` must be the service account email that Pub/Sub uses to sign the OIDC token. `PUBSUB_AUDIENCE` defaults to the incoming request URL and normally does not need to be set.
+
+**Self-hosted (local / Docker) — SIGHUP**
+
+When `GCS_BUCKET` is not set, `cache.db` lives on the local filesystem. After `daily_fetch.py` writes a fresh database, send SIGHUP to the MCP server process; it reconnects lazily on the next incoming request.
+
+```mermaid
+sequenceDiagram
+    participant P as Publisher (daily_fetch.py)
+    participant D as cache.db (local disk)
+    participant M as MCP server
+
+    P->>D: write new cache.db
+    P->>M: kill -HUP <MCP_PID>
+    Note right of M: sets reload flag<br/>(in-flight queries unaffected)
+    M->>D: reconnect on next query
+```
+
+With Docker Compose, retrieve the PID from inside the container:
+
+```bash
+docker compose exec jquants-mcp kill -HUP 1
+```
 
 #### Troubleshooting
 

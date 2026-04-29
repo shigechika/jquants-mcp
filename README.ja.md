@@ -763,7 +763,7 @@ gcloud run deploy jquants-mcp \
 | `PUBSUB_AUDIENCE` | いいえ | リクエスト URL | OIDC 検証時の audience（デフォルトはリクエスト URL） |
 | `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | いいえ | — | マルチユーザーモード時の OAuth 設定 |
 
-Firestore は Cloud Run サービスアカウントの Application Default Credentials を使うため、プロジェクト ID の環境変数設定は不要です。
+Firestore は Cloud Run サービスアカウントの Application Default Credentials を使います。`GOOGLE_CLOUD_PROJECT` 環境変数に GCP プロジェクト ID を設定する必要があります（CD ワークフローでは `vars.GCP_PROJECT` 経由で設定済み）。
 
 ### GCS と Firestore の連携
 
@@ -803,6 +803,56 @@ sequenceDiagram
 - `cache.db` は約 3.5 GiB、ダウンロードに 1〜2 分かかります。この間のリクエストは J-Quants API に直接アクセスします（動作はしますが遅くなり、rate limit 対象となります）。
 - コールドスタート中は `cache_status` が最小ペイロード（`db_path` + `plan` のみ）を返します。行数や `db_size_mb` まで返るようになればキャッシュロード完了のサインです。
 - Firestore は強整合性のため、複数の Cloud Run インスタンスが同時稼働してもデータ競合は発生しません。`maxScale: 1` のような制約は不要で、必要に応じて水平スケール可能です。
+
+#### 日次キャッシュ更新
+
+起動後の `cache.db` は publisher が日次で更新します。更新のトリガー方法はデプロイ先によって異なります。
+
+**Cloud Run — Pub/Sub push**
+
+Cloud Run のマルチインスタンスモデルでは SIGHUP を特定プロセスへ確実に届けられないため、代わりに Pub/Sub push で `/internal/reload` エンドポイントを呼び出します。サーバーはバックグラウンドで GCS から新しい `cache.db` を再ダウンロードします。
+
+```mermaid
+sequenceDiagram
+    participant P as Publisher（daily_fetch.py<br/>+ gcs_export_cache.py）
+    participant G as GCS
+    participant PS as Pub/Sub
+    participant CR as Cloud Run<br/>（/internal/reload）
+    participant C as CacheStore
+
+    P->>G: 新しい cache.db スナップショットをアップロード
+    G->>PS: GCS オブジェクト通知
+    PS->>CR: POST /internal/reload<br/>（Google 署名 OIDC トークン）
+    CR->>CR: OIDC トークン検証<br/>（PUBSUB_INVOKER_SA）
+    CR-->>PS: 200 OK（即時 ACK）
+    CR->>G: 新しい cache.db を /tmp にダウンロード
+    G-->>CR: 約 3.5 GiB
+    CR->>C: request_reload()<br/>（次のクエリ時に遅延再接続）
+```
+
+`PUBSUB_INVOKER_SA` には Pub/Sub が OIDC トークンの署名に使うサービスアカウントのメールアドレスを設定します。`PUBSUB_AUDIENCE` はデフォルトでリクエスト URL になるため、通常は設定不要です。
+
+**セルフホスト（ローカル / Docker） — SIGHUP**
+
+`GCS_BUCKET` を設定しない場合、`cache.db` はローカルファイルシステムに置きます。`daily_fetch.py` が新しいデータベースを書き込んだ後、MCP サーバープロセスに SIGHUP を送ると、次のリクエスト時に遅延再接続します。
+
+```mermaid
+sequenceDiagram
+    participant P as Publisher（daily_fetch.py）
+    participant D as cache.db（ローカルディスク）
+    participant M as MCP サーバー
+
+    P->>D: 新しい cache.db を書き込み
+    P->>M: kill -HUP <MCP_PID>
+    Note right of M: reload フラグを立てる<br/>（処理中クエリに影響なし）
+    M->>D: 次のクエリ時に再接続
+```
+
+Docker Compose 環境では、コンテナ内のプロセスに SIGHUP を送ります:
+
+```bash
+docker compose exec jquants-mcp kill -HUP 1
+```
 
 #### トラブルシューティング
 
