@@ -44,10 +44,10 @@ Edit your Claude Desktop MCP config (`~/Library/Application Support/Claude/claud
     "jquants": {
       "command": "docker",
       "args": [
-        "run", "--rm",
+        "run", "--rm", "-i",
+        "--entrypoint", "jquants-mcp",
         "-e", "JQUANTS_API_KEY=xxx",
-        "ghcr.io/shigechika/jquants-mcp:latest",
-        "jquants-mcp"
+        "ghcr.io/shigechika/jquants-mcp:latest"
       ]
     }
   }
