@@ -647,22 +647,7 @@ uv run python scripts/bulk_fetch_all.py --dry-run
 
 ### CSV インポート
 
-`scripts/import_csv_to_cache.py` はローカルの CSV ファイルをキャッシュにインポートします。API を叩かずに他のパイプラインからデータをサイドロードできます。
-
-```bash
-# 全件インポート（初回セットアップ）
-uv run python scripts/import_csv_to_cache.py \
-    --market-history /path/to/jpx-market-history.csv \
-    --tickers /path/to/jpx-tickers.csv
-
-# 差分インポート（日次運用）
-uv run python scripts/import_csv_to_cache.py \
-    --market-history /path/to/jpx-market-history.csv \
-    --tickers /path/to/jpx-tickers.csv \
-    --incremental
-```
-
-`--incremental` を指定すると、キャッシュ最新日より新しい行だけをインポートします（530万行超の全件ではなく ~4,000行/日）。株式分割・併合は `AdjFactor != 1.0` で自動検知し、該当銘柄の全期間データを再インポートして調整済み値を更新します。
+CSV サイドロードスクリプト（`import_csv_to_cache.py`）はこのキャッシュにデータを投入する publisher パイプライン側で管理されています。独自パイプラインを構築する場合は、`src/jquants_mcp/cache/schema.py` で定義されたスキーマに従って `equities_bars_daily` / `equities_master` テーブルに直接 INSERT することでサイドロードできます。
 
 ### 日次データ取得
 

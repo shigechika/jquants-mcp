@@ -647,22 +647,7 @@ The script respects the plan-based rate limit (e.g. 60 req/min for Light) and re
 
 ### CSV Import
 
-`scripts/import_csv_to_cache.py` imports local CSV files into the cache. Useful for sideloading data from other pipelines without calling the API.
-
-```bash
-# Full import (initial setup)
-uv run python scripts/import_csv_to_cache.py \
-    --market-history /path/to/jpx-market-history.csv \
-    --tickers /path/to/jpx-tickers.csv
-
-# Incremental import (daily operation)
-uv run python scripts/import_csv_to_cache.py \
-    --market-history /path/to/jpx-market-history.csv \
-    --tickers /path/to/jpx-tickers.csv \
-    --incremental
-```
-
-With `--incremental`, only rows newer than the latest cached date are imported (~4,000 rows/day instead of 5M+). Stock splits and reverse splits are automatically detected via `AdjFactor != 1.0` — affected stocks are fully re-imported to update adjusted prices across all dates.
+The CSV sideload script (`import_csv_to_cache.py`) is maintained by the publisher pipeline that feeds this cache. If you are building your own pipeline, implement sideloading by inserting directly into the `equities_bars_daily` / `equities_master` tables following the schema defined in `src/jquants_mcp/cache/schema.py`.
 
 ### Daily Fetch
 
