@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from typing import Any
 
 from fastmcp import FastMCP
@@ -381,7 +382,7 @@ def register(
                     reverse=True,
                 )
                 return {"count": len(matches), "data": matches}
-        except Exception:
+        except sqlite3.OperationalError:
             pass
 
         # Tier 2 fallback: scan date-keyed response_cache entries
@@ -390,7 +391,7 @@ def register(
                 "SELECT data FROM response_cache WHERE cache_key LIKE ?",
                 ("/equities/earnings-calendar?date=%",),
             ).fetchall()
-        except Exception:
+        except sqlite3.OperationalError:
             t2_rows = []
 
         matches = []
@@ -421,7 +422,7 @@ def register(
                 (norm_date,),
             ).fetchall()
             return [json.loads(r["data"]) for r in rows]
-        except Exception:
+        except sqlite3.OperationalError:
             return []
 
 

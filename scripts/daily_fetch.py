@@ -400,7 +400,7 @@ def fetch_earnings_calendar(
     for rec in records:
         code = str(rec.get("Code", ""))
         ann_date = str(rec.get("Date", ""))[:10]  # normalize to YYYY-MM-DD
-        if not code or not ann_date or ann_date == "nan":
+        if not code or len(ann_date) < 10:
             continue
         conn.execute(
             "INSERT OR REPLACE INTO equities_earnings_calendar "
