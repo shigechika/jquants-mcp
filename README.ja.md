@@ -832,26 +832,30 @@ sequenceDiagram
 
 `PUBSUB_INVOKER_SA` には Pub/Sub が OIDC トークンの署名に使うサービスアカウントのメールアドレスを設定します。`PUBSUB_AUDIENCE` はデフォルトでリクエスト URL になるため、通常は設定不要です。
 
-**セルフホスト（ローカル / Docker） — SIGHUP**
+**Docker Compose — ファイル直接更新**
 
-`GCS_BUCKET` を設定しない場合、`cache.db` はローカルファイルシステムに置きます。`daily_fetch.py` が新しいデータベースを書き込んだ後、MCP サーバープロセスに SIGHUP を送ると、次のリクエスト時に遅延再接続します。
+`GCS_BUCKET` を設定しない場合、`cache.db` はローカルファイルシステム（bind mount）に置きます。`daily_fetch.py` は同じファイルに直接行を追記するため、SQLite の通常の concurrent access 処理により、サーバーは次のクエリ時に新しいデータを自動的に参照します。明示的なシグナルは不要です。
 
 ```mermaid
 sequenceDiagram
     participant P as Publisher（daily_fetch.py）
-    participant D as cache.db（ローカルディスク）
+    participant D as cache.db（bind mount）
     participant M as MCP サーバー
 
-    P->>D: 新しい cache.db を書き込み
-    P->>M: kill -HUP <MCP_PID>
-    Note right of M: reload フラグを立てる<br/>（処理中クエリに影響なし）
-    M->>D: 次のクエリ時に再接続
+    P->>D: 新しい行を追記（daily_fetch.py）
+    Note right of D: 同じファイルのため<br/>即座にサーバーから見える
+    M->>D: 次のクエリ時に新しい行を参照
 ```
 
-Docker Compose 環境では、コンテナ内のプロセスに SIGHUP を送ります:
+**ローカルプロセス（launchd / systemd） — SIGHUP**
+
+MCP サーバーをローカルサービス（macOS の launchd 等）として運用している場合、SIGHUP で遅延再接続をトリガーできます。`bulk_fetch_all.py` で `cache.db` を丸ごと置き換えた後などに有用です:
 
 ```bash
-docker compose exec jquants-mcp kill -HUP 1
+# macOS launchd
+launchctl kill SIGHUP system/jp.aikawa.jquants-mcp
+# または直接
+kill -HUP <MCP_PID>
 ```
 
 #### トラブルシューティング

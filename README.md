@@ -832,26 +832,30 @@ sequenceDiagram
 
 `PUBSUB_INVOKER_SA` must be the service account email that Pub/Sub uses to sign the OIDC token. `PUBSUB_AUDIENCE` defaults to the incoming request URL and normally does not need to be set.
 
-**Self-hosted (local / Docker) — SIGHUP**
+**Docker Compose — direct file update**
 
-When `GCS_BUCKET` is not set, `cache.db` lives on the local filesystem. After `daily_fetch.py` writes a fresh database, send SIGHUP to the MCP server process; it reconnects lazily on the next incoming request.
+When `GCS_BUCKET` is not set, `cache.db` lives on the local filesystem (bind-mounted into the container). `daily_fetch.py` appends rows directly to the same file; SQLite's normal concurrent-access handling means the server picks up new data on the next query with no explicit signal required.
 
 ```mermaid
 sequenceDiagram
     participant P as Publisher (daily_fetch.py)
-    participant D as cache.db (local disk)
+    participant D as cache.db (bind mount)
     participant M as MCP server
 
-    P->>D: write new cache.db
-    P->>M: kill -HUP <MCP_PID>
-    Note right of M: sets reload flag<br/>(in-flight queries unaffected)
-    M->>D: reconnect on next query
+    P->>D: append new rows (daily_fetch.py)
+    Note right of D: same file, visible<br/>to the server immediately
+    M->>D: reads new rows on next query
 ```
 
-With Docker Compose, retrieve the PID from inside the container:
+**Local process (launchd / systemd) — SIGHUP**
+
+When running the MCP server as a local service (e.g. launchd on macOS), SIGHUP triggers a lazy reconnect — useful after replacing `cache.db` wholesale (e.g. via `bulk_fetch_all.py`):
 
 ```bash
-docker compose exec jquants-mcp kill -HUP 1
+# macOS launchd
+launchctl kill SIGHUP system/jp.aikawa.jquants-mcp
+# or directly
+kill -HUP <MCP_PID>
 ```
 
 #### Troubleshooting
