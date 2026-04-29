@@ -195,7 +195,7 @@ def _check_earnings_calendar(conn: sqlite3.Connection) -> dict:
     today_str = date.today().isoformat()
     has_future = latest_str > today_str
     # ok if populated and contains forward-looking dates; stale if only past dates
-    status = "ok" if count > 0 and has_future else "stale"
+    status = "ok" if has_future else "stale"
     return {
         "status": status,
         "count": count,
@@ -205,7 +205,7 @@ def _check_earnings_calendar(conn: sqlite3.Connection) -> dict:
 
 
 def _check_screener_results(conn: sqlite3.Connection) -> dict:
-    """screener_results should have ~244 entries per tool (52w rolling window)."""
+    """screener_results should have >= 156 rows per tool (52w × ~3 trading days/week)."""
     if not _table_exists(conn, "screener_results"):
         return {"status": "missing_table", "count": 0}
     try:

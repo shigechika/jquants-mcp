@@ -362,6 +362,18 @@ def test_check_all_overall_degraded_when_tables_empty(conn):
     assert result["overall"] == "degraded"
 
 
+def test_check_all_overall_error_when_core_table_missing(tmp_path):
+    """overall=error when a core table is absent."""
+    db = tmp_path / "empty.db"
+    c = sqlite3.connect(str(db))
+    c.row_factory = sqlite3.Row
+    # No tables created → every core table is missing_table → overall='error'
+    result = check_all(c, "free")
+    c.close()
+    assert result["overall"] == "error"
+    assert any(info["status"] == "missing_table" for info in result["tables"].values())
+
+
 def test_check_all_standard_tables_excluded_for_light(conn):
     """markets_short_ratio is not checked for light plan."""
     result = check_all(conn, "light")
