@@ -30,6 +30,7 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      packages: write
 
     steps:
       - uses: actions/checkout@v6
@@ -39,13 +40,13 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 2
 
-      # Detect whether the deployable Cloud Run image actually depends
-      # on any file in this commit. Test-only, docs-only, .claude/-only,
-      # etc. changes are skipped and save ~5–7 minutes of Cloud Run
-      # build time. ``git diff`` is used instead of the dorny/paths-filter
-      # action because the latter rejects ``HEAD~1`` as an invalid
-      # refspec when it tries to ``git fetch`` the base — we already
-      # have HEAD~1 locally thanks to ``fetch-depth: 2``.
+      # Detect whether the deployable image actually depends on any file in
+      # this commit. Test-only, docs-only, .claude/-only, etc. changes are
+      # skipped and save ~5–7 minutes of Cloud Run build time.
+      # ``git diff`` is used instead of the dorny/paths-filter action because
+      # the latter rejects ``HEAD~1`` as an invalid refspec when it tries to
+      # ``git fetch`` the base — we already have HEAD~1 locally thanks to
+      # ``fetch-depth: 2``.
       - name: Detect deploy-relevant changes
         id: changes
         if: github.event_name == 'workflow_run'
@@ -54,7 +55,7 @@ jobs:
           changed=$(git diff --name-only HEAD~1 HEAD)
           echo "Changed files:"
           echo "$changed"
-          if echo "$changed" | grep -qE '^(src/|Dockerfile$|pyproject\.toml$|uv\.lock$|scripts/entrypoint\.sh$|\.github/workflows/cd\.yml$)'; then
+          if echo "$changed" | grep -qE '^(src/|Dockerfile$|pyproject\.toml$|uv\.lock$|scripts/|\.github/workflows/cd\.yml$)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -70,7 +71,7 @@ jobs:
             echo "Deploying because deploy-relevant files changed"
             echo "should_deploy=true" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::No deploy-relevant files changed; skipping Cloud Run deploy."
+            echo "::notice::No deploy-relevant files changed; skipping deploy."
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -115,3 +116,21 @@ jobs:
               GITHUB_CLIENT_SECRET=github-oauth-client-secret:latest,\
               OAUTH_JWT_SIGNING_KEY=OAUTH_JWT_SIGNING_KEY:latest,\
               JQUANTS_ALLOWED_EMAILS=jquants-allowed-emails:latest"
+
+      - name: Log in to GHCR
+        if: steps.gate.outputs.should_deploy == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push to GHCR
+        if: steps.gate.outputs.should_deploy == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/shigechika/jquants-mcp:latest
+            ghcr.io/shigechika/jquants-mcp:${{ github.event.workflow_run.head_sha || github.sha }}
