@@ -217,9 +217,11 @@ echo -n "<NEW_VALUE>" | gcloud secrets versions add <SECRET_NAME> --data-file=-
 
 Cloud Run services using `--set-secrets "X=SECRET:latest"` pick up the new version on next deploy (or on next cold start, depending on how `gcloud run services update` is invoked — see below).
 
-## 10. Add GitHub Actions secrets
+## 10. Add GitHub Actions secrets and variables
 
 In your fork, go to **Settings → Secrets and variables → Actions** and add:
+
+**Secrets** (encrypted):
 
 | Secret | Value |
 |---|---|
@@ -228,30 +230,33 @@ In your fork, go to **Settings → Secrets and variables → Actions** and add:
 | `GOOGLE_CLIENT_ID` | Google OAuth Client ID from step 8 |
 | `GH_OAUTH_CLIENT_ID` | GitHub OAuth Client ID from step 8 |
 
-## 11. Adjust the CD workflow
+**Variables** (plain text, visible in logs):
 
-The included [`.github/workflows/cd.yml`](../../.github/workflows/cd.yml) is wired to the upstream project's GCP resources. Edit the `gcloud run deploy` line in your fork to match your environment:
+| Variable | Example | Description |
+|---|---|---|
+| `GCP_PROJECT` | `my-gcp-project` | GCP project ID |
+| `GCP_REGION` | `us-west1` | Cloud Run region |
+| `GCP_SERVICE_ACCOUNT` | `jquants-mcp@my-gcp-project.iam.gserviceaccount.com` | Runtime service account |
+| `GCS_BUCKET` | `my-gcp-project-jquants-mcp` | GCS bucket for `cache.db` |
+| `PUBSUB_INVOKER_SA` | `pubsub-invoker@my-gcp-project.iam.gserviceaccount.com` | Pub/Sub push invoker SA |
+| `OAUTH_BASE_URL` | `https://your-domain.example.com` | Public base URL for OAuth endpoints |
+| `CLOUDRUN_SERVICE` | `jquants-mcp` | Cloud Run service name |
 
-```yaml
-gcloud run deploy ${SERVICE} \
-  --project ${PROJECT_ID} \
-  --region ${REGION} \
-  --source . \
-  --execution-environment gen2 \
-  --memory 4Gi \
-  --cpu 1 \
-  --no-cpu-throttling \
-  --cpu-boost \
-  --clear-volumes --clear-volume-mounts \
-  --set-env-vars "..." \
-  --set-secrets "..."
+You can set them all at once with the `gh` CLI:
+
+```bash
+gh variable set GCP_PROJECT        --body "my-gcp-project"
+gh variable set GCP_REGION         --body "us-west1"
+gh variable set GCP_SERVICE_ACCOUNT --body "jquants-mcp@my-gcp-project.iam.gserviceaccount.com"
+gh variable set GCS_BUCKET         --body "my-gcp-project-jquants-mcp"
+gh variable set PUBSUB_INVOKER_SA  --body "pubsub-invoker@my-gcp-project.iam.gserviceaccount.com"
+gh variable set OAUTH_BASE_URL     --body "https://your-domain.example.com"
+gh variable set CLOUDRUN_SERVICE   --body "jquants-mcp"
 ```
 
-Replace the hard-coded `OAUTH_BASE_URL` with your future Cloud Run URL (you'll know it after the first deploy — place a temporary value, redeploy once to learn the URL, then update `OAUTH_BASE_URL` and the OAuth redirect URIs, then redeploy again).
+> **`OAUTH_BASE_URL`**: You need the final public URL of your Cloud Run service here. If you don't have a custom domain yet, run the first deploy without OAuth (bearer-token mode), note the `*.run.app` URL, set `OAUTH_BASE_URL` to that URL, update the OAuth redirect URIs in step 8, then redeploy.
 
-Commit the changes to `main` on your fork.
-
-## 12. Publish an initial `cache.db`
+## 11. Publish an initial `cache.db`
 
 Cloud Run reads `cache.db` read-only. Populate it from your own machine first:
 
@@ -268,7 +273,7 @@ gcloud storage cp ~/.cache/jquants-mcp/cache.db \
 
 Keep a cron / launchd job running `daily_fetch.py + gcs_export_cache.py` on your workstation so Cloud Run always has a fresh snapshot. See [local.md](local.md) for the publisher pattern.
 
-## 13. Deploy
+## 12. Deploy
 
 Trigger the first deploy manually from the **Actions** tab → **CD** → **Run workflow**. Watch the logs; first build takes 5–10 minutes (later deploys are faster thanks to Cloud Build layer cache).
 
