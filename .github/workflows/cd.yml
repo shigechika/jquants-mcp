@@ -133,4 +133,4 @@ jobs:
           push: true
           tags: |
             ghcr.io/shigechika/jquants-mcp:latest
-            ghcr.io/shigechika/jquants-mcp:${{ github.sha }}
+            ghcr.io/shigechika/jquants-mcp:${{ github.event.workflow_run.head_sha || github.sha }}
