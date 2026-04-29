@@ -125,7 +125,7 @@ def _cache_not_ready_error(requested_date: str, latest_cache_date: str | None) -
     latest = latest_cache_date or "unknown"
     return {
         "error": True,
-        "error_type": "cache_not_ready",
+        "error_type": "CacheNotReady",
         "message": (f"Data for {requested_date} not yet available. Latest cache date: {latest}."),
         "hint": "Try again after 17:15 JST on trading days.",
     }

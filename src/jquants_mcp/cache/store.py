@@ -13,6 +13,7 @@ from typing import Any
 
 from jquants_mcp.cache.schema import (
     ALL_TABLE_NAMES as _ALL_TABLE_NAMES,
+    EBD_DATE_INDEX_DDL as _EBD_DATE_INDEX_DDL,
     RESPONSE_CACHE_DDL as _RESPONSE_CACHE_DDL,
     SCREENER_RESULTS_DDL as _SCREENER_RESULTS_DDL,
     SCREENER_RESULTS_INDEX_DDL as _SCREENER_RESULTS_INDEX_DDL,
@@ -323,6 +324,9 @@ class CacheStore:
         # Screener result cache（事前計算結果、PK = tool/params/date）
         conn.execute(_SCREENER_RESULTS_DDL)
         conn.execute(_SCREENER_RESULTS_INDEX_DDL)
+
+        # Single-column index on equities_bars_daily(date) for O(log n) MAX(date).
+        conn.execute(_EBD_DATE_INDEX_DDL)
         conn.commit()
 
         # 既存テーブルのマイグレーション
@@ -963,6 +967,8 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is not None:
             try:
+                # LIMIT 14 covers Japan's longest holiday streak (~10 days,
+                # e.g. Golden Week + adjacent weekends) plus a safety buffer.
                 rows = conn.execute(
                     "SELECT date, data FROM markets_calendar "
                     "WHERE date <= ? ORDER BY date DESC LIMIT 14",
