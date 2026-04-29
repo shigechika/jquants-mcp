@@ -628,7 +628,7 @@ The server uses a two-tier SQLite cache:
 
 Cache is stored at `~/.cache/jquants-mcp/cache.db` by default.
 
-**Expected disk usage after a full historical fetch:**
+**Expected disk usage after a full historical fetch** (approximate; varies by market data availability):
 
 | Plan | Retention | Approx. size |
 |---|---|---|

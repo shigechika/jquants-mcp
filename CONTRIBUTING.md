@@ -66,4 +66,4 @@ docs(deploy): add Docker Compose local setup guide
 
 - Search [existing issues](https://github.com/shigechika/jquants-mcp/issues) before opening a new one
 - Include your J-Quants plan, Python version, and the full error message
-- For security issues, please email instead of opening a public issue
+- For security vulnerabilities, please report via [GitHub Security Advisories](https://github.com/shigechika/jquants-mcp/security/advisories/new) instead of opening a public issue

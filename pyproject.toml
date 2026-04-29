@@ -15,7 +15,6 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/shigechika/jquants-mcp"
 Repository = "https://github.com/shigechika/jquants-mcp"
 Documentation = "https://github.com/shigechika/jquants-mcp/tree/main/docs"
 "Bug Tracker" = "https://github.com/shigechika/jquants-mcp/issues"
