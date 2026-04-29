@@ -116,6 +116,21 @@ def _cache_window_cutoff() -> str:
     return (date.today() - timedelta(weeks=_CACHE_LOOKBACK_WEEKS)).isoformat()
 
 
+def _cache_not_ready_error(requested_date: str, latest_cache_date: str | None) -> dict[str, Any]:
+    """Error response when the cache does not yet have data for the requested date.
+
+    Returned when ``requested_date > latest_cache_date`` so callers get an
+    actionable message instead of silently empty results.
+    """
+    latest = latest_cache_date or "unknown"
+    return {
+        "error": True,
+        "error_type": "CacheNotReady",
+        "message": (f"Data for {requested_date} not yet available. Latest cache date: {latest}."),
+        "hint": "Try again after 17:15 JST on trading days.",
+    }
+
+
 def _out_of_cache_error(norm_date: str) -> dict[str, Any]:
     """Error response for a date older than the supported cache window.
 
@@ -192,6 +207,10 @@ def register(
         cache: CacheStore = get_cache()
 
         norm_date = _normalize_date(date)
+        latest_date = cache.get_latest_equities_date()
+        if latest_date is not None and norm_date > latest_date:
+            return _cache_not_ready_error(norm_date, latest_date)
+
         key_filter: dict[str, str] = {}
         if code:
             key_filter["code"] = _normalize_code(code)
@@ -295,6 +314,11 @@ def register(
         else:
             start = _normalize_date(date_from) if date_from else None
             end = _normalize_date(date_to) if date_to else None
+
+        if end is not None:
+            latest_date = cache.get_latest_equities_date()
+            if latest_date is not None and end > latest_date:
+                return _cache_not_ready_error(end, latest_date)
 
         try:
             rows = cache.get_rows(
@@ -418,6 +442,10 @@ def register(
         if norm_date < _cache_window_cutoff():
             return _out_of_cache_error(norm_date)
 
+        latest_date = cache.get_latest_equities_date()
+        if latest_date is not None and norm_date > latest_date:
+            return _cache_not_ready_error(norm_date, latest_date)
+
         # The pre-computed cache only stores cross-sectional payloads,
         # which were built with min_prior_sessions=60 active. An explicit
         # ``code`` argument bypasses that filter on the on-demand path
@@ -521,6 +549,10 @@ def register(
         if norm_date < _cache_window_cutoff():
             return _out_of_cache_error(norm_date)
 
+        latest_date = cache.get_latest_equities_date()
+        if latest_date is not None and norm_date > latest_date:
+            return _cache_not_ready_error(norm_date, latest_date)
+
         # See note in detect_52w_high_low: cache payload omits codes that
         # the cross-sectional min_prior_sessions filter dropped, but the
         # on-demand path bypasses that filter when ``code`` is set. Skip
@@ -596,6 +628,10 @@ def register(
         cache: CacheStore = get_cache()
 
         norm_date = _normalize_date(date)
+        latest_date = cache.get_latest_equities_date()
+        if latest_date is not None and norm_date > latest_date:
+            return _cache_not_ready_error(norm_date, latest_date)
+
         start = _calendar_window_start(norm_date, baseline_days + 1)
         key_filter: dict[str, str] = {}
         if code:
@@ -726,6 +762,10 @@ def register(
         if d_from < _cache_window_cutoff():
             return _out_of_cache_error(d_from)
 
+        latest_date = cache.get_latest_equities_date()
+        if latest_date is not None and d_to > latest_date:
+            return _cache_not_ready_error(d_to, latest_date)
+
         async def _compute_one(d: str) -> dict[str, Any]:
             start = _calendar_window_start(d, window_sessions)
             return await _high_low_signals(
@@ -814,6 +854,10 @@ def register(
             return make_validation_error_response(["`date_from` must be <= `date_to`."])
         if d_from < _cache_window_cutoff():
             return _out_of_cache_error(d_from)
+
+        latest_date = cache.get_latest_equities_date()
+        if latest_date is not None and d_to > latest_date:
+            return _cache_not_ready_error(d_to, latest_date)
 
         async def _compute_one(d: str) -> dict[str, Any]:
             year_start = d[:4] + "-01-01"

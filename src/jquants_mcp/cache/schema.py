@@ -156,6 +156,11 @@ SCREENER_RESULTS_INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_screener_results_date ON screener_results(date)"
 )
 
+# Speeds up MAX(date) queries in get_latest_equities_date().
+# The composite PK (code, date) requires a full index scan for MAX(date) across
+# all codes; this single-column index lets SQLite resolve it in O(log n).
+EBD_DATE_INDEX_DDL = "CREATE INDEX IF NOT EXISTS idx_ebd_date ON equities_bars_daily(date)"
+
 # ----------------------------------------------------------------
 # Derived constants
 # ----------------------------------------------------------------

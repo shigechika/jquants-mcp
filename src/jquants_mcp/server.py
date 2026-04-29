@@ -416,6 +416,10 @@ def health_check() -> dict[str, Any]:
         status = "degraded"
     cache_ready = integrity == "ok"
 
+    latest_date = cache.get_latest_equities_date()
+    trading_today = cache.get_trading_date_today()
+    today_cache_ready = cache_ready and latest_date is not None and latest_date >= trading_today
+
     return {
         "status": status,
         "service": "jquants-mcp",
@@ -424,6 +428,9 @@ def health_check() -> dict[str, Any]:
         "plan": plan,
         "cache_integrity": integrity,
         "cache_ready": cache_ready,
+        "latest_cache_date": latest_date,
+        "trading_date_today": trading_today,
+        "today_cache_ready": today_cache_ready,
     }
 
 

@@ -13,6 +13,7 @@ from typing import Any
 
 from jquants_mcp.cache.schema import (
     ALL_TABLE_NAMES as _ALL_TABLE_NAMES,
+    EBD_DATE_INDEX_DDL as _EBD_DATE_INDEX_DDL,
     RESPONSE_CACHE_DDL as _RESPONSE_CACHE_DDL,
     SCREENER_RESULTS_DDL as _SCREENER_RESULTS_DDL,
     SCREENER_RESULTS_INDEX_DDL as _SCREENER_RESULTS_INDEX_DDL,
@@ -323,6 +324,9 @@ class CacheStore:
         # Screener result cache（事前計算結果、PK = tool/params/date）
         conn.execute(_SCREENER_RESULTS_DDL)
         conn.execute(_SCREENER_RESULTS_INDEX_DDL)
+
+        # Single-column index on equities_bars_daily(date) for O(log n) MAX(date).
+        conn.execute(_EBD_DATE_INDEX_DDL)
         conn.commit()
 
         # 既存テーブルのマイグレーション
@@ -939,6 +943,47 @@ class CacheStore:
             return 0
         row = conn.execute("SELECT COUNT(*) FROM screener_results").fetchone()
         return int(row[0]) if row else 0
+
+    def get_latest_equities_date(self) -> str | None:
+        """Return the most recent date in equities_bars_daily, or None when not ready."""
+        conn = self._ensure_connection()
+        if conn is None:
+            return None
+        try:
+            row = conn.execute("SELECT MAX(date) FROM equities_bars_daily").fetchone()
+            return str(row[0])[:10] if row and row[0] else None
+        except sqlite3.OperationalError:
+            return None
+
+    def get_trading_date_today(self) -> str:
+        """Return today's date if it is a trading day, else the most recent trading day.
+
+        Queries markets_calendar for the latest date with HolDivision='0' (trading day)
+        at or before today. Falls back to the nearest past weekday when the calendar
+        table is unavailable.
+        """
+        today = date.today()
+        today_str = today.isoformat()
+        conn = self._ensure_connection()
+        if conn is not None:
+            try:
+                # LIMIT 14 covers Japan's longest holiday streak (~10 days,
+                # e.g. Golden Week + adjacent weekends) plus a safety buffer.
+                rows = conn.execute(
+                    "SELECT date, data FROM markets_calendar "
+                    "WHERE date <= ? ORDER BY date DESC LIMIT 14",
+                    (today_str,),
+                ).fetchall()
+                for row in rows:
+                    cal_data = json.loads(row[1]) if row[1] else {}
+                    if str(cal_data.get("HolDivision", "")).strip() == "0":
+                        return str(row[0])[:10]
+            except Exception:
+                pass
+        d = today
+        while d.weekday() >= 5:
+            d -= timedelta(days=1)
+        return d.isoformat()
 
     # ----------------------------------------------------------------
     # ユーティリティ
