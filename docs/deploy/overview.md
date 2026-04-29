@@ -10,11 +10,10 @@ jquants-mcp can be deployed in three shapes. Pick the one that matches your usag
 
 ## stdio
 
-```
-┌─────────────┐  stdio  ┌──────────────┐  HTTPS  ┌─────────┐
-│ Claude Code │ ────── │  jquants-mcp │ ───────▶│ J-Quants│
-│   Desktop   │         │  (local)     │          │  API v2 │
-└─────────────┘         └──────────────┘          └─────────┘
+```mermaid
+graph LR
+    A["Claude Code<br/>Claude Desktop"] -->|stdio| B["jquants-mcp<br/>(local)"]
+    B -->|HTTPS| C["J-Quants<br/>API v2"]
 ```
 
 - Launched by the MCP client as a subprocess (`uvx jquants-mcp` or `claude mcp add`)
@@ -26,17 +25,11 @@ Set up: see the main [README](../../README.md#installation).
 
 ## Self-hosted HTTP
 
-```
-┌───────────┐  HTTPS + Bearer  ┌──────────────┐  HTTPS  ┌─────────┐
-│ mcp-stdio │ ───────────────▶│  jquants-mcp │ ───────▶│ J-Quants│
-│  (proxy)  │                  │  (your host) │          │  API v2 │
-└───────────┘                  └──────────────┘          └─────────┘
-      ▲
-      │ stdio
-┌─────────────┐
-│ Claude Code │
-│   Desktop   │
-└─────────────┘
+```mermaid
+graph LR
+    A["Claude Code<br/>Claude Desktop"] -->|stdio| B["mcp-stdio<br/>(proxy)"]
+    B -->|"HTTPS + Bearer"| C["jquants-mcp<br/>(your host)"]
+    C -->|HTTPS| D["J-Quants<br/>API v2"]
 ```
 
 - Runs on any host that can hold a TLS cert (laptop at home, NUC, VPS)
@@ -48,22 +41,15 @@ Set up: see [local.md](local.md).
 
 ## Cloud Run (GCP)
 
-```
-┌───────────────┐            ┌──────────────────┐      ┌─────────┐
-│ Claude mobile │  OAuth 2.1 │   Cloud Run      │ HTTPS│ J-Quants│
-│ Claude Desktop│ ──────────▶│   jquants-mcp    │ ────▶│  API v2 │
-│ Claude Code   │            └─────────┬────────┘      └─────────┘
-└───────────────┘                      │
-                                        ├──▶ GCS (cache.db snapshot)
-                                        └──▶ Firestore (users, oauth_state)
-                                                 ▲
-                                                 │
-                                        ┌────────┴───────┐
-                                        │ Self-hosted    │
-                                        │ publisher host │
-                                        │ (cron / cache  │
-                                        │  fetcher)      │
-                                        └────────────────┘
+```mermaid
+graph LR
+    A["Claude mobile<br/>Claude Desktop<br/>Claude Code"] -->|"OAuth 2.1"| B["Cloud Run<br/>jquants-mcp"]
+    B -->|HTTPS| C["J-Quants<br/>API v2"]
+    B -->|read| D["GCS<br/>(cache.db)"]
+    B <-->|read/write| E["Firestore<br/>(users, oauth_state)"]
+    F["Self-hosted<br/>publisher<br/>(cron)"] -->|write| D
+
+    style F fill:#4a5,stroke:#333,color:#fff
 ```
 
 - Managed by Google Cloud Run, autoscaling, HTTPS out-of-the-box
@@ -76,22 +62,20 @@ Set up: see [gcp.md](gcp.md).
 
 ## Decision flowchart
 
-```
-                        Will anyone other than you use it?
-                                    │
-                        ┌───────────┴───────────┐
-                       No                      Yes
-                        │                       │
-              Does your mobile phone     Do you want OAuth login
-              or another machine need    so users bring their own
-              to reach it?               J-Quants API keys?
-                        │                       │
-               ┌────────┴────────┐      ┌──────┴──────┐
-              No                 Yes   Yes            No
-               │                  │     │              │
-             stdio         self-hosted  Cloud Run   self-hosted
-                               HTTP                     HTTP
-                                                    (single Bearer token
-                                                     shared with trusted
-                                                     users)
+```mermaid
+flowchart TD
+    Q1["Will anyone other than you use it?"]
+    Q1 -->|No| Q2["Does your mobile or another<br/>machine need to reach it?"]
+    Q1 -->|Yes| Q3["Do you want OAuth login so<br/>users bring their own<br/>J-Quants API keys?"]
+
+    Q2 -->|No| R1["stdio"]
+    Q2 -->|Yes| R2["self-hosted HTTP"]
+
+    Q3 -->|Yes| R3["Cloud Run"]
+    Q3 -->|No| R4["self-hosted HTTP<br/>(shared Bearer token)"]
+
+    style R1 fill:#4a5,stroke:#333,color:#fff
+    style R2 fill:#4a5,stroke:#333,color:#fff
+    style R3 fill:#4a5,stroke:#333,color:#fff
+    style R4 fill:#4a5,stroke:#333,color:#fff
 ```
