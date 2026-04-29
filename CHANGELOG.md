@@ -5,6 +5,20 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ---
 
+## [0.10.0](https://github.com/shigechika/jquants-mcp/compare/v0.9.0...v0.10.0) (2026-04-29)
+
+
+### Features
+
+* **cd:** build and push Docker image to GHCR on deploy ([#192](https://github.com/shigechika/jquants-mcp/issues/192)) ([3741386](https://github.com/shigechika/jquants-mcp/commit/3741386706a97484308498a8706a7ad40f6726f2))
+* **ci:** add release.yml for PyPI + MCP registry publishing ([#194](https://github.com/shigechika/jquants-mcp/issues/194)) ([fde132c](https://github.com/shigechika/jquants-mcp/commit/fde132cd1cd711e98c848238cedd075d917b8d77))
+* **server:** Pub/Sub push endpoint for GCS cache auto-reload ([#172](https://github.com/shigechika/jquants-mcp/issues/172)) ([#186](https://github.com/shigechika/jquants-mcp/issues/186)) ([6b06e8f](https://github.com/shigechika/jquants-mcp/commit/6b06e8f02503ab114cb62d51d5fbbf9582b7d88a))
+
+
+### Bug Fixes
+
+* translate user-visible strings to English (pre-public) ([#196](https://github.com/shigechika/jquants-mcp/issues/196)) ([de4d7f6](https://github.com/shigechika/jquants-mcp/commit/de4d7f6c9b02e3a205ec0bbdb24641e0a6fbbe65))
+
 ## [0.9.0](https://github.com/shigechika/jquants-mcp/compare/v0.8.0...v0.9.0) (2026-04-29)
 
 
