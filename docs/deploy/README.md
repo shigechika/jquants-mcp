@@ -14,7 +14,7 @@ jquants-mcp can be deployed in four shapes. Pick the one that matches your usage
 ```mermaid
 flowchart TD
     Q1{"Multi-user?"}
-    Q1 -->|No| Q2{"Use from smartphone<br/>or desktop app?"}
+    Q1 -->|No| Q2{"Need remote access?"}
     Q1 -->|Yes| Q3{"Manage auth per user?"}
 
     Q2 -->|No| Q4{"Have Docker?"}
