@@ -2,6 +2,11 @@
 
 try:
     from jquants_mcp._version import __version__, __version_tuple__
-except ImportError:  # editable install without build
-    __version__ = "0.0.0+unknown"
+except ImportError:
+    try:
+        from importlib.metadata import version
+
+        __version__ = version("jquants-mcp")
+    except Exception:
+        __version__ = "0.0.0+unknown"
     __version_tuple__ = (0, 0, 0, "unknown")
