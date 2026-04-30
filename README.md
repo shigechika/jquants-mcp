@@ -653,7 +653,7 @@ uv run python scripts/bulk_fetch_all.py --endpoints fins_summary topix margin_in
 uv run python scripts/bulk_fetch_all.py --dry-run
 ```
 
-The script respects the plan-based rate limit (e.g. 60 req/min for Light) and retries on 429 errors.
+The script respects the plan-based rate limit (e.g. 60 req/min for Light) and retries on 429 errors. A full historical fetch takes roughly **1 hour**; use `health_check` to monitor progress.
 
 ### CSV Import
 

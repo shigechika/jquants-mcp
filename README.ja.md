@@ -653,7 +653,7 @@ uv run python scripts/bulk_fetch_all.py --endpoints fins_summary topix margin_in
 uv run python scripts/bulk_fetch_all.py --dry-run
 ```
 
-プラン別のレート制限（例: Light は 60 req/min）を遵守し、429 エラー時は自動リトライします。
+プラン別のレート制限（例: Light は 60 req/min）を遵守し、429 エラー時は自動リトライします。全履歴データの取得には**約 1 時間**かかります。進捗は `health_check` で確認できます。
 
 ### CSV インポート
 
