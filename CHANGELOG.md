@@ -5,6 +5,13 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ---
 
+## [0.10.4](https://github.com/shigechika/jquants-mcp/compare/v0.10.3...v0.10.4) (2026-04-30)
+
+
+### Bug Fixes
+
+* **release:** upgrade upload-artifact to v7, download-artifact to v8 (Node.js 24) ([#206](https://github.com/shigechika/jquants-mcp/issues/206)) ([33f1ce9](https://github.com/shigechika/jquants-mcp/commit/33f1ce9385693fd22a27869190f513b85e30cd90))
+
 ## [0.10.3](https://github.com/shigechika/jquants-mcp/compare/v0.10.2...v0.10.3) (2026-04-29)
 
 
