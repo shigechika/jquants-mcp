@@ -12,7 +12,7 @@
 
 ## 特徴
 
-- **33 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー（22）+ ユーティリティ（5）+ オフライン screener（5）+ opt-in ローソク足チャート描画（1）
+- **35 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー（22）+ ユーティリティ（5）+ オフライン screener（7）+ opt-in ローソク足チャート描画（1）
 - **2層 SQLite キャッシュ** — 時系列データは行レベル、その他はレスポンスレベル（TTL付き）
 - **株式分割検知** — AdjFactor 変化時にキャッシュを自動無効化
 - **レート制限** — プラン別スライディングウィンドウ（Free: 5回/分, Light: 60, Standard: 120, Premium: 500）
@@ -410,7 +410,7 @@ claude mcp add jquants-mcp \
 | オプション | デフォルト | 説明 |
 |---|---|---|
 | `--transport`, `-t` | `stdio` | トランスポート: `stdio` または `streamable-http` |
-| `--host` | `0.0.0.0` | バインドアドレス |
+| `--host` | `127.0.0.1` | バインドアドレス |
 | `--port`, `-p` | `8080` | ポート番号 |
 | `--ssl-certfile` | — | SSL 証明書ファイルのパス |
 | `--ssl-keyfile` | — | SSL 秘密鍵ファイルのパス |
@@ -577,7 +577,7 @@ jquants-mcp -t streamable-http --port 8080 \
 | `get_bulk_list` | `/bulk/list` | Light+ | ダウンロード可能ファイル一覧 |
 | `get_bulk_download_url` | `/bulk/get` | Light+ | 署名付きダウンロード URL 取得 |
 
-### スクリーナー (Screener) — 5ツール
+### スクリーナー (Screener) — 7ツール
 
 キャッシュ済の `equities_bars_daily` から直接計算するオフラインツール。追加 API コールなし、numpy / pandas 非依存の pure Python 実装。Claude と組み合わせた銘柄スクリーニング向け。
 
@@ -586,7 +586,9 @@ jquants-mcp -t streamable-http --port 8080 \
 | `detect_price_limit` | `UL`/`LL` フラグからストップ高/安の銘柄を検出。終値が高安と一致する場合は `limit_high_close` / `limit_low_close` も True になる。 |
 | `compare_close_vs_vwap` | 日次 VWAP (`Va / Vo`) と終値を比較。単日または期間指定。 |
 | `detect_52w_high_low` | 52 週ローリング（≈252 営業日）の高値・安値更新を判定。Yahoo / Bloomberg / TradingView 慣習。`new_high` / `new_high_close` / `new_low` / `new_low_close` の 4 シグナル。 |
+| `detect_52w_high_low_range` | 上記の期間版（`date_from`〜`date_to`）。複数日分を単日ツールの繰り返しではなくこちらで取得。 |
 | `detect_ytd_high_low` | 年初来高値・安値を判定。Kabutan / JPX / Yahoo!ファイナンス慣習。同じ 4 シグナルを当年 1 月 1 日以降の prior と比較して返す。 |
+| `detect_ytd_high_low_range` | 上記の期間版（`date_from`〜`date_to`）。複数日分を単日ツールの繰り返しではなくこちらで取得。 |
 | `detect_volume_surge` | 指定日の出来高が直近 20 営業日平均の `multiplier` 倍（既定 2.0）以上の銘柄を列挙。 |
 
 ### チャート描画 (Charts) — 1 ツール（opt-in）
