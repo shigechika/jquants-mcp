@@ -20,11 +20,11 @@ flowchart TD
     Q2 -->|No| Q4{"Docker 環境ある？"}
     Q2 -->|Yes| R3["self-hosted HTTP"]
 
-    Q4 -->|Yes| R1["Docker Compose"]
     Q4 -->|No| R2["stdio"]
+    Q4 -->|Yes| R1["Docker Compose"]
 
-    Q3 -->|Yes| R4["Cloud Run"]
     Q3 -->|No| R3
+    Q3 -->|Yes| R4["Cloud Run"]
 
     style R1 fill:#4a5,stroke:#333,color:#fff
     style R2 fill:#4a5,stroke:#333,color:#fff
