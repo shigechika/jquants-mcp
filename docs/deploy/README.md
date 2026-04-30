@@ -13,11 +13,11 @@ jquants-mcp can be deployed in four shapes. Pick the one that matches your usage
 
 ```mermaid
 flowchart TD
-    Q1{"Will anyone other than you use it?"}
-    Q1 -->|No| Q2{"Does your mobile or another<br/>machine need to reach it?"}
-    Q1 -->|Yes| Q3{"Do you want OAuth login so<br/>users bring their own<br/>J-Quants API keys?"}
+    Q1{"マルチユーザ対応？"}
+    Q1 -->|No| Q2{"スマホや Desktop アプリから<br/>アクセスしたい？"}
+    Q1 -->|Yes| Q3{"個別に認証管理をする？"}
 
-    Q2 -->|No| Q4{"Do you have Docker and want<br/>a persistent local HTTP server?"}
+    Q2 -->|No| Q4{"Docker 環境ある？"}
     Q2 -->|Yes| R3["self-hosted HTTP"]
 
     Q4 -->|Yes| R1["Docker Compose"]
