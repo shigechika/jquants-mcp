@@ -66,11 +66,10 @@ Opens a browser to J-Quants (AWS Cognito, PKCE flow), and on success writes the 
 
 ### config.ini
 
-MCP-specific settings (plan, cache, client behavior):
+MCP-specific settings (cache, client behavior):
 
 ```ini
 [jquants]
-plan = premium
 # cache_dir = ~/.cache/jquants-mcp
 # base_url = https://api.jquants.com/v2
 

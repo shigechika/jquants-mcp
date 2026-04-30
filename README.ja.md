@@ -66,11 +66,10 @@ jquants-mcp login
 
 ### config.ini
 
-MCP 固有の設定（プラン、キャッシュ、クライアント動作）:
+MCP 固有の設定（キャッシュ、クライアント動作）:
 
 ```ini
 [jquants]
-plan = premium
 # cache_dir = ~/.cache/jquants-mcp
 # base_url = https://api.jquants.com/v2
 
