@@ -760,9 +760,10 @@ gcloud run deploy jquants-mcp \
 | `MCP_BEARER_TOKEN` | いいえ | — | HTTP 認証用 Bearer トークン（単一ユーザーモードのみ） |
 | `PUBSUB_INVOKER_SA` | いいえ | — | Pub/Sub push 認証用サービスアカウントメール。設定時は `/internal/reload` エンドポイントで Google 署名 OIDC トークンを検証。Pub/Sub 自動リロードを使う場合に必須。 |
 | `PUBSUB_AUDIENCE` | いいえ | リクエスト URL | OIDC 検証時の audience（デフォルトはリクエスト URL） |
+| `GOOGLE_CLOUD_PROJECT` | はい | — | GCP プロジェクト ID。Firestore（ユーザー DB）および Secret Manager アクセスに必須。CD ワークフローで `vars.GCP_PROJECT` 経由で設定。 |
 | `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | いいえ | — | マルチユーザーモード時の OAuth 設定 |
 
-Firestore は Cloud Run サービスアカウントの Application Default Credentials を使います。`GOOGLE_CLOUD_PROJECT` 環境変数に GCP プロジェクト ID を設定する必要があります（CD ワークフローでは `vars.GCP_PROJECT` 経由で設定済み）。
+Firestore は Cloud Run サービスアカウントの Application Default Credentials を使います。
 
 ### GCS と Firestore の連携
 

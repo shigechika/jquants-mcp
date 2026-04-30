@@ -760,9 +760,10 @@ Memory sizing notes are in [Memory requirements](#memory-requirements) below.
 | `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication (single-user mode only) |
 | `PUBSUB_INVOKER_SA` | No | — | Service account email for Pub/Sub push authentication. When set, `/internal/reload` verifies the Google-signed OIDC token. Required if using Pub/Sub auto-reload; leave unset otherwise. |
 | `PUBSUB_AUDIENCE` | No | request URL | OIDC audience to verify against (defaults to the incoming request URL) |
+| `GOOGLE_CLOUD_PROJECT` | Yes | — | GCP project ID. Required for Firestore (user DB) and Secret Manager access. Set via `vars.GCP_PROJECT` in the CD workflow |
 | `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | No | — | OAuth configuration for multi-user mode |
 
-Firestore uses Application Default Credentials from the Cloud Run service account. The `GOOGLE_CLOUD_PROJECT` env var must be set to the GCP project ID (included in the CD workflow via `vars.GCP_PROJECT`).
+Firestore uses Application Default Credentials from the Cloud Run service account.
 
 ### GCS and Firestore integration
 
