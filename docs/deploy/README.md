@@ -9,6 +9,29 @@ jquants-mcp can be deployed in four shapes. Pick the one that matches your usage
 | **Self-hosted HTTP** | One or a few trusted users, one host | Host + J-Quants plan | ~1 hour | Homelab / always-on server reachable from mobile or other machines |
 | **Cloud Run** (GCP) | Multiple users, OAuth auth | GCP (~\$0–\$10/mo for low traffic) + J-Quants plan | 2–4 hours first time | Family / team, mobile clients, OAuth login per user |
 
+## Decision flowchart
+
+```mermaid
+flowchart TD
+    Q1{"Will anyone other than you use it?"}
+    Q1 -->|No| Q2{"Does your mobile or another<br/>machine need to reach it?"}
+    Q1 -->|Yes| Q3{"Do you want OAuth login so<br/>users bring their own<br/>J-Quants API keys?"}
+
+    Q2 -->|No| Q4{"Do you have Docker and want<br/>a persistent local HTTP server?"}
+    Q2 -->|Yes| R3["self-hosted HTTP"]
+
+    Q4 -->|Yes| R1["Docker Compose"]
+    Q4 -->|No| R2["stdio"]
+
+    Q3 -->|Yes| R4["Cloud Run"]
+    Q3 -->|No| R3
+
+    style R1 fill:#4a5,stroke:#333,color:#fff
+    style R2 fill:#4a5,stroke:#333,color:#fff
+    style R3 fill:#4a5,stroke:#333,color:#fff
+    style R4 fill:#4a5,stroke:#333,color:#fff
+```
+
 ## stdio
 
 ```mermaid
@@ -101,26 +124,3 @@ graph BT
 - Compatible with Claude Desktop Connectors, Claude mobile, Claude Code
 
 Set up: see [gcp.md](gcp.md).
-
-## Decision flowchart
-
-```mermaid
-flowchart TD
-    Q1{"Will anyone other than you use it?"}
-    Q1 -->|No| Q2{"Does your mobile or another<br/>machine need to reach it?"}
-    Q1 -->|Yes| Q3{"Do you want OAuth login so<br/>users bring their own<br/>J-Quants API keys?"}
-
-    Q2 -->|No| Q4{"Do you have Docker and want<br/>a persistent local HTTP server?"}
-    Q2 -->|Yes| R3["self-hosted HTTP"]
-
-    Q4 -->|Yes| R1["Docker Compose"]
-    Q4 -->|No| R2["stdio"]
-
-    Q3 -->|Yes| R4["Cloud Run"]
-    Q3 -->|No| R3
-
-    style R1 fill:#4a5,stroke:#333,color:#fff
-    style R2 fill:#4a5,stroke:#333,color:#fff
-    style R3 fill:#4a5,stroke:#333,color:#fff
-    style R4 fill:#4a5,stroke:#333,color:#fff
-```
