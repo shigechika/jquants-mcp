@@ -634,9 +634,9 @@ Cache is stored at `~/.cache/jquants-mcp/cache.db` by default.
 | Plan | Retention | Approx. size |
 |---|---|---|
 | Free | 2 years | ~500 MB |
-| Light | 5 years | ~1.5 GB |
-| Standard | 10 years | ~3 GB |
-| Premium | All available | ~3.5 GB+ |
+| Light | 5 years | ~2.9 GB |
+| Standard | 10 years | ~3.5 GB |
+| Premium | All available | ~4 GB+ |
 
 ### Bulk Data Import
 
@@ -653,7 +653,7 @@ uv run python scripts/bulk_fetch_all.py --endpoints fins_summary topix margin_in
 uv run python scripts/bulk_fetch_all.py --dry-run
 ```
 
-The script respects the plan-based rate limit (e.g. 60 req/min for Light) and retries on 429 errors.
+The script respects the plan-based rate limit (e.g. 60 req/min for Light) and retries on 429 errors. A full historical fetch takes roughly **1 hour**; use `health_check` to monitor progress.
 
 ### CSV Import
 
@@ -794,7 +794,7 @@ sequenceDiagram
     E->>D: spawn background job
     activate D
     D->>G: gcloud storage cp cache.db /tmp
-    G-->>D: ~3.5 GiB (1-2 min)
+    G-->>D: ~2.9 GiB (1-2 min)
     D->>M: SIGHUP
     deactivate D
     Note right of M: reload cache.db,<br/>switch to Tier 1 cache
@@ -802,7 +802,7 @@ sequenceDiagram
 ```
 
 Notes:
-- `cache.db` is ~3.5 GiB and takes 1–2 minutes to download. Requests during that window hit the live J-Quants API, so they work but are slower and count against rate limits.
+- `cache.db` is ~2.9 GiB and takes 1–2 minutes to download. Requests during that window hit the live J-Quants API, so they work but are slower and count against rate limits.
 - During the cold-start window `cache_status` returns a minimal payload (`db_path` + `plan` only). A full payload with row counts and `db_size_mb` indicates the cache is loaded.
 - Firestore is strongly consistent, so multiple Cloud Run instances can run concurrently without data races. There is no `maxScale: 1` restriction — scale as needed.
 
@@ -828,7 +828,7 @@ sequenceDiagram
     CR->>CR: verify OIDC token<br/>(PUBSUB_INVOKER_SA)
     CR-->>PS: 200 OK (immediate ACK)
     CR->>G: download new cache.db to /tmp
-    G-->>CR: ~3.5 GiB
+    G-->>CR: ~2.9 GiB
     CR->>C: request_reload()<br/>(lazy reconnect on next query)
 ```
 
@@ -938,11 +938,11 @@ No manual Firestore setup is required — the server creates the `users` and `oa
 
 Cloud Run materializes `cache.db` into `/tmp` (a tmpfs, i.e. RAM). The memory limit therefore must cover:
 
-- `cache.db` size (currently ~3.57 GiB)
+- `cache.db` size (currently ~2.9 GiB)
 - Python runtime + fastmcp + sqlite + httpx overhead (~300 MiB)
 - Request-time JSON serialization headroom
 
-Current production sizing (see [.github/workflows/cd.yml](.github/workflows/cd.yml)) is `--memory 6Gi --cpu 2 --no-cpu-throttling`, which leaves ~2.2 GiB headroom over the baseline. Cloud Run gen2 is required for memory allocations above 4 Gi.
+Current production sizing (see [.github/workflows/cd.yml](.github/workflows/cd.yml)) is `--memory 6Gi --cpu 2 --no-cpu-throttling`, which leaves ~2.8 GiB headroom over the baseline. Cloud Run gen2 is required for memory allocations above 4 Gi.
 
 If `cache.db` grows beyond ~4 GiB, bump the memory limit accordingly — the tmpfs ceiling is roughly the instance memory, so you need `cache.db + ~2 GiB` at a minimum.
 
