@@ -5,6 +5,13 @@ release-please 導入前（〜2026-04-18、v0.3.0 リリース時点）のエン
 
 ---
 
+## [0.10.5](https://github.com/shigechika/jquants-mcp/compare/v0.10.4...v0.10.5) (2026-05-01)
+
+
+### Bug Fixes
+
+* resolve version from importlib.metadata when _version.py is absent ([#211](https://github.com/shigechika/jquants-mcp/issues/211)) ([948ed64](https://github.com/shigechika/jquants-mcp/commit/948ed6401fcd9151ef1eb67f8eb456e03083d487))
+
 ## [0.10.4](https://github.com/shigechika/jquants-mcp/compare/v0.10.3...v0.10.4) (2026-04-30)
 
 
