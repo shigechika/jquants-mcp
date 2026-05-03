@@ -629,7 +629,27 @@ def register(
                 try:
                     if style == "colorblind":
                         ax.set_prop_cycle(color=_OI_COLORS)
-                    df.plot(ax=ax, linewidth=1.5)
+                    # Plot on integer index so non-trading days (weekends /
+                    # holidays / long holidays like GW) produce no gap in
+                    # the line — matplotlib treats DatetimeIndex as a
+                    # continuous time axis and leaves blank spans for missing
+                    # dates, which causes visible line breaks.
+                    date_index = df.index
+                    df_int = df.copy()
+                    df_int.index = range(len(df_int))
+                    df_int.plot(ax=ax, linewidth=1.5)
+                    # Replace auto integer ticks with readable date labels.
+                    n = len(date_index)
+                    tick_every = max(1, n // 8)
+                    tick_pos = list(range(0, n, tick_every))
+                    if tick_pos[-1] != n - 1:
+                        tick_pos.append(n - 1)
+                    ax.set_xticks(tick_pos)
+                    ax.set_xticklabels(
+                        [date_index[i].strftime("%Y-%m-%d") for i in tick_pos],
+                        rotation=30,
+                        ha="right",
+                    )
                     ax.set_title(f"Comparison {norm_from} → {norm_to}", pad=10)
                     if mode == "return_pct":
                         ax.set_ylabel("Return (%)")
