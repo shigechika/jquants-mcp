@@ -642,6 +642,8 @@ def register(
                     n = len(date_index)
                     tick_every = max(1, n // 8)
                     tick_pos = list(range(0, n, tick_every))
+                    if tick_pos[-1] != n - 1:
+                        tick_pos.append(n - 1)
                     ax.set_xticks(tick_pos)
                     ax.set_xticklabels(
                         [date_index[i].strftime("%Y-%m-%d") for i in tick_pos],
