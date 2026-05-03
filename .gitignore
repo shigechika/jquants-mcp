@@ -2,7 +2,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.egg-info/
-src/jquants_mcp/_version.py
 dist/
 build/
 *.egg
