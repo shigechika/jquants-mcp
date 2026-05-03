@@ -8,9 +8,13 @@ Usage:
     uv run python scripts/verify_cache_completeness.py --plan standard --output json
     uv run python scripts/verify_cache_completeness.py --db /path/to/cache.db
 
+    # Detect date-level gaps (days where stock count is abnormally low)
+    uv run python scripts/verify_cache_completeness.py --check-gaps
+    uv run python scripts/verify_cache_completeness.py --check-gaps --gap-threshold 80
+
 Exit code:
-    0  all tables ok
-    1  one or more tables stale / empty / missing
+    0  all tables ok (and no gaps when --check-gaps is used)
+    1  one or more tables stale / empty / missing (or gaps found)
 """
 
 from __future__ import annotations
@@ -226,6 +230,84 @@ def _check_screener_results(conn: sqlite3.Connection) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Date-level gap detection
+# ---------------------------------------------------------------------------
+
+_GAP_DEFAULT_THRESHOLD_PCT = 80  # flag days below this % of the median daily count
+
+
+def check_date_gaps(
+    conn: sqlite3.Connection,
+    threshold_pct: int = _GAP_DEFAULT_THRESHOLD_PCT,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> dict:
+    """Detect date-level gaps in equities_bars_daily.
+
+    A gap is a trading day where the number of distinct codes is significantly
+    lower than the median daily count, indicating a partial or failed fetch.
+
+    Args:
+        conn: SQLite connection.
+        threshold_pct: Days with a code count below this percentage of the
+            median are flagged as gaps (default: 80).
+        from_date: Restrict scan to dates >= from_date (YYYY-MM-DD).
+        to_date: Restrict scan to dates <= to_date (YYYY-MM-DD).
+
+    Returns:
+        dict with keys: status, total_dates, median_count, threshold_pct, gaps.
+    """
+    if not _table_exists(conn, "equities_bars_daily"):
+        return {"status": "missing_table", "gaps": []}
+
+    where_parts: list[str] = []
+    params: list[str] = []
+    if from_date:
+        where_parts.append("date >= ?")
+        params.append(from_date)
+    if to_date:
+        where_parts.append("date <= ?")
+        params.append(to_date)
+    where = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+    try:
+        rows = conn.execute(
+            f"SELECT date, COUNT(DISTINCT code) AS cnt "
+            f"FROM equities_bars_daily {where} GROUP BY date ORDER BY date",
+            params,
+        ).fetchall()
+    except sqlite3.OperationalError as e:
+        return {"status": "error", "gaps": [], "detail": str(e)}
+
+    if not rows:
+        return {"status": "empty", "gaps": [], "total_dates": 0}
+
+    counts = sorted(r["cnt"] for r in rows)
+    n = len(counts)
+    median = counts[n // 2] if n % 2 == 1 else (counts[n // 2 - 1] + counts[n // 2]) / 2
+    cutoff = median * threshold_pct / 100
+
+    gaps = [
+        {
+            "date": str(r["date"])[:10],
+            "count": r["cnt"],
+            "expected": int(median),
+            "pct": round(r["cnt"] / median * 100, 1),
+        }
+        for r in rows
+        if r["cnt"] < cutoff
+    ]
+
+    return {
+        "status": "gaps_found" if gaps else "ok",
+        "total_dates": n,
+        "median_count": int(median),
+        "threshold_pct": threshold_pct,
+        "gaps": gaps,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main check runner
 # ---------------------------------------------------------------------------
 
@@ -326,6 +408,24 @@ def _print_text(result: dict) -> None:
                 )
 
 
+def _print_gaps(gaps_result: dict) -> None:
+    status = gaps_result["status"]
+    sym = "✓" if status == "ok" else ("✗" if status in ("missing_table", "empty", "error") else "!")
+    total = gaps_result.get("total_dates", 0)
+    median = gaps_result.get("median_count", 0)
+    threshold = gaps_result.get("threshold_pct", _GAP_DEFAULT_THRESHOLD_PCT)
+    gaps = gaps_result.get("gaps", [])
+    print()
+    print(
+        f"[{sym}] date_gaps  status={status}  "
+        f"dates_checked={total}  median_codes={median}  threshold={threshold}%"
+    )
+    for g in gaps:
+        print(f"  [!] {g['date']}  codes={g['count']} / expected~{g['expected']}  ({g['pct']}%)")
+    if not gaps and status == "ok":
+        print("     No gaps detected.")
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -352,6 +452,28 @@ def main() -> None:
         default="text",
         help="Output format (default: text)",
     )
+    parser.add_argument(
+        "--check-gaps",
+        action="store_true",
+        help="Detect date-level gaps in equities_bars_daily (days with abnormally low stock count).",
+    )
+    parser.add_argument(
+        "--gap-threshold",
+        type=int,
+        default=_GAP_DEFAULT_THRESHOLD_PCT,
+        metavar="PCT",
+        help=f"Flag days below this %% of the median daily stock count (default: {_GAP_DEFAULT_THRESHOLD_PCT}).",
+    )
+    parser.add_argument(
+        "--from-date",
+        metavar="YYYY-MM-DD",
+        help="Restrict --check-gaps scan to dates >= this date.",
+    )
+    parser.add_argument(
+        "--to-date",
+        metavar="YYYY-MM-DD",
+        help="Restrict --check-gaps scan to dates <= this date.",
+    )
     args = parser.parse_args()
 
     if not Path(args.db).exists():
@@ -359,17 +481,36 @@ def main() -> None:
         sys.exit(1)
 
     conn = _connect(args.db)
+    exit_code = 0
+    gaps_result = None
     try:
         result = check_all(conn, args.plan)
+
+        if args.check_gaps:
+            gaps_result = check_date_gaps(
+                conn,
+                threshold_pct=args.gap_threshold,
+                from_date=args.from_date,
+                to_date=args.to_date,
+            )
     finally:
         conn.close()
 
     if args.output == "json":
+        if gaps_result is not None:
+            result["date_gaps"] = gaps_result
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         _print_text(result)
+        if gaps_result is not None:
+            _print_gaps(gaps_result)
 
-    sys.exit(0 if result["overall"] == "ok" else 1)
+    if result["overall"] != "ok":
+        exit_code = 1
+    # missing_table and empty mean no gaps to check — not an error.
+    if gaps_result is not None and gaps_result["status"] not in ("ok", "missing_table", "empty"):
+        exit_code = 1
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

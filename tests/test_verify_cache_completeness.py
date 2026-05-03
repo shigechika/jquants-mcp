@@ -21,6 +21,7 @@ from verify_cache_completeness import (  # noqa: E402
     _latest_trading_day,
     _table_exists,
     check_all,
+    check_date_gaps,
 )
 
 # ---------------------------------------------------------------------------
@@ -413,3 +414,80 @@ def test_check_all_json_serializable(conn):
     serialized = json.dumps(result)
     parsed = json.loads(serialized)
     assert parsed["plan"] == "free"
+
+
+# ---------------------------------------------------------------------------
+# check_date_gaps
+# ---------------------------------------------------------------------------
+
+
+def _seed_bars(conn, date_str: str, num_codes: int, base_code: int = 1000) -> None:
+    """Insert num_codes rows into equities_bars_daily for the given date."""
+    for i in range(num_codes):
+        code = str(base_code + i)
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_bars_daily (code, date, data, fetched_at) "
+            "VALUES (?, ?, '{}', ?)",
+            (code, date_str, time.time()),
+        )
+    conn.commit()
+
+
+def test_check_date_gaps_no_gaps(conn):
+    # 5 normal days, all with ~4000 codes → no gap
+    for i in range(5):
+        d = (date(2026, 3, 9) + timedelta(days=i)).isoformat()
+        _seed_bars(conn, d, 4000)
+    result = check_date_gaps(conn)
+    assert result["status"] == "ok"
+    assert result["gaps"] == []
+    assert result["total_dates"] == 5
+    assert result["median_count"] == 4000
+
+
+def test_check_date_gaps_detects_partial_fetch_day(conn):
+    # 4 normal days (4000 codes) + 1 partial day (88 codes, like 2026-03-11)
+    for i in range(4):
+        d = (date(2026, 3, 9) + timedelta(days=i)).isoformat()
+        _seed_bars(conn, d, 4000)
+    _seed_bars(conn, "2026-03-13", 88)  # partial fetch day
+    result = check_date_gaps(conn)
+    assert result["status"] == "gaps_found"
+    assert len(result["gaps"]) == 1
+    assert result["gaps"][0]["date"] == "2026-03-13"
+    assert result["gaps"][0]["count"] == 88
+    assert result["gaps"][0]["pct"] < 80.0
+
+
+def test_check_date_gaps_threshold_respected(conn):
+    # With threshold=50, a day at 60% of median should NOT be flagged
+    for i in range(4):
+        d = (date(2026, 3, 9) + timedelta(days=i)).isoformat()
+        _seed_bars(conn, d, 1000)
+    _seed_bars(conn, "2026-03-13", 600)  # 60% of 1000
+    result = check_date_gaps(conn, threshold_pct=50)
+    assert result["status"] == "ok"
+    assert result["gaps"] == []
+
+
+def test_check_date_gaps_from_to_date_filter(conn):
+    # Seed a bad day outside the filter window — must not be flagged
+    _seed_bars(conn, "2026-01-10", 88)  # outside range
+    for i in range(5):
+        d = (date(2026, 3, 9) + timedelta(days=i)).isoformat()
+        _seed_bars(conn, d, 4000)
+    result = check_date_gaps(conn, from_date="2026-03-01")
+    assert result["status"] == "ok"
+    assert result["gaps"] == []
+
+
+def test_check_date_gaps_missing_table(conn):
+    # Drop the table and verify graceful handling
+    conn.execute("DROP TABLE equities_bars_daily")
+    result = check_date_gaps(conn)
+    assert result["status"] == "missing_table"
+
+
+def test_check_date_gaps_empty_table(conn):
+    result = check_date_gaps(conn)
+    assert result["status"] == "empty"
