@@ -103,7 +103,7 @@ class TestDetectPriceLimit:
         ]
         _seed(mock_env["cache"], rows)
 
-        result = await _call("detect_price_limit", date="2026-04-01")
+        result = await _call("detect_price_limit", date="2026-04-01", detail=True)
 
         assert result["count"] == 3
         by_code = {row["Code"]: row for row in result["data"]}
@@ -115,7 +115,7 @@ class TestDetectPriceLimit:
 
     async def test_code_filter_returns_row_even_if_not_triggered(self, mock_env):
         _seed(mock_env["cache"], [_bar("27800", "2026-04-01")])
-        result = await _call("detect_price_limit", date="2026-04-01", code="27800")
+        result = await _call("detect_price_limit", date="2026-04-01", code="27800", detail=True)
         assert result["count"] == 1
         assert result["data"][0]["limit_high_touched"] is False
         assert result["data"][0]["limit_low_touched"] is False
@@ -182,6 +182,7 @@ class TestDetect52wHighLow:
             code="27800",
             window_sessions=30,
             min_prior_sessions=1,
+            detail=True,
         )
         assert result["mode"] == "52w"
         assert result["count"] == 1
@@ -210,6 +211,7 @@ class TestDetect52wHighLow:
             code="27800",
             window_sessions=30,
             min_prior_sessions=1,
+            detail=True,
         )
         r = result["data"][0]
         assert r["new_high"] is True
@@ -234,6 +236,7 @@ class TestDetect52wHighLow:
             code="27800",
             window_sessions=20,
             min_prior_sessions=1,
+            detail=True,
         )
         r = result["data"][0]
         assert r["new_high"] is True  # H == prior max → tie
@@ -256,6 +259,7 @@ class TestDetect52wHighLow:
             code="27800",
             window_sessions=15,
             min_prior_sessions=1,
+            detail=True,
         )
         r = result["data"][0]
         assert r["new_high"] is True  # H ties prior max
@@ -282,6 +286,7 @@ class TestDetect52wHighLow:
             code="27800",
             window_sessions=20,
             min_prior_sessions=1,
+            detail=True,
         )
         r = result["data"][0]
         assert r["new_high"] is False
@@ -306,6 +311,7 @@ class TestDetect52wHighLow:
             date=date_today,
             window_sessions=60,
             min_prior_sessions=1,
+            detail=True,
         )
         codes = {row["Code"] for row in result["data"]}
         assert "10000" in codes
@@ -324,7 +330,7 @@ class TestDetect52wHighLow:
         rows.append(_bar("99990", date_today, h=200, low=150, c=200))
         _seed(mock_env["cache"], rows)
 
-        result = await _call("detect_52w_high_low", date=date_today)  # default min=60
+        result = await _call("detect_52w_high_low", date=date_today, detail=True)  # default min=60
         codes = {row["Code"] for row in result["data"]}
         assert "99990" not in codes
 
@@ -352,6 +358,7 @@ class TestDetectYtdHighLow:
             date=final_date,
             code="27800",
             min_prior_sessions=1,
+            detail=True,
         )
         assert result["mode"] == "ytd"
         r = result["data"][0]
@@ -379,6 +386,7 @@ class TestDetectYtdHighLow:
             date=final_date,
             code="27800",
             min_prior_sessions=1,
+            detail=True,
         )
         r = result["data"][0]
         assert r["new_high"] is True
@@ -411,7 +419,9 @@ class TestDetectVolumeSurge:
         rows.append(_bar("27800", probe, vo=5000.0))
         _seed(mock_env["cache"], rows)
 
-        result = await _call("detect_volume_surge", date=probe, multiplier=2.0, baseline_days=20)
+        result = await _call(
+            "detect_volume_surge", date=probe, multiplier=2.0, baseline_days=20, detail=True
+        )
         assert result["count"] == 1
         assert result["data"][0]["Code"] == "27800"
         assert result["data"][0]["surge_ratio"] == pytest.approx(5.0)
@@ -562,7 +572,7 @@ class TestDetect52wCacheRead:
         )
         # Note: no equities_bars_daily seeded — cache hit must be the
         # only reason the tool returns non-empty data.
-        result = await _call("detect_52w_high_low", date="2026-04-01")
+        result = await _call("detect_52w_high_low", date="2026-04-01", detail=True)
         assert result["count"] == 2
         assert {row["Code"] for row in result["data"]} == {"12340", "67890"}
 
@@ -583,6 +593,7 @@ class TestDetect52wCacheRead:
             code="27800",
             window_sessions=30,
             min_prior_sessions=1,
+            detail=True,
         )
         assert result["count"] == 1
         assert result["data"][0]["new_high"] is True
@@ -644,6 +655,7 @@ class TestDetect52wCacheRead:
             code="27800",
             window_sessions=20,
             min_prior_sessions=1,
+            detail=True,
         )
         assert result["count"] == 1
         assert result["data"][0]["Code"] == "27800"
@@ -683,6 +695,7 @@ class TestDetect52wCacheRead:
             date="2026-04-10",
             code="99990",
             min_prior_sessions=1,  # bypass IPO filter on on-demand path
+            detail=True,
         )
         assert result["count"] == 1
         assert result["data"][0]["Code"] == "99990"
@@ -726,6 +739,7 @@ class TestDetect52wRange:
             "detect_52w_high_low_range",
             date_from="2026-04-01",
             date_to="2026-04-02",
+            detail=True,
         )
         assert result["count"] == 2
         codes = {row["Code"] for row in result["data"]}
@@ -767,6 +781,7 @@ class TestDetect52wRange:
             date_to="2026-04-02",
             window_sessions=60,
             min_prior_sessions=1,
+            detail=True,
         )
         codes_by_date: dict[str, set[str]] = {}
         for row in result["data"]:
@@ -790,6 +805,7 @@ class TestDetect52wRange:
             date_to="2026-04-10",
             window_sessions=60,
             min_prior_sessions=1,
+            detail=True,
         )
         assert result["count"] == 1
         assert result["data"][0]["Code"] == "12340"
@@ -854,6 +870,7 @@ class TestDetect52wRange:
             code="27800",
             window_sessions=20,
             min_prior_sessions=1,
+            detail=True,
         )
         assert result["count"] == 1
         assert result["data"][0]["Code"] == "27800"
@@ -1072,3 +1089,117 @@ class TestScreenerComputeHelpers:
         assert result["count"] == 1
         assert result["data"][0]["new_high"] is True
         assert result["data"][0]["new_high_close"] is True
+
+
+class TestDetailParameter:
+    """``detail`` parameter: False (default) strips ``data``; True keeps it."""
+
+    async def test_price_limit_default_is_summary(self, mock_env):
+        today = "2026-04-01"
+        _seed(
+            mock_env["cache"],
+            [
+                _bar("10000", today, h=200, c=200, ul=1),
+                _bar("20000", today, low=80, c=80, ll=1),
+                _bar("30000", today),
+            ],
+        )
+        result = await _call("detect_price_limit", date=today)
+        assert "data" not in result
+        assert result["count"] == 2
+        assert result["limit_high"] == 1
+        assert result["limit_low"] == 1
+
+    async def test_price_limit_detail_true_returns_data(self, mock_env):
+        today = "2026-04-01"
+        _seed(
+            mock_env["cache"],
+            [
+                _bar("10000", today, ul=1),
+            ],
+        )
+        result = await _call("detect_price_limit", date=today, detail=True)
+        assert "data" in result
+        assert result["count"] == 1
+
+    async def test_52w_default_is_summary(self, mock_env):
+        d = (date.today() - timedelta(days=7)).isoformat()
+        bars = [
+            _bar("11110", d2, h=100 + i, low=80, c=90)
+            for i, d2 in enumerate(
+                [(date.today() - timedelta(days=7 + j)).isoformat() for j in range(70, 0, -1)]
+            )
+        ]
+        bars.append(_bar("11110", d, h=300, low=280, c=295))
+        _seed(mock_env["cache"], bars)
+        result = await _call("detect_52w_high_low", date=d, code="11110")
+        assert "data" not in result
+        assert "new_high" in result
+        assert "new_low" in result
+        assert result["mode"] == "52w"
+
+    async def test_52w_detail_true_returns_data(self, mock_env):
+        d = (date.today() - timedelta(days=7)).isoformat()
+        bars = [
+            _bar("11110", (date.today() - timedelta(days=7 + j)).isoformat(), h=100, low=80, c=90)
+            for j in range(70, 0, -1)
+        ]
+        bars.append(_bar("11110", d, h=300, low=280, c=295))
+        _seed(mock_env["cache"], bars)
+        result = await _call("detect_52w_high_low", date=d, code="11110", detail=True)
+        assert "data" in result
+        assert result["count"] >= 1
+
+    async def test_ytd_default_is_summary(self, mock_env):
+        d = (date.today() - timedelta(days=7)).isoformat()
+        result = await _call("detect_ytd_high_low", date=d, code="99990")
+        assert "data" not in result
+        assert "new_high" in result
+        assert result["mode"] == "ytd"
+
+    async def test_volume_surge_default_is_summary(self, mock_env):
+        today = "2026-04-01"
+        rows = [
+            _bar("55550", (date(2026, 3, 1) + timedelta(days=i)).isoformat(), vo=1000.0)
+            for i in range(21)
+        ]
+        rows.append(_bar("55550", today, vo=5000.0))
+        _seed(mock_env["cache"], rows)
+        result = await _call("detect_volume_surge", date=today)
+        assert "data" not in result
+        assert "count" in result
+        assert result["multiplier"] == 2.0
+
+    async def test_volume_surge_detail_true_returns_data(self, mock_env):
+        today = "2026-04-01"
+        rows = [
+            _bar("55550", (date(2026, 3, 1) + timedelta(days=i)).isoformat(), vo=1000.0)
+            for i in range(21)
+        ]
+        rows.append(_bar("55550", today, vo=5000.0))
+        _seed(mock_env["cache"], rows)
+        result = await _call("detect_volume_surge", date=today, detail=True)
+        assert "data" in result
+
+    async def test_52w_range_default_is_summary(self, mock_env):
+        d_from = (date.today() - timedelta(days=14)).isoformat()
+        d_to = (date.today() - timedelta(days=7)).isoformat()
+        result = await _call("detect_52w_high_low_range", date_from=d_from, date_to=d_to)
+        assert "data" not in result
+        assert "new_high" in result
+        assert "date_from" in result
+        assert "date_to" in result
+
+    async def test_ytd_range_default_is_summary(self, mock_env):
+        d_from = (date.today() - timedelta(days=14)).isoformat()
+        d_to = (date.today() - timedelta(days=7)).isoformat()
+        result = await _call("detect_ytd_high_low_range", date_from=d_from, date_to=d_to)
+        assert "data" not in result
+        assert "new_high" in result
+        assert "date_from" in result
+
+    async def test_error_passes_through_unchanged(self, mock_env):
+        # Validation errors must not be silently swallowed by the summariser.
+        result = await _call("detect_price_limit", date="not-a-date")
+        assert "error" in result or "errors" in result
+        assert "data" not in result

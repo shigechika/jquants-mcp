@@ -358,6 +358,16 @@ claude mcp add jquants-mcp \
 
 API キーは `~/.jquants-api/jquants-api.toml` から自動検出されます。上書きが必要な場合のみ `--env JQUANTS_API_KEY=...` を指定してください。
 
+### AI エージェント向け Skills
+
+プロジェクトに操作ガイド Skill をインストールします：
+
+```bash
+npx skills add shigechika/jquants-mcp
+```
+
+`skills/jquants-mcp-usage/SKILL.md` がプロジェクトに追加され、キャッシュ階層・プラン別日付制限・スクリーナーパターン・安全なキャッシュ管理に関する要点を Claude Code に提供します。ツールの説明を増やすことなく、使い方のコツを Claude Code に伝えられます。
+
 ### Claude Desktop
 
 Claude Desktop の設定ファイルに追加:

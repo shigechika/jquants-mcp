@@ -177,6 +177,7 @@ def register(
     async def detect_price_limit(
         date: str,
         code: str | None = None,
+        detail: bool = False,
     ) -> dict[str, Any]:
         """Find stocks that hit the daily price limit (ストップ高/安) on a given trading day.
 
@@ -199,6 +200,9 @@ def register(
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
             code: Optional 4- or 5-digit code. If omitted, scans all
                 stocks with a row on ``date``.
+            detail: If True, include the full per-stock ``data`` array.
+                Default False returns summary counts only (``count``,
+                ``limit_high``, ``limit_low``).
         """
         errors = collect_errors(validate_date(date), validate_code(code))
         if errors:
@@ -257,7 +261,8 @@ def register(
                 }
             )
 
-        return {"count": len(matches), "data": matches}
+        full = {"count": len(matches), "data": matches}
+        return full if detail else _summarise_price_limit(full)
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def compare_close_vs_vwap(
@@ -369,6 +374,7 @@ def register(
         code: str | None = None,
         window_sessions: int = _FIFTY_TWO_WEEK_SESSIONS,
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
+        detail: bool = False,
     ) -> dict[str, Any]:
         """Identify stocks making a new 52-week rolling high or low (52週高値/安値 ブレイク).
 
@@ -427,6 +433,9 @@ def register(
                 prior history inside the window has fewer than this many
                 sessions (suppresses noise from recent IPOs). Default 60.
                 Set to 1 to disable.
+            detail: If True, include the full per-stock ``data`` array.
+                Default False returns summary counts only (``count``,
+                ``mode``, ``new_high``, ``new_low``).
         """
         errors = collect_errors(validate_date(date), validate_code(code))
         if errors:
@@ -460,10 +469,10 @@ def register(
                 min_prior_sessions=min_prior_sessions,
             )
             if cached is not None:
-                return cached
+                return cached if detail else _summarise_high_low(cached)
 
         start = _calendar_window_start(norm_date, window_sessions)
-        return await _high_low_signals(
+        result = await _high_low_signals(
             cache=cache,
             norm_date=norm_date,
             range_start=start,
@@ -472,12 +481,14 @@ def register(
             min_prior_sessions=min_prior_sessions,
             mode_label="52w",
         )
+        return result if detail else _summarise_high_low(result)
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def detect_ytd_high_low(
         date: str,
         code: str | None = None,
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
+        detail: bool = False,
     ) -> dict[str, Any]:
         """Identify stocks making a new year-to-date high or low (年初来高値/安値 更新).
 
@@ -536,6 +547,9 @@ def register(
                 YTD history has fewer than this many prior sessions
                 (suppresses noise from recent IPOs / January itself).
                 Default 60. Set to 1 to disable.
+            detail: If True, include the full per-stock ``data`` array.
+                Default False returns summary counts only (``count``,
+                ``mode``, ``new_high``, ``new_low``).
         """
         errors = collect_errors(validate_date(date), validate_code(code))
         if errors:
@@ -564,10 +578,10 @@ def register(
                 min_prior_sessions=min_prior_sessions,
             )
             if cached is not None:
-                return cached
+                return cached if detail else _summarise_high_low(cached)
 
         year_start = norm_date[:4] + "-01-01"
-        return await _high_low_signals(
+        result = await _high_low_signals(
             cache=cache,
             norm_date=norm_date,
             range_start=year_start,
@@ -576,6 +590,7 @@ def register(
             min_prior_sessions=min_prior_sessions,
             mode_label="ytd",
         )
+        return result if detail else _summarise_high_low(result)
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def detect_volume_surge(
@@ -583,6 +598,7 @@ def register(
         multiplier: float = 2.0,
         baseline_days: int = _DEFAULT_VOLUME_BASELINE,
         code: str | None = None,
+        detail: bool = False,
     ) -> dict[str, Any]:
         """Identify stocks with abnormally high trading volume (出来高急増) on a given day.
 
@@ -616,6 +632,9 @@ def register(
                 Default 20.
             code: Optional 4- or 5-digit code. If omitted, scans all
                 stocks with a row on ``date``.
+            detail: If True, include the full per-stock ``data`` array.
+                Default False returns summary counts only (``count``,
+                ``multiplier``, ``baseline_days``).
         """
         errors = collect_errors(validate_date(date), validate_code(code))
         if errors:
@@ -688,12 +707,13 @@ def register(
             )
 
         matches.sort(key=lambda m: m["surge_ratio"], reverse=True)
-        return {
+        full = {
             "count": len(matches),
             "multiplier": multiplier,
             "baseline_days": baseline_days,
             "data": matches,
         }
+        return full if detail else _summarise_volume_surge(full)
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def detect_52w_high_low_range(
@@ -702,6 +722,7 @@ def register(
         code: str | None = None,
         window_sessions: int = _FIFTY_TWO_WEEK_SESSIONS,
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
+        detail: bool = False,
     ) -> dict[str, Any]:
         """Scan 52-week high/low signals (52週高値/安値 ブレイク) across a date range.
 
@@ -741,6 +762,10 @@ def register(
                 computed on-demand.
             window_sessions: See ``detect_52w_high_low``.
             min_prior_sessions: See ``detect_52w_high_low``.
+            detail: If True, include the full per-stock ``data`` array.
+                Default False returns summary counts only (``count``,
+                ``mode``, ``date_from``, ``date_to``, ``new_high``,
+                ``new_low``).
         """
         errors = collect_errors(
             validate_date(date_from),
@@ -778,7 +803,7 @@ def register(
                 mode_label="52w",
             )
 
-        return await _high_low_range(
+        result = await _high_low_range(
             cache=cache,
             tool_name=screener_compute.TOOL_DETECT_52W,
             params_hash_value=screener_compute.default_params_hash_52w(
@@ -791,6 +816,7 @@ def register(
             mode_label="52w",
             on_demand=_compute_one,
         )
+        return result if detail else _summarise_high_low(result)
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def detect_ytd_high_low_range(
@@ -798,6 +824,7 @@ def register(
         date_to: str,
         code: str | None = None,
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
+        detail: bool = False,
     ) -> dict[str, Any]:
         """Scan year-to-date high/low signals (年初来高値/安値 更新) across a date range.
 
@@ -836,6 +863,10 @@ def register(
                 cross-sectional IPO filter dropped) and every date is
                 computed on-demand.
             min_prior_sessions: See ``detect_ytd_high_low``.
+            detail: If True, include the full per-stock ``data`` array.
+                Default False returns summary counts only (``count``,
+                ``mode``, ``date_from``, ``date_to``, ``new_high``,
+                ``new_low``).
         """
         errors = collect_errors(
             validate_date(date_from),
@@ -871,7 +902,7 @@ def register(
                 mode_label="ytd",
             )
 
-        return await _high_low_range(
+        result = await _high_low_range(
             cache=cache,
             tool_name=screener_compute.TOOL_DETECT_YTD,
             params_hash_value=screener_compute.default_params_hash_ytd(
@@ -883,6 +914,7 @@ def register(
             mode_label="ytd",
             on_demand=_compute_one,
         )
+        return result if detail else _summarise_high_low(result)
 
 
 # ----------------------------------------------------------------
@@ -1004,6 +1036,50 @@ def _try_screener_cache_ytd(
         "count": payload.get("count", 0),
         "mode": payload.get("mode", "ytd"),
         "data": list(payload.get("data", [])),
+    }
+
+
+def _summarise_price_limit(full: dict[str, Any]) -> dict[str, Any]:
+    """Return aggregate counts without the per-stock ``data`` array."""
+    if "data" not in full:
+        return full
+    data = full["data"]
+    return {
+        "count": full.get("count", 0),
+        "limit_high": sum(1 for r in data if r.get("limit_high_touched")),
+        "limit_low": sum(1 for r in data if r.get("limit_low_touched")),
+    }
+
+
+def _summarise_high_low(full: dict[str, Any]) -> dict[str, Any]:
+    """Return aggregate counts without the per-stock ``data`` array.
+
+    Handles both single-date (52w/ytd) and range results; range payloads
+    include ``date_from``/``date_to`` in the summary.
+    """
+    if "data" not in full:
+        return full
+    data = full["data"]
+    result: dict[str, Any] = {
+        "count": full.get("count", 0),
+        "mode": full.get("mode", ""),
+        "new_high": sum(1 for r in data if r.get("new_high")),
+        "new_low": sum(1 for r in data if r.get("new_low")),
+    }
+    if "date_from" in full:
+        result["date_from"] = full["date_from"]
+        result["date_to"] = full["date_to"]
+    return result
+
+
+def _summarise_volume_surge(full: dict[str, Any]) -> dict[str, Any]:
+    """Return aggregate counts without the per-stock ``data`` array."""
+    if "data" not in full:
+        return full
+    return {
+        "count": full.get("count", 0),
+        "multiplier": full.get("multiplier"),
+        "baseline_days": full.get("baseline_days"),
     }
 
 
