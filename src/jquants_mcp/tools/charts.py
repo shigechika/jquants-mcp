@@ -614,6 +614,9 @@ def register(
             return _error_image(f"No cached bars found for any code in {norm_from}..{norm_to}.")
 
         df = pd.DataFrame(series_map).sort_index()
+        # Forward-fill isolated missing days (e.g., one stock absent from
+        # a specific API response) so a single NaN doesn't break the line.
+        df = df.ffill()
 
         if mode == "return_pct":
             # bfill so a stock that starts mid-window (late IPO) uses its
