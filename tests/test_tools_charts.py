@@ -1304,6 +1304,35 @@ class TestRenderComparisonChart:
         )
         assert _is_error_image_png(png)
 
+    async def test_misaligned_dates_renders_without_error(self, mock_env):
+        # Regression: one stock missing a single trading day that others have
+        # (e.g. 9984/7974 missing 2026-03-11 on m1.local cache) produces NaN
+        # in the outer-joined DataFrame. Without ffill, matplotlib breaks the
+        # line at the NaN. Verify the chart renders successfully.
+        rows_a = []
+        for i in range(5):
+            d = (datetime(2026, 3, 9) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows_a.append(_bar("27800", d, c=100.0 + i))
+        _seed(mock_env["cache"], rows_a)
+
+        # Stock B intentionally missing 2026-03-11 (index position 2).
+        rows_b = [
+            _bar("72030", "2026-03-09", c=200.0),
+            _bar("72030", "2026-03-10", c=201.0),
+            # 2026-03-11 absent
+            _bar("72030", "2026-03-12", c=203.0),
+            _bar("72030", "2026-03-13", c=204.0),
+        ]
+        _seed(mock_env["cache"], rows_b)
+
+        png = await _call_image(
+            "render_comparison_chart",
+            codes=["27800", "72030"],
+            from_date="2026-03-09",
+            to_date="2026-03-13",
+        )
+        assert _is_real_chart_png(png)
+
 
 def test_register_no_op_when_extras_missing():
     """register() should silently skip when mplfinance isn't importable.
