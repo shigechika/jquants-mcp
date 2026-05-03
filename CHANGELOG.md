@@ -5,6 +5,19 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.12.0](https://github.com/shigechika/jquants-mcp/compare/v0.11.2...v0.12.0) (2026-05-03)
+
+
+### Features
+
+* **charts:** add labels and aspect_ratio to render_comparison_chart ([#231](https://github.com/shigechika/jquants-mcp/issues/231)) ([9e8234c](https://github.com/shigechika/jquants-mcp/commit/9e8234c91b3adca061ee0643df6b7d1ac098cb86))
+* **scripts:** add --check-gaps to verify_cache_completeness.py ([#230](https://github.com/shigechika/jquants-mcp/issues/230)) ([29212b0](https://github.com/shigechika/jquants-mcp/commit/29212b0448211c953fde90ffda0e061ded0b9c74))
+
+
+### Bug Fixes
+
+* **charts:** forward-fill isolated missing days in render_comparison_chart ([#227](https://github.com/shigechika/jquants-mcp/issues/227)) ([59a8009](https://github.com/shigechika/jquants-mcp/commit/59a800923b3187e8774461307ff5f4d1d3fe8486))
+
 ## [0.11.2](https://github.com/shigechika/jquants-mcp/compare/v0.11.1...v0.11.2) (2026-05-03)
 
 
