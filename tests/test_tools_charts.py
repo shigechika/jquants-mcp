@@ -1395,6 +1395,22 @@ class TestRenderComparisonChart:
         )
         assert _is_real_comparison_png(png)
 
+    async def test_whitespace_only_label_falls_back_to_auto(self, mock_env):
+        rows = []
+        for i in range(15):
+            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, c=100.0 + i))
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_comparison_chart",
+            codes=["27800"],
+            from_date="2026-01-05",
+            to_date="2026-01-19",
+            labels=["   "],  # whitespace-only → auto-label
+        )
+        assert _is_real_comparison_png(png)
+
     async def test_landscape_aspect_ratio_renders(self, mock_env):
         rows = []
         for i in range(15):
@@ -1443,9 +1459,12 @@ def test_brief_company_name():
 
     # Full-width ASCII → half-width via NFKC
     assert _brief_company_name("ＡＢＣ株式会社") == "ABC株式会社"
-    # Parenthetical suffix stripped
+    # Full-width parentheses are converted to ASCII by NFKC before the regex runs,
+    # so （…） and (…) are both stripped by the single ASCII pattern.
     assert _brief_company_name("トヨタ自動車（普通株）") == "トヨタ自動車"
     assert _brief_company_name("Sony Group Corp (ADR)") == "Sony Group Corp"
+    # Whitespace-only label after stripping → treated as blank
+    assert _brief_company_name("（普通株）") == ""
     # Truncation at _BRIEF_NAME_MAX_LEN (20 chars)
     long_name = "非常に長い会社名前サンプルテスト株式会社"  # 20 chars
     result = _brief_company_name(long_name + "追加")
@@ -1453,8 +1472,6 @@ def test_brief_company_name():
     assert result.endswith("…")
     # Empty string passthrough
     assert _brief_company_name("") == ""
-    # Only parentheses → returns empty string
-    assert _brief_company_name("（普通株）") == ""
 
 
 def test_register_no_op_when_extras_missing():

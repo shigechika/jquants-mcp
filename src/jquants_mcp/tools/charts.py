@@ -206,8 +206,9 @@ def _brief_company_name(name: str) -> str:
     caller can fall back to a code-only label.
     """
     name = unicodedata.normalize("NFKC", name)
-    # Strip （…） and (…) suffixes that add little information in a legend.
-    name = re.sub(r"（[^）]*）|\([^)]*\)", "", name)
+    # NFKC converts （）(U+FF08/FF09) to () before this point, so only the
+    # ASCII form needs to be matched here.
+    name = re.sub(r"\([^)]*\)", "", name)
     name = re.sub(r"\s+", " ", name).strip()
     if not name:
         return ""
@@ -655,7 +656,7 @@ def register(
                 continue
 
             display = _display_code(norm_code)
-            if labels is not None and labels[idx]:
+            if labels is not None and labels[idx].strip():
                 label = labels[idx]
             else:
                 company = _get_company_name(cache, norm_code)
