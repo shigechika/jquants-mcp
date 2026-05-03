@@ -466,23 +466,25 @@ def register(
                 # horizontal bars in the up/down candle colour.
                 plot_kwargs["returnfig"] = True
                 fig, axes = mpf.plot(df, **plot_kwargs)
-                price_ax = axes[0]
-                up_color, down_color = _LOCK_COLORS[style]
-                for lock in lock_days:
-                    date = pd.to_datetime(lock["date"])
-                    if date not in df.index:
-                        continue
-                    x_idx = df.index.get_loc(date)
-                    color = up_color if lock["direction"] == "high" else down_color
-                    price_ax.hlines(
-                        lock["price"],
-                        x_idx - _LOCK_BAR_HALF_WIDTH,
-                        x_idx + _LOCK_BAR_HALF_WIDTH,
-                        colors=color,
-                        linewidth=2.0,
-                    )
-                fig.savefig(buf, dpi=_DPI, format="png")
-                plt.close(fig)
+                try:
+                    price_ax = axes[0]
+                    up_color, down_color = _LOCK_COLORS[style]
+                    for lock in lock_days:
+                        date = pd.to_datetime(lock["date"])
+                        if date not in df.index:
+                            continue
+                        x_idx = df.index.get_loc(date)
+                        color = up_color if lock["direction"] == "high" else down_color
+                        price_ax.hlines(
+                            lock["price"],
+                            x_idx - _LOCK_BAR_HALF_WIDTH,
+                            x_idx + _LOCK_BAR_HALF_WIDTH,
+                            colors=color,
+                            linewidth=2.0,
+                        )
+                    fig.savefig(buf, dpi=_DPI, format="png")
+                finally:
+                    plt.close(fig)
             else:
                 plot_kwargs["savefig"] = {"fname": buf, "dpi": _DPI, "format": "png"}
                 mpf.plot(df, **plot_kwargs)
@@ -624,20 +626,22 @@ def register(
             mpl_style = "dark_background" if style == "dark" else "default"
             with plt.style.context(mpl_style), plt.rc_context(_CJK_RC):
                 fig, ax = plt.subplots(figsize=(_FIG_WIDTH, _FIG_HEIGHT), dpi=_DPI)
-                if style == "colorblind":
-                    ax.set_prop_cycle(color=_OI_COLORS)
-                df.plot(ax=ax, linewidth=1.5)
-                ax.set_title(f"Comparison {norm_from} → {norm_to}", pad=10)
-                if mode == "return_pct":
-                    ax.set_ylabel("Return (%)")
-                    ax.axhline(0, color="gray", linewidth=0.8, linestyle="--", alpha=0.7)
-                else:
-                    ax.set_ylabel("Price (adjusted close)")
-                ax.legend(loc="best", fontsize=8)
-                ax.grid(True, alpha=0.3)
-                fig.tight_layout()
-                fig.savefig(comp_buf, dpi=_DPI, format="png")
-                plt.close(fig)
+                try:
+                    if style == "colorblind":
+                        ax.set_prop_cycle(color=_OI_COLORS)
+                    df.plot(ax=ax, linewidth=1.5)
+                    ax.set_title(f"Comparison {norm_from} → {norm_to}", pad=10)
+                    if mode == "return_pct":
+                        ax.set_ylabel("Return (%)")
+                        ax.axhline(0, color="gray", linewidth=0.8, linestyle="--", alpha=0.7)
+                    else:
+                        ax.set_ylabel("Price (adjusted close)")
+                    ax.legend(loc="best", fontsize=8)
+                    ax.grid(True, alpha=0.3)
+                    fig.tight_layout()
+                    fig.savefig(comp_buf, dpi=_DPI, format="png")
+                finally:
+                    plt.close(fig)
         except Exception as exc:
             logger.warning("render_comparison_chart: rendering failed: %s", exc)
             return _error_image(f"Chart rendering failed: {exc}")

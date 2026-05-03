@@ -63,6 +63,7 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     "detect_ytd_high_low_range": READ_ONLY_CACHE,
     # tools/charts.py — cache only, returns Image (when [charts] extra installed)
     "render_candlestick": READ_ONLY_CACHE,
+    "render_comparison_chart": READ_ONLY_CACHE,
     # server.py utilities — pure server-local read
     "health_check": READ_ONLY_LOCAL,
     "cache_status": READ_ONLY_LOCAL,
@@ -87,10 +88,10 @@ async def _registered_tools() -> dict:
 async def test_tool_has_expected_annotations(name: str, expected: dict[str, bool]):
     tools = await _registered_tools()
     if name not in tools:
-        # render_candlestick is conditionally registered — skip if the
+        # charts tools are conditionally registered — skip if the
         # [charts] extra is not installed in the test env.
-        if name == "render_candlestick":
-            pytest.skip("[charts] extra not installed; render_candlestick not registered")
+        if name in ("render_candlestick", "render_comparison_chart"):
+            pytest.skip("[charts] extra not installed; tool not registered")
         pytest.fail(f"tool {name!r} not registered")
     tool = tools[name]
     annotations = tool.annotations
