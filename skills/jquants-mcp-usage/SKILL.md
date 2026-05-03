@@ -79,10 +79,14 @@ multiple consecutive days in a single call.
 Dates beyond the 52-week cache window return `OutOfCacheRange` immediately — do not retry.
 When a specific stock `code` is provided, cache is bypassed for correctness (IPO edge cases).
 
-All screener tools accept `detail: bool = False` (default).
+The 6 cross-sectional screener tools above (`detect_price_limit`, `detect_52w_high_low`,
+`detect_ytd_high_low`, `detect_volume_surge`, `detect_52w_high_low_range`,
+`detect_ytd_high_low_range`) accept `detail: bool = False`.
 - `detail=False` (default): returns summary counts only — no stock-level array. Prefer this on
   mobile and whenever you only need totals.
 - `detail=True`: returns the full `data` array with per-stock rows.
+
+`compare_close_vs_vwap` is per-code only and always returns a `data` array (no `detail` param).
 
 ### Charts
 - `render_candlestick` — returns a candlestick chart as an inline PNG image

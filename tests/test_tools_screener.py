@@ -1091,7 +1091,6 @@ class TestScreenerComputeHelpers:
         assert result["data"][0]["new_high_close"] is True
 
 
-@pytest.mark.usefixtures("mock_env")
 class TestDetailParameter:
     """``detail`` parameter: False (default) strips ``data``; True keeps it."""
 
