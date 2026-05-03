@@ -5,6 +5,18 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.11.0](https://github.com/shigechika/jquants-mcp/compare/v0.10.5...v0.11.0) (2026-05-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **screener:** screener tools now return summary counts by default (detail=False). Callers that access result["data"] must pass detail=True.
+
+### Features
+
+* add render_comparison_chart tool ([#221](https://github.com/shigechika/jquants-mcp/issues/221)) ([456add5](https://github.com/shigechika/jquants-mcp/commit/456add5b491670df6092b56ac7a73772c4af4986))
+* **screener:** add detail=False parameter to suppress large data arrays ([#220](https://github.com/shigechika/jquants-mcp/issues/220)) ([d625c2d](https://github.com/shigechika/jquants-mcp/commit/d625c2ddb3bc653546d57c17204654c92f8f0fe1))
+
 ## [0.10.5](https://github.com/shigechika/jquants-mcp/compare/v0.10.4...v0.10.5) (2026-05-01)
 
 
