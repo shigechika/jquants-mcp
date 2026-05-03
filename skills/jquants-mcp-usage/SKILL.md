@@ -90,6 +90,7 @@ The 6 cross-sectional screener tools above (`detect_price_limit`, `detect_52w_hi
 
 ### Charts
 - `render_candlestick` — returns a candlestick chart as an inline PNG image
+- `render_comparison_chart` — multi-stock performance comparison line chart as inline PNG; up to 10 codes, `mode="return_pct"` (default) or `"price"`, `style="default"|"dark"|"colorblind"`
 
 ### Bulk
 - `get_bulk_list` — list available bulk data files

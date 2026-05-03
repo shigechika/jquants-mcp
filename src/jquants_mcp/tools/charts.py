@@ -466,23 +466,25 @@ def register(
                 # horizontal bars in the up/down candle colour.
                 plot_kwargs["returnfig"] = True
                 fig, axes = mpf.plot(df, **plot_kwargs)
-                price_ax = axes[0]
-                up_color, down_color = _LOCK_COLORS[style]
-                for lock in lock_days:
-                    date = pd.to_datetime(lock["date"])
-                    if date not in df.index:
-                        continue
-                    x_idx = df.index.get_loc(date)
-                    color = up_color if lock["direction"] == "high" else down_color
-                    price_ax.hlines(
-                        lock["price"],
-                        x_idx - _LOCK_BAR_HALF_WIDTH,
-                        x_idx + _LOCK_BAR_HALF_WIDTH,
-                        colors=color,
-                        linewidth=2.0,
-                    )
-                fig.savefig(buf, dpi=_DPI, format="png")
-                plt.close(fig)
+                try:
+                    price_ax = axes[0]
+                    up_color, down_color = _LOCK_COLORS[style]
+                    for lock in lock_days:
+                        date = pd.to_datetime(lock["date"])
+                        if date not in df.index:
+                            continue
+                        x_idx = df.index.get_loc(date)
+                        color = up_color if lock["direction"] == "high" else down_color
+                        price_ax.hlines(
+                            lock["price"],
+                            x_idx - _LOCK_BAR_HALF_WIDTH,
+                            x_idx + _LOCK_BAR_HALF_WIDTH,
+                            colors=color,
+                            linewidth=2.0,
+                        )
+                    fig.savefig(buf, dpi=_DPI, format="png")
+                finally:
+                    plt.close(fig)
             else:
                 plot_kwargs["savefig"] = {"fname": buf, "dpi": _DPI, "format": "png"}
                 mpf.plot(df, **plot_kwargs)
@@ -491,6 +493,160 @@ def register(
             return _error_image(f"Chart rendering failed: {exc}")
 
         return Image(data=buf.getvalue(), format="png")
+
+    # Okabe-Ito colorblind-safe palette, 10 slots (1 per stock).
+    _OI_COLORS = [
+        "#0072B2",
+        "#E69F00",
+        "#56B4E9",
+        "#009E73",
+        "#F0E442",
+        "#D55E00",
+        "#CC79A7",
+        "#999999",
+        "#000000",
+        "#7F7F7F",
+    ]
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def render_comparison_chart(
+        codes: list[str],
+        from_date: str,
+        to_date: str,
+        mode: str = "return_pct",
+        style: str = "default",
+    ) -> Image:
+        """Render a multi-stock performance comparison line chart as PNG (複数銘柄比較チャート).
+
+        Plots up to 10 stocks on the same axis so relative performance is visible at a
+        glance. Reads adjusted-close prices from the local Tier 1 cache (no API call).
+        The image is returned inline; Claude Desktop and Claude mobile display it directly
+        in chat.
+
+        Use for 比較チャート, パフォーマンス比較, 複数銘柄比較, comparison chart,
+        relative performance, return chart, リターン比較.
+
+        [Supported plans] Free / Light / Standard / Premium
+        [Source] equities_bars_daily Tier 1 cache (no API call)
+        [Optional dependency] ``mplfinance`` + ``matplotlib``
+
+        **Call sequentially when rendering multiple charts** (not in parallel).
+
+        Args:
+            codes: List of 1–10 stock codes (4- or 5-digit, e.g. ["72030", "86970"]).
+            from_date: Range start (YYYYMMDD or YYYY-MM-DD), inclusive.
+            to_date: Range end (YYYYMMDD or YYYY-MM-DD), inclusive.
+            mode: ``return_pct`` (default) — normalise each stock to 0 % at its first
+                available bar so performance is directly comparable. ``price`` — plot raw
+                adjusted-close prices without normalisation.
+            style: ``default``, ``dark``, or ``colorblind`` (Okabe-Ito palette).
+        """
+        if not codes or len(codes) > 10:
+            return _error_image("codes must be a list of 1–10 stock codes.")
+
+        code_errors: list[str] = []
+        for c in codes:
+            err = validate_code(c, param=f"codes[{c!r}]")
+            if err:
+                code_errors.append(err)
+        date_errors = collect_errors(
+            validate_date(from_date, param="from_date"),
+            validate_date(to_date, param="to_date"),
+        )
+        all_errors = code_errors + date_errors
+        if all_errors:
+            return _error_image("; ".join(all_errors))
+
+        if mode not in ("return_pct", "price"):
+            return _error_image(f"Unknown mode: {mode!r}. Accepted: 'return_pct', 'price'")
+        if style not in _STYLE_ALIASES:
+            return _error_image(f"Unknown style: {style!r}. Accepted: {sorted(_STYLE_ALIASES)}")
+
+        norm_from = _normalize_date(from_date)
+        norm_to = _normalize_date(to_date)
+        if norm_from > norm_to:
+            return _error_image("`from_date` must be <= `to_date`.")
+
+        cache: CacheStore = get_cache()
+
+        series_map: dict[str, pd.Series] = {}
+        for code in codes:
+            norm_code = _normalize_code(code)
+            try:
+                rows = cache.get_rows(
+                    "equities_bars_daily",
+                    key_filter={"code": norm_code},
+                    date_from=norm_from,
+                    date_to=norm_to,
+                )
+            except (
+                APIError,
+                InvalidAPIKeyError,
+                UserNotConfiguredError,
+                DecryptionError,
+                UserNotAllowedError,
+            ) as e:
+                err = format_api_error(e)
+                return _error_image(err.get("message") or "API error")
+
+            records: dict = {}
+            for r in rows:
+                try:
+                    d = pd.to_datetime(r["Date"])
+                    adj_c = r.get("AdjC")
+                    raw_c = r.get("C")
+                    val = float(adj_c if adj_c not in (None, "") else raw_c)
+                    records[d] = val
+                except (KeyError, TypeError, ValueError):
+                    continue
+
+            if not records:
+                logger.debug("render_comparison_chart: no bars for %s", norm_code)
+                continue
+
+            company = _get_company_name(cache, norm_code)
+            label = _display_code(norm_code)
+            if company:
+                label = f"{label} {company}"
+            series_map[label] = pd.Series(records).sort_index()
+
+        if not series_map:
+            return _error_image(f"No cached bars found for any code in {norm_from}..{norm_to}.")
+
+        df = pd.DataFrame(series_map).sort_index()
+
+        if mode == "return_pct":
+            # bfill so a stock that starts mid-window (late IPO) uses its
+            # own first real bar as baseline rather than giving a NaN row.
+            baseline = df.bfill().iloc[0]
+            df = df.div(baseline).sub(1).mul(100)
+
+        comp_buf = io.BytesIO()
+        try:
+            mpl_style = "dark_background" if style == "dark" else "default"
+            with plt.style.context(mpl_style), plt.rc_context(_CJK_RC):
+                fig, ax = plt.subplots(figsize=(_FIG_WIDTH, _FIG_HEIGHT), dpi=_DPI)
+                try:
+                    if style == "colorblind":
+                        ax.set_prop_cycle(color=_OI_COLORS)
+                    df.plot(ax=ax, linewidth=1.5)
+                    ax.set_title(f"Comparison {norm_from} → {norm_to}", pad=10)
+                    if mode == "return_pct":
+                        ax.set_ylabel("Return (%)")
+                        ax.axhline(0, color="gray", linewidth=0.8, linestyle="--", alpha=0.7)
+                    else:
+                        ax.set_ylabel("Price (adjusted close)")
+                    ax.legend(loc="best", fontsize=8)
+                    ax.grid(True, alpha=0.3)
+                    fig.tight_layout()
+                    fig.savefig(comp_buf, dpi=_DPI, format="png")
+                finally:
+                    plt.close(fig)
+        except Exception as exc:
+            logger.warning("render_comparison_chart: rendering failed: %s", exc)
+            return _error_image(f"Chart rendering failed: {exc}")
+
+        return Image(data=comp_buf.getvalue(), format="png")
 
 
 def _error_image(message: str) -> Image:
