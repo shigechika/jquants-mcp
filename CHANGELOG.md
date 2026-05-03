@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.11.2](https://github.com/shigechika/jquants-mcp/compare/v0.11.1...v0.11.2) (2026-05-03)
+
+
+### Bug Fixes
+
+* use integer x-axis in render_comparison_chart to eliminate non-trading day gaps ([#225](https://github.com/shigechika/jquants-mcp/issues/225)) ([b6488dc](https://github.com/shigechika/jquants-mcp/commit/b6488dc2502adf7c102d84c95863fe2e6fef576e))
+
 ## [0.11.1](https://github.com/shigechika/jquants-mcp/compare/v0.11.0...v0.11.1) (2026-05-03)
 
 
