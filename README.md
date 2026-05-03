@@ -358,6 +358,16 @@ The `--scope` (`-s`) option controls where the configuration is stored:
 
 API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `--env JQUANTS_API_KEY=...` only to override.
 
+### AI Agent Skills
+
+Install the operational guidance Skill into your Claude Code project:
+
+```bash
+npx skills add shigechika/jquants-mcp
+```
+
+This adds `skills/jquants-mcp-usage/SKILL.md` to your project, giving Claude Code practical tips on cache tiers, plan-based date limits, screener patterns, and safe cache management — without touching the tool definitions.
+
 ### Claude Desktop
 
 Add to Claude Desktop config file:
