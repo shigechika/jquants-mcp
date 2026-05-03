@@ -482,6 +482,7 @@ def main() -> None:
 
     conn = _connect(args.db)
     exit_code = 0
+    gaps_result = None
     try:
         result = check_all(conn, args.plan)
 
@@ -492,8 +493,6 @@ def main() -> None:
                 from_date=args.from_date,
                 to_date=args.to_date,
             )
-        else:
-            gaps_result = None
     finally:
         conn.close()
 
