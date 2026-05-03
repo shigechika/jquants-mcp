@@ -101,6 +101,12 @@ _COMPARISON_ASPECT_RATIOS: dict[str, tuple[float, float]] = {
 # Maximum display length for auto-shortened company name labels.
 _BRIEF_NAME_MAX_LEN = 20
 
+# Compiled patterns used by _brief_company_name.
+_CORP_SUFFIX_RE = re.compile(r"(?:株式会社|合同会社|有限会社)")
+_ETF_SUFFIX_RE = re.compile(r"(?:ETF|ETN)$", re.IGNORECASE)
+_ETF_PREFIX_RE = re.compile(r"^(?:ETF|ETN)(?=[^A-Za-z0-9])", re.IGNORECASE)
+_ETF_STANDALONE = frozenset({"etf", "etn"})
+
 
 # CJK-aware font fallback chain so the chart title (company name)
 # renders in Japanese instead of tofu. mplfinance styles override
@@ -200,20 +206,55 @@ def _get_company_name(cache: CacheStore, code: str) -> str | None:
 def _brief_company_name(name: str) -> str:
     """Shorten a Japanese company name for use as a chart legend label.
 
-    Applies NFKC normalisation (full-width → ASCII), strips parenthetical
-    suffixes, collapses whitespace, and truncates to ``_BRIEF_NAME_MAX_LEN``
-    characters.  Returns an empty string when the result is blank so the
-    caller can fall back to a code-only label.
+    J-Quants ETF ``CoName`` values lead with an asset-management company name
+    separated from the actual fund name by ideographic spaces (U+3000).  This
+    function strips that prefix so the legend shows the meaningful fund
+    identifier, not the manager.
+
+    Steps:
+    1. Split on U+3000 *before* NFKC so the structural boundary survives.
+    2. Drop the leading segment(s) that carry a corporate-type suffix
+       (株式会社 / 合同会社 / 有限会社) when multiple segments exist.
+    3. Apply NFKC to the rest: full-width ASCII → half-width, U+3000 → space,
+       （）→ ().
+    4. Strip ETF/ETN product-type tokens (standalone, suffix, or prefix)
+       so "iFreeETF" → "iFree" and "ETF(年1回決算型)" → "(年1回決算型)".
+    5. Truncate to ``_BRIEF_NAME_MAX_LEN`` characters.
+
+    Parenthetical content is intentionally **kept** — for ETFs the
+    parenthetical often distinguishes otherwise identical names
+    (e.g. 年1回決算型 vs 毎月分配型).
+
+    Returns an empty string when the result is blank so the caller can fall
+    back to a code-only label.
     """
-    name = unicodedata.normalize("NFKC", name)
-    # NFKC converts （）(U+FF08/FF09) to () before this point, so only the
-    # ASCII form needs to be matched here.
-    name = re.sub(r"\([^)]*\)", "", name)
-    name = re.sub(r"\s+", " ", name).strip()
+    # Split on ideographic space first, before NFKC converts it to ASCII space,
+    # so the asset-management company prefix boundary is still detectable.
+    parts = name.split("　")
+    if len(parts) > 1:
+        # The management company name may itself span multiple U+3000-delimited
+        # parts (e.g. "Global　X　Japan株式会社"). Scan the first three
+        # parts and drop everything up to and including the one with a corp suffix.
+        for i, p in enumerate(parts[:3]):
+            if _CORP_SUFFIX_RE.search(p):
+                parts = parts[i + 1 :]
+                break
+    name = unicodedata.normalize("NFKC", " ".join(parts))
+    # Strip ETF/ETN product-type markers so they don't crowd the label.
+    tokens = name.split()
+    cleaned = []
+    for t in tokens:
+        if t.lower() in _ETF_STANDALONE:
+            continue
+        t = _ETF_SUFFIX_RE.sub("", t)  # iFreeETF → iFree
+        t = _ETF_PREFIX_RE.sub("", t)  # ETF(年1回) → (年1回)
+        if t:
+            cleaned.append(t)
+    name = re.sub(r"\s+", " ", " ".join(cleaned)).strip()
     if not name:
         return ""
     if len(name) > _BRIEF_NAME_MAX_LEN:
-        name = name[: _BRIEF_NAME_MAX_LEN - 1] + "…"
+        name = name[: _BRIEF_NAME_MAX_LEN - 1].rstrip() + "…"
     return name
 
 

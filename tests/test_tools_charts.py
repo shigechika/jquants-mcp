@@ -1457,24 +1457,49 @@ class TestRenderComparisonChart:
 def test_brief_company_name():
     from jquants_mcp.tools.charts import _brief_company_name
 
-    # Full-width ASCII → half-width via NFKC
+    # Single-segment name with 株式会社: no U+3000 separator, so the corp suffix
+    # is NOT stripped (it's the entire name, not a management company prefix).
     assert _brief_company_name("ＡＢＣ株式会社") == "ABC株式会社"
-    # Full-width parentheses （）are converted to () by NFKC before the regex runs,
-    # so both full-width and ASCII forms are stripped by the single pattern.
-    assert _brief_company_name("トヨタ自動車（普通株）") == "トヨタ自動車"
-    assert _brief_company_name("Sony Group Corp (ADR)") == "Sony Group Corp"
-    # Parenthetical-only input → empty string after stripping
-    assert _brief_company_name("（普通株）") == ""
-    # Real ETF name (code 13050): full-width ideographic space 　 → ASCII space,
-    # full-width Latin letters ｉＦｒｅｅＥＴＦ → ASCII, and full-width parenthetical
-    # suffix （年１回決算型） stripped; result truncated to 20 chars.
+
+    # Regular stock: no ideographic space, parenthetical kept as-is.
+    # (Real J-Quants CoNames for ordinary stocks do not carry （普通株）;
+    # this is a synthetic edge case to verify no crash.)
+    assert _brief_company_name("トヨタ自動車（普通株）") == "トヨタ自動車(普通株)"
+
+    # Real ETF (code 13050): management company prefix stripped via U+3000 split,
+    # iFreeETF → iFree (ETF suffix removed), parenthetical kept.
+    # Distinguishes from 日経225 variant below.
     assert (
         _brief_company_name(
             "大和アセットマネジメント株式会社　ｉＦｒｅｅＥＴＦ　ＴＯＰＩＸ（年１回決算型）"
         )
-        == "大和アセットマネジメント株式会社 iF…"
+        == "iFree TOPIX(年1回決算型)"
     )
-    # Empty string passthrough
+
+    # Real ETF (code 13200): same brand/type, different index — must produce a
+    # DIFFERENT label from the TOPIX variant above.
+    assert (
+        _brief_company_name(
+            "大和アセットマネジメント株式会社　ｉＦｒｅｅＥＴＦ　日経２２５（年１回決算型）"
+        )
+        == "iFree 日経225(年1回決算型)"
+    )
+
+    # Multi-segment company name (Global　X　Japan株式会社): corp suffix found
+    # at part index 2, all three leading parts dropped.
+    assert _brief_company_name(
+        "Ｇｌｏｂａｌ　Ｘ　Ｊａｐａｎ株式会社　グローバルＸ　ＵＳ　ＲＥＩＴ・トップ２０　ＥＴＦ（隔月分配型）"
+    ).startswith("グローバルX")
+
+    # Truncation: result must be <= 20 chars and end with ellipsis.
+    long_result = _brief_company_name(
+        "野村アセットマネジメント株式会社　ＮＥＸＴ　ＦＵＮＤＳ　"
+        "新興国債券・Ｊ．Ｐ．モルガン・エマージング・マーケット・ボンド・インデックス・プラス（為替ヘッジなし）連動型上場投信"
+    )
+    assert len(long_result) <= 20
+    assert long_result.endswith("…")
+
+    # Empty input passthrough.
     assert _brief_company_name("") == ""
 
 
