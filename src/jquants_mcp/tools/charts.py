@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import sqlite3
+import unicodedata
 from typing import Any
 
 from fastmcp import FastMCP
@@ -83,11 +85,27 @@ _LOCK_COLORS: dict[str, tuple[str, str]] = {
 # at a glance, narrow enough not to overlap neighbouring bars.
 _LOCK_BAR_HALF_WIDTH = 0.4
 
-# PNG render dimensions: comfortable for Claude clients without bloating
-# the response payload (typical output well under 200 KB at this size).
+# PNG render dimensions for render_candlestick.
 _FIG_WIDTH = 12.0
 _FIG_HEIGHT = 8.0
 _DPI = 100
+
+# Accepted aspect ratios for render_comparison_chart.
+# "square" is the default — fits naturally in both chat and mobile viewports.
+_COMPARISON_ASPECT_RATIOS: dict[str, tuple[float, float]] = {
+    "square": (8.0, 8.0),
+    "landscape": (12.0, 6.0),
+    "portrait": (6.0, 9.0),
+}
+
+# Maximum display length for auto-shortened company name labels.
+_BRIEF_NAME_MAX_LEN = 20
+
+# Compiled patterns used by _brief_company_name.
+_CORP_SUFFIX_RE = re.compile(r"(?:株式会社|合同会社|有限会社)")
+_ETF_SUFFIX_RE = re.compile(r"(?:ETF|ETN)$", re.IGNORECASE)
+_ETF_PREFIX_RE = re.compile(r"^(?:ETF|ETN)(?=[^A-Za-z0-9])", re.IGNORECASE)
+_ETF_STANDALONE = frozenset({"etf", "etn"})
 
 
 # CJK-aware font fallback chain so the chart title (company name)
@@ -183,6 +201,61 @@ def _get_company_name(cache: CacheStore, code: str) -> str | None:
         if isinstance(name, str) and name.strip():
             return name.strip()
     return None
+
+
+def _brief_company_name(name: str) -> str:
+    """Shorten a Japanese company name for use as a chart legend label.
+
+    J-Quants ETF ``CoName`` values lead with an asset-management company name
+    separated from the actual fund name by ideographic spaces (U+3000).  This
+    function strips that prefix so the legend shows the meaningful fund
+    identifier, not the manager.
+
+    Steps:
+    1. Split on U+3000 *before* NFKC so the structural boundary survives.
+    2. Drop the leading segment(s) that carry a corporate-type suffix
+       (株式会社 / 合同会社 / 有限会社) when multiple segments exist.
+    3. Apply NFKC to the rest: full-width ASCII → half-width, U+3000 → space,
+       （）→ ().
+    4. Strip ETF/ETN product-type tokens (standalone, suffix, or prefix)
+       so "iFreeETF" → "iFree" and "ETF(年1回決算型)" → "(年1回決算型)".
+    5. Truncate to ``_BRIEF_NAME_MAX_LEN`` characters.
+
+    Parenthetical content is intentionally **kept** — for ETFs the
+    parenthetical often distinguishes otherwise identical names
+    (e.g. 年1回決算型 vs 毎月分配型).
+
+    Returns an empty string when the result is blank so the caller can fall
+    back to a code-only label.
+    """
+    # Split on ideographic space first, before NFKC converts it to ASCII space,
+    # so the asset-management company prefix boundary is still detectable.
+    parts = name.split("　")
+    if len(parts) > 1:
+        # The management company name may itself span multiple U+3000-delimited
+        # parts (e.g. "Global　X　Japan株式会社"). Scan the first three
+        # parts and drop everything up to and including the one with a corp suffix.
+        for i, p in enumerate(parts[:3]):
+            if _CORP_SUFFIX_RE.search(p):
+                parts = parts[i + 1 :]
+                break
+    name = unicodedata.normalize("NFKC", " ".join(parts))
+    # Strip ETF/ETN product-type markers so they don't crowd the label.
+    tokens = name.split()
+    cleaned = []
+    for t in tokens:
+        if t.lower() in _ETF_STANDALONE:
+            continue
+        t = _ETF_SUFFIX_RE.sub("", t)  # iFreeETF → iFree
+        t = _ETF_PREFIX_RE.sub("", t)  # ETF(年1回) → (年1回)
+        if t:
+            cleaned.append(t)
+    name = re.sub(r"\s+", " ", " ".join(cleaned)).strip()
+    if not name:
+        return ""
+    if len(name) > _BRIEF_NAME_MAX_LEN:
+        name = name[: _BRIEF_NAME_MAX_LEN - 1].rstrip() + "…"
+    return name
 
 
 def _build_chart_title(code: str, company: str | None, norm_from: str, norm_to: str) -> str:
@@ -515,6 +588,8 @@ def register(
         to_date: str,
         mode: str = "return_pct",
         style: str = "default",
+        labels: list[str] | None = None,
+        aspect_ratio: str = "square",
     ) -> Image:
         """Render a multi-stock performance comparison line chart as PNG (複数銘柄比較チャート).
 
@@ -540,6 +615,14 @@ def register(
                 available bar so performance is directly comparable. ``price`` — plot raw
                 adjusted-close prices without normalisation.
             style: ``default``, ``dark``, or ``colorblind`` (Okabe-Ito palette).
+            labels: Optional list of custom legend labels, one per code in the same
+                order as ``codes``.  An empty string at any position falls back to the
+                auto-generated ``CODE CompanyName`` label.  When omitted (default),
+                labels are built from the stock code and the company name fetched from
+                the ``equities_master`` cache.
+            aspect_ratio: Chart shape. ``square`` (default, 8×8 in) fits chat and
+                mobile viewports. ``landscape`` (12×6 in) suits wide displays.
+                ``portrait`` (6×9 in) is taller for narrow sidebars.
         """
         if not codes or len(codes) > 10:
             return _error_image("codes must be a list of 1–10 stock codes.")
@@ -561,6 +644,15 @@ def register(
             return _error_image(f"Unknown mode: {mode!r}. Accepted: 'return_pct', 'price'")
         if style not in _STYLE_ALIASES:
             return _error_image(f"Unknown style: {style!r}. Accepted: {sorted(_STYLE_ALIASES)}")
+        if labels is not None and len(labels) != len(codes):
+            return _error_image(
+                f"labels length ({len(labels)}) must match codes length ({len(codes)})."
+            )
+        if aspect_ratio not in _COMPARISON_ASPECT_RATIOS:
+            return _error_image(
+                f"Unknown aspect_ratio: {aspect_ratio!r}. "
+                f"Accepted: {sorted(_COMPARISON_ASPECT_RATIOS)}"
+            )
 
         norm_from = _normalize_date(from_date)
         norm_to = _normalize_date(to_date)
@@ -570,7 +662,7 @@ def register(
         cache: CacheStore = get_cache()
 
         series_map: dict[str, pd.Series] = {}
-        for code in codes:
+        for idx, code in enumerate(codes):
             norm_code = _normalize_code(code)
             try:
                 rows = cache.get_rows(
@@ -604,10 +696,16 @@ def register(
                 logger.debug("render_comparison_chart: no bars for %s", norm_code)
                 continue
 
-            company = _get_company_name(cache, norm_code)
-            label = _display_code(norm_code)
-            if company:
-                label = f"{label} {company}"
+            display = _display_code(norm_code)
+            if labels is not None and labels[idx].strip():
+                label = labels[idx]
+            else:
+                company = _get_company_name(cache, norm_code)
+                if company:
+                    brief = _brief_company_name(company)
+                    label = f"{display} {brief}" if brief else display
+                else:
+                    label = display
             series_map[label] = pd.Series(records).sort_index()
 
         if not series_map:
@@ -625,10 +723,11 @@ def register(
             df = df.div(baseline).sub(1).mul(100)
 
         comp_buf = io.BytesIO()
+        fig_w, fig_h = _COMPARISON_ASPECT_RATIOS[aspect_ratio]
         try:
             mpl_style = "dark_background" if style == "dark" else "default"
             with plt.style.context(mpl_style), plt.rc_context(_CJK_RC):
-                fig, ax = plt.subplots(figsize=(_FIG_WIDTH, _FIG_HEIGHT), dpi=_DPI)
+                fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=_DPI)
                 try:
                     if style == "colorblind":
                         ax.set_prop_cycle(color=_OI_COLORS)
@@ -641,9 +740,10 @@ def register(
                     df_int = df.copy()
                     df_int.index = range(len(df_int))
                     df_int.plot(ax=ax, linewidth=1.5)
-                    # Replace auto integer ticks with readable date labels.
+                    # Scale tick density to figure width so portrait/narrow
+                    # views don't crowd date labels.
                     n = len(date_index)
-                    tick_every = max(1, n // 8)
+                    tick_every = max(1, n // max(4, int(fig_w * 0.7)))
                     tick_pos = list(range(0, n, tick_every))
                     if tick_pos[-1] != n - 1:
                         tick_pos.append(n - 1)
