@@ -138,6 +138,20 @@ def _is_error_image_png(data: bytes) -> bool:
     return width <= 1000
 
 
+def _is_real_comparison_png(data: bytes) -> bool:
+    """True for a real render_comparison_chart PNG.
+
+    The comparison chart default is square (8×8 in = 800×800 px), which has
+    the same width as the error image (800 px).  Distinguish by HEIGHT:
+    real charts are at least 600 px tall; the error image is ~200 px tall
+    (figsize 8×2 with bbox_inches='tight').
+    """
+    if not _is_png(data):
+        return False
+    _, height = _png_dimensions(data)
+    return height > 400
+
+
 def _make_fake_png(width: int = 1200, height: int = 800) -> bytes:
     """Build a minimal PNG-looking byte string with the requested dimensions.
 
@@ -1153,7 +1167,7 @@ class TestRenderComparisonChart:
             from_date="2026-01-05",
             to_date="2026-01-24",
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_comparison_png(png)
 
     async def test_price_mode_renders(self, mock_env):
         rows = []
@@ -1169,7 +1183,7 @@ class TestRenderComparisonChart:
             to_date="2026-01-19",
             mode="price",
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_comparison_png(png)
 
     async def test_colorblind_style_renders(self, mock_env):
         rows = []
@@ -1185,7 +1199,7 @@ class TestRenderComparisonChart:
             to_date="2026-01-19",
             style="colorblind",
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_comparison_png(png)
 
     async def test_missing_stock_skipped_others_render(self, mock_env):
         # 99999 has no data — chart renders with the available series only.
@@ -1201,7 +1215,7 @@ class TestRenderComparisonChart:
             from_date="2026-01-05",
             to_date="2026-01-19",
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_comparison_png(png)
 
     async def test_return_pct_baseline_handles_late_ipo(self, mock_env):
         # Stock A: full window. Stock B: starts mid-window (IPO).
@@ -1225,7 +1239,7 @@ class TestRenderComparisonChart:
             from_date="2026-01-05",
             to_date="2026-01-24",
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_comparison_png(png)
 
     async def test_empty_codes_returns_error_image(self, mock_env):
         png = await _call_image(
@@ -1331,7 +1345,116 @@ class TestRenderComparisonChart:
             from_date="2026-03-09",
             to_date="2026-03-13",
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_comparison_png(png)
+
+    async def test_custom_labels_render(self, mock_env):
+        rows = []
+        for i in range(15):
+            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, c=100.0 + i))
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_comparison_chart",
+            codes=["27800"],
+            from_date="2026-01-05",
+            to_date="2026-01-19",
+            labels=["My Label"],
+        )
+        assert _is_real_comparison_png(png)
+
+    async def test_labels_length_mismatch_returns_error(self, mock_env):
+        rows = []
+        for i in range(10):
+            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, c=100.0 + i))
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_comparison_chart",
+            codes=["27800"],
+            from_date="2026-01-05",
+            to_date="2026-01-14",
+            labels=["Label A", "Label B"],  # length mismatch
+        )
+        assert _is_error_image_png(png)
+
+    async def test_empty_label_falls_back_to_auto(self, mock_env):
+        rows = []
+        for i in range(15):
+            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, c=100.0 + i))
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_comparison_chart",
+            codes=["27800"],
+            from_date="2026-01-05",
+            to_date="2026-01-19",
+            labels=[""],  # empty → auto-label
+        )
+        assert _is_real_comparison_png(png)
+
+    async def test_landscape_aspect_ratio_renders(self, mock_env):
+        rows = []
+        for i in range(15):
+            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, c=100.0 + i))
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_comparison_chart",
+            codes=["27800"],
+            from_date="2026-01-05",
+            to_date="2026-01-19",
+            aspect_ratio="landscape",
+        )
+        assert _is_real_comparison_png(png)
+
+    async def test_portrait_aspect_ratio_renders(self, mock_env):
+        rows = []
+        for i in range(15):
+            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, c=100.0 + i))
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_comparison_chart",
+            codes=["27800"],
+            from_date="2026-01-05",
+            to_date="2026-01-19",
+            aspect_ratio="portrait",
+        )
+        assert _is_real_comparison_png(png)
+
+    async def test_unknown_aspect_ratio_returns_error(self, mock_env):
+        png = await _call_image(
+            "render_comparison_chart",
+            codes=["27800"],
+            from_date="2026-01-05",
+            to_date="2026-01-10",
+            aspect_ratio="widescreen",
+        )
+        assert _is_error_image_png(png)
+
+
+def test_brief_company_name():
+    from jquants_mcp.tools.charts import _brief_company_name
+
+    # Full-width ASCII → half-width via NFKC
+    assert _brief_company_name("ＡＢＣ株式会社") == "ABC株式会社"
+    # Parenthetical suffix stripped
+    assert _brief_company_name("トヨタ自動車（普通株）") == "トヨタ自動車"
+    assert _brief_company_name("Sony Group Corp (ADR)") == "Sony Group Corp"
+    # Truncation at _BRIEF_NAME_MAX_LEN (20 chars)
+    long_name = "非常に長い会社名前サンプルテスト株式会社"  # 20 chars
+    result = _brief_company_name(long_name + "追加")
+    assert len(result) <= 20
+    assert result.endswith("…")
+    # Empty string passthrough
+    assert _brief_company_name("") == ""
+    # Only parentheses → returns empty string
+    assert _brief_company_name("（普通株）") == ""
 
 
 def test_register_no_op_when_extras_missing():
