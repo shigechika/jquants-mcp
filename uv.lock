@@ -1081,6 +1081,7 @@ wheels = [
 
 [[package]]
 name = "jquants-mcp"
+version = "0.11.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -1119,7 +1120,7 @@ requires-dist = [
     { name = "mplfinance", marker = "extra == 'charts'", specifier = ">=0.12" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0" },
 ]
-provides-extras = ["charts", "cloud-run"]
+provides-extras = ["cloud-run", "charts"]
 
 [package.metadata.requires-dev]
 dev = [
