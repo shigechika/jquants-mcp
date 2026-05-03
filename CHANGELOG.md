@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.11.1](https://github.com/shigechika/jquants-mcp/compare/v0.11.0...v0.11.1) (2026-05-03)
+
+
+### Bug Fixes
+
+* replace hatch-vcs with static version to fix Docker version reporting ([#223](https://github.com/shigechika/jquants-mcp/issues/223)) ([d2e8c6c](https://github.com/shigechika/jquants-mcp/commit/d2e8c6c3dd6c4148f37174655e053d64953a57ef))
+
 ## [0.11.0](https://github.com/shigechika/jquants-mcp/compare/v0.10.5...v0.11.0) (2026-05-03)
 
 
