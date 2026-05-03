@@ -12,7 +12,7 @@ It serves data from a local SQLite cache (fast, offline) and falls back to the l
 
 Always call `health_check` at the beginning of a session:
 
-```
+```text
 health_check()
 ```
 
@@ -27,8 +27,8 @@ health_check()
 |---|---|---|
 | free | Latest 2 years (12-week delay) | — |
 | light | Latest 5 years | investor_types, indices_bars_daily, earnings_calendar |
-| standard | Latest 10 years | margin_interest, margin_alert, short_ratio, short_sale_report, breakdown |
-| premium | Full history | derivatives |
+| standard | Latest 10 years | margin_interest, margin_alert, short_ratio, short_sale_report |
+| premium | Full history | breakdown, derivatives |
 
 Queries outside the plan's date range return an error — do not retry with the same date.
 
@@ -43,7 +43,7 @@ Queries outside the plan's date range return an error — do not retry with the 
 ### Equities
 - `get_equities_master` — listed company master (name, sector, market)
 - `get_equities_bars_daily` — OHLCV daily bars with split adjustment
-- `get_equities_bars_minute` — intraday minute bars (light+)
+- `get_equities_bars_minute` — intraday minute bars (light+ with tick add-on)
 - `get_equities_bars_daily_am` — morning session bars
 - `get_equities_investor_types` — weekly investor type flows (light+)
 - `get_equities_earnings_calendar` — scheduled earnings dates (light+)
@@ -56,7 +56,7 @@ Queries outside the plan's date range return an error — do not retry with the 
 ### Markets
 - `get_markets_margin_interest` / `get_markets_margin_alert` — margin trading data (standard+)
 - `get_markets_short_ratio` / `get_markets_short_sale_report` — short-selling data (standard+)
-- `get_markets_breakdown` — trading breakdown by investor type (standard+)
+- `get_markets_breakdown` — trading breakdown by investor type (premium+)
 - `get_markets_calendar` — trading calendar (holidays, market open/close)
 
 ### Indices
@@ -92,7 +92,7 @@ When a specific stock `code` is provided, cache is bypassed for correctness (IPO
 ## Cache Management
 
 ### cache_status
-```
+```text
 cache_status()
 ```
 Shows row counts per table, file size, and detected plan. Does **not** return market data.
@@ -117,30 +117,30 @@ Single-user local mode uses `JQUANTS_API_KEY` env var or the `[jquants]` section
 ## Common Patterns
 
 **Check what data is available today:**
-```
+```text
 health_check()          # confirm cache_ready and plan
 cache_status()          # see latest dates per table
 ```
 
 **Screen for 52-week highs on the latest trading day:**
-```
+```text
 health_check()          # confirm today_cache_ready: true
 detect_52w_high_low()   # omit date → uses latest cached date
 ```
 
 **Retrieve a week of screener results at once:**
-```
+```text
 detect_52w_high_low_range(start_date="2025-04-28", end_date="2025-05-02")
 ```
 
 **Look up a company before querying bars:**
-```
+```text
 get_equities_master(code="72030")   # confirm code, name, sector
 get_equities_bars_daily(code="72030", date_from="2024-01-01")
 ```
 
 **Render a chart:**
-```
+```text
 get_equities_bars_daily(code="72030", date_from="2024-10-01")
 render_candlestick(code="72030", date_from="2024-10-01")
 ```
