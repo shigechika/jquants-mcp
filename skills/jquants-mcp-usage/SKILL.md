@@ -79,6 +79,11 @@ multiple consecutive days in a single call.
 Dates beyond the 52-week cache window return `OutOfCacheRange` immediately — do not retry.
 When a specific stock `code` is provided, cache is bypassed for correctness (IPO edge cases).
 
+All screener tools accept `detail: bool = False` (default).
+- `detail=False` (default): returns summary counts only — no stock-level array. Prefer this on
+  mobile and whenever you only need totals.
+- `detail=True`: returns the full `data` array with per-stock rows.
+
 ### Charts
 - `render_candlestick` — returns a candlestick chart as an inline PNG image
 
