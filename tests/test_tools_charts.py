@@ -1459,17 +1459,21 @@ def test_brief_company_name():
 
     # Full-width ASCII → half-width via NFKC
     assert _brief_company_name("ＡＢＣ株式会社") == "ABC株式会社"
-    # Full-width parentheses are converted to ASCII by NFKC before the regex runs,
-    # so （…） and (…) are both stripped by the single ASCII pattern.
+    # Full-width parentheses （）are converted to () by NFKC before the regex runs,
+    # so both full-width and ASCII forms are stripped by the single pattern.
     assert _brief_company_name("トヨタ自動車（普通株）") == "トヨタ自動車"
     assert _brief_company_name("Sony Group Corp (ADR)") == "Sony Group Corp"
-    # Whitespace-only label after stripping → treated as blank
+    # Parenthetical-only input → empty string after stripping
     assert _brief_company_name("（普通株）") == ""
-    # Truncation at _BRIEF_NAME_MAX_LEN (20 chars)
-    long_name = "非常に長い会社名前サンプルテスト株式会社"  # 20 chars
-    result = _brief_company_name(long_name + "追加")
-    assert len(result) <= 20
-    assert result.endswith("…")
+    # Real ETF name (code 13050): full-width ideographic space 　 → ASCII space,
+    # full-width Latin letters ｉＦｒｅｅＥＴＦ → ASCII, and full-width parenthetical
+    # suffix （年１回決算型） stripped; result truncated to 20 chars.
+    assert (
+        _brief_company_name(
+            "大和アセットマネジメント株式会社　ｉＦｒｅｅＥＴＦ　ＴＯＰＩＸ（年１回決算型）"
+        )
+        == "大和アセットマネジメント株式会社 iF…"
+    )
     # Empty string passthrough
     assert _brief_company_name("") == ""
 
