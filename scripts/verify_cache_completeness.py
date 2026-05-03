@@ -498,10 +498,9 @@ def main() -> None:
         conn.close()
 
     if args.output == "json":
-        output: dict = {"tables": result}
         if gaps_result is not None:
-            output["date_gaps"] = gaps_result
-        print(json.dumps(output, ensure_ascii=False, indent=2))
+            result["date_gaps"] = gaps_result
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         _print_text(result)
         if gaps_result is not None:
@@ -509,6 +508,7 @@ def main() -> None:
 
     if result["overall"] != "ok":
         exit_code = 1
+    # missing_table and empty mean no gaps to check — not an error.
     if gaps_result is not None and gaps_result["status"] not in ("ok", "missing_table", "empty"):
         exit_code = 1
     sys.exit(exit_code)
