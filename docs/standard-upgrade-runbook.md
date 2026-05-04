@@ -42,7 +42,7 @@ uv run python scripts/bulk_fetch_all.py
 
 This fetches every endpoint in `ENDPOINTS` (defined in `scripts/bulk_fetch_all.py`).
 Any endpoint that returns 403 due to a plan restriction is logged as a warning and
-skipped automatically — it is safe to run `--all` without filtering.
+skipped automatically — it is safe to run without `--endpoints` to fetch everything.
 
 Estimated time: 30–90 minutes depending on network speed and plan rate limits.
 
@@ -74,12 +74,12 @@ rm jpx-market-history.csv
 python3 3-download-market-history.py --start-date 2016-01-01
 ```
 
-Then side-load the rebuilt CSV into `cache.db`:
+Then side-load the rebuilt CSV into `cache.db` using the `import_csv_to_cache.py`
+script that ships with jpx-short-report:
 
 ```bash
-cd ~/src/kb/jquants-mcp
-uv run python scripts/import_csv_to_cache.py \
-  --csv ~/path/to/jpx-short-report/jpx-market-history.csv
+cd ~/path/to/jpx-short-report
+python3 import_csv_to_cache.py --market-history jpx-market-history.csv
 ```
 
 ## Verification
