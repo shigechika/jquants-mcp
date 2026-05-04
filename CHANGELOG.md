@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.14.0](https://github.com/shigechika/jquants-mcp/compare/v0.13.0...v0.14.0) (2026-05-04)
+
+
+### Features
+
+* **scripts:** add equities_bars_daily to bulk_fetch_all.py ([#234](https://github.com/shigechika/jquants-mcp/issues/234)) ([a849465](https://github.com/shigechika/jquants-mcp/commit/a8494651611d4708351161702c0185c6f35acaea))
+
 ## [0.13.0](https://github.com/shigechika/jquants-mcp/compare/v0.12.0...v0.13.0) (2026-05-04)
 
 
