@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.13.0](https://github.com/shigechika/jquants-mcp/compare/v0.12.0...v0.13.0) (2026-05-04)
+
+
+### Features
+
+* **scripts:** add --auto-fix and --dry-run to verify_cache_completeness.py ([#232](https://github.com/shigechika/jquants-mcp/issues/232)) ([acd59d3](https://github.com/shigechika/jquants-mcp/commit/acd59d39ee1fcd5426f9389308ec36661ccd1f46))
+
 ## [0.12.0](https://github.com/shigechika/jquants-mcp/compare/v0.11.2...v0.12.0) (2026-05-03)
 
 
