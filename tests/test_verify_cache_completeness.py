@@ -18,8 +18,11 @@ from verify_cache_completeness import (  # noqa: E402
     _check_earnings_calendar,
     _check_markets_calendar,
     _check_screener_results,
+    _collect_fix_dates,
     _latest_trading_day,
     _table_exists,
+    _trading_dates_in_range,
+    auto_fix_gaps,
     check_all,
     check_date_gaps,
 )
@@ -45,6 +48,7 @@ def conn(tmp_path):
         """
         CREATE TABLE IF NOT EXISTS equities_bars_daily (
             code TEXT NOT NULL, date TEXT NOT NULL,
+            adj_factor REAL,
             data TEXT NOT NULL, fetched_at REAL NOT NULL,
             PRIMARY KEY (code, date)
         );
@@ -491,3 +495,214 @@ def test_check_date_gaps_missing_table(conn):
 def test_check_date_gaps_empty_table(conn):
     result = check_date_gaps(conn)
     assert result["status"] == "empty"
+
+
+# ---------------------------------------------------------------------------
+# _trading_dates_in_range
+# ---------------------------------------------------------------------------
+
+
+def test_trading_dates_in_range_weekday_fallback(conn):
+    # Monday 2026-03-09 to Friday 2026-03-13 (markets_calendar empty)
+    dates = _trading_dates_in_range(conn, "2026-03-09", "2026-03-13")
+    assert dates == [
+        "2026-03-09",
+        "2026-03-10",
+        "2026-03-11",
+        "2026-03-12",
+        "2026-03-13",
+    ]
+
+
+def test_trading_dates_in_range_excludes_weekends(conn):
+    # Saturday 2026-03-14 and Sunday 2026-03-15 should be excluded
+    dates = _trading_dates_in_range(conn, "2026-03-14", "2026-03-16")
+    assert dates == ["2026-03-16"]
+
+
+def test_trading_dates_in_range_uses_calendar(conn):
+    # Insert calendar rows: 2026-03-09 is a holiday (HolDivision='1'), 2026-03-10 is a trading day
+    for d, hol in [("2026-03-09", "1"), ("2026-03-10", "0")]:
+        conn.execute(
+            "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+            (d, json.dumps({"HolDivision": hol}), time.time()),
+        )
+    conn.commit()
+    dates = _trading_dates_in_range(conn, "2026-03-09", "2026-03-10")
+    assert dates == ["2026-03-10"]
+
+
+def test_trading_dates_in_range_all_holidays_returns_empty(conn):
+    # All calendar entries are holidays → calendar is trusted → empty list (not weekday fallback)
+    for d in ["2026-03-09", "2026-03-10"]:
+        conn.execute(
+            "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+            (d, json.dumps({"HolDivision": "1"}), time.time()),
+        )
+    conn.commit()
+    dates = _trading_dates_in_range(conn, "2026-03-09", "2026-03-10")
+    # Calendar says both days are holidays → no trading days; must NOT fall back to weekdays
+    assert dates == []
+
+
+# ---------------------------------------------------------------------------
+# _collect_fix_dates
+# ---------------------------------------------------------------------------
+
+
+def test_collect_fix_dates_no_gaps_no_trailing(conn):
+    # Table is up to date: max_date = latest trading day
+    trading_day = _latest_trading_day(conn)
+    _seed_bars(conn, trading_day, 4000)
+    gaps_result = {"gaps": []}
+    gap_dates, trailing = _collect_fix_dates(conn, gaps_result, None, None)
+    assert gap_dates == []
+    assert trailing == []
+
+
+def test_collect_fix_dates_gap_included(conn):
+    trading_day = _latest_trading_day(conn)
+    _seed_bars(conn, trading_day, 4000)
+    gaps_result = {"gaps": [{"date": "2026-03-19"}]}
+    gap_dates, _ = _collect_fix_dates(conn, gaps_result, None, None)
+    assert "2026-03-19" in gap_dates
+
+
+def test_collect_fix_dates_trailing_detected(conn):
+    # Insert data 10 days ago → trailing dates should appear
+    old = (date.today() - timedelta(days=10)).isoformat()
+    _seed_bars(conn, old, 4000)
+    gaps_result = {"gaps": []}
+    _, trailing = _collect_fix_dates(conn, gaps_result, None, None)
+    assert len(trailing) > 0
+
+
+def test_collect_fix_dates_from_date_filter(conn):
+    trading_day = _latest_trading_day(conn)
+    _seed_bars(conn, trading_day, 4000)
+    gaps_result = {"gaps": [{"date": "2026-01-10"}, {"date": "2026-03-19"}]}
+    gap_dates, _ = _collect_fix_dates(conn, gaps_result, from_date="2026-03-01", to_date=None)
+    assert "2026-01-10" not in gap_dates
+    assert "2026-03-19" in gap_dates
+
+
+# ---------------------------------------------------------------------------
+# auto_fix_gaps — dry_run
+# ---------------------------------------------------------------------------
+
+
+def test_auto_fix_gaps_dry_run_returns_plan(conn):
+    # Seed old data so there are trailing dates
+    old = (date.today() - timedelta(days=5)).isoformat()
+    _seed_bars(conn, old, 4000)
+    gaps_result = {"gaps": []}
+    result = auto_fix_gaps(
+        conn,
+        gaps_result,
+        api_key="dummy",
+        base_url="https://api.jquants.com/v2",
+        plan="light",
+        dry_run=True,
+    )
+    assert result["dry_run"] is True
+    assert "all_dates" in result
+    # Seeded data is 5 days old → at least 1 weekday must be trailing
+    assert result["total_count"] >= 1
+
+
+def test_auto_fix_gaps_dry_run_no_db_writes(conn):
+    # Even with trailing dates, dry_run must not modify the DB
+    old = (date.today() - timedelta(days=5)).isoformat()
+    _seed_bars(conn, old, 4000)
+    before = conn.execute("SELECT COUNT(*) FROM equities_bars_daily").fetchone()[0]
+    gaps_result = {"gaps": []}
+    auto_fix_gaps(
+        conn,
+        gaps_result,
+        api_key="dummy",
+        base_url="https://api.jquants.com/v2",
+        plan="light",
+        dry_run=True,
+    )
+    after = conn.execute("SELECT COUNT(*) FROM equities_bars_daily").fetchone()[0]
+    assert before == after
+
+
+# ---------------------------------------------------------------------------
+# auto_fix_gaps — actual fix (mocked API)
+# ---------------------------------------------------------------------------
+
+
+def test_auto_fix_gaps_fixes_gap_date(conn, monkeypatch):
+    # Seed a gap day (1 code) and a normal day
+    _seed_bars(conn, "2026-03-18", 4000)
+    _seed_bars(conn, "2026-03-19", 1)  # gap
+
+    fake_rows = [
+        {"Code": str(1000 + i), "Date": "2026-03-19", "AdjFactor": 1.0} for i in range(4000)
+    ]
+
+    import verify_cache_completeness as vcc  # noqa: PLC0415
+
+    monkeypatch.setattr(vcc, "_fetch_bars_for_date", lambda *_a, **_kw: fake_rows)
+
+    gaps_result = {"gaps": [{"date": "2026-03-19"}]}
+    result = auto_fix_gaps(
+        conn,
+        gaps_result,
+        api_key="dummy",
+        base_url="https://api.jquants.com/v2",
+        plan="light",
+        dry_run=False,
+    )
+    assert result["dry_run"] is False
+    assert any(f["date"] == "2026-03-19" for f in result["dates_fixed"])
+    count = conn.execute(
+        "SELECT COUNT(*) FROM equities_bars_daily WHERE date='2026-03-19'"
+    ).fetchone()[0]
+    assert count == 4000
+
+
+def test_auto_fix_gaps_skips_empty_api_response(conn, monkeypatch):
+    # API returns empty list → date is skipped, no errors
+    old = (date.today() - timedelta(days=3)).isoformat()
+    _seed_bars(conn, old, 4000)
+
+    import verify_cache_completeness as vcc  # noqa: PLC0415
+
+    monkeypatch.setattr(vcc, "_fetch_bars_for_date", lambda *_a, **_kw: [])
+
+    gaps_result = {"gaps": []}
+    result = auto_fix_gaps(
+        conn,
+        gaps_result,
+        api_key="dummy",
+        base_url="https://api.jquants.com/v2",
+        plan="light",
+        dry_run=False,
+    )
+    assert result["errors"] == []
+
+
+def test_auto_fix_gaps_records_api_error(conn, monkeypatch):
+    old = (date.today() - timedelta(days=3)).isoformat()
+    _seed_bars(conn, old, 4000)
+
+    import verify_cache_completeness as vcc  # noqa: PLC0415
+
+    def _raise(*_a, **_kw):
+        raise RuntimeError("network error")
+
+    monkeypatch.setattr(vcc, "_fetch_bars_for_date", _raise)
+
+    gaps_result = {"gaps": []}
+    result = auto_fix_gaps(
+        conn,
+        gaps_result,
+        api_key="dummy",
+        base_url="https://api.jquants.com/v2",
+        plan="light",
+        dry_run=False,
+    )
+    assert len(result["errors"]) > 0
+    assert "network error" in result["errors"][0]["error"]
