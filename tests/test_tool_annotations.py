@@ -53,6 +53,11 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     # tools/bulk.py
     "get_bulk_list": READ_ONLY_API,
     "get_bulk_download_url": READ_ONLY_API,
+    # tools/market_overview.py — cache only, no API
+    "detect_price_change": READ_ONLY_CACHE,
+    "get_advance_decline_ratio": READ_ONLY_CACHE,
+    "get_top_movers": READ_ONLY_CACHE,
+    "get_top_volume": READ_ONLY_CACHE,
     # tools/screener.py — cache only, no API
     "detect_price_limit": READ_ONLY_CACHE,
     "compare_close_vs_vwap": READ_ONLY_CACHE,
