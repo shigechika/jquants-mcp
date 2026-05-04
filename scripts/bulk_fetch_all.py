@@ -111,6 +111,14 @@ ENDPOINTS: dict[str, dict] = {
         "table": "derivatives_bars_daily_options_225",
         "csv_key_map": [("Code", "code"), ("Date", "date")],
     },
+    "equities_bars_daily": {
+        "api_path": "/equities/bars/daily",
+        "table": "equities_bars_daily",
+        "csv_key_map": [("Code", "code"), ("Date", "date")],
+        # AdjFactor is queried directly from the column for split detection;
+        # store it as REAL rather than leaving it NULL.
+        "numeric_columns": [("AdjFactor", "adj_factor")],
+    },
 }
 
 # Table DDL (single source of truth in schema.py)
@@ -199,23 +207,28 @@ class BulkFetcher:
         conn: sqlite3.Connection,
         table: str,
         csv_key_map: list[tuple[str, str]],
+        numeric_columns: list[tuple[str, str]] | None = None,
     ) -> int:
         """Parse CSV text and import rows into SQLite."""
         reader = csv.DictReader(io.StringIO(text))
         now = time.time()
         batch: list[tuple] = []
         count = 0
+        num_cols = numeric_columns or []
 
-        db_cols = [db_col for _, db_col in csv_key_map]
+        db_cols = [db_col for _, db_col in csv_key_map] + [db_col for _, db_col in num_cols]
         col_names = ", ".join(db_cols) + ", data, fetched_at"
         placeholders = ", ".join(["?"] * (len(db_cols) + 2))
         sql = f"INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})"
 
         for row in reader:
             key_values = [str(row.get(csv_col, "")) for csv_col, _ in csv_key_map]
+            num_values: list[float | None] = [
+                (float(v) if (v := row.get(csv_col, "")) else None) for csv_col, _ in num_cols
+            ]
             data = {k: _convert_numeric(v) for k, v in row.items()}
             data_json = json.dumps(data, ensure_ascii=False)
-            batch.append((*key_values, data_json, now))
+            batch.append((*key_values, *num_values, data_json, now))
             count += 1
 
             if len(batch) >= BATCH_SIZE:
@@ -235,6 +248,7 @@ class BulkFetcher:
         api_path = config["api_path"]
         table = config["table"]
         csv_key_map = config["csv_key_map"]
+        numeric_columns = config.get("numeric_columns")
 
         logger.info("=" * 60)
         logger.info("start: %s -> table %s", api_path, table)
@@ -273,7 +287,7 @@ class BulkFetcher:
 
                 # Download the CSV and import it.
                 text = self._download_csv(download_url)
-                rows = self._import_csv_text(text, conn, table, csv_key_map)
+                rows = self._import_csv_text(text, conn, table, csv_key_map, numeric_columns)
                 total_rows += rows
                 logger.info(
                     "  [%d/%d] %s -> %d rows (%.1f KB)",
