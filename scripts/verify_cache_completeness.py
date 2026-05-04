@@ -455,9 +455,8 @@ def _load_api_credentials() -> tuple[str, str]:
         from jquants_mcp.config import Settings  # type: ignore[import]
 
         s = Settings()
-        return s.jquants_api_key or os.environ.get(
-            "JQUANTS_API_KEY", ""
-        ), s.jquants_base_url or base_url
+        api_key = s.jquants_api_key or os.environ.get("JQUANTS_API_KEY", "")
+        return api_key, s.jquants_base_url or base_url
     except ImportError:
         pass
     return os.environ.get("JQUANTS_API_KEY", ""), base_url
@@ -484,7 +483,8 @@ def _trading_dates_in_range(
                     cal = {}
                 if str(cal.get("HolDivision", "")).strip() == "0":
                     trading.append(str(row["date"])[:10])
-            if trading:
+            if rows:
+                # Calendar has entries for this range: trust it (even if all are holidays)
                 return trading
         except sqlite3.OperationalError:
             pass
@@ -663,6 +663,7 @@ def auto_fix_gaps(
             label = " [gap]" if target_date in gap_set else ""
             print(f"  [✓] {target_date}: {len(rows):,} rows{label}")
         except Exception as e:
+            conn.rollback()
             errors.append({"date": target_date, "error": str(e)})
             print(f"  [✗] {target_date}: {e}", file=sys.stderr)
 
@@ -753,12 +754,12 @@ def main() -> None:
     parser.add_argument(
         "--from-date",
         metavar="YYYY-MM-DD",
-        help="Restrict --check-gaps scan to dates >= this date.",
+        help="Restrict --check-gaps scan and --auto-fix repair to dates >= this date.",
     )
     parser.add_argument(
         "--to-date",
         metavar="YYYY-MM-DD",
-        help="Restrict --check-gaps scan to dates <= this date.",
+        help="Restrict --check-gaps scan and --auto-fix repair to dates <= this date.",
     )
     parser.add_argument(
         "--auto-fix",

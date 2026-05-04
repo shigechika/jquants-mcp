@@ -532,6 +532,19 @@ def test_trading_dates_in_range_uses_calendar(conn):
     assert dates == ["2026-03-10"]
 
 
+def test_trading_dates_in_range_all_holidays_returns_empty(conn):
+    # All calendar entries are holidays → calendar is trusted → empty list (not weekday fallback)
+    for d in ["2026-03-09", "2026-03-10"]:
+        conn.execute(
+            "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+            (d, json.dumps({"HolDivision": "1"}), time.time()),
+        )
+    conn.commit()
+    dates = _trading_dates_in_range(conn, "2026-03-09", "2026-03-10")
+    # Calendar says both days are holidays → no trading days; must NOT fall back to weekdays
+    assert dates == []
+
+
 # ---------------------------------------------------------------------------
 # _collect_fix_dates
 # ---------------------------------------------------------------------------
@@ -593,7 +606,8 @@ def test_auto_fix_gaps_dry_run_returns_plan(conn):
     )
     assert result["dry_run"] is True
     assert "all_dates" in result
-    assert result["total_count"] >= 0  # may be 0 if today is the last trading day
+    # Seeded data is 5 days old → at least 1 weekday must be trailing
+    assert result["total_count"] >= 1
 
 
 def test_auto_fix_gaps_dry_run_no_db_writes(conn):
