@@ -73,7 +73,9 @@ def _cache_not_ready_error(requested_date: str, latest: str | None) -> dict[str,
 def _get_session_dates(cache: CacheStore, end_date: str, count: int) -> list[str]:
     """Return up to *count* most recent trading dates up to and including *end_date*."""
     # Pad calendar days generously to cover holidays (Golden Week = 5 days, etc.)
-    start = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=count * 3)).isoformat()
+    start = (datetime.strptime(end_date, "%Y-%m-%d") - timedelta(days=count * 3)).strftime(
+        "%Y-%m-%d"
+    )
     dates = cache.iter_session_dates(date_from=start, date_to=end_date)
     return dates[-count:] if len(dates) >= count else dates
 
@@ -432,6 +434,13 @@ def register(
             UserNotAllowedError,
         ) as e:
             return format_api_error(e)
+
+        if not rows:
+            return {
+                "error": True,
+                "error_type": "NoTradingData",
+                "message": f"No trading data found for {norm_date}. It may be a holiday or non-trading day.",
+            }
 
         items: list[dict[str, Any]] = []
         for row in rows:

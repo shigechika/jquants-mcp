@@ -175,10 +175,36 @@ class TestGetAdvanceDeclineRatio:
             "get_advance_decline_ratio", {"date": "2026-05-02", "period": 4}
         )
         data = _call(result)
+        # A always up (4), B always down (4), C alternates up/down/up/down over 4 days
+        # period 1: A↑ B↓ C↓ → adv=1 dec=2
+        # period 2: A↑ B↓ C↑ → adv=2 dec=1
+        # period 3: A↑ B↓ C↓ → adv=1 dec=2
+        # period 4: A↑ B↓ C↑ → adv=2 dec=1
+        # total: advances=6 declines=6 ratio=100.0
         assert data["period"] == 4
-        assert data["advances_sum"] > 0
-        assert data["declines_sum"] > 0
-        assert data["ratio"] is not None
+        assert data["advances_sum"] == 6
+        assert data["declines_sum"] == 6
+        assert data["ratio"] == pytest.approx(100.0)
+
+    @pytest.mark.asyncio
+    async def test_ratio_null_when_no_declines(self, tmp_path):
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        for i, d in enumerate(["2026-04-30", "2026-05-01", "2026-05-02"]):
+            _insert_bar(conn, "A0000", d, 100.0 + i * 10)
+            _insert_bar(conn, "B0000", d, 200.0 + i * 10)
+        conn.commit()
+        conn.close()
+        with (
+            patch.object(server_module, "_settings", Settings()),
+            patch.object(server_module, "_cache", cache),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_advance_decline_ratio", {"date": "2026-05-02", "period": 2}
+            )
+        data = _call(result)
+        assert data["declines_sum"] == 0
+        assert data["ratio"] is None
 
     @pytest.mark.asyncio
     async def test_invalid_period(self, mock_server_multi):
@@ -284,3 +310,11 @@ class TestGetTopVolume:
         result = await mock_server.call_tool("get_top_volume", {"date": "2026-05-02", "n": 101})
         data = _call(result)
         assert data.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_non_trading_day_returns_error(self, mock_server):
+        # 2026-04-30 is within cache range (latest=2026-05-02) but has no data in fixture
+        result = await mock_server.call_tool("get_top_volume", {"date": "2026-04-30"})
+        data = _call(result)
+        assert data.get("error") is True
+        assert data["error_type"] == "NoTradingData"
