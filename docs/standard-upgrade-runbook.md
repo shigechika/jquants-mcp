@@ -58,30 +58,6 @@ To fetch only a subset of endpoints:
 uv run python scripts/bulk_fetch_all.py --endpoints short_ratio margin_interest margin_alert
 ```
 
-## Step 3 — (jpx-short-report users) Rebuild the stock price CSV
-
-`jpx-market-history.csv` is managed outside `cache.db` by the jpx-short-report
-pipeline. Under Light plan, `get_eq_bars_daily_range()` returns only the most recent
-12 months, so the CSV is truncated. Rebuild it from scratch with Standard access:
-
-```bash
-cd ~/path/to/jpx-short-report
-
-# Delete the truncated CSV so create_jpx_market() is triggered instead of update
-rm jpx-market-history.csv
-
-# Re-download from 2016-01-01 (earliest available date on Standard)
-python3 3-download-market-history.py --start-date 2016-01-01
-```
-
-Then side-load the rebuilt CSV into `cache.db` using the `import_csv_to_cache.py`
-script that ships with jpx-short-report:
-
-```bash
-cd ~/path/to/jpx-short-report
-python3 import_csv_to_cache.py --market-history jpx-market-history.csv
-```
-
 ## Verification
 
 Check row counts and date coverage after the backfill:
@@ -109,5 +85,6 @@ uv run python scripts/verify_cache_completeness.py
   Standard-only endpoints start automatically once Step 1 is done.
 - Standard-only tables keep their rows in `cache.db` if you later downgrade to Light,
   but they will no longer receive incremental updates until you upgrade again.
-- If you started on Standard and never had a Light period, you can skip Step 3 —
-  `jpx-market-history.csv` will already have full history.
+- If your workflow manages an external stock price CSV (e.g. populated via
+  `get_eq_bars_daily_range()`), rebuild it from scratch after upgrading — Light plan
+  limits that call to the most recent 12 months, leaving older data missing.
