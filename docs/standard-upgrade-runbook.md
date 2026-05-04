@@ -20,17 +20,18 @@ Run this procedure after upgrading your J-Quants subscription from Light to Stan
 ## Prerequisites
 
 - Standard (or higher) plan is active on your J-Quants account
-- API key is configured (`~/.config/jquants-mcp/config.toml` or `JQUANTS_API_KEY` env var)
+- API key is configured (`~/.jquants-api/jquants-api.toml` or `JQUANTS_API_KEY` env var)
 - Python environment is set up: `cd ~/src/kb/jquants-mcp && uv sync`
 
 ## Step 1 — Update plan in config
 
-Set `jquants_plan = "standard"` so that `daily_fetch.py` starts picking up
-Standard-only endpoints in future incremental runs:
+Set `plan = standard` in the `[jquants]` section of `config.ini` so that
+`daily_fetch.py` starts picking up Standard-only endpoints in future incremental runs:
 
-```toml
-# ~/.config/jquants-mcp/config.toml
-jquants_plan = "standard"
+```ini
+# ~/.config/jquants-mcp/config.ini
+[jquants]
+plan = standard
 ```
 
 ## Step 2 — Hydrate cache.db with full history
