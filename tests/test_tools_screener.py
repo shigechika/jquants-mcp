@@ -107,11 +107,11 @@ class TestDetectPriceLimit:
 
         assert result["count"] == 3
         by_code = {row["Code"]: row for row in result["data"]}
-        assert by_code["10000"]["limit_high_close"] is True
-        assert by_code["10000"]["limit_high_touched"] is True
-        assert by_code["20000"]["limit_low_close"] is True
-        assert by_code["40000"]["limit_high_touched"] is True
-        assert by_code["40000"]["limit_high_close"] is False
+        assert by_code["1000"]["limit_high_close"] is True
+        assert by_code["1000"]["limit_high_touched"] is True
+        assert by_code["2000"]["limit_low_close"] is True
+        assert by_code["4000"]["limit_high_touched"] is True
+        assert by_code["4000"]["limit_high_close"] is False
 
     async def test_code_filter_returns_row_even_if_not_triggered(self, mock_env):
         _seed(mock_env["cache"], [_bar("27800", "2026-04-01")])
@@ -314,7 +314,7 @@ class TestDetect52wHighLow:
             detail=True,
         )
         codes = {row["Code"] for row in result["data"]}
-        assert "10000" in codes
+        assert "1000" in codes
         # Code 20000 ties on H=100 (matches prior 100) so it also flags.
         # Real point of the test: Code 10000 is present.
 
@@ -332,7 +332,7 @@ class TestDetect52wHighLow:
 
         result = await _call("detect_52w_high_low", date=date_today, detail=True)  # default min=60
         codes = {row["Code"] for row in result["data"]}
-        assert "99990" not in codes
+        assert "9999" not in codes
 
         # But explicit code= bypasses the filter (caller asked specifically).
         result_explicit = await _call(
@@ -423,7 +423,7 @@ class TestDetectVolumeSurge:
             "detect_volume_surge", date=probe, multiplier=2.0, baseline_days=20, detail=True
         )
         assert result["count"] == 1
-        assert result["data"][0]["Code"] == "27800"
+        assert result["data"][0]["Code"] == "2780"
         assert result["data"][0]["surge_ratio"] == pytest.approx(5.0)
 
     async def test_below_multiplier_filtered(self, mock_env):
@@ -530,7 +530,9 @@ class TestScreenerCachePersistence:
         got = cache.screener_result_get("detect_52w_high_low", "h-default", "2026-04-01")
         assert got is not None
         assert got["count"] == 1
-        assert got["data"][0]["Code"] == "12340"
+        assert (
+            got["data"][0]["Code"] == "12340"
+        )  # raw cache stores 5-digit; display_code applied at tool layer
 
     def test_put_replaces_existing(self, mock_env):
         cache = mock_env["cache"]
@@ -574,7 +576,7 @@ class TestDetect52wCacheRead:
         # only reason the tool returns non-empty data.
         result = await _call("detect_52w_high_low", date="2026-04-01", detail=True)
         assert result["count"] == 2
-        assert {row["Code"] for row in result["data"]} == {"12340", "67890"}
+        assert {row["Code"] for row in result["data"]} == {"1234", "6789"}
 
     async def test_cache_miss_falls_through_to_compute(self, mock_env):
         # No cache row, but seeded bars: tool computes on-demand.
@@ -658,7 +660,7 @@ class TestDetect52wCacheRead:
             detail=True,
         )
         assert result["count"] == 1
-        assert result["data"][0]["Code"] == "27800"
+        assert result["data"][0]["Code"] == "2780"
         assert result["data"][0]["new_high"] is True
 
     async def test_code_specified_with_ipo_recovers_signal(self, mock_env):
@@ -698,7 +700,7 @@ class TestDetect52wCacheRead:
             detail=True,
         )
         assert result["count"] == 1
-        assert result["data"][0]["Code"] == "99990"
+        assert result["data"][0]["Code"] == "9999"
         assert result["data"][0]["new_high"] is True
 
 
@@ -743,7 +745,7 @@ class TestDetect52wRange:
         )
         assert result["count"] == 2
         codes = {row["Code"] for row in result["data"]}
-        assert codes == {"12340", "67890"}
+        assert codes == {"1234", "6789"}
         assert result["mode"] == "52w"
 
     async def test_partial_hit_falls_through_for_misses(self, mock_env):
@@ -786,8 +788,8 @@ class TestDetect52wRange:
         codes_by_date: dict[str, set[str]] = {}
         for row in result["data"]:
             codes_by_date.setdefault(row["Date"], set()).add(row["Code"])
-        assert "00010" in codes_by_date["2026-04-01"]  # from cache
-        assert "00020" in codes_by_date["2026-04-02"]  # on-demand
+        assert "0001" in codes_by_date["2026-04-01"]  # from cache
+        assert "0002" in codes_by_date["2026-04-02"]  # on-demand
 
     async def test_full_miss_outside_cache(self, mock_env):
         # No cached rows. Range tool falls through to on-demand for every
@@ -808,7 +810,7 @@ class TestDetect52wRange:
             detail=True,
         )
         assert result["count"] == 1
-        assert result["data"][0]["Code"] == "12340"
+        assert result["data"][0]["Code"] == "1234"
 
     async def test_single_date_range_works(self, mock_env):
         cache = mock_env["cache"]
@@ -873,7 +875,7 @@ class TestDetect52wRange:
             detail=True,
         )
         assert result["count"] == 1
-        assert result["data"][0]["Code"] == "27800"
+        assert result["data"][0]["Code"] == "2780"
         assert result["data"][0]["new_high"] is True
 
 

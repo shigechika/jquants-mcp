@@ -55,6 +55,7 @@ from ..exceptions import (
 from ..tool_annotations import READ_ONLY_CACHE
 from ..validators import (
     collect_errors,
+    display_code,
     make_validation_error_response,
     validate_code,
     validate_date,
@@ -247,7 +248,7 @@ def register(
             close = row.get("C")
             matches.append(
                 {
-                    "Code": str(row.get("Code") or ""),
+                    "Code": display_code(str(row.get("Code") or "")),
                     "Date": row.get("Date") or norm_date,
                     "C": close,
                     "H": high,
@@ -356,7 +357,7 @@ def register(
                     close_above_vwap = close > vwap
             out.append(
                 {
-                    "Code": str(row.get("Code") or ""),
+                    "Code": display_code(str(row.get("Code") or "")),
                     "Date": row.get("Date"),
                     "C": close,
                     "Va": va,
@@ -697,7 +698,7 @@ def register(
                 continue
             matches.append(
                 {
-                    "Code": c,
+                    "Code": display_code(c),
                     "Date": norm_date,
                     "Vo": today_vol,
                     "baseline_days_used": len(baseline),
@@ -977,7 +978,7 @@ async def _high_low_signals(
     ) as e:
         return format_api_error(e)
 
-    return screener_compute.compute_high_low_signals(
+    result = screener_compute.compute_high_low_signals(
         rows,
         norm_date=norm_date,
         code=code,
@@ -985,6 +986,10 @@ async def _high_low_signals(
         min_prior_sessions=min_prior_sessions,
         mode_label=mode_label,
     )
+    for item in result.get("data", []):
+        if "Code" in item:
+            item["Code"] = display_code(item["Code"])
+    return result
 
 
 def _try_screener_cache_52w(
@@ -1009,11 +1014,11 @@ def _try_screener_cache_52w(
     payload = cache.screener_result_get(screener_compute.TOOL_DETECT_52W, params_hash, norm_date)
     if payload is None:
         return None
-    return {
-        "count": payload.get("count", 0),
-        "mode": payload.get("mode", "52w"),
-        "data": list(payload.get("data", [])),
-    }
+    data = [dict(item) for item in payload.get("data", [])]
+    for item in data:
+        if "Code" in item:
+            item["Code"] = display_code(item["Code"])
+    return {"count": payload.get("count", 0), "mode": payload.get("mode", "52w"), "data": data}
 
 
 def _try_screener_cache_ytd(
@@ -1032,11 +1037,11 @@ def _try_screener_cache_ytd(
     payload = cache.screener_result_get(screener_compute.TOOL_DETECT_YTD, params_hash, norm_date)
     if payload is None:
         return None
-    return {
-        "count": payload.get("count", 0),
-        "mode": payload.get("mode", "ytd"),
-        "data": list(payload.get("data", [])),
-    }
+    data = [dict(item) for item in payload.get("data", [])]
+    for item in data:
+        if "Code" in item:
+            item["Code"] = display_code(item["Code"])
+    return {"count": payload.get("count", 0), "mode": payload.get("mode", "ytd"), "data": data}
 
 
 def _summarise_price_limit(full: dict[str, Any]) -> dict[str, Any]:
@@ -1122,7 +1127,10 @@ async def _high_low_range(
     aggregated: list[dict[str, Any]] = []
     for d in sorted(set(trading_days)):
         if d in cached_by_date:
-            rows = cached_by_date[d].get("data", [])
+            rows = [dict(r) for r in cached_by_date[d].get("data", [])]
+            for item in rows:
+                if "Code" in item:
+                    item["Code"] = display_code(item["Code"])
         else:
             payload = await on_demand(d)
             if payload.get("error"):

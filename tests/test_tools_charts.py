@@ -581,19 +581,19 @@ class TestChartTitleHelpers:
         assert "(" not in title  # no parenthesised suffix at all
 
     def test_display_code_keeps_4_digit(self):
-        from jquants_mcp.tools.charts import _display_code
+        from jquants_mcp.validators import display_code as _display_code
 
         assert _display_code("7203") == "7203"
 
     def test_display_code_collapses_5_digit_ordinary(self):
-        from jquants_mcp.tools.charts import _display_code
+        from jquants_mcp.validators import display_code as _display_code
 
         # 5-digit ending in 0 = ordinary share → display 4-digit.
         assert _display_code("72030") == "7203"
         assert _display_code("13010") == "1301"
 
     def test_display_code_keeps_5_digit_non_ordinary(self):
-        from jquants_mcp.tools.charts import _display_code
+        from jquants_mcp.validators import display_code as _display_code
 
         # 5-digit not ending in 0 = preferred / second-class share.
         assert _display_code("25935") == "25935"
@@ -605,7 +605,7 @@ class TestChartTitleHelpers:
         # codes: 5-char API form, 4-char display form. Kabutan / Yahoo!
         # Finance Japan / JPX all show ``130A`` (not ``130A0``) for the
         # ordinary share — match that.
-        from jquants_mcp.tools.charts import _display_code
+        from jquants_mcp.validators import display_code as _display_code
 
         assert _display_code("130A0") == "130A"
         assert _display_code("554A0") == "554A"

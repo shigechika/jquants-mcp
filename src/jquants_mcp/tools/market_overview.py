@@ -30,7 +30,7 @@ from ..exceptions import (
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_CACHE
-from ..validators import collect_errors, make_validation_error_response, validate_date
+from ..validators import collect_errors, display_code, make_validation_error_response, validate_date
 
 logger = logging.getLogger(__name__)
 
@@ -375,7 +375,7 @@ def register(
             change_pct = round((today_close - prev_close) / prev_close * 100, 4)
             movers.append(
                 {
-                    "code": code,
+                    "code": display_code(code),
                     "close": today_close,
                     "prev_close": prev_close,
                     "change_pct": change_pct,
@@ -450,7 +450,7 @@ def register(
                 continue
             items.append(
                 {
-                    "code": code,
+                    "code": display_code(code),
                     "volume": int(volume),
                     "turnover_value": _as_float(row.get("Va")),
                     "close": _as_float(row.get("C")),
