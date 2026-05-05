@@ -202,8 +202,10 @@ def register(
             code: Optional 4- or 5-digit code. If omitted, scans all
                 stocks with a row on ``date``.
             detail: If True, include the full per-stock ``data`` array.
-                Default False returns summary counts only (``count``,
-                ``limit_high``, ``limit_low``).
+                Default False returns summary counts only: ``count``,
+                ``limit_high`` / ``limit_low`` (totals), plus close/touched
+                breakdowns (``limit_high_close``, ``limit_high_touched``,
+                ``limit_low_close``, ``limit_low_touched``).
         """
         errors = collect_errors(validate_date(date), validate_code(code))
         if errors:
@@ -1045,14 +1047,32 @@ def _try_screener_cache_ytd(
 
 
 def _summarise_price_limit(full: dict[str, Any]) -> dict[str, Any]:
-    """Return aggregate counts without the per-stock ``data`` array."""
+    """Return aggregate counts without the per-stock ``data`` array.
+
+    Summary fields:
+    - ``limit_high`` / ``limit_low``: total stocks that touched each limit
+      (backward-compatible aggregate).
+    - ``limit_high_close`` / ``limit_low_close``: closed at the limit
+      (引けストップ高/安).
+    - ``limit_high_touched`` / ``limit_low_touched``: touched the limit but
+      did NOT close there — includes 寄らずストップ and intraday-only touches
+      (stronger directional signal than a close-at-limit).
+    """
     if "data" not in full:
         return full
     data = full["data"]
+    lh_close = sum(1 for r in data if r.get("limit_high_close"))
+    ll_close = sum(1 for r in data if r.get("limit_low_close"))
+    lh_total = sum(1 for r in data if r.get("limit_high_touched"))
+    ll_total = sum(1 for r in data if r.get("limit_low_touched"))
     return {
         "count": full.get("count", 0),
-        "limit_high": sum(1 for r in data if r.get("limit_high_touched")),
-        "limit_low": sum(1 for r in data if r.get("limit_low_touched")),
+        "limit_high": lh_total,
+        "limit_high_close": lh_close,
+        "limit_high_touched": lh_total - lh_close,
+        "limit_low": ll_total,
+        "limit_low_close": ll_close,
+        "limit_low_touched": ll_total - ll_close,
     }
 
 

@@ -1112,6 +1112,32 @@ class TestDetailParameter:
         assert result["limit_high"] == 1
         assert result["limit_low"] == 1
 
+    async def test_price_limit_summary_breakdown(self, mock_env):
+        today = "2026-04-01"
+        _seed(
+            mock_env["cache"],
+            [
+                # 引けストップ高: ul=1, c==h
+                _bar("10000", today, h=200, c=200, ul=1),
+                # 寄らずストップ高 (or intraday-only): ul=1, c!=h
+                _bar("11000", today, h=200, c=150, ul=1),
+                # 引けストップ安: ll=1, c==l
+                _bar("20000", today, low=80, c=80, ll=1),
+                # 寄らずストップ安: ll=1, c!=l
+                _bar("21000", today, low=80, c=100, ll=1),
+                # no limit
+                _bar("30000", today),
+            ],
+        )
+        result = await _call("detect_price_limit", date=today)
+        assert result["count"] == 4
+        assert result["limit_high"] == 2
+        assert result["limit_high_close"] == 1
+        assert result["limit_high_touched"] == 1
+        assert result["limit_low"] == 2
+        assert result["limit_low_close"] == 1
+        assert result["limit_low_touched"] == 1
+
     async def test_price_limit_detail_true_returns_data(self, mock_env):
         today = "2026-04-01"
         _seed(
