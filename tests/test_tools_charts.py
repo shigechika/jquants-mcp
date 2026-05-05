@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import builtins
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -476,6 +476,123 @@ class TestRenderCandlestickEdgeCases:
             aspect_ratio="widescreen",
         )
         assert _is_error_image_png(png)
+
+
+class TestCandlestickDateDefaults:
+    """Tests for optional from_date / to_date and SMA warmup."""
+
+    async def test_both_dates_omitted_renders_chart(self, mock_env):
+        # Seed bars spanning the last ~100 calendar days so the default
+        # window (today - 90 days .. today) has data.
+        today = date.today()
+        rows = []
+        for i in range(100):
+            d = (today - timedelta(days=99 - i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d))
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_candlestick",
+            code="27800",
+            # from_date and to_date intentionally omitted
+        )
+        assert _is_real_png(png)
+
+    async def test_to_date_omitted_defaults_to_today(self, mock_env):
+        today = date.today()
+        rows = []
+        for i in range(30):
+            d = (today - timedelta(days=29 - i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d))
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_candlestick",
+            code="27800",
+            from_date=(today - timedelta(days=20)).strftime("%Y-%m-%d"),
+            # to_date omitted → defaults to today
+        )
+        assert _is_real_png(png)
+
+    async def test_from_date_omitted_defaults_to_91_days_before_to_date(self, mock_env):
+        # Seed 100 bars ending on a fixed to_date. With from_date omitted
+        # the window should be to_date - 90 days; provide bars covering
+        # that entire range so the chart renders.
+        base = datetime(2026, 4, 1)
+        rows = [_bar("27800", (base + timedelta(days=i)).strftime("%Y-%m-%d")) for i in range(100)]
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_candlestick",
+            code="27800",
+            to_date="2026-06-01",
+            # from_date omitted → defaults to 2026-03-03 (91 days before)
+        )
+        assert _is_real_png(png)
+
+    async def test_sma_warmup_populates_addplot_when_display_range_short(self, mock_env):
+        # Scenario: display range = 5 bars, requested indicator = sma60.
+        # Old code: len(df) < 60 → addplot skipped entirely.
+        # New code: warmup fetches 120 extra calendar days of bars behind
+        #   norm_from; with 85 total bars len(df_extended) >= 60 → addplot added.
+        today = date.today()
+        rows = []
+        for i in range(85):
+            d = (today - timedelta(days=84 - i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, c=float(100 + i)))
+        _seed(mock_env["cache"], rows)
+
+        from_d = (today - timedelta(days=4)).strftime("%Y-%m-%d")
+        to_d = today.strftime("%Y-%m-%d")
+
+        import mplfinance as mpf_mod
+
+        original_make_addplot = mpf_mod.make_addplot
+        call_count: list[int] = []
+
+        def counting_make_addplot(data, **kwargs):
+            call_count.append(1)
+            return original_make_addplot(data, **kwargs)
+
+        with patch("mplfinance.make_addplot", side_effect=counting_make_addplot):
+            png = await _call_image(
+                "render_candlestick",
+                code="27800",
+                from_date=from_d,
+                to_date=to_d,
+                indicators=["volume", "sma60"],
+            )
+
+        assert _is_real_png(png)
+        # Warmup data available (85 total bars ≥ 60) → addplot was called
+        assert len(call_count) == 1
+
+    async def test_sma_no_warmup_data_still_skips_gracefully(self, mock_env):
+        # Only 5 bars exist with no history before norm_from, and we request
+        # sma60. Total bars < 60 → addplot still skipped (same as old code).
+        rows = [_bar("27800", f"2026-04-{d:02d}") for d in range(1, 6)]
+        _seed(mock_env["cache"], rows)
+
+        import mplfinance as mpf_mod
+
+        original_make_addplot = mpf_mod.make_addplot
+        call_count: list[int] = []
+
+        def counting_make_addplot(data, **kwargs):
+            call_count.append(1)
+            return original_make_addplot(data, **kwargs)
+
+        with patch("mplfinance.make_addplot", side_effect=counting_make_addplot):
+            png = await _call_image(
+                "render_candlestick",
+                code="27800",
+                from_date="2026-04-01",
+                to_date="2026-04-05",
+                indicators=["volume", "sma60"],
+            )
+
+        assert _is_real_png(png)
+        assert len(call_count) == 0  # not enough data → skipped
 
 
 class TestJpConventionDefaults:

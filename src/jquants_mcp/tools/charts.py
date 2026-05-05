@@ -20,6 +20,7 @@ import logging
 import re
 import sqlite3
 import unicodedata
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastmcp import FastMCP
@@ -88,6 +89,9 @@ _LOCK_BAR_HALF_WIDTH = 0.4
 
 _DPI = 100
 
+# Default display range for render_candlestick when from_date / to_date are omitted.
+_DEFAULT_RANGE_DAYS = 91
+
 # Accepted aspect ratios for render_candlestick and render_comparison_chart.
 # "square" is the default — fits naturally in both chat and mobile viewports.
 _ASPECT_RATIOS: dict[str, tuple[float, float]] = {
@@ -130,10 +134,21 @@ _CJK_RC: dict[str, Any] = {
 }
 
 
-def _normalize_date(date: str) -> str:
-    if "-" in date:
-        return date
-    return f"{date[0:4]}-{date[4:6]}-{date[6:8]}"
+def _max_indicator_window(indicators: list[str]) -> int:
+    """Return the maximum rolling-window length required by *indicators*."""
+    max_win = 0
+    for ind in indicators:
+        if ind.startswith("sma"):
+            max_win = max(max_win, int(ind[3:]))
+        elif ind == "bb20":
+            max_win = max(max_win, 20)
+    return max_win
+
+
+def _normalize_date(d: str) -> str:
+    if "-" in d:
+        return d
+    return f"{d[0:4]}-{d[4:6]}-{d[6:8]}"
 
 
 def _normalize_code(code: str) -> str:
@@ -354,8 +369,8 @@ def register(
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def render_candlestick(
         code: str,
-        from_date: str,
-        to_date: str,
+        from_date: str | None = None,
+        to_date: str | None = None,
         indicators: list[str] | None = None,
         style: str = "default",
         adjusted: bool = True,
@@ -380,10 +395,19 @@ def register(
         budget and trigger OOM kills. For 2+ charts in a row, issue
         the calls one after another.
 
+        **SMA / Bollinger warmup**: the tool fetches up to ``max_window × 2``
+        extra calendar days before ``from_date`` so that moving-average
+        indicators start with fully-warmed values from the first displayed
+        bar.  Bars in the warmup zone are used only for indicator
+        computation and never appear in the rendered chart.
+
         Args:
             code: 4- or 5-digit stock code (e.g. "72030" or "7203").
             from_date: Range start (YYYYMMDD or YYYY-MM-DD), inclusive.
+                When omitted, defaults to a 91-day inclusive window ending at
+                ``to_date`` (i.e. ``to_date`` minus 90 calendar days).
             to_date: Range end (YYYYMMDD or YYYY-MM-DD), inclusive.
+                Defaults to today when omitted.
             indicators: List of overlays. Defaults to
                 ``["volume", "sma5", "sma25"]`` (Japanese 短期/中期
                 convention). Accepted values: ``volume``, ``sma5``,
@@ -421,18 +445,37 @@ def register(
                 f"Unknown aspect_ratio: {aspect_ratio!r}. Accepted: {sorted(_ASPECT_RATIOS)}"
             )
 
-        norm_code = _normalize_code(code)
-        norm_from = _normalize_date(from_date)
-        norm_to = _normalize_date(to_date)
+        today_str = date.today().strftime("%Y-%m-%d")
+        norm_to = _normalize_date(to_date) if to_date is not None else today_str
+        norm_from = (
+            _normalize_date(from_date)
+            if from_date is not None
+            else (
+                datetime.strptime(norm_to, "%Y-%m-%d") - timedelta(days=_DEFAULT_RANGE_DAYS - 1)
+            ).strftime("%Y-%m-%d")
+        )
         if norm_from > norm_to:
             return _error_image("`from_date` must be <= `to_date`.")
 
+        norm_code = _normalize_code(code)
+
+        # Extend the fetch window backwards so rolling-average indicators
+        # (SMA, Bollinger) are fully warmed before the first displayed bar.
+        max_win = _max_indicator_window(indicators)
+        warmup_start = (
+            (datetime.strptime(norm_from, "%Y-%m-%d") - timedelta(days=max_win * 2)).strftime(
+                "%Y-%m-%d"
+            )
+            if max_win > 0
+            else norm_from
+        )
+
         cache: CacheStore = get_cache()
         try:
-            rows = cache.get_rows(
+            all_rows = cache.get_rows(
                 "equities_bars_daily",
                 key_filter={"code": norm_code},
-                date_from=norm_from,
+                date_from=warmup_start,
                 date_to=norm_to,
             )
         except (
@@ -445,7 +488,10 @@ def register(
             err = format_api_error(e)
             return _error_image(err.get("message") or "API error")
 
-        if not rows:
+        # Rows visible in the rendered chart (≥ norm_from).
+        display_rows = [r for r in all_rows if str(r.get("Date") or "")[:10] >= norm_from]
+
+        if not display_rows:
             return _error_image(
                 f"No cached bars for code={norm_code} in {norm_from}..{norm_to}. "
                 "Run scripts/daily_fetch.py to populate the cache."
@@ -460,10 +506,12 @@ def register(
             "Close": f"{prefix}C" if adjusted else "C",
             "Volume": f"{prefix}Vo" if adjusted else "Vo",
         }
-        records = []
-        for r in rows:
+
+        # Build extended DataFrame (warmup + display) for indicator computation.
+        all_records = []
+        for r in all_rows:
             try:
-                records.append(
+                all_records.append(
                     {
                         "Date": pd.to_datetime(r[cols["Date"]]),
                         "Open": float(r[cols["Open"]]),
@@ -476,10 +524,15 @@ def register(
             except (KeyError, TypeError, ValueError):
                 # Skip malformed rows rather than fail the whole chart.
                 continue
-        if not records:
+        if not all_records:
             return _error_image(f"Cached rows for code={norm_code} are missing OHLC columns.")
 
-        df = pd.DataFrame.from_records(records).set_index("Date").sort_index()
+        df_extended = pd.DataFrame.from_records(all_records).set_index("Date").sort_index()
+        display_start = pd.Timestamp(norm_from)
+        df = df_extended[df_extended.index >= display_start]
+
+        if df.empty:
+            return _error_image(f"Cached rows for code={norm_code} are missing OHLC columns.")
 
         addplots = []
         for ind in indicators:
@@ -487,13 +540,16 @@ def register(
                 continue  # handled by mpf.plot(volume=True)
             if ind.startswith("sma"):
                 length = int(ind[3:])
-                if len(df) >= length:
-                    sma = df["Close"].rolling(length).mean()
+                if len(df_extended) >= length:
+                    sma_ext = df_extended["Close"].rolling(length).mean()
+                    sma = sma_ext[sma_ext.index >= display_start]
                     addplots.append(mpf.make_addplot(sma, width=1.0))
             elif ind == "bb20":
-                if len(df) >= 20:
-                    mid = df["Close"].rolling(20).mean()
-                    std = df["Close"].rolling(20).std()
+                if len(df_extended) >= 20:
+                    mid_ext = df_extended["Close"].rolling(20).mean()
+                    std_ext = df_extended["Close"].rolling(20).std()
+                    mid = mid_ext[mid_ext.index >= display_start]
+                    std = std_ext[std_ext.index >= display_start]
                     addplots.append(mpf.make_addplot(mid + 2 * std, width=0.8))
                     addplots.append(mpf.make_addplot(mid - 2 * std, width=0.8))
 
@@ -504,7 +560,7 @@ def register(
         # actually refer to the stock.
         title = _build_chart_title(display_code(norm_code), company, norm_from, norm_to)
 
-        lock_days = _detect_lock_days(rows, adjusted)
+        lock_days = _detect_lock_days(display_rows, adjusted)
 
         buf = io.BytesIO()
         # mplfinance's addplot validator rejects ``None`` (only dict / list
@@ -532,10 +588,10 @@ def register(
                     price_ax = axes[0]
                     up_color, down_color = _LOCK_COLORS[style]
                     for lock in lock_days:
-                        date = pd.to_datetime(lock["date"])
-                        if date not in df.index:
+                        lock_date = pd.to_datetime(lock["date"])
+                        if lock_date not in df.index:
                             continue
-                        x_idx = df.index.get_loc(date)
+                        x_idx = df.index.get_loc(lock_date)
                         color = up_color if lock["direction"] == "high" else down_color
                         price_ax.hlines(
                             lock["price"],
