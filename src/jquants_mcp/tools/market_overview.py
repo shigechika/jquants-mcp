@@ -479,7 +479,8 @@ def register(
         Use for 売買代金ランキング, 売買代金, turnover, trading value.
         Distinct from ``get_top_volume`` which ranks by share count: turnover
         value (= price × volume) surfaces the names that moved the most money,
-        so high-priced large-caps dominate over thinly priced low-priced shares.
+        so higher-priced names dominate the ranking instead of being crowded
+        out by thinly priced low-priced shares.
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily Tier 1 cache (no API call)

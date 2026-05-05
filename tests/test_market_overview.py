@@ -436,7 +436,7 @@ class TestGetTopTurnoverValue:
 
 
 class TestNameField:
-    """Both get_top_movers and get_top_volume inject a ``name`` field per item."""
+    """get_top_movers / get_top_volume / get_top_turnover_value all inject ``name`` per item."""
 
     @pytest.fixture()
     def named_cache(self, tmp_path):
@@ -489,6 +489,23 @@ class TestNameField:
     @pytest.mark.asyncio
     async def test_top_volume_name_key_always_present(self, mock_named):
         result = await mock_named.call_tool("get_top_volume", {"date": "2026-05-02"})
+        data = _call(result)
+        for item in data["items"]:
+            assert "name" in item
+
+    @pytest.mark.asyncio
+    async def test_top_turnover_value_name_populated(self, mock_named):
+        result = await mock_named.call_tool(
+            "get_top_turnover_value", {"date": "2026-05-02", "n": 2}
+        )
+        data = _call(result)
+        items = {i["code"]: i for i in data["items"]}
+        assert items["1301"]["name"] == "テスト一番"
+        assert items["1302"]["name"] is None
+
+    @pytest.mark.asyncio
+    async def test_top_turnover_value_name_key_always_present(self, mock_named):
+        result = await mock_named.call_tool("get_top_turnover_value", {"date": "2026-05-02"})
         data = _call(result)
         for item in data["items"]:
             assert "name" in item
