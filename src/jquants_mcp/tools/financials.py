@@ -30,6 +30,45 @@ logger = logging.getLogger(__name__)
 # Per-share fields in fins_summary that need stock split adjustment
 _SPLIT_ADJ_FIELDS = ("BPS", "EPS", "DivAnn")
 
+# Fiscal period values surfaced via the derived FiscalPeriod field.
+_VALID_FISCAL_PERIODS = ("1Q", "2Q", "3Q", "FY", "Other")
+
+
+def _derive_fiscal_period(row: dict[str, Any]) -> str | None:
+    """Return the fiscal period label for a fins_summary row.
+
+    Priority:
+    1. ``CurPerType`` / legacy ``TypeOfCurrentPeriod`` if it already matches a
+       recognised period code.
+    2. Prefix of ``DocType`` / legacy ``TypeOfDocument`` for statements
+       (``1Q``/``2Q``/``3Q``/``FY``/``OtherPeriod``).
+
+    The ``"Other"`` label maps to ``OtherPeriodFinancialStatements_*`` —
+    irregular reporting periods such as the 5-month statement issued when
+    a company changes its fiscal year-end.
+
+    Returns ``None`` for forecast revisions and any unparseable shape.
+    """
+    cur = row.get("CurPerType") or row.get("TypeOfCurrentPeriod") or ""
+    cur = str(cur).strip()
+    if cur in _VALID_FISCAL_PERIODS:
+        return cur
+
+    doc = str(row.get("DocType") or row.get("TypeOfDocument") or "")
+    for prefix in ("1Q", "2Q", "3Q", "FY"):
+        if doc.startswith(f"{prefix}Financial"):
+            return prefix
+    if doc.startswith("OtherPeriodFinancial"):
+        return "Other"
+    return None
+
+
+def _annotate_fiscal_period(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Inject ``FiscalPeriod`` into each row in-place and return the list."""
+    for row in rows:
+        row["FiscalPeriod"] = _derive_fiscal_period(row)
+    return rows
+
 
 def _apply_split_adjustment(
     rows: list[dict[str, Any]],
@@ -107,6 +146,11 @@ def register(
         net income (純利益), EPS (一株利益), BPS (一株純資産), cash flow (CF: OperatingCF /
         InvestingCF / FinancingCF), dividends (配当), and earnings forecasts (業績予想).
         Adjusted EPS/BPS (AdjEPS/AdjBPS) are included when split data is available.
+        Each row carries a derived ``FiscalPeriod`` label
+        (``"1Q"`` / ``"2Q"`` / ``"3Q"`` / ``"FY"`` / ``"Other"`` / ``null``) so callers
+        can identify the period without parsing date fields. ``"Other"`` covers
+        irregular reporting periods (e.g., fiscal-year-end change). ``null`` is
+        returned for forecast revisions and unrecognised document types.
         Either 'code' or 'date' must be specified.
 
         [Supported plans] Free / Light / Standard / Premium
@@ -136,6 +180,7 @@ def register(
 
         try:
             data = await client.get_all_pages("/fins/summary", params)
+            _annotate_fiscal_period(data)
             result: dict[str, Any] = {"count": len(data), "data": data}
             result["split_adjustment"] = "not_applied"
             result["split_adjustment_reason"] = (
@@ -280,6 +325,7 @@ async def _get_fins_summary_with_cache(
         if cached_data and date:
             # Apply split adjustment even for cached data
             adjusted, _ = _apply_split_adjustment(cached_data, cache)
+            _annotate_fiscal_period(adjusted)
             return {"count": len(adjusted), "data": adjusted, "source": "cache"}
 
         # API から取得
@@ -318,6 +364,7 @@ async def _get_fins_summary_with_cache(
             source = "api"
 
         merged, split_adjusted = _apply_split_adjustment(merged, cache)
+        _annotate_fiscal_period(merged)
         result = {"count": len(merged), "data": merged, "source": source}
         if not split_adjusted and any(
             r.get(f) not in (None, "") for r in merged for f in _SPLIT_ADJ_FIELDS

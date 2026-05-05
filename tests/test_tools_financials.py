@@ -239,6 +239,192 @@ class TestFinsSummarySplitAdjustment:
             assert result.get("split_adjustment") == "not_applied"
 
 
+class TestFinsSummaryFiscalPeriod:
+    """Derived ``FiscalPeriod`` field on fins_summary rows."""
+
+    async def test_fiscal_period_from_cur_per_type(self, mock_env):
+        mock_data = [
+            {
+                "Code": "72030",
+                "DiscDate": "2024-02-06",
+                "DiscNo": "001",
+                "CurPerType": "2Q",
+                "DocType": "2QFinancialStatements_Consolidated_JP",
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", code="72030")
+            assert result["data"][0]["FiscalPeriod"] == "2Q"
+
+    async def test_fiscal_period_from_doc_type_when_cur_per_blank(self, mock_env):
+        mock_data = [
+            {
+                "Code": "72030",
+                "DiscDate": "2024-08-06",
+                "DiscNo": "002",
+                "CurPerType": "",
+                "DocType": "1QFinancialStatements_Consolidated_JP",
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", code="72030")
+            assert result["data"][0]["FiscalPeriod"] == "1Q"
+
+    async def test_fiscal_period_fy_from_doc_type(self, mock_env):
+        mock_data = [
+            {
+                "Code": "72030",
+                "DiscDate": "2024-05-15",
+                "DiscNo": "003",
+                "DocType": "FYFinancialStatements_Consolidated_JP",
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", code="72030")
+            assert result["data"][0]["FiscalPeriod"] == "FY"
+
+    async def test_fiscal_period_other_period(self, mock_env):
+        mock_data = [
+            {
+                "Code": "72030",
+                "DiscDate": "2024-09-15",
+                "DiscNo": "004",
+                "DocType": "OtherPeriodFinancialStatements_Consolidated_JP",
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", code="72030")
+            assert result["data"][0]["FiscalPeriod"] == "Other"
+
+    async def test_fiscal_period_none_for_forecast_revision(self, mock_env):
+        mock_data = [
+            {
+                "Code": "72030",
+                "DiscDate": "2024-10-15",
+                "DiscNo": "005",
+                "DocType": "EarnForecastRevision",
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", code="72030")
+            assert result["data"][0]["FiscalPeriod"] is None
+
+    async def test_fiscal_period_none_when_fields_absent(self, mock_env):
+        mock_data = [
+            {"Code": "72030", "DiscDate": "2024-11-15", "DiscNo": "006"},
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", code="72030")
+            assert result["data"][0]["FiscalPeriod"] is None
+
+    async def test_fiscal_period_on_cache_hit(self, mock_env):
+        cache = mock_env["cache"]
+        cache.put_rows(
+            "fins_summary",
+            [
+                {
+                    "Code": "72030",
+                    "DiscDate": "2024-02-06",
+                    "DiscNo": "001",
+                    "CurPerType": "3Q",
+                    "DocType": "3QFinancialStatements_Consolidated_JP",
+                }
+            ],
+            key_columns=["Code", "DiscDate"],
+        )
+        mock_fn = AsyncMock(return_value=[])
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_fins_summary", code="72030", date="2024-02-06")
+            assert result["source"] == "cache"
+            assert result["data"][0]["FiscalPeriod"] == "3Q"
+
+    async def test_fiscal_period_on_date_only_query(self, mock_env):
+        mock_data = [
+            {
+                "Code": "72030",
+                "DiscDate": "2024-02-06",
+                "DocType": "FYFinancialStatements_Consolidated_JP",
+            },
+            {
+                "Code": "67580",
+                "DiscDate": "2024-02-06",
+                "DocType": "1QFinancialStatements_Consolidated_JP",
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", date="2024-02-06")
+            periods = {r["Code"]: r["FiscalPeriod"] for r in result["data"]}
+            assert periods["72030"] == "FY"
+            assert periods["67580"] == "1Q"
+
+    async def test_fiscal_period_handles_non_jp_doctype_variants(self, mock_env):
+        # The DocType prefix-match logic should work uniformly for all
+        # accounting-standard variants (IFRS / JMIS / REIT / Foreign / US),
+        # not just `_Consolidated_JP`.
+        mock_data = [
+            {
+                "Code": "11000",
+                "DiscDate": "2024-02-01",
+                "DocType": "1QFinancialStatements_Consolidated_IFRS",
+            },
+            {
+                "Code": "12000",
+                "DiscDate": "2024-02-02",
+                "DocType": "FYFinancialStatements_Consolidated_REIT",
+            },
+            {
+                "Code": "13000",
+                "DiscDate": "2024-02-03",
+                "DocType": "3QFinancialStatements_NonConsolidated_Foreign",
+            },
+            {
+                "Code": "14000",
+                "DiscDate": "2024-02-04",
+                "DocType": "2QFinancialStatements_Consolidated_JMIS",
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", date="2024-02-01")
+            periods = {r["Code"]: r["FiscalPeriod"] for r in result["data"]}
+            assert periods["11000"] == "1Q"
+            assert periods["12000"] == "FY"
+            assert periods["13000"] == "3Q"
+            assert periods["14000"] == "2Q"
+
+    async def test_fiscal_period_legacy_long_keys(self, mock_env):
+        # Defensive: J-Quants historically used `TypeOfCurrentPeriod` and
+        # `TypeOfDocument`; cache rows from older fetches may still carry them.
+        mock_data = [
+            {
+                "Code": "72030",
+                "DiscDate": "2024-02-06",
+                "TypeOfCurrentPeriod": "FY",
+                "TypeOfDocument": "FYFinancialStatements_Consolidated_JP",
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", code="72030")
+            assert result["data"][0]["FiscalPeriod"] == "FY"
+
+
 class TestGetFinsDetails:
     async def test_returns_data(self, mock_env):
         mock_data = [
