@@ -5,7 +5,7 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
-## [0.19.0](https://github.com/shigechika/jquants-mcp/compare/v0.18.0...v0.19.0) (2026-05-05)
+## [0.19.0](https://github.com/shigechika/jquants-mcp/compare/v0.18.0...v0.19.0) (2026-05-06)
 
 
 ### Features
