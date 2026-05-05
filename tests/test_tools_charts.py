@@ -141,8 +141,8 @@ def _make_fake_png(width: int = 1200, height: int = 800) -> bytes:
     Used by tests that patch ``mpf.plot`` to capture kwargs: the patched
     callable still has to write *something* PNG-shaped to the buffer for
     the tool to surface a successful Image. Encodes width/height into
-    the IHDR slot so ``_is_real_chart_png`` / ``_is_error_image_png``
-    keep working against the fake.
+    the IHDR slot so ``_is_real_png`` / ``_is_error_image_png`` keep
+    working against the fake.
     """
     return (
         b"\x89PNG\r\n\x1a\n"
