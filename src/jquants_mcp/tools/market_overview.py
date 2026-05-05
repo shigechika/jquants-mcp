@@ -9,7 +9,8 @@ Exposed tools:
 - ``detect_price_change`` — advance/decline summary (値上がり/値下がり銘柄数)
 - ``get_advance_decline_ratio`` — advance/decline ratio over N periods (騰落レシオ)
 - ``get_top_movers`` — top gainers/losers by percentage price change
-- ``get_top_volume`` — top stocks by trading volume
+- ``get_top_volume`` — top stocks by trading volume (出来高ランキング)
+- ``get_top_turnover_value`` — top stocks by turnover value (売買代金ランキング)
 """
 
 from __future__ import annotations
@@ -462,6 +463,91 @@ def register(
             )
 
         items.sort(key=lambda x: x["volume"], reverse=True)
+
+        return {
+            "date": norm_date,
+            "items": items[:n],
+        }
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def get_top_turnover_value(
+        date: str,
+        n: int = 10,
+    ) -> dict[str, Any]:
+        """Return top stocks by turnover value (売買代金ランキング) on a given date.
+
+        Use for 売買代金ランキング, 売買代金, turnover, trading value.
+        Distinct from ``get_top_volume`` which ranks by share count: turnover
+        value (= price × volume) surfaces the names that moved the most money,
+        so high-priced large-caps dominate over thinly priced low-priced shares.
+
+        [Supported plans] Free / Light / Standard / Premium
+        [Source] equities_bars_daily Tier 1 cache (no API call)
+
+        Args:
+            date: Trading date in YYYY-MM-DD or YYYYMMDD format.
+            n: Number of stocks to return (1–100). Default: 10.
+
+        Returns:
+            dict with keys:
+            - date: the requested trading date
+            - items: list of up to *n* dicts, each with:
+                - code: stock code (4- or 5-digit display form)
+                - name: company name (from equities_master) or null
+                - turnover_value: trading value in yen
+                - volume: number of shares traded
+                - close: closing price
+        """
+        errors = collect_errors(validate_date(date, "date"), _validate_n(n))
+        if errors:
+            return make_validation_error_response(errors)
+
+        norm_date = _normalize_date(date)
+        cache: CacheStore = get_cache()
+
+        latest = cache.get_latest_equities_date()
+        if latest and norm_date > latest:
+            return _cache_not_ready_error(norm_date, latest)
+
+        try:
+            rows = cache.get_rows(
+                "equities_bars_daily", key_filter={}, date_from=norm_date, date_to=norm_date
+            )
+        except (
+            APIError,
+            InvalidAPIKeyError,
+            UserNotConfiguredError,
+            DecryptionError,
+            UserNotAllowedError,
+        ) as e:
+            return format_api_error(e)
+
+        if not rows:
+            return {
+                "error": True,
+                "error_type": "NoTradingData",
+                "message": f"No trading data found for {norm_date}. It may be a holiday or non-trading day.",
+            }
+
+        name_map = cache.get_name_map()
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            code = str(row.get("Code") or "")
+            turnover = _as_float(row.get("Va"))
+            if turnover is None:
+                continue
+            volume = _as_float(row.get("Vo"))
+            items.append(
+                {
+                    "code": display_code(code),
+                    "name": name_map.get(code),
+                    "turnover_value": turnover,
+                    "volume": int(volume) if volume is not None else None,
+                    "close": _as_float(row.get("C")),
+                }
+            )
+
+        items.sort(key=lambda x: x["turnover_value"], reverse=True)
 
         return {
             "date": norm_date,
