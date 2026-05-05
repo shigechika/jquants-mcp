@@ -43,6 +43,10 @@ def _derive_fiscal_period(row: dict[str, Any]) -> str | None:
     2. Prefix of ``DocType`` / legacy ``TypeOfDocument`` for statements
        (``1Q``/``2Q``/``3Q``/``FY``/``OtherPeriod``).
 
+    The ``"Other"`` label maps to ``OtherPeriodFinancialStatements_*`` —
+    irregular reporting periods such as the 5-month statement issued when
+    a company changes its fiscal year-end.
+
     Returns ``None`` for forecast revisions and any unparseable shape.
     """
     cur = row.get("CurPerType") or row.get("TypeOfCurrentPeriod") or ""
@@ -144,7 +148,9 @@ def register(
         Adjusted EPS/BPS (AdjEPS/AdjBPS) are included when split data is available.
         Each row carries a derived ``FiscalPeriod`` label
         (``"1Q"`` / ``"2Q"`` / ``"3Q"`` / ``"FY"`` / ``"Other"`` / ``null``) so callers
-        can identify the period without parsing date fields.
+        can identify the period without parsing date fields. ``"Other"`` covers
+        irregular reporting periods (e.g., fiscal-year-end change). ``null`` is
+        returned for forecast revisions and unrecognised document types.
         Either 'code' or 'date' must be specified.
 
         [Supported plans] Free / Light / Standard / Premium

@@ -371,6 +371,42 @@ class TestFinsSummaryFiscalPeriod:
             assert periods["72030"] == "FY"
             assert periods["67580"] == "1Q"
 
+    async def test_fiscal_period_handles_non_jp_doctype_variants(self, mock_env):
+        # The DocType prefix-match logic should work uniformly for all
+        # accounting-standard variants (IFRS / JMIS / REIT / Foreign / US),
+        # not just `_Consolidated_JP`.
+        mock_data = [
+            {
+                "Code": "11000",
+                "DiscDate": "2024-02-01",
+                "DocType": "1QFinancialStatements_Consolidated_IFRS",
+            },
+            {
+                "Code": "12000",
+                "DiscDate": "2024-02-02",
+                "DocType": "FYFinancialStatements_Consolidated_REIT",
+            },
+            {
+                "Code": "13000",
+                "DiscDate": "2024-02-03",
+                "DocType": "3QFinancialStatements_NonConsolidated_Foreign",
+            },
+            {
+                "Code": "14000",
+                "DiscDate": "2024-02-04",
+                "DocType": "2QFinancialStatements_Consolidated_JMIS",
+            },
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=mock_data
+        ):
+            result = await _call("get_fins_summary", date="2024-02-01")
+            periods = {r["Code"]: r["FiscalPeriod"] for r in result["data"]}
+            assert periods["11000"] == "1Q"
+            assert periods["12000"] == "FY"
+            assert periods["13000"] == "3Q"
+            assert periods["14000"] == "2Q"
+
     async def test_fiscal_period_legacy_long_keys(self, mock_env):
         # Defensive: J-Quants historically used `TypeOfCurrentPeriod` and
         # `TypeOfDocument`; cache rows from older fetches may still carry them.
