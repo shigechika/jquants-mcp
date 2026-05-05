@@ -12,6 +12,12 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    # Run release-please in JST so the CHANGELOG entry date matches the
+    # JST merge day rather than the runner's UTC clock. release-please
+    # formats the version-header date via `new Date().toLocaleDateString('en-CA')`
+    # (changelog-notes/github.ts), which respects the TZ environment variable.
+    env:
+      TZ: Asia/Tokyo
     steps:
       - uses: googleapis/release-please-action@v5
         with:
