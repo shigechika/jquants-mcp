@@ -5,6 +5,14 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.19.0](https://github.com/shigechika/jquants-mcp/compare/v0.18.0...v0.19.0) (2026-05-06)
+
+
+### Features
+
+* **market_overview:** add get_sector_performance tool ([#263](https://github.com/shigechika/jquants-mcp/issues/263)) ([14dd7b5](https://github.com/shigechika/jquants-mcp/commit/14dd7b5579bd2b1d00a281d24003f5127e47baf6))
+* **market_overview:** add get_top_turnover_value tool ([#261](https://github.com/shigechika/jquants-mcp/issues/261)) ([4c0f559](https://github.com/shigechika/jquants-mcp/commit/4c0f5599c4dcc0edc1437d2cd0ee2c0fc360028d))
+
 ## [0.18.0](https://github.com/shigechika/jquants-mcp/compare/v0.17.0...v0.18.0) (2026-05-06)
 
 
