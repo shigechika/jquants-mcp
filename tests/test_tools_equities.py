@@ -318,3 +318,211 @@ class TestGetEquitiesEarningsCalendar:
         self._seed_tier1(cache, [{"Code": "72030", "Date": "2026-05-10", "FQ": "3Q"}])
         result = await _call("get_equities_earnings_calendar", code="7203")
         assert result["count"] == 1
+
+
+def _seed_master(cache: CacheStore, rows: list[dict]) -> None:
+    """Seed equities_master Tier 1 rows."""
+    cache.put_rows("equities_master", rows, key_columns=["Code", "Date"])
+
+
+class TestSearchEquities:
+    async def test_exact_match(self, mock_env):
+        cache = mock_env["cache"]
+        _seed_master(
+            cache,
+            [
+                {
+                    "Code": "80530",
+                    "Date": "2026-01-04",
+                    "CoName": "住友商事",
+                    "CoNameEn": "Sumitomo Corp",
+                },
+                {
+                    "Code": "72030",
+                    "Date": "2026-01-04",
+                    "CoName": "トヨタ自動車",
+                    "CoNameEn": "Toyota Motor",
+                },
+            ],
+        )
+        result = await _call("search_equities", name="住友商事")
+        assert result["count"] == 1
+        assert result["data"][0]["code"] == "8053"
+        assert result["data"][0]["name"] == "住友商事"
+
+    async def test_partial_match(self, mock_env):
+        cache = mock_env["cache"]
+        _seed_master(
+            cache,
+            [
+                {
+                    "Code": "72030",
+                    "Date": "2026-01-04",
+                    "CoName": "トヨタ自動車",
+                    "CoNameEn": "Toyota Motor",
+                },
+                {
+                    "Code": "71820",
+                    "Date": "2026-01-04",
+                    "CoName": "トヨタ紡織",
+                    "CoNameEn": "Toyota Boshoku",
+                },
+                {
+                    "Code": "80530",
+                    "Date": "2026-01-04",
+                    "CoName": "住友商事",
+                    "CoNameEn": "Sumitomo Corp",
+                },
+            ],
+        )
+        result = await _call("search_equities", name="トヨタ")
+        assert result["count"] == 2
+        codes = [r["code"] for r in result["data"]]
+        assert "7203" in codes
+        assert "7182" in codes
+
+    async def test_english_name_match(self, mock_env):
+        cache = mock_env["cache"]
+        _seed_master(
+            cache,
+            [
+                {
+                    "Code": "72030",
+                    "Date": "2026-01-04",
+                    "CoName": "トヨタ自動車",
+                    "CoNameEn": "Toyota Motor",
+                },
+                {
+                    "Code": "80530",
+                    "Date": "2026-01-04",
+                    "CoName": "住友商事",
+                    "CoNameEn": "Sumitomo Corp",
+                },
+            ],
+        )
+        result = await _call("search_equities", name="Toyota")
+        assert result["count"] == 1
+        assert result["data"][0]["code"] == "7203"
+
+    async def test_case_insensitive(self, mock_env):
+        cache = mock_env["cache"]
+        _seed_master(
+            cache,
+            [
+                {
+                    "Code": "72030",
+                    "Date": "2026-01-04",
+                    "CoName": "トヨタ自動車",
+                    "CoNameEn": "Toyota Motor",
+                },
+            ],
+        )
+        result = await _call("search_equities", name="toyota")
+        assert result["count"] == 1
+
+    async def test_deduplicates_by_latest_date(self, mock_env):
+        cache = mock_env["cache"]
+        _seed_master(
+            cache,
+            [
+                {"Code": "72030", "Date": "2024-01-04", "CoName": "旧社名", "CoNameEn": "Old Name"},
+                {
+                    "Code": "72030",
+                    "Date": "2026-01-04",
+                    "CoName": "トヨタ自動車",
+                    "CoNameEn": "Toyota Motor",
+                },
+            ],
+        )
+        result = await _call("search_equities", name="トヨタ")
+        assert result["count"] == 1
+        assert result["data"][0]["name"] == "トヨタ自動車"
+
+    async def test_empty_cache_returns_empty(self, mock_env):
+        result = await _call("search_equities", name="住友商事")
+        assert result["count"] == 0
+        assert result["data"] == []
+
+    async def test_no_match_returns_empty(self, mock_env):
+        cache = mock_env["cache"]
+        _seed_master(
+            cache,
+            [
+                {
+                    "Code": "72030",
+                    "Date": "2026-01-04",
+                    "CoName": "トヨタ自動車",
+                    "CoNameEn": "Toyota Motor",
+                },
+            ],
+        )
+        result = await _call("search_equities", name="住友商事")
+        assert result["count"] == 0
+
+    async def test_empty_name_returns_error(self, mock_env):
+        result = await _call("search_equities", name="")
+        assert result.get("error") is True
+        assert result.get("error_type") == "ValidationError"
+
+    async def test_sorted_by_code(self, mock_env):
+        cache = mock_env["cache"]
+        _seed_master(
+            cache,
+            [
+                {
+                    "Code": "80530",
+                    "Date": "2026-01-04",
+                    "CoName": "住友商事",
+                    "CoNameEn": "Sumitomo Corp",
+                },
+                {
+                    "Code": "80540",
+                    "Date": "2026-01-04",
+                    "CoName": "住友電気工業",
+                    "CoNameEn": "Sumitomo Electric",
+                },
+                {
+                    "Code": "80550",
+                    "Date": "2026-01-04",
+                    "CoName": "住友不動産",
+                    "CoNameEn": "Sumitomo Realty",
+                },
+            ],
+        )
+        result = await _call("search_equities", name="住友")
+        codes = [r["code"] for r in result["data"]]
+        assert codes == sorted(codes)
+
+    async def test_includes_optional_fields_when_present(self, mock_env):
+        cache = mock_env["cache"]
+        _seed_master(
+            cache,
+            [
+                {
+                    "Code": "72030",
+                    "Date": "2026-01-04",
+                    "CoName": "トヨタ自動車",
+                    "CoNameEn": "Toyota Motor",
+                    "MarketCodeName": "プライム",
+                    "Sector33CodeName": "輸送用機器",
+                }
+            ],
+        )
+        result = await _call("search_equities", name="トヨタ")
+        item = result["data"][0]
+        assert item["market"] == "プライム"
+        assert item["sector"] == "輸送用機器"
+        assert item["name_en"] == "Toyota Motor"
+
+    async def test_5digit_code_normalized_to_display(self, mock_env):
+        cache = mock_env["cache"]
+        _seed_master(
+            cache,
+            [
+                {"Code": "72030", "Date": "2026-01-04", "CoName": "トヨタ自動車"},
+                # ETF-style code: 5-digit not ending in 0 stays as-is
+                {"Code": "13050", "Date": "2026-01-04", "CoName": "大和 iFreeETF TOPIX"},
+            ],
+        )
+        result = await _call("search_equities", name="トヨタ")
+        assert result["data"][0]["code"] == "7203"

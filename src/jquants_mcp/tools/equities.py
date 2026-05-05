@@ -19,9 +19,10 @@ from ..exceptions import (
     UserNotConfiguredError,
     format_api_error,
 )
-from ..tool_annotations import READ_ONLY_API
+from ..tool_annotations import READ_ONLY_API, READ_ONLY_CACHE
 from ..validators import (
     collect_errors,
+    display_code,
     make_validation_error_response,
     validate_code,
     validate_date,
@@ -358,6 +359,67 @@ def register(
             UserNotAllowedError,
         ) as e:
             return format_api_error(e)
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def search_equities(name: str) -> dict[str, Any]:
+        """Search for listed stocks by company name (reverse lookup: 会社名 → コード).
+
+        Use when the user knows a company name but not the stock code — e.g. "住友商事
+        のコードは？" or "トヨタ関連銘柄を調べて". Performs a case-insensitive partial
+        match against both the Japanese name (CoName) and English name (CoNameEn) fields
+        in the equities master cache.
+
+        Reads entirely from the local ``equities_master`` Tier 1 cache (no API call).
+        Returns an empty list when the cache has never been populated.
+
+        [Supported plans] Free / Light / Standard / Premium
+        [Source] equities_master Tier 1 cache (no API call)
+
+        Args:
+            name: Partial or full company name to search for (e.g. "住友商事", "トヨタ",
+                "Sumitomo"). Case-insensitive; matches anywhere in the name.
+        """
+        query = name.strip() if name else ""
+        if not query:
+            return make_validation_error_response(["'name' must be a non-empty string."])
+
+        cache: CacheStore = get_cache()
+
+        rows = cache.get_rows("equities_master", key_filter={})
+
+        # Deduplicate: keep the most recent row per code.
+        latest_by_code: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            code = str(row.get("Code") or "")
+            if not code:
+                continue
+            prev = latest_by_code.get(code)
+            if prev is None or (row.get("Date") or "") > (prev.get("Date") or ""):
+                latest_by_code[code] = row
+
+        query_lower = query.lower()
+        matches: list[dict[str, Any]] = []
+        for code, row in latest_by_code.items():
+            coname = str(row.get("CoName") or "")
+            coname_en = str(row.get("CoNameEn") or "")
+            if query_lower not in coname.lower() and query_lower not in coname_en.lower():
+                continue
+            entry: dict[str, Any] = {
+                "code": display_code(code),
+                "name": coname or coname_en or None,
+            }
+            if coname_en:
+                entry["name_en"] = coname_en
+            market = row.get("MarketCodeName") or row.get("MarketCode")
+            if market:
+                entry["market"] = market
+            sector = row.get("Sector33CodeName")
+            if sector:
+                entry["sector"] = sector
+            matches.append(entry)
+
+        matches.sort(key=lambda r: r["code"])
+        return {"count": len(matches), "query": query, "data": matches}
 
     def _search_earnings_by_code(cache: CacheStore, code: str) -> dict[str, Any]:
         """Search accumulated earnings calendar data for a specific stock code.
