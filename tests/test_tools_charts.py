@@ -106,20 +106,15 @@ def _png_dimensions(data: bytes) -> tuple[int, int]:
     return (width, height)
 
 
-# A real chart PNG is 1200x800 (figsize 12x8 at DPI 100). The error-image
-# fallback in tools/charts.py is 800x200 (figsize 8x2). Use the WIDTH to
-# distinguish: matplotlib bbox_inches='tight' on the error image can
-# trim the height, but the rendered width stays close to the figsize.
-def _is_real_chart_png(data: bytes) -> bool:
-    """True for the actual candlestick PNG; False for the error-image PNG.
+# Real chart PNGs are at least 600 px tall across all aspect ratios. The
+# error-image fallback is ~200 px tall (figsize 8×2). Distinguish by HEIGHT.
+def _is_real_png(data: bytes) -> bool:
+    """True for any real rendered chart PNG (candlestick or comparison).
 
-    Without this check, a test that asserts ``_is_png(...)`` would silently
-    pass even when the tool fell back to the error-image path, masking
-    real rendering bugs.
-
-    Uses HEIGHT as the discriminator now that aspect_ratio="square" is the
-    default (800×800 px): error image is ~200 px tall (figsize 8×2), real
-    charts are at least 600 px tall across all aspect ratios.
+    Uses HEIGHT as the discriminator: real charts are at least 600 px tall
+    across all aspect ratios; the error-image fallback (figsize 8×2) is
+    ~200 px tall.  Without this check a test would silently pass even when
+    the tool fell back to the error-image path.
     """
     if not _is_png(data):
         return False
@@ -138,20 +133,6 @@ def _is_error_image_png(data: bytes) -> bool:
         return False
     _, height = _png_dimensions(data)
     return height <= 400
-
-
-def _is_real_comparison_png(data: bytes) -> bool:
-    """True for a real render_comparison_chart PNG.
-
-    The comparison chart default is square (8×8 in = 800×800 px), which has
-    the same width as the error image (800 px).  Distinguish by HEIGHT:
-    real charts are at least 600 px tall; the error image is ~200 px tall
-    (figsize 8×2 with bbox_inches='tight').
-    """
-    if not _is_png(data):
-        return False
-    _, height = _png_dimensions(data)
-    return height > 400
 
 
 def _make_fake_png(width: int = 1200, height: int = 800) -> bytes:
@@ -186,7 +167,7 @@ class TestRenderCandlestick:
             from_date="2026-01-05",
             to_date="2026-02-13",
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
         # Sanity: the rendered chart is a non-trivial size.
         assert 5_000 < len(png) < 500_000
 
@@ -204,7 +185,7 @@ class TestRenderCandlestick:
             to_date="2026-03-05",
             indicators=["volume", "sma20", "bb20"],
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_unknown_indicator_returns_error_image(self, mock_env):
         # Even a validation error should return a PNG (the contract is
@@ -286,8 +267,8 @@ class TestRenderCandlestick:
             to_date="2026-01-24",
             adjusted=False,
         )
-        assert _is_real_chart_png(png_adj)
-        assert _is_real_chart_png(png_raw)
+        assert _is_real_png(png_adj)
+        assert _is_real_png(png_raw)
         # The two charts should differ — the adjusted one uses 50/55/45/52
         # while the raw one uses 100/110/90/105.
         assert png_adj != png_raw
@@ -311,7 +292,7 @@ class TestRenderCandlestickEdgeCases:
             to_date="2026-04-01",
             indicators=["volume"],  # SMA needs >=N bars; skip for 1-bar test
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_sma_window_wider_than_data_silently_skips(self, mock_env):
         # With sma60 + only 10 bars, the SMA never has enough history.
@@ -329,7 +310,7 @@ class TestRenderCandlestickEdgeCases:
             to_date="2026-04-10",
             indicators=["volume", "sma60"],
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_all_flat_bars_render(self, mock_env):
         # Every bar has O=H=L=C — produces all-doji candles. Real-world
@@ -347,7 +328,7 @@ class TestRenderCandlestickEdgeCases:
             to_date="2026-04-10",
             indicators=["volume"],
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_split_inside_range_adjusted_vs_raw_differ(self, mock_env):
         # Mid-range 2-for-1 split: raw prices halve at the split day;
@@ -383,8 +364,8 @@ class TestRenderCandlestickEdgeCases:
             adjusted=False,
             indicators=["volume"],
         )
-        assert _is_real_chart_png(png_adj)
-        assert _is_real_chart_png(png_raw)
+        assert _is_real_png(png_adj)
+        assert _is_real_png(png_raw)
         assert png_adj != png_raw
 
     async def test_alphanumeric_code_accepted_end_to_end(self, mock_env):
@@ -404,7 +385,7 @@ class TestRenderCandlestickEdgeCases:
             to_date="2026-04-10",
             indicators=["volume"],
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_4char_alphanumeric_code_accepted_end_to_end(self, mock_env):
         # Issue #153 regression — the 4-char display form (e.g. 130A)
@@ -425,7 +406,7 @@ class TestRenderCandlestickEdgeCases:
             to_date="2026-04-10",
             indicators=["volume"],
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_malformed_row_skipped_not_crashing(self, mock_env):
         # Cache may carry rows missing OHLC fields (legacy / partial
@@ -445,7 +426,7 @@ class TestRenderCandlestickEdgeCases:
             to_date="2026-04-02",
             indicators=["volume"],
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_square_aspect_ratio_renders(self, mock_env):
         rows = [_bar("27800", f"2026-04-{d:02d}") for d in range(1, 11)]
@@ -458,7 +439,7 @@ class TestRenderCandlestickEdgeCases:
             indicators=["volume"],
             aspect_ratio="square",
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_landscape_aspect_ratio_renders(self, mock_env):
         rows = [_bar("27800", f"2026-04-{d:02d}") for d in range(1, 11)]
@@ -471,7 +452,7 @@ class TestRenderCandlestickEdgeCases:
             indicators=["volume"],
             aspect_ratio="landscape",
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_portrait_aspect_ratio_renders(self, mock_env):
         rows = [_bar("27800", f"2026-04-{d:02d}") for d in range(1, 11)]
@@ -484,7 +465,7 @@ class TestRenderCandlestickEdgeCases:
             indicators=["volume"],
             aspect_ratio="portrait",
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_unknown_aspect_ratio_returns_error(self, mock_env):
         png = await _call_image(
@@ -514,7 +495,7 @@ class TestJpConventionDefaults:
             from_date="2026-04-01",
             to_date="2026-05-10",
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_sma25_and_sma75_are_accepted(self, mock_env):
         # JP convention adds sma25 and sma75 alongside sma5; both must
@@ -531,7 +512,7 @@ class TestJpConventionDefaults:
             to_date="2026-04-30",
             indicators=["volume", "sma5", "sma25", "sma75"],
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
 
 def _seed_master(cache: CacheStore, code: str, name: str | None, date: str = "2026-01-04") -> None:
@@ -554,13 +535,20 @@ class TestChartTitleHelpers:
     the final title via these helpers.
     """
 
+    def test_short_date_format(self):
+        from jquants_mcp.tools.charts import _short_date
+
+        assert _short_date("2026-01-05") == "'26/01"
+        assert _short_date("2026-12-31") == "'26/12"
+        assert _short_date("2025-05-01") == "'25/05"
+
     def test_build_title_without_company(self):
         from jquants_mcp.tools.charts import _build_chart_title
 
-        title = _build_chart_title("7203", None, "2026-01-05", "2026-01-30")
+        title = _build_chart_title("7203", None, "2026-01-05", "2026-04-30")
         assert "7203" in title
-        assert "2026-01-05" in title
-        assert "2026-01-30" in title
+        assert "'26/01" in title
+        assert "'26/04" in title
 
     def test_build_title_with_company(self):
         from jquants_mcp.tools.charts import _build_chart_title
@@ -1008,7 +996,7 @@ class TestRenderCandlestickLockDayOverlay:
             indicators=["volume"],
         )
         # Must be a real chart PNG (not the error-image fallback).
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_render_with_lock_low_returns_real_chart(self, mock_env):
         rows = []
@@ -1029,7 +1017,7 @@ class TestRenderCandlestickLockDayOverlay:
             to_date="2026-04-15",
             indicators=["volume"],
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_lock_day_rendering_uses_returnfig_path(self, mock_env):
         # Patch mpf.plot to capture how it was called when a lock day is present.
@@ -1094,7 +1082,7 @@ class TestRenderCandlestickLockDayOverlay:
             to_date="2026-05-01",
             indicators=["volume", "sma5"],
         )
-        assert _is_real_chart_png(png)
+        assert _is_real_png(png)
 
     async def test_lock_day_uses_correct_color_per_direction(self, mock_env):
         # Pin the colour-by-direction logic: lock-high → up colour
@@ -1188,7 +1176,7 @@ class TestRenderComparisonChart:
             from_date="2026-01-05",
             to_date="2026-01-24",
         )
-        assert _is_real_comparison_png(png)
+        assert _is_real_png(png)
 
     async def test_price_mode_renders(self, mock_env):
         rows = []
@@ -1204,7 +1192,7 @@ class TestRenderComparisonChart:
             to_date="2026-01-19",
             mode="price",
         )
-        assert _is_real_comparison_png(png)
+        assert _is_real_png(png)
 
     async def test_colorblind_style_renders(self, mock_env):
         rows = []
@@ -1220,7 +1208,7 @@ class TestRenderComparisonChart:
             to_date="2026-01-19",
             style="colorblind",
         )
-        assert _is_real_comparison_png(png)
+        assert _is_real_png(png)
 
     async def test_missing_stock_skipped_others_render(self, mock_env):
         # 99999 has no data — chart renders with the available series only.
@@ -1236,7 +1224,7 @@ class TestRenderComparisonChart:
             from_date="2026-01-05",
             to_date="2026-01-19",
         )
-        assert _is_real_comparison_png(png)
+        assert _is_real_png(png)
 
     async def test_return_pct_baseline_handles_late_ipo(self, mock_env):
         # Stock A: full window. Stock B: starts mid-window (IPO).
@@ -1260,7 +1248,7 @@ class TestRenderComparisonChart:
             from_date="2026-01-05",
             to_date="2026-01-24",
         )
-        assert _is_real_comparison_png(png)
+        assert _is_real_png(png)
 
     async def test_empty_codes_returns_error_image(self, mock_env):
         png = await _call_image(
@@ -1366,7 +1354,7 @@ class TestRenderComparisonChart:
             from_date="2026-03-09",
             to_date="2026-03-13",
         )
-        assert _is_real_comparison_png(png)
+        assert _is_real_png(png)
 
     async def test_custom_labels_render(self, mock_env):
         rows = []
@@ -1382,7 +1370,7 @@ class TestRenderComparisonChart:
             to_date="2026-01-19",
             labels=["My Label"],
         )
-        assert _is_real_comparison_png(png)
+        assert _is_real_png(png)
 
     async def test_labels_length_mismatch_returns_error(self, mock_env):
         rows = []
@@ -1414,7 +1402,7 @@ class TestRenderComparisonChart:
             to_date="2026-01-19",
             labels=[""],  # empty → auto-label
         )
-        assert _is_real_comparison_png(png)
+        assert _is_real_png(png)
 
     async def test_whitespace_only_label_falls_back_to_auto(self, mock_env):
         rows = []
@@ -1430,7 +1418,23 @@ class TestRenderComparisonChart:
             to_date="2026-01-19",
             labels=["   "],  # whitespace-only → auto-label
         )
-        assert _is_real_comparison_png(png)
+        assert _is_real_png(png)
+
+    async def test_square_aspect_ratio_renders(self, mock_env):
+        rows = []
+        for i in range(15):
+            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, c=100.0 + i))
+        _seed(mock_env["cache"], rows)
+
+        png = await _call_image(
+            "render_comparison_chart",
+            codes=["27800"],
+            from_date="2026-01-05",
+            to_date="2026-01-19",
+            aspect_ratio="square",
+        )
+        assert _is_real_png(png)
 
     async def test_landscape_aspect_ratio_renders(self, mock_env):
         rows = []
@@ -1446,7 +1450,7 @@ class TestRenderComparisonChart:
             to_date="2026-01-19",
             aspect_ratio="landscape",
         )
-        assert _is_real_comparison_png(png)
+        assert _is_real_png(png)
 
     async def test_portrait_aspect_ratio_renders(self, mock_env):
         rows = []
@@ -1462,7 +1466,7 @@ class TestRenderComparisonChart:
             to_date="2026-01-19",
             aspect_ratio="portrait",
         )
-        assert _is_real_comparison_png(png)
+        assert _is_real_png(png)
 
     async def test_unknown_aspect_ratio_returns_error(self, mock_env):
         png = await _call_image(

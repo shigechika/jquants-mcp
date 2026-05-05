@@ -231,10 +231,18 @@ def _brief_company_name(name: str) -> str:
     return name
 
 
+def _short_date(date_str: str) -> str:
+    """Shorten ``YYYY-MM-DD`` to ``'YY/MM`` for compact chart titles.
+
+    Examples: ``"2026-01-05"`` → ``"'26/01"``, ``"2026-05-01"`` → ``"'26/05"``.
+    """
+    return f"'{date_str[2:4]}/{date_str[5:7]}"
+
+
 def _build_chart_title(code: str, company: str | None, norm_from: str, norm_to: str) -> str:
     """Compose the chart title used by ``mpf.plot``.
 
-    Format: ``CODE [COMPANY ]FROM → TO``.
+    Format: ``CODE [COMPANY ]'YY/MM → 'YY/MM``.
 
     The adjusted/raw distinction is intentionally omitted — Kabutan,
     Yahoo! Finance Japan, JPX official pages, every JP brokerage chart,
@@ -249,7 +257,7 @@ def _build_chart_title(code: str, company: str | None, norm_from: str, norm_to: 
     up matplotlib.
     """
     name_part = f" {company}" if company else ""
-    return f"{code}{name_part} {norm_from} → {norm_to}"
+    return f"{code}{name_part} {_short_date(norm_from)} → {_short_date(norm_to)}"
 
 
 def _detect_lock_days(rows: list[dict], adjusted: bool) -> list[dict]:
@@ -733,7 +741,9 @@ def register(
                         rotation=30,
                         ha="right",
                     )
-                    ax.set_title(f"Comparison {norm_from} → {norm_to}", pad=10)
+                    ax.set_title(
+                        f"Comparison {_short_date(norm_from)} → {_short_date(norm_to)}", pad=10
+                    )
                     if mode == "return_pct":
                         ax.set_ylabel("Return (%)")
                         ax.axhline(0, color="gray", linewidth=0.8, linestyle="--", alpha=0.7)
