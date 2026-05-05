@@ -34,11 +34,26 @@ def _make_cache(tmp_path: Path) -> CacheStore:
         "data TEXT, fetched_at REAL, PRIMARY KEY (code, date))"
     )
     conn.execute("CREATE INDEX idx_ebd_date ON equities_bars_daily (date)")
+    conn.execute(
+        "CREATE TABLE equities_master "
+        "(code TEXT NOT NULL, date TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'standard', "
+        "data TEXT, fetched_at REAL, PRIMARY KEY (code, date))"
+    )
     conn.commit()
     conn.close()
     settings = Settings()
     settings.jquants_plan = "premium"
     return CacheStore(db_path, settings)
+
+
+def _insert_master(
+    conn: sqlite3.Connection, code: str, name: str, date: str = "2026-05-01"
+) -> None:
+    data = {"Code": code, "Date": date, "CoName": name, "CoNameEn": name + " Co"}
+    conn.execute(
+        "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+        (code, date, json.dumps(data), 0.0),
+    )
 
 
 def _insert_bar(
@@ -318,3 +333,67 @@ class TestGetTopVolume:
         data = _call(result)
         assert data.get("error") is True
         assert data["error_type"] == "NoTradingData"
+
+
+# ---------------------------------------------------------------------------
+# name field injection
+# ---------------------------------------------------------------------------
+
+
+class TestNameField:
+    """Both get_top_movers and get_top_volume inject a ``name`` field per item."""
+
+    @pytest.fixture()
+    def named_cache(self, tmp_path):
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "13010", "2026-05-01", 100.0, vo=5000)
+        _insert_bar(conn, "13010", "2026-05-02", 110.0, vo=6000)
+        _insert_bar(conn, "13020", "2026-05-01", 200.0, vo=3000)
+        _insert_bar(conn, "13020", "2026-05-02", 180.0, vo=2000)
+        _insert_master(conn, "13010", "テスト一番")
+        conn.commit()
+        conn.close()
+        return cache
+
+    @pytest.fixture()
+    def mock_named(self, named_cache):
+        with (
+            patch.object(server_module, "_settings", Settings()),
+            patch.object(server_module, "_cache", named_cache),
+        ):
+            yield server_module.mcp
+
+    @pytest.mark.asyncio
+    async def test_top_movers_name_populated(self, mock_named):
+        result = await mock_named.call_tool(
+            "get_top_movers", {"date": "2026-05-02", "direction": "up", "n": 2}
+        )
+        data = _call(result)
+        items = {i["code"]: i for i in data["items"]}
+        assert items["1301"]["name"] == "テスト一番"
+        assert items["1302"]["name"] is None
+
+    @pytest.mark.asyncio
+    async def test_top_movers_name_key_always_present(self, mock_named):
+        result = await mock_named.call_tool(
+            "get_top_movers", {"date": "2026-05-02", "direction": "up"}
+        )
+        data = _call(result)
+        for item in data["items"]:
+            assert "name" in item
+
+    @pytest.mark.asyncio
+    async def test_top_volume_name_populated(self, mock_named):
+        result = await mock_named.call_tool("get_top_volume", {"date": "2026-05-02", "n": 2})
+        data = _call(result)
+        items = {i["code"]: i for i in data["items"]}
+        assert items["1301"]["name"] == "テスト一番"
+        assert items["1302"]["name"] is None
+
+    @pytest.mark.asyncio
+    async def test_top_volume_name_key_always_present(self, mock_named):
+        result = await mock_named.call_tool("get_top_volume", {"date": "2026-05-02"})
+        data = _call(result)
+        for item in data["items"]:
+            assert "name" in item

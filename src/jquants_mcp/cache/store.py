@@ -569,6 +569,37 @@ class CacheStore:
             return [_normalize_fields(json.loads(row["data"])) for row in rows]
         return [json.loads(row["data"]) for row in rows]
 
+    def get_name_map(self) -> dict[str, str]:
+        """Return a mapping of 5-digit code to company name from equities_master.
+
+        Uses the most recent record per code. Falls back to the English name when
+        the Japanese name is absent. Returns an empty dict when the table is empty
+        or the connection is unavailable.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        try:
+            rows = conn.execute(
+                "SELECT e.data FROM equities_master e "
+                "JOIN (SELECT code, MAX(date) AS max_date "
+                "      FROM equities_master GROUP BY code) AS m "
+                "ON e.code = m.code AND e.date = m.max_date"
+            ).fetchall()
+        except Exception:
+            return {}
+        result: dict[str, str] = {}
+        for row in rows:
+            try:
+                data = json.loads(row["data"])
+            except Exception:
+                continue
+            code = str(data.get("Code") or "")
+            name = str(data.get("CoName") or data.get("CoNameEn") or "")
+            if code and name:
+                result[code] = name
+        return result
+
     def iter_session_dates(
         self,
         date_from: str,

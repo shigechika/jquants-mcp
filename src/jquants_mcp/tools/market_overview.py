@@ -364,6 +364,7 @@ def register(
             return format_api_error(e)
 
         prev_close_map = _rows_to_close_map(prev_rows)
+        name_map = cache.get_name_map()
 
         movers: list[dict[str, Any]] = []
         for row in today_rows:
@@ -376,6 +377,7 @@ def register(
             movers.append(
                 {
                     "code": display_code(code),
+                    "name": name_map.get(code),
                     "close": today_close,
                     "prev_close": prev_close,
                     "change_pct": change_pct,
@@ -442,6 +444,7 @@ def register(
                 "message": f"No trading data found for {norm_date}. It may be a holiday or non-trading day.",
             }
 
+        name_map = cache.get_name_map()
         items: list[dict[str, Any]] = []
         for row in rows:
             code = str(row.get("Code") or "")
@@ -451,6 +454,7 @@ def register(
             items.append(
                 {
                     "code": display_code(code),
+                    "name": name_map.get(code),
                     "volume": int(volume),
                     "turnover_value": _as_float(row.get("Va")),
                     "close": _as_float(row.get("C")),
