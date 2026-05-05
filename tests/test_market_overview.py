@@ -232,7 +232,7 @@ class TestGetTopMovers:
         assert len(items) <= 3
         # 13010 rose 10% — should be top
         top = items[0]
-        assert top["code"] == "13010"
+        assert top["code"] == "1301"
         assert top["change_pct"] == pytest.approx(10.0)
 
     @pytest.mark.asyncio
@@ -245,7 +245,7 @@ class TestGetTopMovers:
         items = data["items"]
         # 13020 fell 10% — should be top loser
         top = items[0]
-        assert top["code"] == "13020"
+        assert top["code"] == "1302"
         assert top["change_pct"] == pytest.approx(-10.0)
 
     @pytest.mark.asyncio
@@ -292,7 +292,7 @@ class TestGetTopVolume:
         result = await mock_server.call_tool("get_top_volume", {"date": "2026-05-02", "n": 1})
         data = _call(result)
         # 13010 has vo=6000 on 2026-05-02 — highest
-        assert data["items"][0]["code"] == "13010"
+        assert data["items"][0]["code"] == "1301"
         assert data["items"][0]["volume"] == 6000
 
     @pytest.mark.asyncio

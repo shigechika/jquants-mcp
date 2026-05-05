@@ -580,36 +580,6 @@ class TestChartTitleHelpers:
         assert "raw" not in title
         assert "(" not in title  # no parenthesised suffix at all
 
-    def test_display_code_keeps_4_digit(self):
-        from jquants_mcp.tools.charts import _display_code
-
-        assert _display_code("7203") == "7203"
-
-    def test_display_code_collapses_5_digit_ordinary(self):
-        from jquants_mcp.tools.charts import _display_code
-
-        # 5-digit ending in 0 = ordinary share → display 4-digit.
-        assert _display_code("72030") == "7203"
-        assert _display_code("13010") == "1301"
-
-    def test_display_code_keeps_5_digit_non_ordinary(self):
-        from jquants_mcp.tools.charts import _display_code
-
-        # 5-digit not ending in 0 = preferred / second-class share.
-        assert _display_code("25935") == "25935"
-        assert _display_code("99991") == "99991"
-
-    def test_display_code_collapses_alphanumeric_ordinary_share(self):
-        # JPX's 2024-introduced alphanumeric codes (DDDUD pattern, e.g.
-        # 130A0) follow the same display convention as legacy numeric
-        # codes: 5-char API form, 4-char display form. Kabutan / Yahoo!
-        # Finance Japan / JPX all show ``130A`` (not ``130A0``) for the
-        # ordinary share — match that.
-        from jquants_mcp.tools.charts import _display_code
-
-        assert _display_code("130A0") == "130A"
-        assert _display_code("554A0") == "554A"
-
     async def test_render_title_uses_4_digit_form(self, mock_env):
         # 5-digit ordinary share input should appear as 4-digit in the
         # title, paired with the company name.

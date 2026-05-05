@@ -37,6 +37,7 @@ from ..exceptions import (
 from ..tool_annotations import READ_ONLY_CACHE
 from ..validators import (
     collect_errors,
+    display_code,
     validate_code,
     validate_date,
 )
@@ -137,31 +138,6 @@ def _normalize_date(date: str) -> str:
 
 def _normalize_code(code: str) -> str:
     return code + "0" if len(code) == 4 else code
-
-
-def _display_code(code: str) -> str:
-    """Render a J-Quants stock code in the form Japanese investors read.
-
-    JP stock codes have a 4-character "display" form and a 5-character
-    "J-Quants API" form. The 5th character is ``0`` for ordinary
-    shares, non-zero for preferred / second-class shares. JPX, Kabutan,
-    Yahoo! Finance Japan and the rest of the JP equity ecosystem all
-    show ordinary shares in the 4-character form (``7203`` not
-    ``72030``, ``130A`` not ``130A0``).
-
-    The alphanumeric codes (e.g. ``130A``) were introduced by JPX in
-    2024 to extend the ticker space — they follow the same 4-char
-    display / 5-char API duality as the legacy numeric codes.
-
-    Examples:
-        ``"7203"`` → ``"7203"`` (already 4-char display form)
-        ``"72030"`` → ``"7203"`` (5-char ordinary share → 4-char)
-        ``"25935"`` → ``"25935"`` (5-char non-ordinary, suffix ≠ 0)
-        ``"130A0"`` → ``"130A"`` (5-char alphanumeric ordinary share)
-    """
-    if len(code) == 5 and code.endswith("0"):
-        return code[:4]
-    return code
 
 
 def _get_company_name(cache: CacheStore, code: str) -> str | None:
@@ -518,7 +494,7 @@ def register(
         # conventional 4-digit form (``72030`` → ``7203``) for
         # ordinary shares so the title matches how JP investors
         # actually refer to the stock.
-        title = _build_chart_title(_display_code(norm_code), company, norm_from, norm_to)
+        title = _build_chart_title(display_code(norm_code), company, norm_from, norm_to)
 
         lock_days = _detect_lock_days(rows, adjusted)
 
@@ -700,7 +676,7 @@ def register(
                 logger.debug("render_comparison_chart: no bars for %s", norm_code)
                 continue
 
-            display = _display_code(norm_code)
+            display = display_code(norm_code)
             if labels is not None and labels[idx].strip():
                 label = labels[idx]
             else:

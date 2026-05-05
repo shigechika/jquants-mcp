@@ -2,6 +2,7 @@
 
 from jquants_mcp.validators import (
     collect_errors,
+    display_code,
     make_validation_error_response,
     validate_code,
     validate_date,
@@ -195,3 +196,26 @@ def test_make_validation_error_response():
     assert resp["error_type"] == "ValidationError"
     assert "msg1" in resp["message"]
     assert "msg2" in resp["message"]
+
+
+class TestDisplayCode:
+    def test_keeps_4_digit(self):
+        assert display_code("7203") == "7203"
+
+    def test_collapses_5_digit_ordinary(self):
+        assert display_code("72030") == "7203"
+        assert display_code("13010") == "1301"
+
+    def test_keeps_5_digit_non_ordinary(self):
+        # 5-digit not ending in 0 = preferred / second-class share.
+        assert display_code("25935") == "25935"
+        assert display_code("99991") == "99991"
+
+    def test_collapses_alphanumeric_ordinary_share(self):
+        # JPX 2024 alphanumeric codes (e.g. 130A0) follow the same 4-char
+        # display convention as legacy numeric codes.
+        assert display_code("130A0") == "130A"
+        assert display_code("554A0") == "554A"
+
+    def test_empty_string_passthrough(self):
+        assert display_code("") == ""

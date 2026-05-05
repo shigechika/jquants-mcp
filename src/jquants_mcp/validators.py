@@ -158,3 +158,23 @@ def make_validation_error_response(errors: list[str]) -> dict:
         "error_type": "ValidationError",
         "message": "; ".join(errors),
     }
+
+
+def display_code(code: str) -> str:
+    """Return the investor-facing display form of a J-Quants stock code.
+
+    JP stock codes have a 4-character display form and a 5-character
+    J-Quants API form. The 5th character is ``0`` for ordinary shares,
+    non-zero for preferred / second-class shares. JPX, Kabutan,
+    Yahoo! Finance Japan and most JP equity platforms show ordinary shares
+    in the 4-character form.
+
+    Examples:
+        ``"72030"`` → ``"7203"``   (ordinary share, strip trailing 0)
+        ``"130A0"`` → ``"130A"``   (alphanumeric ordinary share)
+        ``"25935"`` → ``"25935"``  (non-ordinary, last char ≠ 0)
+        ``"7203"``  → ``"7203"``   (already 4-char, unchanged)
+    """
+    if len(code) == 5 and code.endswith("0"):
+        return code[:4]
+    return code
