@@ -676,3 +676,31 @@ class TestGetSectorPerformance:
         assert "7050" in sectors
         assert sectors["7050"]["count"] == 1
         assert len(data["sectors"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_stocks_with_empty_sector_code_are_skipped(self, tmp_path):
+        # equities_master row exists but S33 is an empty string (J-Quants
+        # occasionally emits this for unclassified or special-listing
+        # securities). Such stocks should be skipped from aggregation.
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業")
+        # Master row exists but sector code is blank
+        _insert_bar(conn, "12340", "2026-05-01", 500.0)
+        _insert_bar(conn, "12340", "2026-05-02", 600.0)
+        _insert_master_with_sector(conn, "12340", "未分類銘柄", "", "")
+        conn.commit()
+        conn.close()
+        with (
+            patch.object(server_module, "_settings", Settings()),
+            patch.object(server_module, "_cache", cache),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_sector_performance", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        sectors = {s["code"]: s for s in data["sectors"]}
+        assert list(sectors) == ["7050"]
+        assert sectors["7050"]["count"] == 1

@@ -570,6 +570,10 @@ def register(
         counts. The default ``s33`` partitions the market into the 33 TSE
         sub-sectors; ``s17`` collapses to the 17-sector top-level grouping.
 
+        Only stocks with a sector code populated in ``equities_master`` are
+        aggregated; orphan rows (no master entry) and rows with an empty sector
+        field are silently dropped from the bucket.
+
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily + equities_master Tier 1 cache (no API call)
 
@@ -663,7 +667,10 @@ def register(
                     "count": 0,
                 },
             )
-            # Prefer the first non-empty name we see (later rows may be blank)
+            # The first stock in this sector seeds bucket["name"] via setdefault
+            # above; this branch only fires when that initial seed was an empty
+            # string (rare J-Quants data quality case) and a later stock has
+            # the non-empty form, so we backfill the proper sector name.
             if not bucket["name"] and sec_name:
                 bucket["name"] = sec_name
             if today_close > prev_close:
