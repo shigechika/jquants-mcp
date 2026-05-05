@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import builtins
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -484,9 +484,7 @@ class TestCandlestickDateDefaults:
     async def test_both_dates_omitted_renders_chart(self, mock_env):
         # Seed bars spanning the last ~100 calendar days so the default
         # window (today - 90 days .. today) has data.
-        from datetime import date as dt_date
-
-        today = dt_date.today()
+        today = date.today()
         rows = []
         for i in range(100):
             d = (today - timedelta(days=99 - i)).strftime("%Y-%m-%d")
@@ -501,9 +499,7 @@ class TestCandlestickDateDefaults:
         assert _is_real_png(png)
 
     async def test_to_date_omitted_defaults_to_today(self, mock_env):
-        from datetime import date as dt_date
-
-        today = dt_date.today()
+        today = date.today()
         rows = []
         for i in range(30):
             d = (today - timedelta(days=29 - i)).strftime("%Y-%m-%d")
@@ -539,9 +535,7 @@ class TestCandlestickDateDefaults:
         # Old code: len(df) < 60 → addplot skipped entirely.
         # New code: warmup fetches 120 extra calendar days of bars behind
         #   norm_from; with 85 total bars len(df_extended) >= 60 → addplot added.
-        from datetime import date as dt_date
-
-        today = dt_date.today()
+        today = date.today()
         rows = []
         for i in range(85):
             d = (today - timedelta(days=84 - i)).strftime("%Y-%m-%d")

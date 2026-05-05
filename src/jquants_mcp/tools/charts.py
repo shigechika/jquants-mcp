@@ -404,7 +404,8 @@ def register(
         Args:
             code: 4- or 5-digit stock code (e.g. "72030" or "7203").
             from_date: Range start (YYYYMMDD or YYYY-MM-DD), inclusive.
-                Defaults to ``to_date - 90 days`` when omitted.
+                When omitted, defaults to a 91-day inclusive window ending at
+                ``to_date`` (i.e. ``to_date`` minus 90 calendar days).
             to_date: Range end (YYYYMMDD or YYYY-MM-DD), inclusive.
                 Defaults to today when omitted.
             indicators: List of overlays. Defaults to
