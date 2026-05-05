@@ -5,6 +5,18 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.17.0](https://github.com/shigechika/jquants-mcp/compare/v0.16.0...v0.17.0) (2026-05-05)
+
+
+### Features
+
+* normalize response codes to 4-digit display form ([#250](https://github.com/shigechika/jquants-mcp/issues/250)) ([ed64034](https://github.com/shigechika/jquants-mcp/commit/ed64034b82f29416c29a8f005e97bb279fe5ea24))
+
+
+### Bug Fixes
+
+* **cd:** deploy on release-please commits too ([#251](https://github.com/shigechika/jquants-mcp/issues/251)) ([6c2d3cd](https://github.com/shigechika/jquants-mcp/commit/6c2d3cd18f387d8fbd4d9b967fad67ddae4ab929))
+
 ## [0.16.0](https://github.com/shigechika/jquants-mcp/compare/v0.15.0...v0.16.0) (2026-05-05)
 
 
