@@ -336,12 +336,107 @@ class TestGetTopVolume:
 
 
 # ---------------------------------------------------------------------------
+# get_top_turnover_value
+# ---------------------------------------------------------------------------
+
+
+class TestGetTopTurnoverValue:
+    @pytest.fixture()
+    def turnover_cache(self, tmp_path):
+        """Cache where the volume ranking and turnover ranking diverge.
+
+        Stock A: low price, high volume → tops volume ranking
+        Stock B: high price, medium volume → tops turnover ranking
+        Stock C: middle price, low volume → middle of both
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        # A: price 10, volume 1,000,000 → Va = 10,000,000
+        _insert_bar(conn, "10000", "2026-05-02", 10.0, vo=1_000_000)
+        # B: price 5000, volume 5000 → Va = 25,000,000 (highest turnover)
+        _insert_bar(conn, "20000", "2026-05-02", 5000.0, vo=5_000)
+        # C: price 1000, volume 10000 → Va = 10,000,000 (ties with A on turnover)
+        _insert_bar(conn, "30000", "2026-05-02", 1000.0, vo=10_000)
+        conn.commit()
+        conn.close()
+        return cache
+
+    @pytest.fixture()
+    def mock_turnover(self, turnover_cache):
+        with (
+            patch.object(server_module, "_settings", Settings()),
+            patch.object(server_module, "_cache", turnover_cache),
+        ):
+            yield server_module.mcp
+
+    @pytest.mark.asyncio
+    async def test_sorted_by_turnover_value(self, mock_turnover):
+        result = await mock_turnover.call_tool(
+            "get_top_turnover_value", {"date": "2026-05-02", "n": 10}
+        )
+        data = _call(result)
+        assert data["date"] == "2026-05-02"
+        values = [item["turnover_value"] for item in data["items"]]
+        assert values == sorted(values, reverse=True)
+
+    @pytest.mark.asyncio
+    async def test_top_differs_from_volume_ranking(self, mock_turnover):
+        # Volume ranking: A (1M shares) > C (10k shares) > B (5k shares)
+        # Turnover ranking: B (¥25M) > A (¥10M) ≥ C (¥10M)
+        # So top by turnover should be B (2000), not A (1000) which leads volume.
+        result = await mock_turnover.call_tool(
+            "get_top_turnover_value", {"date": "2026-05-02", "n": 1}
+        )
+        data = _call(result)
+        assert data["items"][0]["code"] == "2000"
+        assert data["items"][0]["turnover_value"] == pytest.approx(25_000_000.0)
+
+    @pytest.mark.asyncio
+    async def test_volume_ranking_picks_low_priced_stock(self, mock_turnover):
+        # Sanity check: get_top_volume picks A (low-priced, high-volume) at the
+        # top, demonstrating that volume and turnover rankings differ.
+        result = await mock_turnover.call_tool("get_top_volume", {"date": "2026-05-02", "n": 1})
+        data = _call(result)
+        assert data["items"][0]["code"] == "1000"
+        assert data["items"][0]["volume"] == 1_000_000
+
+    @pytest.mark.asyncio
+    async def test_fields_present(self, mock_turnover):
+        result = await mock_turnover.call_tool("get_top_turnover_value", {"date": "2026-05-02"})
+        data = _call(result)
+        item = data["items"][0]
+        for key in ("code", "name", "turnover_value", "volume", "close"):
+            assert key in item
+
+    @pytest.mark.asyncio
+    async def test_n_too_large(self, mock_turnover):
+        result = await mock_turnover.call_tool(
+            "get_top_turnover_value", {"date": "2026-05-02", "n": 101}
+        )
+        data = _call(result)
+        assert data.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_non_trading_day_returns_error(self, mock_turnover):
+        result = await mock_turnover.call_tool("get_top_turnover_value", {"date": "2026-04-30"})
+        data = _call(result)
+        assert data.get("error") is True
+        assert data["error_type"] == "NoTradingData"
+
+    @pytest.mark.asyncio
+    async def test_invalid_date(self, mock_turnover):
+        result = await mock_turnover.call_tool("get_top_turnover_value", {"date": "not-a-date"})
+        data = _call(result)
+        assert data.get("error") is True
+
+
+# ---------------------------------------------------------------------------
 # name field injection
 # ---------------------------------------------------------------------------
 
 
 class TestNameField:
-    """Both get_top_movers and get_top_volume inject a ``name`` field per item."""
+    """get_top_movers / get_top_volume / get_top_turnover_value all inject ``name`` per item."""
 
     @pytest.fixture()
     def named_cache(self, tmp_path):
@@ -394,6 +489,23 @@ class TestNameField:
     @pytest.mark.asyncio
     async def test_top_volume_name_key_always_present(self, mock_named):
         result = await mock_named.call_tool("get_top_volume", {"date": "2026-05-02"})
+        data = _call(result)
+        for item in data["items"]:
+            assert "name" in item
+
+    @pytest.mark.asyncio
+    async def test_top_turnover_value_name_populated(self, mock_named):
+        result = await mock_named.call_tool(
+            "get_top_turnover_value", {"date": "2026-05-02", "n": 2}
+        )
+        data = _call(result)
+        items = {i["code"]: i for i in data["items"]}
+        assert items["1301"]["name"] == "テスト一番"
+        assert items["1302"]["name"] is None
+
+    @pytest.mark.asyncio
+    async def test_top_turnover_value_name_key_always_present(self, mock_named):
+        result = await mock_named.call_tool("get_top_turnover_value", {"date": "2026-05-02"})
         data = _call(result)
         for item in data["items"]:
             assert "name" in item
