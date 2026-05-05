@@ -5,6 +5,17 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.18.0](https://github.com/shigechika/jquants-mcp/compare/v0.17.0...v0.18.0) (2026-05-05)
+
+
+### Features
+
+* add company name field to ranking and screener tools ([#243](https://github.com/shigechika/jquants-mcp/issues/243)) ([#257](https://github.com/shigechika/jquants-mcp/issues/257)) ([a436443](https://github.com/shigechika/jquants-mcp/commit/a43644345b68d7f36c887cf640a9c1cae7855cf9))
+* **charts:** optional from_date/to_date with SMA warmup for render_candlestick ([#258](https://github.com/shigechika/jquants-mcp/issues/258)) ([928adb6](https://github.com/shigechika/jquants-mcp/commit/928adb6ffc7d2b8555f3934b9aa86d5acdb2f582))
+* **equities:** add search_equities tool for reverse lookup by company name ([#256](https://github.com/shigechika/jquants-mcp/issues/256)) ([509ecb5](https://github.com/shigechika/jquants-mcp/commit/509ecb5f63b36b452be6d50da85e18976ffb2804))
+* **fins:** add FiscalPeriod label to get_fins_summary rows ([#259](https://github.com/shigechika/jquants-mcp/issues/259)) ([ba89a40](https://github.com/shigechika/jquants-mcp/commit/ba89a40978c5154705e2c3cbf2fd376fc8dbe218))
+* **screener:** split detect_price_limit summary into close vs touched counts ([#254](https://github.com/shigechika/jquants-mcp/issues/254)) ([14be735](https://github.com/shigechika/jquants-mcp/commit/14be73582776496057790bd6a8bc986f1c1f6347))
+
 ## [0.17.0](https://github.com/shigechika/jquants-mcp/compare/v0.16.0...v0.17.0) (2026-05-05)
 
 
