@@ -85,12 +85,9 @@ _LOCK_COLORS: dict[str, tuple[str, str]] = {
 # at a glance, narrow enough not to overlap neighbouring bars.
 _LOCK_BAR_HALF_WIDTH = 0.4
 
-# PNG render dimensions for render_candlestick.
-_FIG_WIDTH = 12.0
-_FIG_HEIGHT = 8.0
 _DPI = 100
 
-# Accepted aspect ratios for render_comparison_chart.
+# Accepted aspect ratios for render_candlestick and render_comparison_chart.
 # "square" is the default — fits naturally in both chat and mobile viewports.
 _COMPARISON_ASPECT_RATIOS: dict[str, tuple[float, float]] = {
     "square": (8.0, 8.0),
@@ -378,6 +375,7 @@ def register(
         indicators: list[str] | None = None,
         style: str = "default",
         adjusted: bool = True,
+        aspect_ratio: str = "square",
     ) -> Image:
         """Render a stock candlestick chart as a PNG (ローソク足チャート). All plans.
 
@@ -412,6 +410,9 @@ def register(
                 (``AdjO`` / ``AdjH`` / ``AdjL`` / ``AdjC``) so corporate
                 actions inside the window do not produce a price gap.
                 Set ``False`` to render unadjusted prices.
+            aspect_ratio: Chart shape. ``square`` (default, 8×8 in) fits
+                chat and mobile. ``landscape`` (12×6 in) for wide desktop
+                views. ``portrait`` (6×9 in) for tall mobile viewports.
         """
         if indicators is None:
             indicators = ["volume", "sma5", "sma25"]
@@ -431,6 +432,11 @@ def register(
             )
         if style not in _STYLE_ALIASES:
             return _error_image(f"Unknown style: {style!r}. Accepted: {sorted(_STYLE_ALIASES)}")
+        if aspect_ratio not in _COMPARISON_ASPECT_RATIOS:
+            return _error_image(
+                f"Unknown aspect_ratio: {aspect_ratio!r}. "
+                f"Accepted: {sorted(_COMPARISON_ASPECT_RATIOS)}"
+            )
 
         norm_code = _normalize_code(code)
         norm_from = _normalize_date(from_date)
@@ -526,7 +532,7 @@ def register(
             "style": _STYLES[style],
             "volume": "volume" in indicators,
             "title": title,
-            "figsize": (_FIG_WIDTH, _FIG_HEIGHT),
+            "figsize": _COMPARISON_ASPECT_RATIOS[aspect_ratio],
         }
         if addplots:
             plot_kwargs["addplot"] = addplots

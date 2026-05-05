@@ -116,17 +116,19 @@ def _is_real_chart_png(data: bytes) -> bool:
     Without this check, a test that asserts ``_is_png(...)`` would silently
     pass even when the tool fell back to the error-image path, masking
     real rendering bugs.
+
+    Uses HEIGHT as the discriminator now that aspect_ratio="square" is the
+    default (800×800 px): error image is ~200 px tall (figsize 8×2), real
+    charts are at least 600 px tall across all aspect ratios.
     """
     if not _is_png(data):
         return False
-    width, _ = _png_dimensions(data)
-    # Real chart: 1200 px wide. Error image: 800 px wide. Use a midpoint
-    # well above the error width but below the chart width.
-    return width > 1000
+    _, height = _png_dimensions(data)
+    return height > 400
 
 
 def _is_error_image_png(data: bytes) -> bool:
-    """True for the error-image fallback PNG (small, 800-px wide figure).
+    """True for the error-image fallback PNG (figsize 8×2, ~200 px tall).
 
     Tests that intentionally exercise the error path use this so a
     regression that makes the tool render a real chart on bad input is
@@ -134,8 +136,8 @@ def _is_error_image_png(data: bytes) -> bool:
     """
     if not _is_png(data):
         return False
-    width, _ = _png_dimensions(data)
-    return width <= 1000
+    _, height = _png_dimensions(data)
+    return height <= 400
 
 
 def _is_real_comparison_png(data: bytes) -> bool:
@@ -444,6 +446,42 @@ class TestRenderCandlestickEdgeCases:
             indicators=["volume"],
         )
         assert _is_real_chart_png(png)
+
+    async def test_square_aspect_ratio_renders(self, mock_env):
+        rows = [_bar("27800", f"2026-04-{d:02d}") for d in range(1, 11)]
+        _seed(mock_env["cache"], rows)
+        png = await _call_image(
+            "render_candlestick",
+            code="27800",
+            from_date="2026-04-01",
+            to_date="2026-04-10",
+            indicators=["volume"],
+            aspect_ratio="square",
+        )
+        assert _is_real_chart_png(png)
+
+    async def test_landscape_aspect_ratio_renders(self, mock_env):
+        rows = [_bar("27800", f"2026-04-{d:02d}") for d in range(1, 11)]
+        _seed(mock_env["cache"], rows)
+        png = await _call_image(
+            "render_candlestick",
+            code="27800",
+            from_date="2026-04-01",
+            to_date="2026-04-10",
+            indicators=["volume"],
+            aspect_ratio="landscape",
+        )
+        assert _is_real_chart_png(png)
+
+    async def test_unknown_aspect_ratio_returns_error(self, mock_env):
+        png = await _call_image(
+            "render_candlestick",
+            code="27800",
+            from_date="2026-04-01",
+            to_date="2026-04-10",
+            aspect_ratio="widescreen",
+        )
+        assert _is_error_image_png(png)
 
 
 class TestJpConventionDefaults:
