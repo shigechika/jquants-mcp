@@ -238,7 +238,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
-        name_map = cache.get_name_map()
+        name_map = cache.get_name_map() if detail else {}
         matches: list[dict[str, Any]] = []
         for row in rows:
             ul = _as_int(row.get("UL"))
@@ -691,7 +691,7 @@ def register(
                 continue
             by_code.setdefault(c, []).append(row)
 
-        name_map = cache.get_name_map()
+        name_map = cache.get_name_map() if detail else {}
         matches: list[dict[str, Any]] = []
         for c, sessions in by_code.items():
             sessions.sort(key=lambda r: r.get("Date") or "")

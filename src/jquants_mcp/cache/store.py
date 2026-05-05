@@ -575,6 +575,10 @@ class CacheStore:
         Uses the most recent record per code. Falls back to the English name when
         the Japanese name is absent. Returns an empty dict when the table is empty
         or the connection is unavailable.
+
+        Note: intentionally bypasses ``_build_where_clause`` / plan-based date
+        restrictions.  ``equities_master`` is a reference table; plan gating on
+        the name lookup would incorrectly suppress names for older codes.
         """
         conn = self._ensure_connection()
         if conn is None:

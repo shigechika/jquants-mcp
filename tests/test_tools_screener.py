@@ -1326,3 +1326,46 @@ class TestNameFieldInjection:
         result = await _call("get_top_volume", date="2026-04-02")
         assert len(result["items"]) >= 1
         assert result["items"][0]["name"] == "出来高王"
+
+    async def test_detect_52w_range_name_cache_hit_path(self, mock_env):
+        """Cache-hit branch of _high_low_range injects name from name_map."""
+        cache = mock_env["cache"]
+        params_hash = screener_compute.default_params_hash_52w()
+        d_to = (date.today() - timedelta(days=7)).isoformat()
+        d_from = (date.today() - timedelta(days=14)).isoformat()
+        # Seed one bar so iter_session_dates can find d_to.
+        _seed(cache, [_bar("12340", d_to)])
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash=params_hash,
+            date=d_to,
+            payload=_stub_payload_52w(d_to, ["12340"]),
+        )
+        _seed_master(cache, "12340", "キャッシュヒット株")
+        result = await _call(
+            "detect_52w_high_low_range", date_from=d_from, date_to=d_to, detail=True
+        )
+        names = [r.get("name") for r in result.get("data", [])]
+        assert "キャッシュヒット株" in names
+
+    async def test_detect_ytd_range_name_cache_hit_path(self, mock_env):
+        """Cache-hit branch of _high_low_range injects name for YTD variant."""
+        cache = mock_env["cache"]
+        params_hash = screener_compute.default_params_hash_ytd()
+        d_to = (date.today() - timedelta(days=7)).isoformat()
+        d_from = (date.today() - timedelta(days=14)).isoformat()
+        _seed(cache, [_bar("99980", d_to)])
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_YTD,
+            params_hash=params_hash,
+            date=d_to,
+            payload=_stub_payload_ytd(d_to, ["99980"]),
+        )
+        _seed_master(cache, "99980", "YTDキャッシュ株")
+        result = await _call(
+            "detect_ytd_high_low_range", date_from=d_from, date_to=d_to, detail=True
+        )
+        names = [r.get("name") for r in result.get("data", [])]
+        assert "YTDキャッシュ株" in names
