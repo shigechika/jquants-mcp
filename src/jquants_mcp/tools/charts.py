@@ -140,9 +140,6 @@ def _normalize_code(code: str) -> str:
     return code + "0" if len(code) == 4 else code
 
 
-# display_code is imported from validators — no local definition needed.
-
-
 def _get_company_name(cache: CacheStore, code: str) -> str | None:
     """Best-effort lookup of the listed company name from the
     ``equities_master`` cache.
