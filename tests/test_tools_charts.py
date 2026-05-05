@@ -473,6 +473,19 @@ class TestRenderCandlestickEdgeCases:
         )
         assert _is_real_chart_png(png)
 
+    async def test_portrait_aspect_ratio_renders(self, mock_env):
+        rows = [_bar("27800", f"2026-04-{d:02d}") for d in range(1, 11)]
+        _seed(mock_env["cache"], rows)
+        png = await _call_image(
+            "render_candlestick",
+            code="27800",
+            from_date="2026-04-01",
+            to_date="2026-04-10",
+            indicators=["volume"],
+            aspect_ratio="portrait",
+        )
+        assert _is_real_chart_png(png)
+
     async def test_unknown_aspect_ratio_returns_error(self, mock_env):
         png = await _call_image(
             "render_candlestick",
