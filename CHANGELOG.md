@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.16.0](https://github.com/shigechika/jquants-mcp/compare/v0.15.0...v0.16.0) (2026-05-05)
+
+
+### Features
+
+* add aspect_ratio param to render_candlestick, default square ([#239](https://github.com/shigechika/jquants-mcp/issues/239)) ([24bfd00](https://github.com/shigechika/jquants-mcp/commit/24bfd0033ff403a0c5c221225807b5fef8ee4c98))
+
 ## [0.15.0](https://github.com/shigechika/jquants-mcp/compare/v0.14.0...v0.15.0) (2026-05-04)
 
 
