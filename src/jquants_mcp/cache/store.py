@@ -604,6 +604,45 @@ class CacheStore:
                 result[code] = name
         return result
 
+    def get_sector_map(self) -> dict[str, dict[str, str]]:
+        """Return a mapping of 5-digit code to sector codes/names from equities_master.
+
+        Each value is a dict with keys ``s33``, ``s33_name``, ``s17``, ``s17_name``
+        (each may be an empty string if the master row lacks that field).
+        Uses the most recent record per code, mirroring ``get_name_map``.
+
+        Note: intentionally bypasses ``_build_where_clause`` / plan-based date
+        restrictions for the same reason as ``get_name_map``.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        try:
+            rows = conn.execute(
+                "SELECT e.data FROM equities_master e "
+                "JOIN (SELECT code, MAX(date) AS max_date "
+                "      FROM equities_master GROUP BY code) AS m "
+                "ON e.code = m.code AND e.date = m.max_date"
+            ).fetchall()
+        except Exception:
+            return {}
+        result: dict[str, dict[str, str]] = {}
+        for row in rows:
+            try:
+                data = json.loads(row["data"])
+            except Exception:
+                continue
+            code = str(data.get("Code") or "")
+            if not code:
+                continue
+            result[code] = {
+                "s33": str(data.get("S33") or ""),
+                "s33_name": str(data.get("S33Nm") or ""),
+                "s17": str(data.get("S17") or ""),
+                "s17_name": str(data.get("S17Nm") or ""),
+            }
+        return result
+
     def iter_session_dates(
         self,
         date_from: str,
