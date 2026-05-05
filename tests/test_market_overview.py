@@ -509,3 +509,198 @@ class TestNameField:
         data = _call(result)
         for item in data["items"]:
             assert "name" in item
+
+
+# ---------------------------------------------------------------------------
+# get_sector_performance
+# ---------------------------------------------------------------------------
+
+
+def _insert_master_with_sector(
+    conn: sqlite3.Connection,
+    code: str,
+    name: str,
+    s33: str,
+    s33_name: str,
+    s17: str = "",
+    s17_name: str = "",
+    date: str = "2026-05-01",
+) -> None:
+    data = {
+        "Code": code,
+        "Date": date,
+        "CoName": name,
+        "CoNameEn": name + " Co",
+        "S33": s33,
+        "S33Nm": s33_name,
+        "S17": s17,
+        "S17Nm": s17_name,
+    }
+    conn.execute(
+        "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+        (code, date, json.dumps(data), 0.0),
+    )
+
+
+class TestGetSectorPerformance:
+    @pytest.fixture()
+    def sector_cache(self, tmp_path):
+        """Three sectors with different aggregate behaviour:
+
+        - Banks (s33="7050"): two stocks, both up (avg ~+5%)
+        - IT (s33="5250"): one stock, down (avg -10%)
+        - Steel (s33="3450"): two stocks, mixed (avg 0%)
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        # Banks (sector 7050 / s17 7)
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0)  # +10%
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+        _insert_bar(conn, "83160", "2026-05-01", 2000.0)
+        _insert_bar(conn, "83160", "2026-05-02", 2000.0)  # 0%
+        _insert_master_with_sector(conn, "83160", "三井住友", "7050", "銀行業", "7", "金融")
+        # IT (sector 5250 / s17 5)
+        _insert_bar(conn, "97660", "2026-05-01", 5000.0)
+        _insert_bar(conn, "97660", "2026-05-02", 4500.0)  # -10%
+        _insert_master_with_sector(conn, "97660", "コナミ", "5250", "情報・通信業", "5", "情報通信")
+        # Steel (sector 3450 / s17 3)
+        _insert_bar(conn, "53010", "2026-05-01", 1000.0)
+        _insert_bar(conn, "53010", "2026-05-02", 1100.0)  # +10%
+        _insert_master_with_sector(conn, "53010", "新日鉄", "3450", "鉄鋼", "3", "素材・化学")
+        _insert_bar(conn, "53020", "2026-05-01", 1000.0)
+        _insert_bar(conn, "53020", "2026-05-02", 900.0)  # -10%
+        _insert_master_with_sector(conn, "53020", "JFE", "3450", "鉄鋼", "3", "素材・化学")
+        conn.commit()
+        conn.close()
+        return cache
+
+    @pytest.fixture()
+    def mock_sector(self, sector_cache):
+        with (
+            patch.object(server_module, "_settings", Settings()),
+            patch.object(server_module, "_cache", sector_cache),
+        ):
+            yield server_module.mcp
+
+    @pytest.mark.asyncio
+    async def test_basic_aggregation_s33(self, mock_sector):
+        result = await mock_sector.call_tool("get_sector_performance", {"date": "2026-05-02"})
+        data = _call(result)
+        assert data["date"] == "2026-05-02"
+        assert data["previous_date"] == "2026-05-01"
+        assert data["sector_type"] == "s33"
+        sectors = {s["code"]: s for s in data["sectors"]}
+        # Banks: +10% and 0% → avg = 5%
+        assert sectors["7050"]["name"] == "銀行業"
+        assert sectors["7050"]["count"] == 2
+        assert sectors["7050"]["advances"] == 1
+        assert sectors["7050"]["unchanged"] == 1
+        assert sectors["7050"]["avg_change_pct"] == pytest.approx(5.0)
+        # IT: -10% only → avg = -10%
+        assert sectors["5250"]["avg_change_pct"] == pytest.approx(-10.0)
+        # Steel: +10% and -10% → avg = 0%
+        assert sectors["3450"]["count"] == 2
+        assert sectors["3450"]["advances"] == 1
+        assert sectors["3450"]["declines"] == 1
+        assert sectors["3450"]["avg_change_pct"] == pytest.approx(0.0)
+
+    @pytest.mark.asyncio
+    async def test_sectors_sorted_descending(self, mock_sector):
+        result = await mock_sector.call_tool("get_sector_performance", {"date": "2026-05-02"})
+        data = _call(result)
+        pcts = [s["avg_change_pct"] for s in data["sectors"]]
+        assert pcts == sorted(pcts, reverse=True)
+        # Banks (+5%) > Steel (0%) > IT (-10%)
+        assert data["sectors"][0]["code"] == "7050"
+        assert data["sectors"][-1]["code"] == "5250"
+
+    @pytest.mark.asyncio
+    async def test_s17_aggregation_collapses_codes(self, mock_sector):
+        result = await mock_sector.call_tool(
+            "get_sector_performance", {"date": "2026-05-02", "sector_type": "s17"}
+        )
+        data = _call(result)
+        assert data["sector_type"] == "s17"
+        sectors = {s["code"]: s for s in data["sectors"]}
+        # s17="7" Finance: same as s33 banks (2 stocks)
+        assert sectors["7"]["count"] == 2
+        assert sectors["7"]["avg_change_pct"] == pytest.approx(5.0)
+        # s17="3" Materials: same as s33 steel
+        assert sectors["3"]["count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_invalid_sector_type(self, mock_sector):
+        result = await mock_sector.call_tool(
+            "get_sector_performance", {"date": "2026-05-02", "sector_type": "s99"}
+        )
+        data = _call(result)
+        assert data.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_invalid_date(self, mock_sector):
+        result = await mock_sector.call_tool("get_sector_performance", {"date": "not-a-date"})
+        data = _call(result)
+        assert data.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_cache_not_ready(self, mock_sector):
+        result = await mock_sector.call_tool("get_sector_performance", {"date": "2099-01-01"})
+        data = _call(result)
+        assert data["error_type"] == "CacheNotReady"
+
+    @pytest.mark.asyncio
+    async def test_stocks_without_sector_are_skipped(self, tmp_path):
+        # Stock with bar data but no equities_master entry → has no sector
+        # mapping, should be silently dropped from aggregation.
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業")
+        # Orphan: bar present but no master
+        _insert_bar(conn, "99999", "2026-05-01", 500.0)
+        _insert_bar(conn, "99999", "2026-05-02", 600.0)
+        conn.commit()
+        conn.close()
+        with (
+            patch.object(server_module, "_settings", Settings()),
+            patch.object(server_module, "_cache", cache),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_sector_performance", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        sectors = {s["code"]: s for s in data["sectors"]}
+        # Only the bank shows up — orphan dropped
+        assert "7050" in sectors
+        assert sectors["7050"]["count"] == 1
+        assert len(data["sectors"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_stocks_with_empty_sector_code_are_skipped(self, tmp_path):
+        # equities_master row exists but S33 is an empty string (J-Quants
+        # occasionally emits this for unclassified or special-listing
+        # securities). Such stocks should be skipped from aggregation.
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業")
+        # Master row exists but sector code is blank
+        _insert_bar(conn, "12340", "2026-05-01", 500.0)
+        _insert_bar(conn, "12340", "2026-05-02", 600.0)
+        _insert_master_with_sector(conn, "12340", "未分類銘柄", "", "")
+        conn.commit()
+        conn.close()
+        with (
+            patch.object(server_module, "_settings", Settings()),
+            patch.object(server_module, "_cache", cache),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_sector_performance", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        sectors = {s["code"]: s for s in data["sectors"]}
+        assert list(sectors) == ["7050"]
+        assert sectors["7050"]["count"] == 1

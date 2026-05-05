@@ -11,6 +11,7 @@ Exposed tools:
 - ``get_top_movers`` — top gainers/losers by percentage price change
 - ``get_top_volume`` — top stocks by trading volume (出来高ランキング)
 - ``get_top_turnover_value`` — top stocks by turnover value (売買代金ランキング)
+- ``get_sector_performance`` — sector-level average percentage change (業種別騰落率)
 """
 
 from __future__ import annotations
@@ -553,4 +554,155 @@ def register(
         return {
             "date": norm_date,
             "items": items[:n],
+        }
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def get_sector_performance(
+        date: str,
+        sector_type: str = "s33",
+    ) -> dict[str, Any]:
+        """Return sector-level average percentage change (業種別騰落率) on a date.
+
+        Use for 業種別騰落率, セクター別パフォーマンス, sector performance,
+        業種別ランキング.
+        Groups all listed equities by TSE sector classification and reports the
+        average daily change percentage per sector along with advance/decline
+        counts. The default ``s33`` partitions the market into the 33 TSE
+        sub-sectors; ``s17`` collapses to the 17-sector top-level grouping.
+
+        Only stocks with a sector code populated in ``equities_master`` are
+        aggregated; orphan rows (no master entry) and rows with an empty sector
+        field are silently dropped from the bucket.
+
+        [Supported plans] Free / Light / Standard / Premium
+        [Source] equities_bars_daily + equities_master Tier 1 cache (no API call)
+
+        Args:
+            date: Trading date in YYYY-MM-DD or YYYYMMDD format.
+            sector_type: ``"s33"`` (default, 33 sectors) or ``"s17"`` (17 sectors).
+
+        Returns:
+            dict with keys:
+            - date: the requested trading date
+            - previous_date: comparison base trading date
+            - sector_type: ``"s33"`` or ``"s17"``
+            - sectors: list of dicts (sorted by avg_change_pct desc), each with:
+                - code: sector code
+                - name: sector name
+                - count: stocks with both today and prev close
+                - advances: stocks that rose
+                - declines: stocks that fell
+                - unchanged: stocks with no price change
+                - avg_change_pct: mean daily change in percent
+        """
+        if sector_type not in ("s33", "s17"):
+            return make_validation_error_response(["sector_type must be 's33' or 's17'"])
+        errors = collect_errors(validate_date(date, "date"))
+        if errors:
+            return make_validation_error_response(errors)
+
+        norm_date = _normalize_date(date)
+        cache: CacheStore = get_cache()
+
+        latest = cache.get_latest_equities_date()
+        if latest and norm_date > latest:
+            return _cache_not_ready_error(norm_date, latest)
+
+        session_dates = _get_session_dates(cache, norm_date, 2)
+        if len(session_dates) < 2:
+            return {
+                "error": True,
+                "error_type": "InsufficientData",
+                "message": f"Not enough trading days before {norm_date}.",
+            }
+
+        prev_date = session_dates[-2]
+        today_date = session_dates[-1]
+
+        try:
+            today_rows = cache.get_rows(
+                "equities_bars_daily", key_filter={}, date_from=today_date, date_to=today_date
+            )
+            prev_rows = cache.get_rows(
+                "equities_bars_daily", key_filter={}, date_from=prev_date, date_to=prev_date
+            )
+        except (
+            APIError,
+            InvalidAPIKeyError,
+            UserNotConfiguredError,
+            DecryptionError,
+            UserNotAllowedError,
+        ) as e:
+            return format_api_error(e)
+
+        prev_close_map = _rows_to_close_map(prev_rows)
+        sector_map = cache.get_sector_map()
+
+        code_key = sector_type
+        name_key = f"{sector_type}_name"
+
+        # buckets[sector_code] = {"name": str, "advances": int, "declines": int,
+        #                         "unchanged": int, "pct_sum": float, "count": int}
+        buckets: dict[str, dict[str, Any]] = {}
+        for row in today_rows:
+            code = str(row.get("Code") or "")
+            today_close = _as_float(row.get("AdjC"))
+            prev_close = prev_close_map.get(code)
+            if today_close is None or prev_close is None or prev_close == 0:
+                continue
+            sector = sector_map.get(code, {})
+            sec_code = sector.get(code_key) or ""
+            if not sec_code:
+                continue
+            sec_name = sector.get(name_key) or ""
+            change_pct = (today_close - prev_close) / prev_close * 100.0
+            bucket = buckets.setdefault(
+                sec_code,
+                {
+                    "name": sec_name,
+                    "advances": 0,
+                    "declines": 0,
+                    "unchanged": 0,
+                    "pct_sum": 0.0,
+                    "count": 0,
+                },
+            )
+            # The first stock in this sector seeds bucket["name"] via setdefault
+            # above; this branch only fires when that initial seed was an empty
+            # string (rare J-Quants data quality case) and a later stock has
+            # the non-empty form, so we backfill the proper sector name.
+            if not bucket["name"] and sec_name:
+                bucket["name"] = sec_name
+            if today_close > prev_close:
+                bucket["advances"] += 1
+            elif today_close < prev_close:
+                bucket["declines"] += 1
+            else:
+                bucket["unchanged"] += 1
+            bucket["pct_sum"] += change_pct
+            bucket["count"] += 1
+
+        sectors: list[dict[str, Any]] = []
+        for sec_code, bucket in buckets.items():
+            if bucket["count"] == 0:
+                continue
+            sectors.append(
+                {
+                    "code": sec_code,
+                    "name": bucket["name"] or None,
+                    "count": bucket["count"],
+                    "advances": bucket["advances"],
+                    "declines": bucket["declines"],
+                    "unchanged": bucket["unchanged"],
+                    "avg_change_pct": round(bucket["pct_sum"] / bucket["count"], 4),
+                }
+            )
+
+        sectors.sort(key=lambda x: x["avg_change_pct"], reverse=True)
+
+        return {
+            "date": today_date,
+            "previous_date": prev_date,
+            "sector_type": sector_type,
+            "sectors": sectors,
         }
