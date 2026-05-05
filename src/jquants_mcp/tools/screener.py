@@ -238,6 +238,7 @@ def register(
         ) as e:
             return format_api_error(e)
 
+        name_map = cache.get_name_map() if detail else {}
         matches: list[dict[str, Any]] = []
         for row in rows:
             ul = _as_int(row.get("UL"))
@@ -245,12 +246,14 @@ def register(
             if ul != 1 and ll != 1 and code is None:
                 # Cross-sectional: only include triggered rows.
                 continue
+            raw_code = str(row.get("Code") or "")
             high = row.get("H")
             low = row.get("L")
             close = row.get("C")
             matches.append(
                 {
-                    "Code": display_code(str(row.get("Code") or "")),
+                    "Code": display_code(raw_code),
+                    "name": name_map.get(raw_code),
                     "Date": row.get("Date") or norm_date,
                     "C": close,
                     "H": high,
@@ -464,12 +467,14 @@ def register(
         # (e.g. so newly-listed stocks still return their signal), so
         # serving code-specific calls from the cross-sectional payload
         # would silently drop IPO codes. Skip the cache when code is set.
+        name_map = cache.get_name_map()
         if code is None:
             cached = _try_screener_cache_52w(
                 cache,
                 norm_date=norm_date,
                 window_sessions=window_sessions,
                 min_prior_sessions=min_prior_sessions,
+                name_map=name_map,
             )
             if cached is not None:
                 return cached if detail else _summarise_high_low(cached)
@@ -483,6 +488,7 @@ def register(
             window_sessions=window_sessions,
             min_prior_sessions=min_prior_sessions,
             mode_label="52w",
+            name_map=name_map,
         )
         return result if detail else _summarise_high_low(result)
 
@@ -574,11 +580,13 @@ def register(
         # the cross-sectional min_prior_sessions filter dropped, but the
         # on-demand path bypasses that filter when ``code`` is set. Skip
         # the cache for explicit-code calls to avoid losing IPO rows.
+        name_map = cache.get_name_map()
         if code is None:
             cached = _try_screener_cache_ytd(
                 cache,
                 norm_date=norm_date,
                 min_prior_sessions=min_prior_sessions,
+                name_map=name_map,
             )
             if cached is not None:
                 return cached if detail else _summarise_high_low(cached)
@@ -592,6 +600,7 @@ def register(
             window_sessions=None,  # YTD has no fixed window cap
             min_prior_sessions=min_prior_sessions,
             mode_label="ytd",
+            name_map=name_map,
         )
         return result if detail else _summarise_high_low(result)
 
@@ -682,6 +691,7 @@ def register(
                 continue
             by_code.setdefault(c, []).append(row)
 
+        name_map = cache.get_name_map() if detail else {}
         matches: list[dict[str, Any]] = []
         for c, sessions in by_code.items():
             sessions.sort(key=lambda r: r.get("Date") or "")
@@ -701,6 +711,7 @@ def register(
             matches.append(
                 {
                     "Code": display_code(c),
+                    "name": name_map.get(c),
                     "Date": norm_date,
                     "Vo": today_vol,
                     "baseline_days_used": len(baseline),
@@ -794,6 +805,8 @@ def register(
         if latest_date is not None and d_to > latest_date:
             return _cache_not_ready_error(d_to, latest_date)
 
+        name_map = cache.get_name_map()
+
         async def _compute_one(d: str) -> dict[str, Any]:
             start = _calendar_window_start(d, window_sessions)
             return await _high_low_signals(
@@ -804,6 +817,7 @@ def register(
                 window_sessions=window_sessions,
                 min_prior_sessions=min_prior_sessions,
                 mode_label="52w",
+                name_map=name_map,
             )
 
         result = await _high_low_range(
@@ -817,6 +831,7 @@ def register(
             date_to=d_to,
             code=code,
             mode_label="52w",
+            name_map=name_map,
             on_demand=_compute_one,
         )
         return result if detail else _summarise_high_low(result)
@@ -893,6 +908,8 @@ def register(
         if latest_date is not None and d_to > latest_date:
             return _cache_not_ready_error(d_to, latest_date)
 
+        name_map = cache.get_name_map()
+
         async def _compute_one(d: str) -> dict[str, Any]:
             year_start = d[:4] + "-01-01"
             return await _high_low_signals(
@@ -903,6 +920,7 @@ def register(
                 window_sessions=None,
                 min_prior_sessions=min_prior_sessions,
                 mode_label="ytd",
+                name_map=name_map,
             )
 
         result = await _high_low_range(
@@ -915,6 +933,7 @@ def register(
             date_to=d_to,
             code=code,
             mode_label="ytd",
+            name_map=name_map,
             on_demand=_compute_one,
         )
         return result if detail else _summarise_high_low(result)
@@ -952,6 +971,7 @@ async def _high_low_signals(
     window_sessions: int | None,
     min_prior_sessions: int,
     mode_label: str,
+    name_map: dict[str, str],
 ) -> dict[str, Any]:
     """Shared implementation for ``detect_52w_high_low`` / ``detect_ytd_high_low``.
 
@@ -990,6 +1010,7 @@ async def _high_low_signals(
     )
     for item in result.get("data", []):
         if "Code" in item:
+            item["name"] = name_map.get(item["Code"])
             item["Code"] = display_code(item["Code"])
     return result
 
@@ -1000,6 +1021,7 @@ def _try_screener_cache_52w(
     norm_date: str,
     window_sessions: int,
     min_prior_sessions: int,
+    name_map: dict[str, str],
 ) -> dict[str, Any] | None:
     """Look up a pre-computed cross-sectional 52w-high/low payload.
 
@@ -1019,6 +1041,7 @@ def _try_screener_cache_52w(
     data = [dict(item) for item in payload.get("data", [])]
     for item in data:
         if "Code" in item:
+            item["name"] = name_map.get(item["Code"])
             item["Code"] = display_code(item["Code"])
     return {"count": payload.get("count", 0), "mode": payload.get("mode", "52w"), "data": data}
 
@@ -1028,6 +1051,7 @@ def _try_screener_cache_ytd(
     *,
     norm_date: str,
     min_prior_sessions: int,
+    name_map: dict[str, str],
 ) -> dict[str, Any] | None:
     """Look up a pre-computed cross-sectional YTD-high/low payload.
 
@@ -1042,6 +1066,7 @@ def _try_screener_cache_ytd(
     data = [dict(item) for item in payload.get("data", [])]
     for item in data:
         if "Code" in item:
+            item["name"] = name_map.get(item["Code"])
             item["Code"] = display_code(item["Code"])
     return {"count": payload.get("count", 0), "mode": payload.get("mode", "ytd"), "data": data}
 
@@ -1117,6 +1142,7 @@ async def _high_low_range(
     date_to: str,
     code: str | None,
     mode_label: str,
+    name_map: dict[str, str],
     on_demand,
 ) -> dict[str, Any]:
     """Range scan: bulk cache lookup + on-demand fallback per missing day.
@@ -1150,6 +1176,7 @@ async def _high_low_range(
             rows = [dict(r) for r in cached_by_date[d].get("data", [])]
             for item in rows:
                 if "Code" in item:
+                    item["name"] = name_map.get(item["Code"])
                     item["Code"] = display_code(item["Code"])
         else:
             payload = await on_demand(d)

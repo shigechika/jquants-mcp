@@ -1231,3 +1231,141 @@ class TestDetailParameter:
         result = await _call("detect_price_limit", date="not-a-date")
         assert "error" in result or "errors" in result
         assert "data" not in result
+
+
+# ---------------------------------------------------------------------------
+# name field injection
+# ---------------------------------------------------------------------------
+
+
+def _seed_master(cache: CacheStore, code: str, name: str, date: str = "2026-01-01") -> None:
+    """Insert one equities_master row so get_name_map() can resolve the code."""
+    cache.put_rows(
+        "equities_master",
+        [{"Code": code, "Date": date, "CoName": name, "CoNameEn": name + " En"}],
+        key_columns=["Code", "Date"],
+    )
+
+
+@pytest.mark.asyncio
+class TestNameFieldInjection:
+    """name field appears in detail items for all six ranking/screener tools."""
+
+    async def test_detect_price_limit_name_in_detail(self, mock_env):
+        today = "2026-04-01"
+        _seed(mock_env["cache"], [_bar("10000", today, h=200, c=200, ul=1)])
+        _seed_master(mock_env["cache"], "10000", "テスト会社")
+        result = await _call("detect_price_limit", date=today, detail=True)
+        assert result["data"][0]["name"] == "テスト会社"
+
+    async def test_detect_price_limit_name_none_when_missing(self, mock_env):
+        today = "2026-04-01"
+        _seed(mock_env["cache"], [_bar("10000", today, h=200, c=200, ul=1)])
+        result = await _call("detect_price_limit", date=today, detail=True)
+        assert result["data"][0]["name"] is None
+
+    async def test_detect_volume_surge_name_in_detail(self, mock_env):
+        today = "2026-04-01"
+        rows = [
+            _bar("55550", (date(2026, 3, 1) + timedelta(days=i)).isoformat(), vo=1000.0)
+            for i in range(21)
+        ]
+        rows.append(_bar("55550", today, vo=5000.0))
+        _seed(mock_env["cache"], rows)
+        _seed_master(mock_env["cache"], "55550", "急増商事")
+        result = await _call("detect_volume_surge", date=today, detail=True)
+        assert len(result["data"]) >= 1
+        assert result["data"][0]["name"] == "急増商事"
+
+    async def test_detect_52w_name_in_detail(self, mock_env):
+        d = (date.today() - timedelta(days=7)).isoformat()
+        bars = [
+            _bar("11110", (date.today() - timedelta(days=7 + j)).isoformat(), h=100, low=80, c=90)
+            for j in range(70, 0, -1)
+        ]
+        bars.append(_bar("11110", d, h=300, low=280, c=295))
+        _seed(mock_env["cache"], bars)
+        _seed_master(mock_env["cache"], "11110", "高値更新株式")
+        result = await _call("detect_52w_high_low", date=d, code="11110", detail=True)
+        assert len(result["data"]) >= 1
+        assert result["data"][0]["name"] == "高値更新株式"
+
+    async def test_detect_ytd_name_in_detail(self, mock_env):
+        # Use a date near the start of this year so YTD window is meaningful.
+        year = date.today().year
+        d = date(year, 1, 31).isoformat()
+        bars = [
+            _bar("22220", date(year, 1, m).isoformat(), h=100, low=80, c=90) for m in range(2, 30)
+        ]
+        bars.append(_bar("22220", d, h=300, low=280, c=295))
+        _seed(mock_env["cache"], bars)
+        _seed_master(mock_env["cache"], "22220", "年初来高値株")
+        result = await _call("detect_ytd_high_low", date=d, code="22220", detail=True)
+        assert len(result["data"]) >= 1
+        assert result["data"][0]["name"] == "年初来高値株"
+
+    async def test_get_top_movers_name_key_present(self, mock_env):
+        _seed(
+            mock_env["cache"],
+            [
+                _bar("13010", "2026-04-01", c=100.0, adj_c=100.0),
+                _bar("13010", "2026-04-02", c=110.0, adj_c=110.0),
+            ],
+        )
+        _seed_master(mock_env["cache"], "13010", "トップ株式")
+        result = await _call("get_top_movers", date="2026-04-02", direction="up")
+        assert len(result["items"]) >= 1
+        assert result["items"][0]["name"] == "トップ株式"
+
+    async def test_get_top_volume_name_key_present(self, mock_env):
+        _seed(
+            mock_env["cache"],
+            [_bar("13010", "2026-04-02", vo=9999.0)],
+        )
+        _seed_master(mock_env["cache"], "13010", "出来高王")
+        result = await _call("get_top_volume", date="2026-04-02")
+        assert len(result["items"]) >= 1
+        assert result["items"][0]["name"] == "出来高王"
+
+    async def test_detect_52w_range_name_cache_hit_path(self, mock_env):
+        """Cache-hit branch of _high_low_range injects name from name_map."""
+        cache = mock_env["cache"]
+        params_hash = screener_compute.default_params_hash_52w()
+        d_to = (date.today() - timedelta(days=7)).isoformat()
+        d_from = (date.today() - timedelta(days=14)).isoformat()
+        # Seed one bar so iter_session_dates can find d_to.
+        _seed(cache, [_bar("12340", d_to)])
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash=params_hash,
+            date=d_to,
+            payload=_stub_payload_52w(d_to, ["12340"]),
+        )
+        _seed_master(cache, "12340", "キャッシュヒット株")
+        result = await _call(
+            "detect_52w_high_low_range", date_from=d_from, date_to=d_to, detail=True
+        )
+        names = [r.get("name") for r in result.get("data", [])]
+        assert "キャッシュヒット株" in names
+
+    async def test_detect_ytd_range_name_cache_hit_path(self, mock_env):
+        """Cache-hit branch of _high_low_range injects name for YTD variant."""
+        cache = mock_env["cache"]
+        params_hash = screener_compute.default_params_hash_ytd()
+        d_to = (date.today() - timedelta(days=7)).isoformat()
+        d_from = (date.today() - timedelta(days=14)).isoformat()
+        _seed(cache, [_bar("99980", d_to)])
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_YTD,
+            params_hash=params_hash,
+            date=d_to,
+            payload=_stub_payload_ytd(d_to, ["99980"]),
+        )
+        _seed_master(cache, "99980", "YTDキャッシュ株")
+        result = await _call(
+            "detect_ytd_high_low_range", date_from=d_from, date_to=d_to, detail=True
+        )
+        names = [r.get("name") for r in result.get("data", [])]
+        assert "YTDキャッシュ株" in names
