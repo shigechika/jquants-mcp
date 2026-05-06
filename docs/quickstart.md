@@ -40,23 +40,26 @@ chart tools are silently unregistered and the rest still works.
 
 ## 2. Get your J-Quants API key
 
-The easiest way is the built-in browser login:
+The easiest way is the built-in browser login (PKCE flow):
 
 ```bash
-jquants-mcp --login
+jquants-mcp login
 ```
 
-This opens the J-Quants OAuth page; after approving, your refresh token is
-stored at `~/.jquants-api/credentials.toml` and refreshed automatically.
+This opens the J-Quants OAuth page; after approving, the API key is saved
+to `~/.config/jquants-mcp/config.ini` (mode 0600). Run `jquants-mcp logout`
+to clear it.
 
-If you prefer to manage the key yourself, copy the API key from the
-[J-Quants dashboard](https://jpx-jquants.com/) and add it to a config file:
+If you prefer to manage the key yourself, copy it from the
+[J-Quants dashboard](https://jpx-jquants.com/) and put it in the same file:
 
 ```ini
-# ~/.jquants-mcp/config.ini
+# ~/.config/jquants-mcp/config.ini
 [jquants]
 api_key = YOUR_API_KEY_HERE
 ```
+
+`JQUANTS_API_KEY` env var also works if you would rather not write a config file.
 
 ## 3. Connect to Claude
 
