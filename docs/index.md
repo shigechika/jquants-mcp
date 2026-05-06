@@ -1,11 +1,11 @@
 # jquants-mcp
 
-**Japanese stock market data for Claude — via the [J-Quants API v2](https://jpx-jquants.com/).**
+**Talk through Japanese stocks with Claude — backed by the [J-Quants API v2](https://jpx-jquants.com/).**
 
-jquants-mcp is an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/)
-server that lets Claude — Desktop, CLI, or mobile — answer questions about the
-Japanese stock market by calling 43 specialised tools backed by a local
-SQLite cache.
+jquants-mcp is a Japanese-equities-focused [MCP (Model Context Protocol)](https://modelcontextprotocol.io/)
+server. It gives Claude — Desktop, CLI, or mobile — 43 specialist tools and
+a local SQLite cache, turning it into a hands-on companion for your stock
+research rather than a one-off query tool.
 
 <p align="center">
   <video controls width="330" preload="metadata" playsinline
@@ -30,9 +30,10 @@ Once jquants-mcp is connected, conversational queries like these just work:
 
 ## Why this exists
 
-J-Quants gives institutional-quality Japanese market data, but the raw API is
-chatty (per-stock pagination, 5–500 requests/min plan limits, unfamiliar field
-names). jquants-mcp:
+J-Quants provides institutional-quality Japanese equities data, but drilling
+into a single stock through the raw API gets repetitive fast — the same code
+fetched again and again (per-stock pagination, 5–500 req/min plan caps,
+unfamiliar JSON field names, etc.). So jquants-mcp:
 
 - Caches everything locally so repeat queries are instant.
 - Adapts to your J-Quants plan automatically (Free / Light / Standard / Premium).
