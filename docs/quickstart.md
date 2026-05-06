@@ -98,11 +98,19 @@ Open Claude and ask:
 Claude calls `get_sector_performance` and returns a ranked sector table. The
 first call seeds the local cache; subsequent queries are instant.
 
+<p align="center" markdown>
+![Full TSE 17-sector ranking on the Claude iPhone app](screenshots/jquants-mcp-demo2.png){ width="280" }
+</p>
+
 Try a chart:
 
 > キオクシア（285A）のチャートを 3 か月分
 
 If you installed the `[charts]` extra, Claude renders a candlestick PNG inline.
+
+<p align="center" markdown>
+![Candlestick chart for KIOXIA Holdings on the Claude iPhone app](screenshots/jquants-mcp-demo5.png){ width="280" }
+</p>
 
 ## Next steps
 
