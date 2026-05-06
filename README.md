@@ -1031,6 +1031,18 @@ uv run ruff check src/ tests/
 uv run ruff format src/ tests/
 ```
 
+## Disclaimer
+
+This software (jquants-mcp) is a technical tool for retrieving Japanese stock data from the [J-Quants API v2](https://jpx-jquants.com/) for use with Claude and other MCP clients. It is intended to provide reference information for your own investment research, and:
+
+- This software and its output **do not constitute investment advice or recommendations**.
+- We make no warranty regarding the accuracy, completeness, or timeliness of the information provided.
+- **Investment decisions are made at your own risk and responsibility.**
+- Past performance does not guarantee future results.
+- The author is not registered as a financial instruments business operator under Japanese law.
+- Use is subject to the [terms and conditions](https://jpx-jquants.com/) of J-Quants, the underlying data provider.
+- The author disclaims all liability for any damages arising from the use of this software.
+
 ## License
 
 [MIT](LICENSE)

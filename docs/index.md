@@ -51,3 +51,10 @@ unfamiliar JSON field names, etc.). So jquants-mcp:
 For the full technical reference (config schema, deployment shapes, multi-user
 mode, OAuth setup, every tool with parameter tables), see the
 [README on GitHub](https://github.com/shigechika/jquants-mcp).
+
+---
+
+!!! warning "Not investment advice"
+    This software is a data-access tool, not a financial advisory service.
+    Investment decisions are made at your own risk. See the full
+    [disclaimer](disclaimer.md) for details.

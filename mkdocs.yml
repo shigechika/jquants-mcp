@@ -54,6 +54,7 @@ nav:
   - Quickstart: quickstart.md
   - Tools: tools.md
   - FAQ: faq.md
+  - Disclaimer: disclaimer.md
 
 plugins:
   - search
@@ -72,6 +73,7 @@ plugins:
             Quickstart: クイックスタート
             Tools: ツール
             FAQ: FAQ
+            Disclaimer: 免責事項
 
 markdown_extensions:
   - admonition
