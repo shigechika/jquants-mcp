@@ -7,7 +7,7 @@ jquants-mcp は [MCP (Model Context Protocol)](https://modelcontextprotocol.io/)
 答えられるよう、ローカル SQLite キャッシュをバックエンドにした 43 の専門ツールを提供します。
 
 <p align="center">
-  <img src="screenshots/jquants-mcp-demo.gif"
+  <img src="../screenshots/jquants-mcp-demo.gif"
        alt="Claude iPhone アプリの 24 秒ループデモ。業種別騰落率、売買代金ランキング、SMA 付きローソク足、四半期決算ダイジェスト、5 銘柄リターン比較を順に表示"
        width="330">
 </p>
