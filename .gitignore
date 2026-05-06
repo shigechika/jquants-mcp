@@ -16,6 +16,9 @@ venv/
 .pytest_cache/
 .mypy_cache/
 
+# MkDocs build output
+site/
+
 *.db
 *.sqlite
 *.sqlite3
