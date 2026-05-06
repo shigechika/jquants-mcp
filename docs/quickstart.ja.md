@@ -96,11 +96,19 @@ Claude を開いて聞いてみる：
 Claude が `get_sector_performance` を呼んで業種ランキング表を返します。
 最初の 1 回でローカルキャッシュが温まり、以後のクエリは即時返答に。
 
+<p align="center" markdown>
+![Claude iPhone アプリの東証17業種ランキング全表示](screenshots/jquants-mcp-demo2.png){ width="280" }
+</p>
+
 チャートも試してみる：
 
 > キオクシア（285A）のチャートを 3 か月分
 
 `[charts]` extras がインストールされていれば、Claude がローソク足 PNG をチャットに inline 表示します。
+
+<p align="center" markdown>
+![Claude iPhone アプリ上のキオクシアホールディングスのローソク足チャート](screenshots/jquants-mcp-demo5.png){ width="280" }
+</p>
 
 ## 次のステップ
 
