@@ -5,6 +5,14 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.19.2](https://github.com/shigechika/jquants-mcp/compare/v0.19.1...v0.19.2) (2026-05-06)
+
+
+### Documentation
+
+* add investor disclaimer (README + Pages, EN/JA) ([#275](https://github.com/shigechika/jquants-mcp/issues/275)) ([75b6286](https://github.com/shigechika/jquants-mcp/commit/75b6286b4053691333205883e912482ff793e9c4))
+* **pages:** refine home lead toward "thinking partner" tone ([#273](https://github.com/shigechika/jquants-mcp/issues/273)) ([ac6b4fa](https://github.com/shigechika/jquants-mcp/commit/ac6b4fad38bdbb3212f0ce3f68589ee68c5fdb79))
+
 ## [0.19.1](https://github.com/shigechika/jquants-mcp/compare/v0.19.0...v0.19.1) (2026-05-06)
 
 
