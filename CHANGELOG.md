@@ -5,6 +5,17 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.19.1](https://github.com/shigechika/jquants-mcp/compare/v0.19.0...v0.19.1) (2026-05-06)
+
+
+### Documentation
+
+* **pages:** add Japanese translations via mkdocs-static-i18n ([#268](https://github.com/shigechika/jquants-mcp/issues/268)) ([39c89c8](https://github.com/shigechika/jquants-mcp/commit/39c89c8a9b85de980639876be6389545985b5bb3))
+* **pages:** add MkDocs Material site for [#219](https://github.com/shigechika/jquants-mcp/issues/219) Phase 2 ([#267](https://github.com/shigechika/jquants-mcp/issues/267)) ([98a331b](https://github.com/shigechika/jquants-mcp/commit/98a331bf8464916d139a61a4801afe76a26f8414))
+* **pages:** repair JA image links and embed example screenshots ([#269](https://github.com/shigechika/jquants-mcp/issues/269)) ([43a57f8](https://github.com/shigechika/jquants-mcp/commit/43a57f8f8c3f07e5daf2318bf006443969c42fbe))
+* **pages:** replace home GIF with click-to-play mp4 ([#271](https://github.com/shigechika/jquants-mcp/issues/271)) ([cd3ba71](https://github.com/shigechika/jquants-mcp/commit/cd3ba711e09bb0bb8ac104df8db6695c42df0770))
+* **readme:** add demo GIF + update tool list for v0.19.0 ([#219](https://github.com/shigechika/jquants-mcp/issues/219) Phase 1) ([#265](https://github.com/shigechika/jquants-mcp/issues/265)) ([3626573](https://github.com/shigechika/jquants-mcp/commit/3626573ea341a4a0c8333d4a2c64e5be1d564670))
+
 ## [0.19.0](https://github.com/shigechika/jquants-mcp/compare/v0.18.0...v0.19.0) (2026-05-06)
 
 
