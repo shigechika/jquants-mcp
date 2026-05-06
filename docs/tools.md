@@ -26,6 +26,10 @@ What's the market doing today as a whole?
 
 These all run against the local cache — no API call, no rate limit.
 
+<p align="center" markdown>
+![Top turnover ranking on the Claude iPhone app](screenshots/jquants-mcp-demo3.png){ width="280" }
+</p>
+
 ## Per-stock data
 
 Drill into a specific code:
@@ -41,6 +45,10 @@ Drill into a specific code:
 `render_candlestick` defaults to a 91-day window with `volume + sma5 + sma25`
 overlays. SMAs are warmed up from earlier bars so the moving averages are
 fully populated from the first displayed candle.
+
+<p align="center" markdown>
+![Quarterly financial summary for the five major Japanese trading houses](screenshots/jquants-mcp-demo6.png){ width="280" }
+</p>
 
 ## Screening
 
@@ -66,6 +74,10 @@ Side-by-side return comparison for up to 10 codes:
 Claude calls `render_comparison_chart` with `mode="return_pct"` (the default),
 producing a return chart with each series normalised to 0% at the first bar.
 Add `mode="price"` if you want the raw split-adjusted close instead.
+
+<p align="center" markdown>
+![Return comparison chart for the five major trading houses, dark mode](screenshots/jquants-mcp-demo7.png){ width="280" }
+</p>
 
 ## Investor positioning (Standard plan and above)
 
