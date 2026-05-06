@@ -7,9 +7,13 @@ jquants-mcp は [MCP (Model Context Protocol)](https://modelcontextprotocol.io/)
 答えられるよう、ローカル SQLite キャッシュをバックエンドにした 43 の専門ツールを提供します。
 
 <p align="center">
-  <img src="../screenshots/jquants-mcp-demo.gif"
-       alt="Claude iPhone アプリの 24 秒ループデモ。業種別騰落率、売買代金ランキング、SMA 付きローソク足、四半期決算ダイジェスト、5 銘柄リターン比較を順に表示"
-       width="330">
+  <video controls width="330" preload="metadata" playsinline
+         poster="../screenshots/jquants-mcp-demo1.png">
+    <source src="../screenshots/jquants-mcp-demo.mp4" type="video/mp4">
+    お使いのブラウザは inline 動画再生に対応していません。Claude iPhone アプリ上で
+    業種別騰落率、売買代金ランキング、ローソク足チャート、四半期決算ダイジェスト、
+    複数銘柄リターン比較を順に巡るデモ動画です。
+  </video>
 </p>
 
 ## Claude にできる質問

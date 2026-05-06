@@ -8,9 +8,13 @@ Japanese stock market by calling 43 specialised tools backed by a local
 SQLite cache.
 
 <p align="center">
-  <img src="screenshots/jquants-mcp-demo.gif"
-       alt="24-second loop on the Claude iPhone app cycling through sector performance, top turnover ranking, candlestick chart with SMA, quarterly financial summary, and a 5-stock return comparison"
-       width="330">
+  <video controls width="330" preload="metadata" playsinline
+         poster="screenshots/jquants-mcp-demo1.png">
+    <source src="screenshots/jquants-mcp-demo.mp4" type="video/mp4">
+    Your browser does not support inline video. The clip walks through sector
+    performance, top turnover ranking, candlestick charts, quarterly financial
+    summaries, and a multi-stock return comparison on the Claude iPhone app.
+  </video>
 </p>
 
 ## What you can ask Claude
