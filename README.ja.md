@@ -10,9 +10,25 @@
 
 デプロイ形態（stdio / Docker Compose / セルフホスト HTTP / Cloud Run）の選び方は [docs/deploy/README.ja.md](docs/deploy/README.ja.md) を参照。
 
+## デモ
+
+<p align="center">
+  <img src="docs/screenshots/jquants-mcp-demo.gif" alt="Claude iPhone アプリ上での jquants-mcp デモ" width="330">
+</p>
+
+Claude iPhone アプリ上で jquants-mcp ツールを呼び出した実際の出力（24秒ループ）：
+
+- 業種別騰落率（東証17業種） — `get_sector_performance`
+- 売買代金ランキング — `get_top_turnover_value`
+- ローソク足チャート（SMA付き） — `render_candlestick`
+- 決算ダイジェスト — `get_fins_summary`
+- 5銘柄リターン比較 — `render_comparison_chart`
+
+各フレームの静止画は [docs/screenshots/](docs/screenshots/) にあります。
+
 ## 特徴
 
-- **35 の MCP ツール** — J-Quants API v2 の全エンドポイントをカバー（22）+ ユーティリティ（5）+ オフライン screener（7）+ opt-in ローソク足チャート描画（1）
+- **43 の MCP ツール** — J-Quants API v2 全エンドポイント（22）+ マーケット概況（6）+ オフライン screener（7）+ 銘柄名検索（1）+ チャート描画（2、opt-in）+ サーバーユーティリティ（5）
 - **2層 SQLite キャッシュ** — 時系列データは行レベル、その他はレスポンスレベル（TTL付き）
 - **株式分割検知** — AdjFactor 変化時にキャッシュを自動無効化
 - **レート制限** — プラン別スライディングウィンドウ（Free: 5回/分, Light: 60, Standard: 120, Premium: 500）
@@ -535,7 +551,7 @@ jquants-mcp -t streamable-http --port 8080 \
 
 ## 提供ツール一覧
 
-### 株式 (Equities) — 6ツール
+### 株式 (Equities) — 7ツール
 
 | ツール名 | エンドポイント | 対応プラン | 説明 |
 |---|---|---|---|
@@ -545,6 +561,7 @@ jquants-mcp -t streamable-http --port 8080 \
 | `get_equities_bars_daily_am` | `/equities/bars/daily/am` | Premium | 前場四本値 |
 | `get_equities_investor_types` | `/equities/investor-types` | Light+ | 投資部門別売買 |
 | `get_equities_earnings_calendar` | `/equities/earnings-calendar` | Free+ | 決算発表予定 |
+| `search_equities` | （キャッシュのみ） | Free+ | 銘柄名による逆引き検索（例: `"住友商事"` → `8053`） |
 
 ### 財務 (Financials) — 3ツール
 
@@ -587,6 +604,19 @@ jquants-mcp -t streamable-http --port 8080 \
 | `get_bulk_list` | `/bulk/list` | Light+ | ダウンロード可能ファイル一覧 |
 | `get_bulk_download_url` | `/bulk/get` | Light+ | 署名付きダウンロード URL 取得 |
 
+### マーケット概況 (Market Overview) — 6ツール
+
+全上場銘柄を横断的にスキャンするキャッシュ専用ツール。追加 API コールなし。「今日の相場全体はどうだった？」系のクエリ向け。
+
+| ツール名 | 説明 |
+|---|---|
+| `detect_price_change` | 日次の値上がり/値下がり銘柄数サマリー（advance/decline ratio 含む） |
+| `get_advance_decline_ratio` | 騰落レシオ（cumulative advance/decline ratio）を *period* 営業日累積で計算。デフォルト 25 日（120 超で過熱、70 未満で売られすぎ） |
+| `get_top_movers` | 値上がり率/値下がり率ランキング（code + name + change_pct を返す） |
+| `get_top_volume` | 出来高ランキング（株数ベース、code + name + volume + turnover_value を返す） |
+| `get_top_turnover_value` | 売買代金ランキング（金額ベース）。`get_top_volume` と異なり高単価大型株が上位に来るので機関投資家フローの把握に最適 |
+| `get_sector_performance` | 業種別騰落率。デフォルトは東証33業種、`sector_type="s17"` で17業種に切替 |
+
 ### スクリーナー (Screener) — 7ツール
 
 キャッシュ済の `equities_bars_daily` から直接計算するオフラインツール。追加 API コールなし、numpy / pandas 非依存の pure Python 実装。Claude と組み合わせた銘柄スクリーニング向け。
@@ -601,9 +631,9 @@ jquants-mcp -t streamable-http --port 8080 \
 | `detect_ytd_high_low_range` | 上記の期間版（`date_from`〜`date_to`）。複数日分を単日ツールの繰り返しではなくこちらで取得。 |
 | `detect_volume_surge` | 指定日の出来高が直近 20 営業日平均の `multiplier` 倍（既定 2.0）以上の銘柄を列挙。 |
 
-### チャート描画 (Charts) — 1 ツール（opt-in）
+### チャート描画 (Charts) — 2ツール（opt-in）
 
-[`mplfinance`](https://github.com/matplotlib/mplfinance) でローソク足チャートを PNG として返却。Claude Desktop / モバイルでチャットに直接表示されるので、Claude にチャートを視覚的に読み解かせる用途。
+[`mplfinance`](https://github.com/matplotlib/mplfinance) と matplotlib でチャートを PNG として返却。Claude Desktop / モバイルでチャットに直接表示されるので、Claude にチャートを視覚的に読み解かせる用途。
 
 インストール:
 
@@ -617,7 +647,8 @@ extras 未インストール時はツール登録を silent skip するので、
 
 | ツール名 | 説明 |
 |---|---|
-| `render_candlestick` | コード + 期間で OHLC ローソク足 PNG を生成。デフォルトのオーバーレイは JP 慣習（`volume`, `sma5`, `sma25` = 短期/中期）。受け付ける値: `volume`, `sma5` / `sma20` / `sma25` / `sma60` / `sma75`（長期）/ `sma200`, `bb20`。スタイル: `default` / `dark` / `colorblind`。デフォルトで分割調整後 (`adjusted=True`)。 |
+| `render_candlestick` | コード + 期間で OHLC ローソク足 PNG を生成。`from_date` / `to_date` は省略可（デフォルト: 直近91日）。SMA / Bollinger は表示開始バーから完全に温まるよう前倒しでフェッチして計算。デフォルトのオーバーレイは JP 慣習（`volume`, `sma5`, `sma25` = 短期/中期）。受け付ける値: `volume`, `sma5` / `sma20` / `sma25` / `sma60` / `sma75`（長期）/ `sma200`, `bb20`。スタイル: `default` / `dark` / `colorblind`。アスペクト比: `square`（デフォルト）/ `landscape` / `portrait`。デフォルトで分割調整後 (`adjusted=True`)。 |
+| `render_comparison_chart` | 複数銘柄リターン比較ライン PNG（最大10銘柄）。`mode="return_pct"`（デフォルト）は各系列を最初のバーで 0% に正規化、`mode="price"` は分割調整済み終値をそのまま描画。`labels=[...]` で凡例の `CODE 銘柄名` 自動生成を上書き可。スタイル・アスペクト比は `render_candlestick` と同様。x 軸が整数インデックスなので非営業日で線が途切れない。 |
 
 ### ユーティリティ — 5ツール
 

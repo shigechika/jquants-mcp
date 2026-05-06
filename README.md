@@ -10,9 +10,25 @@ Release history and changelog: [GitHub Releases](https://github.com/shigechika/j
 
 Deployment shapes (stdio / Docker Compose / self-hosted HTTP / Cloud Run) and how to pick between them: see [docs/deploy/](docs/deploy/).
 
+## Demo
+
+<p align="center">
+  <img src="docs/screenshots/jquants-mcp-demo.gif" alt="jquants-mcp demo on the Claude iPhone app" width="330">
+</p>
+
+24-second loop showing real output from the Claude iPhone app calling jquants-mcp tools:
+
+- Sector performance ranking (業種別騰落率) — `get_sector_performance`
+- Top turnover by trading value (売買代金ランキング) — `get_top_turnover_value`
+- Candlestick chart with SMA — `render_candlestick`
+- Quarterly financial summary (決算ダイジェスト) — `get_fins_summary`
+- 5-stock return comparison — `render_comparison_chart`
+
+Individual frames are in [docs/screenshots/](docs/screenshots/).
+
 ## Features
 
-- **35 MCP tools**: 22 covering all J-Quants API v2 endpoints, 5 utility, 7 offline screener, and 1 opt-in candlestick chart renderer
+- **43 MCP tools** — 22 J-Quants API v2 endpoints, 6 market overview, 7 offline screener, 1 cache-only equity search, 2 chart renderers (opt-in), and 5 server utilities
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -535,7 +551,7 @@ On first use, Claude Desktop opens a browser window for GitHub OAuth. After auth
 
 ## Available Tools
 
-### Equities (6 tools)
+### Equities (7 tools)
 
 | Tool | Endpoint | Plan | Description |
 |---|---|---|---|
@@ -545,6 +561,7 @@ On first use, Claude Desktop opens a browser window for GitHub OAuth. After auth
 | `get_equities_bars_daily_am` | `/equities/bars/daily/am` | Premium | Morning session prices |
 | `get_equities_investor_types` | `/equities/investor-types` | Light+ | Trading by investor type |
 | `get_equities_earnings_calendar` | `/equities/earnings-calendar` | Free+ | Earnings schedule |
+| `search_equities` | (cache only) | Free+ | Reverse lookup by company name (e.g. `"住友商事"` → `8053`) |
 
 ### Financials (3 tools)
 
@@ -587,6 +604,19 @@ On first use, Claude Desktop opens a browser window for GitHub OAuth. After auth
 | `get_bulk_list` | `/bulk/list` | Light+ | List downloadable CSV files |
 | `get_bulk_download_url` | `/bulk/get` | Light+ | Get signed download URL |
 
+### Market Overview (6 tools)
+
+Cross-sectional cache-only tools that scan all listed equities for a given date. No extra API calls, useful for "what's the overall market doing today?" queries.
+
+| Tool | Description |
+|---|---|
+| `detect_price_change` | Daily advance/decline summary (値上がり/値下がり銘柄数) and advance-decline ratio. |
+| `get_advance_decline_ratio` | Cumulative advance/decline ratio (騰落レシオ) over the last *period* trading days. Default 25 (overbought >120, oversold <70). |
+| `get_top_movers` | Top gainers/losers ranked by percentage price change. Returns code + name + change_pct. |
+| `get_top_volume` | Top stocks by trading volume (出来高ランキング, share count). Returns code + name + volume + turnover_value. |
+| `get_top_turnover_value` | Top stocks by turnover value (売買代金ランキング, yen). Surfaces high-priced large-caps that dominate institutional flow, distinct from `get_top_volume`. |
+| `get_sector_performance` | Sector-level average daily change (業種別騰落率) grouped by TSE 33 sectors (default) or 17 sectors (`sector_type="s17"`). |
+
 ### Screener (7 tools)
 
 Offline tools that compute signals directly from the cached `equities_bars_daily` rows. No extra API calls, pure Python, no numpy/pandas. Intended for Claude-assisted stock screening without hitting rate limits.
@@ -601,9 +631,9 @@ Offline tools that compute signals directly from the cached `equities_bars_daily
 | `detect_ytd_high_low_range` | Same as above but across a date range (`date_from`–`date_to`). Use this instead of repeated single-date calls. |
 | `detect_volume_surge` | List stocks whose volume on `date` exceeds the trailing 20-day average by a configurable `multiplier` (default 2.0). |
 
-### Charts (1 tool, opt-in)
+### Charts (2 tools, opt-in)
 
-Inline candlestick charts rendered as PNG via [`mplfinance`](https://github.com/matplotlib/mplfinance). Claude Desktop and Claude mobile display the image directly in chat, so you can ask Claude to read the chart visually.
+Inline charts rendered as PNG via [`mplfinance`](https://github.com/matplotlib/mplfinance) and matplotlib. Claude Desktop and Claude mobile display the image directly in chat, so you can ask Claude to read the chart visually.
 
 Install with:
 
@@ -617,7 +647,8 @@ The tool registration silently no-ops when the extras are not installed, so the 
 
 | Tool | Description |
 |---|---|
-| `render_candlestick` | OHLC candlestick PNG for a code + date range. Default overlays follow JP convention (`volume`, `sma5`, `sma25`). Accepted: `volume`, `sma5` / `sma20` / `sma25` / `sma60` / `sma75` / `sma200`, `bb20`. Styles: `default` / `dark` / `colorblind`. Uses split-adjusted prices by default (`adjusted=True`). |
+| `render_candlestick` | OHLC candlestick PNG for a code + date range. `from_date` / `to_date` are optional (default: 91-day window ending today). SMA / Bollinger overlays are warmed up from prior bars so they start fully populated at the first displayed candle. Default overlays follow JP convention (`volume`, `sma5`, `sma25`). Accepted: `volume`, `sma5` / `sma20` / `sma25` / `sma60` / `sma75` / `sma200`, `bb20`. Styles: `default` / `dark` / `colorblind`. Aspect ratio: `square` (default) / `landscape` / `portrait`. Uses split-adjusted prices by default (`adjusted=True`). |
+| `render_comparison_chart` | Multi-stock return-comparison line chart (up to 10 codes). `mode="return_pct"` (default) normalises each series to 0% at the first available bar; `mode="price"` plots adjusted close. Per-code labels (`labels=[...]`) override the auto `CODE 銘柄名` legend. Same style and aspect-ratio options as `render_candlestick`. Uses an integer x-axis so non-trading days do not break the line. |
 
 ### Utility (5 tools)
 
