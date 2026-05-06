@@ -6,6 +6,8 @@ English | [日本語](README.ja.md)
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that retrieves Japanese stock market data via [J-Quants API v2](https://jpx-jquants.com/).
 
+User-facing documentation site: <https://shigechika.github.io/jquants-mcp/> — start there if you want a gentler 5-minute introduction. This README is the technical reference (config schema, all 43 tools with parameter tables, deployment).
+
 Release history and changelog: [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases).
 
 Deployment shapes (stdio / Docker Compose / self-hosted HTTP / Cloud Run) and how to pick between them: see [docs/deploy/](docs/deploy/).

@@ -6,6 +6,8 @@
 
 [J-Quants API v2](https://jpx-jquants.com/) を使って日本株市場データを取得する [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) サーバーです。
 
+ユーザー向けドキュメントサイト: <https://shigechika.github.io/jquants-mcp/>（5 分で始められる導入ガイド・英語）。本 README は技術リファレンス（設定 schema、43 ツール全パラメータ表、デプロイ）です。
+
 リリース履歴・変更履歴は [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases) を参照してください。
 
 デプロイ形態（stdio / Docker Compose / セルフホスト HTTP / Cloud Run）の選び方は [docs/deploy/README.ja.md](docs/deploy/README.ja.md) を参照。

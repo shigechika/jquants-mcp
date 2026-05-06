@@ -1,0 +1,87 @@
+site_name: jquants-mcp
+site_description: An MCP server that retrieves Japanese stock market data via J-Quants API v2.
+site_url: https://shigechika.github.io/jquants-mcp/
+site_author: AIKAWA Shigechika
+
+repo_name: shigechika/jquants-mcp
+repo_url: https://github.com/shigechika/jquants-mcp
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Tools: tools.md
+  - FAQ: faq.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/shigechika/jquants-mcp
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/jquants-mcp/
+
+# Existing /docs/{deploy,runbooks,*.md} are technical references kept on
+# GitHub directly. Exclude them from the user-facing site so their internal
+# cross-links (../scripts/, ../.github/, ../../README.md, etc.) do not
+# generate build warnings.
+exclude_docs: |
+  README.md
+  README.ja.md
+  changelog-historical.md
+  cloud-run-memory-sizing.md
+  comparison.md
+  dr.md
+  gcsfuse-postmortem.md
+  slo.md
+  deploy/
+  runbooks/
+
+validation:
+  omitted_files: ignore
+  absolute_links: warn
+  unrecognized_links: warn
