@@ -11,7 +11,10 @@ theme:
   name: material
   language: en
   features:
-    - navigation.instant
+    - header.autohide
+    # navigation.instant intentionally omitted: it loads pages via XHR and
+    # bypasses the language-switcher's contextual <link rel="alternate">
+    # rewrite, which mkdocs-static-i18n needs for cross-language jumps.
     - navigation.tracking
     - navigation.sections
     - navigation.top
@@ -41,14 +44,34 @@ theme:
 #   1. List it here in `nav:` (otherwise it builds but is unreachable
 #      via top navigation),
 #   2. Make sure links from it resolve under the published site root
-#      (`mkdocs build --strict` in CI will reject broken targets), and
+#      (`mkdocs build --strict` in CI will reject broken targets),
 #   3. If the page is NOT meant for the public site, add it to
-#      `exclude_docs:` below instead so build does not parse it.
+#      `exclude_docs:` below instead so build does not parse it, and
+#   4. Provide a Japanese translation as `<page>.ja.md` (the i18n plugin
+#      pairs the suffix variant with the English original automatically).
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
   - Tools: tools.md
   - FAQ: faq.md
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: suffix
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+        - locale: ja
+          name: 日本語
+          build: true
+          nav_translations:
+            Home: ホーム
+            Quickstart: クイックスタート
+            Tools: ツール
+            FAQ: FAQ
 
 markdown_extensions:
   - admonition
