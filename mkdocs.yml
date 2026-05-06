@@ -37,6 +37,13 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
+# When adding a new user-facing page under docs/, you must:
+#   1. List it here in `nav:` (otherwise it builds but is unreachable
+#      via top navigation),
+#   2. Make sure links from it resolve under the published site root
+#      (`mkdocs build --strict` in CI will reject broken targets), and
+#   3. If the page is NOT meant for the public site, add it to
+#      `exclude_docs:` below instead so build does not parse it.
 nav:
   - Home: index.md
   - Quickstart: quickstart.md
