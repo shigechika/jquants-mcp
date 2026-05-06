@@ -13,7 +13,7 @@ Deployment shapes (stdio / Docker Compose / self-hosted HTTP / Cloud Run) and ho
 ## Demo
 
 <p align="center">
-  <img src="docs/screenshots/jquants-mcp-demo.gif" alt="jquants-mcp demo on the Claude iPhone app" width="330">
+  <img src="docs/screenshots/jquants-mcp-demo.gif" alt="24-second loop on the Claude iPhone app cycling through sector performance, top turnover ranking, candlestick chart with SMA, quarterly financial summary, and a 5-stock return comparison" width="330">
 </p>
 
 24-second loop showing real output from the Claude iPhone app calling jquants-mcp tools:
@@ -647,8 +647,16 @@ The tool registration silently no-ops when the extras are not installed, so the 
 
 | Tool | Description |
 |---|---|
-| `render_candlestick` | OHLC candlestick PNG for a code + date range. `from_date` / `to_date` are optional (default: 91-day window ending today). SMA / Bollinger overlays are warmed up from prior bars so they start fully populated at the first displayed candle. Default overlays follow JP convention (`volume`, `sma5`, `sma25`). Accepted: `volume`, `sma5` / `sma20` / `sma25` / `sma60` / `sma75` / `sma200`, `bb20`. Styles: `default` / `dark` / `colorblind`. Aspect ratio: `square` (default) / `landscape` / `portrait`. Uses split-adjusted prices by default (`adjusted=True`). |
-| `render_comparison_chart` | Multi-stock return-comparison line chart (up to 10 codes). `mode="return_pct"` (default) normalises each series to 0% at the first available bar; `mode="price"` plots adjusted close. Per-code labels (`labels=[...]`) override the auto `CODE 銘柄名` legend. Same style and aspect-ratio options as `render_candlestick`. Uses an integer x-axis so non-trading days do not break the line. |
+| `render_candlestick` | OHLC candlestick PNG for a single code. Optional date range (default: 91 days ending today), SMA / Bollinger overlays with prior-bar warmup, JP-convention defaults (`volume`, `sma5`, `sma25`). |
+| `render_comparison_chart` | Multi-stock return-comparison line chart (up to 10 codes). Default `mode="return_pct"` normalises each series to 0% at its first bar; `mode="price"` plots adjusted close. Per-code legend labels overridable. |
+
+Both tools share these options:
+
+- **Indicators** (`render_candlestick` only): `volume`, `sma5` / `sma20` / `sma25` / `sma60` / `sma75` / `sma200`, `bb20` (20-day Bollinger band)
+- **Style**: `default` (Yahoo-like) / `dark` / `colorblind` (Okabe-Ito palette)
+- **Aspect ratio**: `square` (default, 8×8 in) / `landscape` (12×6 in) / `portrait` (6×9 in)
+- **Adjusted prices**: split-adjusted by default (`adjusted=True`); set `False` for raw OHLC
+- **Non-trading days**: handled cleanly — `render_candlestick` via mplfinance's built-in skip, `render_comparison_chart` via integer x-axis
 
 ### Utility (5 tools)
 

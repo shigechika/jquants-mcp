@@ -13,7 +13,7 @@
 ## デモ
 
 <p align="center">
-  <img src="docs/screenshots/jquants-mcp-demo.gif" alt="Claude iPhone アプリ上での jquants-mcp デモ" width="330">
+  <img src="docs/screenshots/jquants-mcp-demo.gif" alt="Claude iPhone アプリの 24 秒ループデモ。業種別騰落率、売買代金ランキング、SMA 付きローソク足、四半期決算ダイジェスト、5 銘柄リターン比較を順に表示" width="330">
 </p>
 
 Claude iPhone アプリ上で jquants-mcp ツールを呼び出した実際の出力（24秒ループ）：
@@ -647,8 +647,16 @@ extras 未インストール時はツール登録を silent skip するので、
 
 | ツール名 | 説明 |
 |---|---|
-| `render_candlestick` | コード + 期間で OHLC ローソク足 PNG を生成。`from_date` / `to_date` は省略可（デフォルト: 直近91日）。SMA / Bollinger は表示開始バーから完全に温まるよう前倒しでフェッチして計算。デフォルトのオーバーレイは JP 慣習（`volume`, `sma5`, `sma25` = 短期/中期）。受け付ける値: `volume`, `sma5` / `sma20` / `sma25` / `sma60` / `sma75`（長期）/ `sma200`, `bb20`。スタイル: `default` / `dark` / `colorblind`。アスペクト比: `square`（デフォルト）/ `landscape` / `portrait`。デフォルトで分割調整後 (`adjusted=True`)。 |
-| `render_comparison_chart` | 複数銘柄リターン比較ライン PNG（最大10銘柄）。`mode="return_pct"`（デフォルト）は各系列を最初のバーで 0% に正規化、`mode="price"` は分割調整済み終値をそのまま描画。`labels=[...]` で凡例の `CODE 銘柄名` 自動生成を上書き可。スタイル・アスペクト比は `render_candlestick` と同様。x 軸が整数インデックスなので非営業日で線が途切れない。 |
+| `render_candlestick` | 単一銘柄の OHLC ローソク足 PNG。期間は省略可（デフォルト: 直近91日）、SMA / Bollinger は前倒しウォームアップで先頭バーから完全描画、デフォルト overlay は JP 慣習の `volume`, `sma5`, `sma25`。 |
+| `render_comparison_chart` | 複数銘柄リターン比較ライン PNG（最大10銘柄）。`mode="return_pct"`（デフォルト）は各系列を最初のバーで 0% に正規化、`mode="price"` は分割調整済み終値をそのまま描画。凡例ラベル上書き可。 |
+
+両ツール共通のオプション：
+
+- **インジケーター**（`render_candlestick` のみ）: `volume`, `sma5` / `sma20` / `sma25` / `sma60` / `sma75`（長期）/ `sma200`, `bb20`（20日 Bollinger Band）
+- **スタイル**: `default`（Yahoo 風）/ `dark` / `colorblind`（Okabe-Ito パレット）
+- **アスペクト比**: `square`（デフォルト, 8×8 in）/ `landscape`（12×6 in）/ `portrait`（6×9 in）
+- **分割調整**: デフォルト `adjusted=True`、`False` で raw OHLC
+- **非営業日**: いずれも線途切れなし — `render_candlestick` は mplfinance の自動スキップ、`render_comparison_chart` は整数 x 軸で対応
 
 ### ユーティリティ — 5ツール
 
