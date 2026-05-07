@@ -814,6 +814,9 @@ def register(
         norm_date = _normalize_date(date)
         cache: CacheStore = get_cache()
 
+        # ``norm_date > latest`` (future date / cache empty) returns CacheNotReady.
+        # InsufficientData below fires only when norm_date ≤ latest but the cache
+        # has fewer than 2 trading sessions — effectively "first day of data".
         latest = cache.get_latest_equities_date()
         if latest and norm_date > latest:
             return _cache_not_ready_error(norm_date, latest)
