@@ -761,7 +761,7 @@ class TestGetMarketBriefing:
         # Top-level structure
         assert data["date"] == "2026-05-02"
         assert data["previous_date"] == "2026-05-01"
-        assert data["sector_type"] == "s17"
+        assert data["sector_type"] == "s33"
         # Summary subsection
         assert "advances" in data["summary"]
         assert "declines" in data["summary"]
@@ -805,8 +805,8 @@ class TestGetMarketBriefing:
         top = data["sectors"]["top"]
         bottom = data["sectors"]["bottom"]
         # Banks (avg +10%) should rank higher than IT (-10%)
-        assert top[0]["code"] == "7"
-        assert bottom[0]["code"] == "5"
+        assert top[0]["code"] == "7050"
+        assert bottom[0]["code"] == "5250"
 
     @pytest.mark.asyncio
     async def test_response_cache_hit_within_ttl(self, mock_briefing):
