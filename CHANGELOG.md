@@ -5,6 +5,25 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.20.0](https://github.com/shigechika/jquants-mcp/compare/v0.19.2...v0.20.0) (2026-05-07)
+
+
+### Features
+
+* **market_overview:** add get_market_briefing composite tool ([#276](https://github.com/shigechika/jquants-mcp/issues/276)) ([fc10a88](https://github.com/shigechika/jquants-mcp/commit/fc10a889cbc38c0e2649ea98282878538716c5bb))
+
+
+### Bug Fixes
+
+* **cd:** bump Cloud Run memory 4Gi → 6Gi to absorb get_market_briefing peak ([#279](https://github.com/shigechika/jquants-mcp/issues/279)) ([c6f8ff4](https://github.com/shigechika/jquants-mcp/commit/c6f8ff40444a1b131b8f53c653720733ef4a9b6d))
+* **cd:** restore --cpu 2 to satisfy Cloud Run 6 GiB constraint ([#280](https://github.com/shigechika/jquants-mcp/issues/280)) ([af2f223](https://github.com/shigechika/jquants-mcp/commit/af2f223ab5161d42c7f23c5ecdc9ab5c142940bd))
+* **charts:** normalise company name and crop padding in render_candlestick ([#281](https://github.com/shigechika/jquants-mcp/issues/281)) ([5b96db6](https://github.com/shigechika/jquants-mcp/commit/5b96db66855c36aef87d815d0945e2363a942510))
+
+
+### Performance Improvements
+
+* **market_overview:** eliminate N+1 cache reads in get_market_briefing ([#282](https://github.com/shigechika/jquants-mcp/issues/282)) ([032b1f8](https://github.com/shigechika/jquants-mcp/commit/032b1f8045bda8f2385aa70b94d7c4fbd20a9f70))
+
 ## [0.19.2](https://github.com/shigechika/jquants-mcp/compare/v0.19.1...v0.19.2) (2026-05-06)
 
 
