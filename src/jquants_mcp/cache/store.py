@@ -689,6 +689,11 @@ class CacheStore:
         where date > disc_date for that code.  Codes with no splits after their
         date are omitted (callers should default to 1.0).
 
+        Splits on disc_date itself are excluded (strict ``>``, not ``>=``).
+        In J-Quants, DisclosedDate (TDnet filing date) and adj_factor record
+        date (split ex-date) coinciding on the same calendar day is virtually
+        impossible in practice, so this boundary is safe to ignore.
+
         Args:
             code_disc_dates: Mapping of 5-digit code to disclosure date (YYYY-MM-DD).
 
