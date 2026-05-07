@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.21.1](https://github.com/shigechika/jquants-mcp/compare/v0.21.0...v0.21.1) (2026-05-07)
+
+
+### Bug Fixes
+
+* adjust DivAnn for post-disclosure stock splits in dividend yield ranking ([#286](https://github.com/shigechika/jquants-mcp/issues/286)) ([64c372d](https://github.com/shigechika/jquants-mcp/commit/64c372d6f14ca0d69364c62c120ddd5d73503675))
+
 ## [0.21.0](https://github.com/shigechika/jquants-mcp/compare/v0.20.0...v0.21.0) (2026-05-07)
 
 
