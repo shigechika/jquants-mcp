@@ -883,3 +883,49 @@ class TestGetMarketBriefing:
             )
         data = _call(result)
         assert data["summary"]["topix_change_pct"] == pytest.approx(1.0, abs=1e-3)
+
+    @pytest.mark.asyncio
+    async def test_topix_change_pct_uses_short_c_field(self, tmp_path):
+        # _topix_change_pct_best_effort accepts both `Close` (current J-Quants
+        # response shape) and `C` (legacy short form, see _LEGACY_FIELD_MAP in
+        # cache.store). Seed rows with `C` only to pin the fallback branch so a
+        # future J-Quants migration to short keys does not silently drop the
+        # field on us.
+        from unittest.mock import MagicMock
+
+        from jquants_mcp.client import JQuantsClient
+
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+        conn.execute(
+            "CREATE TABLE indices_bars_daily_topix "
+            "(date TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'standard', "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (date))"
+        )
+        # Use the short `C` field, not `Close`. 2700 → 2754 = +2.0%.
+        conn.execute(
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
+            ("2026-05-01", json.dumps({"Date": "2026-05-01", "C": 2700.0}), 0.0),
+        )
+        conn.execute(
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
+            ("2026-05-02", json.dumps({"Date": "2026-05-02", "C": 2754.0}), 0.0),
+        )
+        conn.commit()
+        conn.close()
+
+        stub_client = MagicMock(spec=JQuantsClient)
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", stub_client),
+            patch.object(server_module, "_plan_detected", True),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        assert data["summary"]["topix_change_pct"] == pytest.approx(2.0, abs=1e-3)
