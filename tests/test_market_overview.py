@@ -1168,3 +1168,45 @@ class TestGetDividendYieldRanking:
         assert data["count"] == 1
         # Uses DivAnn=100 from the 2025-11-14 disclosure (not skipped)
         assert data["items"][0]["yield_pct"] == pytest.approx(5.0)
+
+    @pytest.mark.asyncio
+    async def test_split_adjusted_yield(self, tmp_path):
+        """DivAnn is adjusted for stock splits that occurred after disc_date.
+
+        50010: disc_date=2025-06-30 DivAnn=86.0, split 1:10 on 2025-09-27
+               (adj_factor=0.1 stored in the column), current AdjC=220.0.
+        Unadjusted yield = 86/220*100 = 39.1% (the old bug).
+        Adjusted yield   = (86*0.1)/220*100 = 3.9%.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        # Current bar (query date)
+        _insert_bar(conn, "50010", "2026-05-02", 220.0)
+        # Split bar: adj_factor=0.1 stored in the column (1:10 split)
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_bars_daily "
+            "(code, date, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?)",
+            ("50010", "2025-09-27", '{"Code":"50010","AdjC":22.0}', 0.0, 0.1),
+        )
+        _insert_fins_summary(conn, "50010", "2025-06-30", 86.0)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["yield_pct"] == pytest.approx(86.0 * 0.1 / 220.0 * 100, rel=1e-3)
+        assert item["div_ann"] == pytest.approx(8.6, rel=1e-3)

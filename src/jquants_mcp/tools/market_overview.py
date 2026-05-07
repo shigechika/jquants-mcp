@@ -867,21 +867,26 @@ def register(
         div_ann_map = cache.get_div_ann_map()
         name_map = cache.get_name_map()
 
+        code_disc_dates = {code: disc for code, (_, disc) in div_ann_map.items()}
+        split_factors = cache.get_split_factors_after(code_disc_dates)
+
         items: list[dict[str, Any]] = []
         for row in bars:
             code = str(row.get("Code") or "")
             adj_c = _as_float(row.get("AdjC"))
-            div_ann = div_ann_map.get(code)
-            if adj_c is None or adj_c <= 0 or div_ann is None:
+            entry = div_ann_map.get(code)
+            if adj_c is None or adj_c <= 0 or entry is None:
                 continue
-            yield_pct = round(div_ann / adj_c * 100, 4)
+            div_ann, _ = entry
+            adj_div_ann = div_ann * split_factors.get(code, 1.0)
+            yield_pct = round(adj_div_ann / adj_c * 100, 4)
             if yield_pct < min_yield:
                 continue
             items.append(
                 {
                     "code": display_code(code),
                     "name": name_map.get(code),
-                    "div_ann": div_ann,
+                    "div_ann": round(adj_div_ann, 4),
                     "close": adj_c,
                     "yield_pct": yield_pct,
                 }
