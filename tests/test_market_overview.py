@@ -946,6 +946,7 @@ class TestGetMarketBriefing:
 
     @pytest.mark.asyncio
     async def test_topix_change_pct_uses_short_c_field(self, tmp_path):
+
         # _topix_change_pct_best_effort accepts both `Close` (current J-Quants
         # response shape) and `C` (legacy short form, see _LEGACY_FIELD_MAP in
         # cache.store). Seed rows with `C` only to pin the fallback branch so a
@@ -989,3 +990,181 @@ class TestGetMarketBriefing:
             )
         data = _call(result)
         assert data["summary"]["topix_change_pct"] == pytest.approx(2.0, abs=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# get_dividend_yield_ranking
+# ---------------------------------------------------------------------------
+
+
+def _insert_fins_summary(
+    conn: sqlite3.Connection, code: str, disc_date: str, div_ann: float | None
+) -> None:
+    data: dict = {"Code": code, "DisclosedDate": disc_date}
+    if div_ann is not None:
+        data["DivAnn"] = div_ann
+    conn.execute(
+        "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+        (code, disc_date, json.dumps(data), 0.0),
+    )
+
+
+class TestGetDividendYieldRanking:
+    """Tests for get_dividend_yield_ranking tool."""
+
+    @pytest.fixture()
+    def yield_cache(self, tmp_path):
+        """Cache with fins_summary + bars for 4 stocks on 2026-05-02.
+
+        Yields:
+          13010: DivAnn=100, AdjC=2000 → yield=5.0% (qualifies at default 3%)
+          13020: DivAnn=60,  AdjC=3000 → yield=2.0% (below default 3%)
+          13030: DivAnn=200, AdjC=2500 → yield=8.0% (qualifies)
+          13040: no DivAnn entry        → excluded
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "13010", "2026-05-02", 2000.0)
+        _insert_fins_summary(conn, "13010", "2026-03-31", 100.0)
+        _insert_master(conn, "13010", "高配当A")
+
+        _insert_bar(conn, "13020", "2026-05-02", 3000.0)
+        _insert_fins_summary(conn, "13020", "2026-03-31", 60.0)
+        _insert_master(conn, "13020", "低配当B")
+
+        _insert_bar(conn, "13030", "2026-05-02", 2500.0)
+        _insert_fins_summary(conn, "13030", "2026-03-31", 200.0)
+        _insert_master(conn, "13030", "高配当C")
+
+        _insert_bar(conn, "13040", "2026-05-02", 1000.0)
+        _insert_master(conn, "13040", "無配D")
+
+        conn.commit()
+        conn.close()
+        return cache
+
+    @pytest.fixture()
+    def mock_yield_server(self, yield_cache):
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", yield_cache),
+            patch.object(server_module, "_client", None),
+        ):
+            yield server_module.mcp
+
+    @pytest.mark.asyncio
+    async def test_basic_ranking(self, mock_yield_server):
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking", {"date": "2026-05-02"}
+        )
+        data = _call(result)
+        assert data["date"] == "2026-05-02"
+        # Default min_yield=3.0 → 13010 (5%) and 13030 (8%) qualify
+        assert data["count"] == 2
+        assert len(data["items"]) == 2
+        # Sorted by yield desc: 13030 (8%) first, then 13010 (5%)
+        assert data["items"][0]["code"] == "1303"
+        assert data["items"][1]["code"] == "1301"
+
+    @pytest.mark.asyncio
+    async def test_yield_values(self, mock_yield_server):
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+        )
+        data = _call(result)
+        assert data["count"] == 3
+        by_code = {item["code"]: item for item in data["items"]}
+        assert by_code["1303"]["yield_pct"] == pytest.approx(8.0)
+        assert by_code["1301"]["yield_pct"] == pytest.approx(5.0)
+        assert by_code["1302"]["yield_pct"] == pytest.approx(2.0)
+
+    @pytest.mark.asyncio
+    async def test_min_yield_filter(self, mock_yield_server):
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 6.0}
+        )
+        data = _call(result)
+        assert data["count"] == 1
+        assert data["items"][0]["yield_pct"] == pytest.approx(8.0)
+
+    @pytest.mark.asyncio
+    async def test_name_injected(self, mock_yield_server):
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking", {"date": "2026-05-02"}
+        )
+        data = _call(result)
+        by_code = {item["code"]: item["name"] for item in data["items"]}
+        assert by_code["1303"] == "高配当C"
+        assert by_code["1301"] == "高配当A"
+
+    @pytest.mark.asyncio
+    async def test_no_date_uses_latest(self, yield_cache):
+        """Omitting date resolves to the latest cached trading day."""
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", yield_cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool("get_dividend_yield_ranking", {})
+        data = _call(result)
+        assert data["date"] == "2026-05-02"
+        assert "items" in data
+
+    @pytest.mark.asyncio
+    async def test_cache_not_ready(self, mock_yield_server):
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking", {"date": "2099-01-01"}
+        )
+        data = _call(result)
+        assert data["error_type"] == "CacheNotReady"
+
+    @pytest.mark.asyncio
+    async def test_invalid_n(self, mock_yield_server):
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking", {"date": "2026-05-02", "n": 0}
+        )
+        data = _call(result)
+        assert data.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_invalid_min_yield(self, mock_yield_server):
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": -1.0}
+        )
+        data = _call(result)
+        assert data.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_latest_valid_div_ann_per_code(self, tmp_path):
+        """Latest disclosure with positive DivAnn wins over a later empty one."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "13010", "2026-05-02", 2000.0)
+        # Older (Q3) disclosure has valid DivAnn=100; newer (Q1 interim) has empty DivAnn
+        _insert_fins_summary(conn, "13010", "2025-11-14", 100.0)
+        _insert_fins_summary(conn, "13010", "2026-02-14", None)  # interim, no DivAnn
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        # Uses DivAnn=100 from the 2025-11-14 disclosure (not skipped)
+        assert data["items"][0]["yield_pct"] == pytest.approx(5.0)

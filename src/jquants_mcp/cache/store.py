@@ -643,6 +643,43 @@ class CacheStore:
             }
         return result
 
+    def get_div_ann_map(self) -> dict[str, float]:
+        """Return a mapping of 5-digit code to annual dividend per share (DivAnn).
+
+        Uses the most recent disclosure date with a positive DivAnn per code,
+        skipping interim/quarterly reports where DivAnn is empty or zero.
+        Returns an empty dict when the table is missing, empty, or the
+        connection is unavailable.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        try:
+            rows = conn.execute(
+                "SELECT f.code, json_extract(f.data, '$.DivAnn') AS div_ann "
+                "FROM fins_summary f "
+                "JOIN ("
+                "  SELECT code, MAX(disc_date) AS md "
+                "  FROM fins_summary "
+                "  WHERE json_extract(data, '$.DivAnn') IS NOT NULL "
+                "    AND json_extract(data, '$.DivAnn') != '' "
+                "    AND CAST(json_extract(data, '$.DivAnn') AS REAL) > 0 "
+                "  GROUP BY code"
+                ") m ON f.code = m.code AND f.disc_date = m.md"
+            ).fetchall()
+        except Exception:
+            return {}
+        result: dict[str, float] = {}
+        for row in rows:
+            code = str(row[0] or "")
+            try:
+                val = float(row[1])
+            except (TypeError, ValueError):
+                continue
+            if code and val > 0:
+                result[code] = val
+        return result
+
     def iter_session_dates(
         self,
         date_from: str,

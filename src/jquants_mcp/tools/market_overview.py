@@ -12,6 +12,7 @@ Exposed tools:
 - ``get_top_volume`` — top stocks by trading volume (出来高ランキング)
 - ``get_top_turnover_value`` — top stocks by turnover value (売買代金ランキング)
 - ``get_sector_performance`` — sector-level average percentage change (業種別騰落率)
+- ``get_dividend_yield_ranking`` — top stocks by dividend yield (高配当利回りランキング)
 - ``get_market_briefing`` — composite daily briefing aggregating the above plus
   TOPIX change and screener summaries (相場ブリーフィング)
 """
@@ -44,6 +45,10 @@ _MAX_PERIOD = 90
 
 def _validate_n(n: int) -> str | None:
     return "n must be between 1 and 100" if not (1 <= n <= _MAX_N) else None
+
+
+def _validate_min_yield(min_yield: float) -> str | None:
+    return "min_yield must be >= 0" if min_yield < 0 else None
 
 
 def _validate_period(period: int) -> str | None:
@@ -765,6 +770,132 @@ def register(
                 today_rows, prev_close_map, sector_map, sector_type
             ),
         }
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def get_dividend_yield_ranking(
+        n: int = 20,
+        min_yield: float = 3.0,
+        date: str | None = None,
+    ) -> dict[str, Any]:
+        """Return high dividend yield stock ranking (高配当利回りランキング).
+
+        Use for 高配当, 配当利回り, dividend yield, 高利回り銘柄.
+        Joins the latest valid annual dividend per share (DivAnn) from
+        ``fins_summary`` with the split-adjusted closing price (AdjC) from
+        ``equities_bars_daily`` to compute yield_pct = DivAnn / AdjC × 100.
+
+        Uses the most recent disclosure with a positive DivAnn per code, so
+        interim/quarterly reports where DivAnn is empty are skipped in favour
+        of the most recent full-year disclosure.
+
+        Note: ``DivAnn`` is the ordinary dividend only; special dividends are
+        recorded in a separate ``FDivAnn`` field (not included here).
+
+        [Supported plans] Free / Light / Standard / Premium
+        [Source] fins_summary + equities_bars_daily Tier 1 cache (no API call)
+
+        Args:
+            n: Number of stocks to return (1–100). Default: 20.
+            min_yield: Minimum dividend yield percentage to include (>= 0). Default: 3.0.
+            date: Trading date in YYYY-MM-DD or YYYYMMDD format (default: latest
+                  cached trading day). Automatically rounds back to the nearest
+                  past trading day so weekend/holiday inputs work.
+
+        Returns:
+            dict with keys:
+            - date: the resolved trading date used for closing prices
+            - count: number of stocks returned
+            - min_yield: the applied minimum yield filter
+            - items: list of up to *n* dicts sorted by yield_pct desc, each with:
+                - code: stock code (4- or 5-digit display form)
+                - name: company name (from equities_master) or null
+                - div_ann: annual dividend per share in yen
+                - close: split-adjusted closing price (AdjC)
+                - yield_pct: dividend yield in percent (DivAnn / AdjC × 100)
+        """
+        errors = collect_errors(_validate_n(n), _validate_min_yield(min_yield))
+        if date is not None:
+            errors += collect_errors(validate_date(date, "date"))
+        if errors:
+            return make_validation_error_response(errors)
+
+        cache: CacheStore = get_cache()
+
+        if date is None:
+            latest = cache.get_latest_equities_date()
+            if latest is None:
+                return _cache_not_ready_error("latest", None)
+            norm_date = latest
+        else:
+            norm_date = _normalize_date(date)
+            latest = cache.get_latest_equities_date()
+            if latest and norm_date > latest:
+                return _cache_not_ready_error(norm_date, latest)
+            session = _get_session_dates(cache, norm_date, 1)
+            if not session:
+                return _cache_not_ready_error(norm_date, latest)
+            norm_date = session[-1]
+
+        cache_key = make_cache_key(
+            "tool:get_dividend_yield_ranking",
+            {"date": norm_date, "n": n, "min_yield": min_yield},
+        )
+        cached = cache.get_response(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            bars = cache.get_rows(
+                "equities_bars_daily", key_filter={}, date_from=norm_date, date_to=norm_date
+            )
+        except (
+            APIError,
+            InvalidAPIKeyError,
+            UserNotConfiguredError,
+            DecryptionError,
+            UserNotAllowedError,
+        ) as e:
+            return format_api_error(e)
+
+        if not bars:
+            return {
+                "error": True,
+                "error_type": "NoTradingData",
+                "message": f"No trading data found for {norm_date}. It may be a holiday or non-trading day.",
+            }
+
+        div_ann_map = cache.get_div_ann_map()
+        name_map = cache.get_name_map()
+
+        items: list[dict[str, Any]] = []
+        for row in bars:
+            code = str(row.get("Code") or "")
+            adj_c = _as_float(row.get("AdjC"))
+            div_ann = div_ann_map.get(code)
+            if adj_c is None or adj_c <= 0 or div_ann is None:
+                continue
+            yield_pct = round(div_ann / adj_c * 100, 4)
+            if yield_pct < min_yield:
+                continue
+            items.append(
+                {
+                    "code": display_code(code),
+                    "name": name_map.get(code),
+                    "div_ann": div_ann,
+                    "close": adj_c,
+                    "yield_pct": yield_pct,
+                }
+            )
+
+        items.sort(key=lambda x: x["yield_pct"], reverse=True)
+        result: dict[str, Any] = {
+            "date": norm_date,
+            "count": min(len(items), n),
+            "min_yield": min_yield,
+            "items": items[:n],
+        }
+        cache.put_response(cache_key, result, ttl_seconds=3600)
+        return result
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def get_market_briefing(
