@@ -1210,3 +1210,48 @@ class TestGetDividendYieldRanking:
         item = data["items"][0]
         assert item["yield_pct"] == pytest.approx(86.0 * 0.1 / 220.0 * 100, rel=1e-3)
         assert item["div_ann"] == pytest.approx(8.6, rel=1e-3)
+
+    @pytest.mark.asyncio
+    async def test_split_on_disc_date_not_applied(self, tmp_path):
+        """A split bar whose date equals disc_date must NOT be included in the factor.
+
+        J-Quants records DivAnn at disc_date on a pre-split basis; the split
+        ratio stored on the same day should not be double-counted.
+        bar_date <= disc_date is excluded, so adj_factor on the same date is ignored.
+
+        60010: disc_date=2025-09-27, split adj_factor=0.1 also on 2025-09-27,
+               current AdjC=220.0.
+        Expected: cum_factor=1.0 (split on disc_date excluded) → yield=86/220*100≈39.1%.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "60010", "2026-05-02", 220.0)
+        # Split bar date == disc_date: must be excluded from the factor
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_bars_daily "
+            "(code, date, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?)",
+            ("60010", "2025-09-27", '{"Code":"60010","AdjC":22.0}', 0.0, 0.1),
+        )
+        _insert_fins_summary(conn, "60010", "2025-09-27", 86.0)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        # cum_factor == 1.0 because split on disc_date is excluded
+        assert item["div_ann"] == pytest.approx(86.0, rel=1e-3)
+        assert item["yield_pct"] == pytest.approx(86.0 / 220.0 * 100, rel=1e-3)

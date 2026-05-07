@@ -782,11 +782,16 @@ def register(
         Use for 高配当, 配当利回り, dividend yield, 高利回り銘柄.
         Joins the latest valid annual dividend per share (DivAnn) from
         ``fins_summary`` with the split-adjusted closing price (AdjC) from
-        ``equities_bars_daily`` to compute yield_pct = DivAnn / AdjC × 100.
+        ``equities_bars_daily`` to compute the yield.
 
         Uses the most recent disclosure with a positive DivAnn per code, so
         interim/quarterly reports where DivAnn is empty are skipped in favour
         of the most recent full-year disclosure.
+
+        DivAnn is stated on a pre-split per-share basis at the time of
+        disclosure.  If stock splits occurred after that disclosure date, the
+        value is multiplied by the cumulative split factor so it is comparable
+        with the split-adjusted AdjC.  yield_pct = adj_DivAnn / AdjC × 100.
 
         Note: ``DivAnn`` is the ordinary dividend only; special dividends are
         recorded in a separate ``FDivAnn`` field (not included here).
@@ -809,9 +814,9 @@ def register(
             - items: list of up to *n* dicts sorted by yield_pct desc, each with:
                 - code: stock code (4- or 5-digit display form)
                 - name: company name (from equities_master) or null
-                - div_ann: annual dividend per share in yen
+                - div_ann: split-adjusted annual dividend per share in yen
                 - close: split-adjusted closing price (AdjC)
-                - yield_pct: dividend yield in percent (DivAnn / AdjC × 100)
+                - yield_pct: dividend yield in percent (adj_DivAnn / AdjC × 100)
         """
         errors = collect_errors(_validate_n(n), _validate_min_yield(min_yield))
         if date is not None:
