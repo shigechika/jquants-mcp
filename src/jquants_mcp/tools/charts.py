@@ -553,7 +553,16 @@ def register(
                     addplots.append(mpf.make_addplot(mid + 2 * std, width=0.8))
                     addplots.append(mpf.make_addplot(mid - 2 * std, width=0.8))
 
-        company = _get_company_name(cache, norm_code)
+        company_raw = _get_company_name(cache, norm_code)
+        # Run the company name through the same normaliser that
+        # ``render_comparison_chart`` uses for legend labels: NFKC folds
+        # full-width ASCII (e.g. "ＨＥＮＮＧＥ" → "HENNGE") so the title
+        # does not render with phantom inter-character spacing, the
+        # corporate-suffix prefix is dropped (e.g. "野村アセットマネジメント
+        # 株式会社　NEXT FUNDS …" → "NEXT FUNDS …"), and the result is
+        # truncated to ``_BRIEF_NAME_MAX_LEN`` so long ETF names no
+        # longer overflow the figure width.
+        company = _brief_company_name(company_raw) if company_raw else None
         # Cache lookups always use the 5-digit form, but display the
         # conventional 4-digit form (``72030`` → ``7203``) for
         # ordinary shares so the title matches how JP investors
@@ -575,6 +584,15 @@ def register(
         }
         if addplots:
             plot_kwargs["addplot"] = addplots
+
+        # ``bbox_inches="tight"`` crops the surrounding figure padding at
+        # save time, which is the canonical mplfinance + matplotlib fix
+        # for the "extra right-side margin" that mpf.plot leaves when the
+        # title is shorter than the figure or when the title pushes the
+        # axes inward. Applied to both the lock-day ``returnfig`` path
+        # and the default ``savefig`` path so the two are visually
+        # identical.
+        savefig_kwargs = {"fname": buf, "dpi": _DPI, "format": "png", "bbox_inches": "tight"}
 
         try:
             if lock_days:
@@ -600,11 +618,11 @@ def register(
                             colors=color,
                             linewidth=2.0,
                         )
-                    fig.savefig(buf, dpi=_DPI, format="png")
+                    fig.savefig(buf, dpi=_DPI, format="png", bbox_inches="tight")
                 finally:
                     plt.close(fig)
             else:
-                plot_kwargs["savefig"] = {"fname": buf, "dpi": _DPI, "format": "png"}
+                plot_kwargs["savefig"] = savefig_kwargs
                 mpf.plot(df, **plot_kwargs)
         except Exception as exc:  # mplfinance / matplotlib runtime errors
             logger.warning("render_candlestick: rendering failed: %s", exc)
