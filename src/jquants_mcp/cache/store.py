@@ -711,13 +711,11 @@ class CacheStore:
             placeholders = ",".join("?" * len(batch))
             try:
                 rows = conn.execute(
-                    f"SELECT code, date, "
-                    f"COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
-                    f"FROM equities_bars_daily "
-                    f"WHERE COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) IS NOT NULL "
-                    f"AND COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) != 1.0 "
-                    f"AND COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) != 0.0 "
-                    f"AND code IN ({placeholders})",
+                    f"SELECT code, date, adj_factor FROM ("
+                    f"  SELECT code, date, "
+                    f"  COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
+                    f"  FROM equities_bars_daily WHERE code IN ({placeholders})"
+                    f") WHERE adj_factor IS NOT NULL AND adj_factor != 1.0 AND adj_factor != 0.0",
                     batch,
                 ).fetchall()
             except Exception:
@@ -915,12 +913,10 @@ class CacheStore:
         if conn is None:
             return 1.0
         rows = conn.execute(
-            "SELECT COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
-            "FROM equities_bars_daily "
-            "WHERE code = ? AND date > ? "
-            "AND COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) IS NOT NULL "
-            "AND COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) != 1.0 "
-            "AND COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) != 0.0",
+            "SELECT adj_factor FROM ("
+            "  SELECT COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
+            "  FROM equities_bars_daily WHERE code = ? AND date > ?"
+            ") WHERE adj_factor IS NOT NULL AND adj_factor != 1.0 AND adj_factor != 0.0",
             (code, target_date),
         ).fetchall()
         if not rows:
