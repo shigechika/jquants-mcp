@@ -618,7 +618,9 @@ def register(
                             colors=color,
                             linewidth=2.0,
                         )
-                    fig.savefig(buf, dpi=_DPI, format="png", bbox_inches="tight")
+                    # Reuse the same savefig kwargs as the default path
+                    # so the two visual outputs match exactly.
+                    fig.savefig(**savefig_kwargs)
                 finally:
                     plt.close(fig)
             else:
