@@ -826,6 +826,140 @@ class TestChartTitleHelpers:
 
         assert "テスト株式会社" in captured.get("title", "")
 
+    async def test_render_title_normalises_fullwidth_ascii(self, mock_env):
+        # When the master row stores a name in full-width ASCII (e.g.
+        # ``ＨＥＮＮＧＥ`` for code 4475), the chart title must render in
+        # half-width form so the title does not appear as "H E N N G E"
+        # with phantom inter-character spacing. Achieved by routing the
+        # raw name through ``_brief_company_name`` (NFKC fold).
+        rows = [
+            _bar("44750", (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d"))
+            for i in range(10)
+        ]
+        _seed(mock_env["cache"], rows)
+        _seed_master(mock_env["cache"], "44750", "ＨＥＮＮＧＥ")
+
+        captured: dict = {}
+
+        def fake_plot(df, **kwargs):
+            captured.update(kwargs)
+            kwargs["savefig"]["fname"].write(_make_fake_png())
+
+        with patch("mplfinance.plot", side_effect=fake_plot):
+            await _call_image(
+                "render_candlestick",
+                code="4475",
+                from_date="2026-04-01",
+                to_date="2026-04-10",
+                indicators=["volume"],
+            )
+
+        title = captured.get("title", "")
+        assert "HENNGE" in title  # NFKC-normalised half-width form
+        assert "ＨＥＮＮＧＥ" not in title  # raw full-width form must be gone
+
+    async def test_render_title_strips_etf_corporate_prefix(self, mock_env):
+        # ETF master rows include the asset-management company name as a
+        # U+3000-delimited prefix (e.g. "野村アセットマネジメント株式会社
+        # NEXT FUNDS 日経225連動型上場投信"). The chart title must drop
+        # the manager prefix and keep the fund identifier so the title
+        # does not overflow the figure width.
+        rows = [
+            _bar("13210", (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d"))
+            for i in range(10)
+        ]
+        _seed(mock_env["cache"], rows)
+        _seed_master(
+            mock_env["cache"],
+            "13210",
+            "野村アセットマネジメント株式会社　ＮＥＸＴ　ＦＵＮＤＳ　日経２２５連動型上場投信",
+        )
+
+        captured: dict = {}
+
+        def fake_plot(df, **kwargs):
+            captured.update(kwargs)
+            kwargs["savefig"]["fname"].write(_make_fake_png())
+
+        with patch("mplfinance.plot", side_effect=fake_plot):
+            await _call_image(
+                "render_candlestick",
+                code="1321",
+                from_date="2026-04-01",
+                to_date="2026-04-10",
+                indicators=["volume"],
+            )
+
+        title = captured.get("title", "")
+        assert "野村" not in title
+        assert "株式会社" not in title
+        assert "NEXT" in title  # NFKC-normalised + manager prefix stripped
+
+    async def test_render_title_truncates_long_company_name(self, mock_env):
+        # Long fund names must be truncated (currently 20-char cap via
+        # ``_BRIEF_NAME_MAX_LEN``) so the title fits inside the figure.
+        # The exact ellipsis form is an internal detail of
+        # ``_brief_company_name`` — we just pin that the company segment
+        # no longer matches the full original name.
+        rows = [
+            _bar("13210", (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d"))
+            for i in range(10)
+        ]
+        _seed(mock_env["cache"], rows)
+        long_name = "ＮＥＸＴ　ＦＵＮＤＳ　日経２２５連動型上場投信（年４回決算型）"
+        _seed_master(mock_env["cache"], "13210", long_name)
+
+        captured: dict = {}
+
+        def fake_plot(df, **kwargs):
+            captured.update(kwargs)
+            kwargs["savefig"]["fname"].write(_make_fake_png())
+
+        with patch("mplfinance.plot", side_effect=fake_plot):
+            await _call_image(
+                "render_candlestick",
+                code="1321",
+                from_date="2026-04-01",
+                to_date="2026-04-10",
+                indicators=["volume"],
+            )
+
+        title = captured.get("title", "")
+        # The full 25+ char fund name must not be embedded verbatim.
+        assert "年４回決算型" not in title
+        # But the leading half of the name (which ``_brief_company_name``
+        # keeps) must still be present so the title is informative.
+        assert "NEXT" in title
+
+    async def test_render_savefig_uses_bbox_inches_tight(self, mock_env):
+        # Right-side padding in the rendered PNG was reported as a bug
+        # (Slack 2026-05-07). The fix is to pass ``bbox_inches="tight"``
+        # at save time so matplotlib crops the surrounding whitespace.
+        # Pin the kwarg so a future refactor does not silently drop it.
+        rows = [
+            _bar("72030", (datetime(2026, 4, 1) + timedelta(days=i)).strftime("%Y-%m-%d"))
+            for i in range(10)
+        ]
+        _seed(mock_env["cache"], rows)
+
+        captured: dict = {}
+
+        def fake_plot(df, **kwargs):
+            captured.update(kwargs)
+            kwargs["savefig"]["fname"].write(_make_fake_png())
+
+        with patch("mplfinance.plot", side_effect=fake_plot):
+            await _call_image(
+                "render_candlestick",
+                code="7203",
+                from_date="2026-04-01",
+                to_date="2026-04-10",
+                indicators=["volume"],
+            )
+
+        savefig = captured.get("savefig") or {}
+        assert savefig.get("bbox_inches") == "tight"
+
 
 class TestDetectLockDays:
     """Unit tests for the pure ``_detect_lock_days`` helper."""
