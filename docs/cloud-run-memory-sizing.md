@@ -28,10 +28,13 @@ in a single request. The peak memory demand of this call — full-universe
 YTD/volume/limit scans accumulated alongside the rankings — pushes the
 instance past the ~3850 MiB baseline ceiling that 4 GiB barely contained,
 which manifests as OOM kills (`exit(137)`) and truncated responses.
-Restored memory to **6 GiB** to recover the ~2.2 GiB headroom of the
-Apr-11 sizing. Memory-footprint reduction is tracked separately in Issue
-\#277 (`_compute_*` helper extraction) and a forthcoming sub-tool memory
-audit; once those land, 4 GiB may again be viable.
+Restored memory to **6 GiB + 2 vCPU** to recover the ~2.2 GiB headroom
+of the Apr-11 sizing. Cloud Run requires ≥2 vCPU for any memory above
+4 GiB (1 vCPU is capped at 4 GiB), so vCPU was lifted back from 1 to 2
+in the same change. Memory-footprint reduction is tracked separately
+in Issue #277 (`_compute_*` helper extraction) and a forthcoming
+sub-tool memory audit; once those land, 4 GiB + 1 vCPU may again be
+viable.
 
 ## Motivation
 
@@ -316,7 +319,7 @@ Filed as a future polish.
 - [`scripts/load_test.py`](../scripts/load_test.py)
 - [`scripts/collect_metrics.py`](../scripts/collect_metrics.py)
 - [`.github/workflows/cd.yml`](../.github/workflows/cd.yml) — single source
-  of truth for the `--memory 4Gi --cpu 1` setting
+  of truth for the `--memory 6Gi --cpu 2` setting
 - [`docs/gcsfuse-postmortem.md`](gcsfuse-postmortem.md) — the previous
   sizing-related incident that motivated the startup-copy architecture
 - Issue [#72](https://github.com/shigechika/jquants-mcp/issues/72),
