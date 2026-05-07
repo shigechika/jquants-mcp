@@ -12,6 +12,7 @@ Exposed tools:
 - ``get_top_volume`` — top stocks by trading volume (出来高ランキング)
 - ``get_top_turnover_value`` — top stocks by turnover value (売買代金ランキング)
 - ``get_sector_performance`` — sector-level average percentage change (業種別騰落率)
+- ``get_dividend_yield_ranking`` — top stocks by dividend yield (高配当利回りランキング)
 - ``get_market_briefing`` — composite daily briefing aggregating the above plus
   TOPIX change and screener summaries (相場ブリーフィング)
 """
