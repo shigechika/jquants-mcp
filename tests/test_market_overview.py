@@ -831,3 +831,55 @@ class TestGetMarketBriefing:
         result = await mock_briefing.call_tool("get_market_briefing", {"date": "2099-01-01"})
         data = _call(result)
         assert data.get("error_type") == "CacheNotReady"
+
+    @pytest.mark.asyncio
+    async def test_topix_change_pct_from_seeded_cache(self, tmp_path):
+        # Seed both equities and TOPIX rows so the briefing's best-effort
+        # path returns a real percentage (not None). Without TOPIX rows the
+        # Tier-1 cache lookup is empty and the tool falls back to an API call,
+        # which is fail-soft to None when the client is not available.
+        from unittest.mock import MagicMock
+
+        from jquants_mcp.client import JQuantsClient
+
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        # Equities (need at least 1 stock + master so detect_price_change works)
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+
+        # TOPIX cache table and rows. Cache hit covers the full requested
+        # range so the indices tool returns from cache without an API call.
+        conn.execute(
+            "CREATE TABLE indices_bars_daily_topix "
+            "(date TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'standard', "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (date))"
+        )
+        # 2026-05-01: 2700, 2026-05-02: 2727 → change_pct = +1.0%
+        conn.execute(
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
+            ("2026-05-01", json.dumps({"Date": "2026-05-01", "Close": 2700.0}), 0.0),
+        )
+        conn.execute(
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
+            ("2026-05-02", json.dumps({"Date": "2026-05-02", "Close": 2727.0}), 0.0),
+        )
+        conn.commit()
+        conn.close()
+
+        # Pin _plan_detected and supply a stub client so the indices tool can
+        # acquire a client without triggering plan auto-detection (which would
+        # otherwise fire an API call and AuthenticationError on no key).
+        stub_client = MagicMock(spec=JQuantsClient)
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", stub_client),
+            patch.object(server_module, "_plan_detected", True),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        assert data["summary"]["topix_change_pct"] == pytest.approx(1.0, abs=1e-3)
