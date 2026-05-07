@@ -61,6 +61,7 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     "get_top_volume": READ_ONLY_CACHE,
     "get_top_turnover_value": READ_ONLY_CACHE,
     "get_sector_performance": READ_ONLY_CACHE,
+    "get_market_briefing": READ_ONLY_CACHE,
     # tools/screener.py — cache only, no API
     "detect_price_limit": READ_ONLY_CACHE,
     "compare_close_vs_vwap": READ_ONLY_CACHE,
