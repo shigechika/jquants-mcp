@@ -819,6 +819,66 @@ class TestGetMarketBriefing:
         assert _call(first) == _call(second)
 
     @pytest.mark.asyncio
+    async def test_equities_bars_daily_fetched_once(self, briefing_cache):
+        """get_market_briefing must call get_rows('equities_bars_daily') exactly once.
+
+        The N+1 elimination refactor fetches the full ADR span in one shot and
+        passes pre-fetched rows to all _compute_* helpers.  This test pins that
+        invariant so a future refactor cannot silently reintroduce extra reads.
+        """
+        with patch.object(briefing_cache, "get_rows", wraps=briefing_cache.get_rows) as spy:
+            with (
+                patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+                patch.object(server_module, "_cache", briefing_cache),
+                patch.object(server_module, "_client", None),
+            ):
+                result = await server_module.mcp.call_tool(
+                    "get_market_briefing", {"date": "2026-05-02"}
+                )
+        _call(result)  # assert no error key before checking call count
+        equities_calls = [
+            c for c in spy.call_args_list if c.args and c.args[0] == "equities_bars_daily"
+        ]
+        # Expected breakdown (total == 4):
+        #   1  wide ADR fetch from the main computation
+        #   3  screener sub-tool reads: detect_ytd_high_low, detect_volume_surge,
+        #      detect_price_limit (each issues its own get_rows via mcp.call_tool)
+        # Before this refactor the main path alone issued 5+ redundant reads
+        # (one per advance/decline, sector, top-movers-up, top-movers-down,
+        # top-turnover); grand total was 8+.
+        assert len(equities_calls) == 4, (
+            f"expected exactly 4 get_rows('equities_bars_daily') calls, "
+            f"got {len(equities_calls)}: {[str(c) for c in equities_calls]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_insufficient_data(self, tmp_path):
+        """InsufficientData is returned when the cache has only one trading session.
+
+        The briefing needs at least 2 sessions (today + previous) to compute
+        advance/decline.  This fires when norm_date <= latest but the cache
+        has no prior session — e.g. the very first day of data.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        # Only one date in the cache — no previous session to compare against.
+        _insert_bar(conn, "13010", "2026-05-02", 100.0)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        assert data.get("error") is True
+        assert data.get("error_type") == "InsufficientData"
+
+    @pytest.mark.asyncio
     async def test_invalid_sector_type(self, mock_briefing):
         result = await mock_briefing.call_tool(
             "get_market_briefing", {"date": "2026-05-02", "sector_type": "s99"}
