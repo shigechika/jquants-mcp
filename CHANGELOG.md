@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.22.0](https://github.com/shigechika/jquants-mcp/compare/v0.21.1...v0.22.0) (2026-05-07)
+
+
+### Features
+
+* add migrate_adj_factor.py to backfill adj_factor from JSON data ([#290](https://github.com/shigechika/jquants-mcp/issues/290)) ([34fd865](https://github.com/shigechika/jquants-mcp/commit/34fd865f9337cacce9c72a8b21ee2c125a44540b))
+
 ## [0.21.1](https://github.com/shigechika/jquants-mcp/compare/v0.21.0...v0.21.1) (2026-05-07)
 
 
