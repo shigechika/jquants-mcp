@@ -704,3 +704,228 @@ class TestGetSectorPerformance:
         sectors = {s["code"]: s for s in data["sectors"]}
         assert list(sectors) == ["7050"]
         assert sectors["7050"]["count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# get_market_briefing
+# ---------------------------------------------------------------------------
+
+
+class TestGetMarketBriefing:
+    @pytest.fixture()
+    def briefing_cache(self, tmp_path):
+        """Cache with 4 stocks across 2 dates plus master rows with sector codes.
+
+        Designed so the briefing output covers every section meaningfully:
+        advances + declines + unchanged populated, multiple sectors so top/bottom
+        differ, top movers and turnover both have content.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        # Banks (s33=7050 / s17=7) — strong sector
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)  # +10%
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+        _insert_bar(conn, "83160", "2026-05-01", 2000.0, vo=5_000_000)
+        _insert_bar(conn, "83160", "2026-05-02", 2200.0, vo=5_000_000)  # +10%
+        _insert_master_with_sector(conn, "83160", "三井住友", "7050", "銀行業", "7", "金融")
+        # IT (s33=5250 / s17=5) — weak sector
+        _insert_bar(conn, "97660", "2026-05-01", 5000.0, vo=200_000)
+        _insert_bar(conn, "97660", "2026-05-02", 4500.0, vo=300_000)  # -10%
+        _insert_master_with_sector(conn, "97660", "コナミ", "5250", "情報・通信業", "5", "情報通信")
+        # Steel (s33=3450 / s17=3) — flat sector
+        _insert_bar(conn, "53010", "2026-05-01", 1000.0, vo=100_000)
+        _insert_bar(conn, "53010", "2026-05-02", 1000.0, vo=100_000)  # 0%
+        _insert_master_with_sector(conn, "53010", "新日鉄", "3450", "鉄鋼", "3", "素材・化学")
+        conn.commit()
+        conn.close()
+        return cache
+
+    @pytest.fixture()
+    def mock_briefing(self, briefing_cache):
+        # Patch `_client` to None so the TOPIX best-effort path can't reach a
+        # real J-Quants API key from the developer's home dir; the briefing
+        # tool's own _call_json swallows the resulting failure and returns
+        # topix_change_pct=None.
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", briefing_cache),
+            patch.object(server_module, "_client", None),
+        ):
+            yield server_module.mcp
+
+    @pytest.mark.asyncio
+    async def test_basic_shape(self, mock_briefing):
+        result = await mock_briefing.call_tool("get_market_briefing", {"date": "2026-05-02"})
+        data = _call(result)
+        # Top-level structure
+        assert data["date"] == "2026-05-02"
+        assert data["previous_date"] == "2026-05-01"
+        assert data["sector_type"] == "s17"
+        # Summary subsection
+        assert "advances" in data["summary"]
+        assert "declines" in data["summary"]
+        assert "unchanged" in data["summary"]
+        assert "advance_decline_ratio_25d" in data["summary"]
+        # TOPIX best-effort: with no client, fail-soft to None
+        assert data["summary"]["topix_change_pct"] is None
+        # Sectors top/bottom present
+        assert isinstance(data["sectors"]["top"], list)
+        assert isinstance(data["sectors"]["bottom"], list)
+        # Movers and turnover lists
+        assert isinstance(data["top_movers_up"], list)
+        assert isinstance(data["top_movers_down"], list)
+        assert isinstance(data["top_turnover_value"], list)
+        # Highlights aggregate keys
+        for key in (
+            "ytd_new_highs",
+            "ytd_new_lows",
+            "volume_surges",
+            "limit_high_close",
+            "limit_high_touched",
+            "limit_low_close",
+            "limit_low_touched",
+        ):
+            assert key in data["highlights"]
+
+    @pytest.mark.asyncio
+    async def test_advances_declines_match(self, mock_briefing):
+        # In the fixture: 2 banks +10%, 1 IT -10%, 1 steel flat → advances=2,
+        # declines=1, unchanged=1.
+        result = await mock_briefing.call_tool("get_market_briefing", {"date": "2026-05-02"})
+        data = _call(result)
+        assert data["summary"]["advances"] == 2
+        assert data["summary"]["declines"] == 1
+        assert data["summary"]["unchanged"] == 1
+
+    @pytest.mark.asyncio
+    async def test_sectors_top_and_bottom_differ(self, mock_briefing):
+        result = await mock_briefing.call_tool("get_market_briefing", {"date": "2026-05-02"})
+        data = _call(result)
+        top = data["sectors"]["top"]
+        bottom = data["sectors"]["bottom"]
+        # Banks (avg +10%) should rank higher than IT (-10%)
+        assert top[0]["code"] == "7"
+        assert bottom[0]["code"] == "5"
+
+    @pytest.mark.asyncio
+    async def test_response_cache_hit_within_ttl(self, mock_briefing):
+        # Two identical calls within the TTL must return the same payload and
+        # the second one should be served from response cache.
+        first = await mock_briefing.call_tool("get_market_briefing", {"date": "2026-05-02", "n": 3})
+        second = await mock_briefing.call_tool(
+            "get_market_briefing", {"date": "2026-05-02", "n": 3}
+        )
+        assert _call(first) == _call(second)
+
+    @pytest.mark.asyncio
+    async def test_invalid_sector_type(self, mock_briefing):
+        result = await mock_briefing.call_tool(
+            "get_market_briefing", {"date": "2026-05-02", "sector_type": "s99"}
+        )
+        data = _call(result)
+        assert data.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_cache_not_ready(self, mock_briefing):
+        result = await mock_briefing.call_tool("get_market_briefing", {"date": "2099-01-01"})
+        data = _call(result)
+        assert data.get("error_type") == "CacheNotReady"
+
+    @pytest.mark.asyncio
+    async def test_topix_change_pct_from_seeded_cache(self, tmp_path):
+        # Seed both equities and TOPIX rows so the briefing's best-effort
+        # path returns a real percentage (not None). Without TOPIX rows the
+        # Tier-1 cache lookup is empty and the tool falls back to an API call,
+        # which is fail-soft to None when the client is not available.
+        from unittest.mock import MagicMock
+
+        from jquants_mcp.client import JQuantsClient
+
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        # Equities (need at least 1 stock + master so detect_price_change works)
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+
+        # TOPIX cache table and rows. Cache hit covers the full requested
+        # range so the indices tool returns from cache without an API call.
+        conn.execute(
+            "CREATE TABLE indices_bars_daily_topix "
+            "(date TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'standard', "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (date))"
+        )
+        # 2026-05-01: 2700, 2026-05-02: 2727 → change_pct = +1.0%
+        conn.execute(
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
+            ("2026-05-01", json.dumps({"Date": "2026-05-01", "Close": 2700.0}), 0.0),
+        )
+        conn.execute(
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
+            ("2026-05-02", json.dumps({"Date": "2026-05-02", "Close": 2727.0}), 0.0),
+        )
+        conn.commit()
+        conn.close()
+
+        # Pin _plan_detected and supply a stub client so the indices tool can
+        # acquire a client without triggering plan auto-detection (which would
+        # otherwise fire an API call and AuthenticationError on no key).
+        stub_client = MagicMock(spec=JQuantsClient)
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", stub_client),
+            patch.object(server_module, "_plan_detected", True),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        assert data["summary"]["topix_change_pct"] == pytest.approx(1.0, abs=1e-3)
+
+    @pytest.mark.asyncio
+    async def test_topix_change_pct_uses_short_c_field(self, tmp_path):
+        # _topix_change_pct_best_effort accepts both `Close` (current J-Quants
+        # response shape) and `C` (legacy short form, see _LEGACY_FIELD_MAP in
+        # cache.store). Seed rows with `C` only to pin the fallback branch so a
+        # future J-Quants migration to short keys does not silently drop the
+        # field on us.
+        from unittest.mock import MagicMock
+
+        from jquants_mcp.client import JQuantsClient
+
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+        conn.execute(
+            "CREATE TABLE indices_bars_daily_topix "
+            "(date TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'standard', "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (date))"
+        )
+        # Use the short `C` field, not `Close`. 2700 → 2754 = +2.0%.
+        conn.execute(
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
+            ("2026-05-01", json.dumps({"Date": "2026-05-01", "C": 2700.0}), 0.0),
+        )
+        conn.execute(
+            "INSERT INTO indices_bars_daily_topix (date, data, fetched_at) VALUES (?, ?, ?)",
+            ("2026-05-02", json.dumps({"Date": "2026-05-02", "C": 2754.0}), 0.0),
+        )
+        conn.commit()
+        conn.close()
+
+        stub_client = MagicMock(spec=JQuantsClient)
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", stub_client),
+            patch.object(server_module, "_plan_detected", True),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        assert data["summary"]["topix_change_pct"] == pytest.approx(2.0, abs=1e-3)

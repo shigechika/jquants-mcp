@@ -12,6 +12,8 @@ Exposed tools:
 - ``get_top_volume`` — top stocks by trading volume (出来高ランキング)
 - ``get_top_turnover_value`` — top stocks by turnover value (売買代金ランキング)
 - ``get_sector_performance`` — sector-level average percentage change (業種別騰落率)
+- ``get_market_briefing`` — composite daily briefing aggregating the above plus
+  TOPIX change and screener summaries (相場ブリーフィング)
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from ..cache.store import CacheStore
+from ..cache.store import CacheStore, make_cache_key
 from ..exceptions import (
     APIError,
     DecryptionError,
@@ -706,3 +708,184 @@ def register(
             "sector_type": sector_type,
             "sectors": sectors,
         }
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def get_market_briefing(
+        date: str,
+        sector_type: str = "s17",
+        n: int = 5,
+    ) -> dict[str, Any]:
+        """Daily market briefing — composite of advance/decline, sector ranking, top movers, top turnover, and screener highlights (相場ブリーフィング).
+
+        Use for 相場ブリーフィング, 市場概況, マーケットブリーフィング, daily briefing,
+        market briefing, market summary, 今日の相場.
+        Single call to get a structured snapshot of "what happened in the
+        Japanese market today". Calls existing tools internally and merges
+        the results, so no extra API calls beyond what the underlying tools
+        already do.
+
+        [Supported plans] Free / Light / Standard / Premium
+        [Source] equities_bars_daily + equities_master + indices_bars_daily_topix
+                 (Tier 1 / Tier 2 cache; underlying tools may make API calls
+                 if the cache is cold)
+
+        Args:
+            date: Trading date in YYYY-MM-DD or YYYYMMDD format.
+            sector_type: ``"s33"`` or ``"s17"`` (default: ``"s17"`` — collapses
+                to 17 top-level TSE sectors which is more readable on mobile).
+            n: TopN size for movers / turnover sections (1–100, default: 5).
+
+        Returns:
+            dict with keys:
+            - date / previous_date: the trading date and comparison base
+            - summary: {advances, declines, unchanged, advance_decline_ratio_25d,
+                topix_change_pct (null on TOPIX fetch failure)}
+            - sectors: {top: [...], bottom: [...]} — top n and bottom n sectors
+                by avg_change_pct
+            - top_movers_up / top_movers_down: TopN by daily change_pct
+            - top_turnover_value: TopN by trading value (yen)
+            - highlights: {ytd_new_highs, ytd_new_lows, volume_surges,
+                limit_high_close, limit_high_touched, limit_low_close,
+                limit_low_touched}
+        """
+        if sector_type not in ("s33", "s17"):
+            return make_validation_error_response(["sector_type must be 's33' or 's17'"])
+        errors = collect_errors(validate_date(date, "date"), _validate_n(n))
+        if errors:
+            return make_validation_error_response(errors)
+
+        norm_date = _normalize_date(date)
+        cache: CacheStore = get_cache()
+
+        latest = cache.get_latest_equities_date()
+        if latest and norm_date > latest:
+            return _cache_not_ready_error(norm_date, latest)
+
+        # Tier 2 response cache: same params within 1h reuse the composite result.
+        cache_key = make_cache_key(
+            "tool:get_market_briefing",
+            {"date": norm_date, "sector_type": sector_type, "n": n},
+        )
+        cached = cache.get_response(cache_key)
+        if cached is not None:
+            return cached
+
+        # Internal helper: call MCP tool by name and unwrap the JSON content.
+        # ``mcp.call_tool`` returns a CallToolResult whose ``content[0].text`` holds
+        # the JSON-encoded dict. We unwrap and JSON-decode here so the briefing can
+        # treat each upstream tool's output as a regular Python dict.
+        async def _call_json(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+            import json as _json
+
+            try:
+                result = await mcp.call_tool(tool_name, args)
+            except Exception:
+                # Fail-soft: a missing API key, network blip, or any other tool
+                # error must not derail the whole briefing. Caller checks
+                # `result.get("error")` and substitutes a neutral default.
+                return {"error": True, "error_type": "ToolCallFailed"}
+            text = result.content[0].text if result.content else "{}"
+            try:
+                return _json.loads(text)
+            except (ValueError, TypeError):
+                return {}
+
+        # 1. Core advance/decline summary (also yields previous_date).
+        pc = await detect_price_change(norm_date)
+        if pc.get("error"):
+            return pc
+        previous_date = pc.get("previous_date")
+        today_date = pc.get("date", norm_date)
+
+        # 2. 25-day advance/decline ratio (騰落レシオ).
+        adr = await get_advance_decline_ratio(norm_date, period=25)
+        adr_value = adr.get("ratio") if not adr.get("error") else None
+
+        # 3. Sector top/bottom (n each side, may overlap when total sectors < 2n).
+        sp = await get_sector_performance(norm_date, sector_type=sector_type)
+        sectors_list = sp.get("sectors", []) if not sp.get("error") else []
+        sectors_top = sectors_list[:n]
+        sectors_bottom = list(reversed(sectors_list[-n:])) if sectors_list else []
+
+        # 4. Top movers and top turnover.
+        movers_up = await get_top_movers(norm_date, direction="up", n=n)
+        movers_down = await get_top_movers(norm_date, direction="down", n=n)
+        turnover = await get_top_turnover_value(norm_date, n=n)
+
+        # 5. Screener summaries via call_tool (registered by screener.register).
+        ytd = await _call_json("detect_ytd_high_low", {"date": norm_date})
+        vsurge = await _call_json("detect_volume_surge", {"date": norm_date})
+        plimit = await _call_json("detect_price_limit", {"date": norm_date})
+
+        # Screener summary payload shapes (when detail=False, the default):
+        #   detect_ytd_high_low: {count, mode, new_high, new_low}
+        #   detect_volume_surge: {count, multiplier, baseline_days}
+        #   detect_price_limit:  {count, limit_high_close, limit_high_touched, ...}
+        ytd_new_highs = ytd.get("new_high", 0) if not ytd.get("error") else 0
+        ytd_new_lows = ytd.get("new_low", 0) if not ytd.get("error") else 0
+        volume_surges = vsurge.get("count", 0) if not vsurge.get("error") else 0
+
+        # 6. TOPIX change percentage — best effort, fail-soft to None.
+        topix_change_pct = await _topix_change_pct_best_effort(_call_json, norm_date)
+
+        result: dict[str, Any] = {
+            "date": today_date,
+            "previous_date": previous_date,
+            "sector_type": sector_type,
+            "summary": {
+                "advances": pc.get("advances", 0),
+                "declines": pc.get("declines", 0),
+                "unchanged": pc.get("unchanged", 0),
+                "advance_decline_ratio_25d": adr_value,
+                "topix_change_pct": topix_change_pct,
+            },
+            "sectors": {
+                "top": sectors_top,
+                "bottom": sectors_bottom,
+            },
+            "top_movers_up": movers_up.get("items", []) if not movers_up.get("error") else [],
+            "top_movers_down": movers_down.get("items", []) if not movers_down.get("error") else [],
+            "top_turnover_value": turnover.get("items", []) if not turnover.get("error") else [],
+            "highlights": {
+                "ytd_new_highs": ytd_new_highs,
+                "ytd_new_lows": ytd_new_lows,
+                "volume_surges": volume_surges,
+                "limit_high_close": plimit.get("limit_high_close", 0),
+                "limit_high_touched": plimit.get("limit_high_touched", 0),
+                "limit_low_close": plimit.get("limit_low_close", 0),
+                "limit_low_touched": plimit.get("limit_low_touched", 0),
+            },
+        }
+
+        # 1h response cache so reloading "今日の相場" within the hour is instant.
+        cache.put_response(cache_key, result, ttl_seconds=3600)
+        return result
+
+
+async def _topix_change_pct_best_effort(call_json, norm_date: str) -> float | None:
+    """Compute TOPIX day-over-day percentage change.
+
+    Pulls the last few sessions of indices_bars_daily_topix via the existing
+    MCP tool (its own Tier 1 cache backs it). Returns ``None`` on any failure
+    so the briefing surfaces a missing TOPIX field instead of an error.
+    """
+    # Pad calendar days generously to cover holidays.
+    start = (datetime.strptime(norm_date, "%Y-%m-%d") - timedelta(days=10)).strftime("%Y-%m-%d")
+    payload = await call_json(
+        "get_indices_bars_daily_topix",
+        {"date_from": start, "date_to": norm_date},
+    )
+    if payload.get("error"):
+        return None
+    rows = payload.get("data") or []
+    if len(rows) < 2:
+        return None
+    # The endpoint returns rows sorted by Date asc; use the last two.
+    try:
+        prev_close = float(rows[-2].get("Close") or rows[-2].get("C"))
+        today_close = float(rows[-1].get("Close") or rows[-1].get("C"))
+    except (TypeError, ValueError):
+        return None
+    if prev_close == 0:
+        return None
+    return round((today_close - prev_close) / prev_close * 100, 4)
