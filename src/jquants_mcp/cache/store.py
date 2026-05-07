@@ -643,11 +643,12 @@ class CacheStore:
             }
         return result
 
-    def get_div_ann_map(self) -> dict[str, float]:
-        """Return a mapping of 5-digit code to annual dividend per share (DivAnn).
+    def get_div_ann_map(self) -> dict[str, tuple[float, str]]:
+        """Return a mapping of 5-digit code to (annual dividend per share, disclosure date).
 
         Uses the most recent disclosure date with a positive DivAnn per code,
         skipping interim/quarterly reports where DivAnn is empty or zero.
+        The disclosure date is needed by callers to apply split adjustments.
         Returns an empty dict when the table is missing, empty, or the
         connection is unavailable.
         """
@@ -656,7 +657,7 @@ class CacheStore:
             return {}
         try:
             rows = conn.execute(
-                "SELECT f.code, json_extract(f.data, '$.DivAnn') AS div_ann "
+                "SELECT f.code, json_extract(f.data, '$.DivAnn') AS div_ann, m.md "
                 "FROM fins_summary f "
                 "JOIN ("
                 "  SELECT code, MAX(disc_date) AS md "
@@ -669,15 +670,61 @@ class CacheStore:
             ).fetchall()
         except Exception:
             return {}
-        result: dict[str, float] = {}
+        result: dict[str, tuple[float, str]] = {}
         for row in rows:
             code = str(row[0] or "")
+            disc_date = str(row[2] or "")
             try:
                 val = float(row[1])
             except (TypeError, ValueError):
                 continue
-            if code and val > 0:
-                result[code] = val
+            if code and val > 0 and disc_date:
+                result[code] = (val, disc_date)
+        return result
+
+    def get_split_factors_after(self, code_disc_dates: dict[str, str]) -> dict[str, float]:
+        """Return cumulative split adjustment factors for multiple codes.
+
+        For each code, multiplies all AdjFactor values in equities_bars_daily
+        where date > disc_date for that code.  Codes with no splits after their
+        date are omitted (callers should default to 1.0).
+
+        Splits on disc_date itself are excluded (strict ``>``, not ``>=``).
+        In J-Quants, DisclosedDate (TDnet filing date) and adj_factor record
+        date (split ex-date) coinciding on the same calendar day is virtually
+        impossible in practice, so this boundary is safe to ignore.
+
+        Args:
+            code_disc_dates: Mapping of 5-digit code to disclosure date (YYYY-MM-DD).
+
+        Returns:
+            Mapping of code to cumulative split factor (e.g., 0.1 for a 1:10 split).
+        """
+        conn = self._ensure_connection()
+        if conn is None or not code_disc_dates:
+            return {}
+        codes = list(code_disc_dates.keys())
+        # Fetch all split rows for relevant codes; SQLite limit is 999 variables.
+        all_rows: list[tuple[str, str, float]] = []
+        for i in range(0, len(codes), 900):
+            batch = codes[i : i + 900]
+            placeholders = ",".join("?" * len(batch))
+            try:
+                rows = conn.execute(
+                    f"SELECT code, date, adj_factor FROM equities_bars_daily "
+                    f"WHERE adj_factor IS NOT NULL AND adj_factor != 1.0 "
+                    f"AND adj_factor != 0.0 AND code IN ({placeholders})",
+                    batch,
+                ).fetchall()
+            except Exception:
+                continue
+            all_rows.extend((str(r[0]), str(r[1]), float(r[2])) for r in rows)
+        result: dict[str, float] = {}
+        for code, bar_date, factor in all_rows:
+            disc_date = code_disc_dates.get(code)
+            if disc_date is None or bar_date <= disc_date:
+                continue
+            result[code] = result.get(code, 1.0) * factor
         return result
 
     def iter_session_dates(

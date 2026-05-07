@@ -782,11 +782,16 @@ def register(
         Use for 高配当, 配当利回り, dividend yield, 高利回り銘柄.
         Joins the latest valid annual dividend per share (DivAnn) from
         ``fins_summary`` with the split-adjusted closing price (AdjC) from
-        ``equities_bars_daily`` to compute yield_pct = DivAnn / AdjC × 100.
+        ``equities_bars_daily`` to compute the yield.
 
         Uses the most recent disclosure with a positive DivAnn per code, so
         interim/quarterly reports where DivAnn is empty are skipped in favour
         of the most recent full-year disclosure.
+
+        DivAnn is stated on a pre-split per-share basis at the time of
+        disclosure.  If stock splits occurred after that disclosure date, the
+        value is multiplied by the cumulative split factor so it is comparable
+        with the split-adjusted AdjC.  yield_pct = adj_DivAnn / AdjC × 100.
 
         Note: ``DivAnn`` is the ordinary dividend only; special dividends are
         recorded in a separate ``FDivAnn`` field (not included here).
@@ -809,9 +814,9 @@ def register(
             - items: list of up to *n* dicts sorted by yield_pct desc, each with:
                 - code: stock code (4- or 5-digit display form)
                 - name: company name (from equities_master) or null
-                - div_ann: annual dividend per share in yen
+                - div_ann: split-adjusted annual dividend per share in yen
                 - close: split-adjusted closing price (AdjC)
-                - yield_pct: dividend yield in percent (DivAnn / AdjC × 100)
+                - yield_pct: dividend yield in percent (adj_DivAnn / AdjC × 100)
         """
         errors = collect_errors(_validate_n(n), _validate_min_yield(min_yield))
         if date is not None:
@@ -867,21 +872,26 @@ def register(
         div_ann_map = cache.get_div_ann_map()
         name_map = cache.get_name_map()
 
+        code_disc_dates = {code: disc for code, (_, disc) in div_ann_map.items()}
+        split_factors = cache.get_split_factors_after(code_disc_dates)
+
         items: list[dict[str, Any]] = []
         for row in bars:
             code = str(row.get("Code") or "")
             adj_c = _as_float(row.get("AdjC"))
-            div_ann = div_ann_map.get(code)
-            if adj_c is None or adj_c <= 0 or div_ann is None:
+            entry = div_ann_map.get(code)
+            if adj_c is None or adj_c <= 0 or entry is None:
                 continue
-            yield_pct = round(div_ann / adj_c * 100, 4)
+            div_ann, _ = entry
+            adj_div_ann = div_ann * split_factors.get(code, 1.0)
+            yield_pct = round(adj_div_ann / adj_c * 100, 4)
             if yield_pct < min_yield:
                 continue
             items.append(
                 {
                     "code": display_code(code),
                     "name": name_map.get(code),
-                    "div_ann": div_ann,
+                    "div_ann": round(adj_div_ann, 4),
                     "close": adj_c,
                     "yield_pct": yield_pct,
                 }
