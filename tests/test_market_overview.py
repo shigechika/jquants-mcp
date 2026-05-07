@@ -1212,6 +1212,50 @@ class TestGetDividendYieldRanking:
         assert item["div_ann"] == pytest.approx(8.6, rel=1e-3)
 
     @pytest.mark.asyncio
+    async def test_split_adjusted_yield_adj_factor_in_json(self, tmp_path):
+        """Split factor is read from data JSON when adj_factor column is NULL.
+
+        Legacy rows written before the adj_factor column was added store
+        AdjFactor only inside the data JSON blob.  COALESCE must fall back
+        to json_extract(data, '$.AdjFactor') in that case.
+
+        70010: disc_date=2025-06-30 DivAnn=86.0, split 1:10 on 2025-09-27
+               with adj_factor column = NULL but AdjFactor in data JSON = 0.1.
+        Adjusted yield = (86*0.1)/220*100 = 3.9%.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "70010", "2026-05-02", 220.0)
+        # adj_factor column is NULL; AdjFactor lives only in data JSON
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_bars_daily "
+            "(code, date, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?)",
+            ("70010", "2025-09-27", '{"Code":"70010","AdjC":22.0,"AdjFactor":0.1}', 0.0, None),
+        )
+        _insert_fins_summary(conn, "70010", "2025-06-30", 86.0)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["yield_pct"] == pytest.approx(86.0 * 0.1 / 220.0 * 100, rel=1e-3)
+        assert item["div_ann"] == pytest.approx(8.6, rel=1e-3)
+
+    @pytest.mark.asyncio
     async def test_split_on_disc_date_not_applied(self, tmp_path):
         """A split bar whose date equals disc_date must NOT be included in the factor.
 

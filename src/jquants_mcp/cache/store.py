@@ -711,9 +711,11 @@ class CacheStore:
             placeholders = ",".join("?" * len(batch))
             try:
                 rows = conn.execute(
-                    f"SELECT code, date, adj_factor FROM equities_bars_daily "
-                    f"WHERE adj_factor IS NOT NULL AND adj_factor != 1.0 "
-                    f"AND adj_factor != 0.0 AND code IN ({placeholders})",
+                    f"SELECT code, date, adj_factor FROM ("
+                    f"  SELECT code, date, "
+                    f"  COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
+                    f"  FROM equities_bars_daily WHERE code IN ({placeholders})"
+                    f") WHERE adj_factor IS NOT NULL AND adj_factor != 1.0 AND adj_factor != 0.0",
                     batch,
                 ).fetchall()
             except Exception:
@@ -879,7 +881,8 @@ class CacheStore:
             return True  # DB 未準備 → 分割チェック不可、キャッシュなしとして扱う
 
         _adj_sql = (
-            "SELECT adj_factor FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT 1"
+            "SELECT COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
+            "FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT 1"
         )
         row = conn.execute(_adj_sql, (code,)).fetchone()
 
@@ -910,9 +913,10 @@ class CacheStore:
         if conn is None:
             return 1.0
         rows = conn.execute(
-            "SELECT adj_factor FROM equities_bars_daily "
-            "WHERE code = ? AND date > ? AND adj_factor IS NOT NULL "
-            "AND adj_factor != 1.0 AND adj_factor != 0.0",
+            "SELECT adj_factor FROM ("
+            "  SELECT COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
+            "  FROM equities_bars_daily WHERE code = ? AND date > ?"
+            ") WHERE adj_factor IS NOT NULL AND adj_factor != 1.0 AND adj_factor != 0.0",
             (code, target_date),
         ).fetchall()
         if not rows:
@@ -932,7 +936,8 @@ class CacheStore:
         if conn is None:
             return None
         row = conn.execute(
-            "SELECT adj_factor FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT 1",
+            "SELECT COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
+            "FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT 1",
             (code,),
         ).fetchone()
         if row is None or row["adj_factor"] is None:
