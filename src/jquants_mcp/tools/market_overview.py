@@ -900,7 +900,7 @@ def register(
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def get_market_briefing(
         date: str,
-        sector_type: str = "s17",
+        sector_type: str = "s33",
         n: int = 5,
     ) -> dict[str, Any]:
         """Daily market briefing — composite of advance/decline, sector ranking, top movers, top turnover, and screener highlights (相場ブリーフィング).
@@ -919,8 +919,8 @@ def register(
 
         Args:
             date: Trading date in YYYY-MM-DD or YYYYMMDD format.
-            sector_type: ``"s33"`` or ``"s17"`` (default: ``"s17"`` — collapses
-                to 17 top-level TSE sectors which is more readable on mobile).
+            sector_type: ``"s33"`` (default, 33 TSE sub-sectors — matches most
+                Japanese stock apps) or ``"s17"`` (17 top-level sectors).
             n: TopN size for movers / turnover sections (1–100, default: 5).
 
         Returns:

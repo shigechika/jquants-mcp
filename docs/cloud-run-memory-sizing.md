@@ -23,7 +23,7 @@ Re-tested with 4 GiB — all phases passed with 0 errors. Further tested with
 **1 vCPU + 4 GiB** (down from 2 vCPU + 8 GiB — 75% cost reduction).
 
 **Update (May 7):** `get_market_briefing` (PR #276) introduced a composite
-tool that calls 6 market_overview tools + 3 screener tools + indices_topix
+tool that calls 8 market_overview tools + 3 screener tools + indices_topix
 in a single request. The peak memory demand of this call — full-universe
 YTD/volume/limit scans accumulated alongside the rankings — pushes the
 instance past the ~3850 MiB baseline ceiling that 4 GiB barely contained,

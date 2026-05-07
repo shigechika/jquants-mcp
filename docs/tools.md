@@ -104,6 +104,6 @@ Add `mode="price"` if you want the raw split-adjusted close instead.
 | 「キャッシュの状況」 | `cache_status` |
 | 「キャッシュをクリアして」 | `cache_clear` |
 
-The full list of 43 tools (with endpoints, plan requirements, and parameter
+The full list of 45 tools (with endpoints, plan requirements, and parameter
 tables) is on the
 [Available Tools section of the GitHub README](https://github.com/shigechika/jquants-mcp#available-tools).

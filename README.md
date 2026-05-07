@@ -30,7 +30,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ## Features
 
-- **43 MCP tools** — 22 J-Quants API v2 endpoints, 6 market overview, 7 offline screener, 1 cache-only equity search, 2 chart renderers (opt-in), and 5 server utilities
+- **45 MCP tools** — 22 J-Quants API v2 endpoints, 8 market overview, 7 offline screener, 1 cache-only equity search, 2 chart renderers (opt-in), and 5 server utilities
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -606,7 +606,7 @@ On first use, Claude Desktop opens a browser window for GitHub OAuth. After auth
 | `get_bulk_list` | `/bulk/list` | Light+ | List downloadable CSV files |
 | `get_bulk_download_url` | `/bulk/get` | Light+ | Get signed download URL |
 
-### Market Overview (6 tools)
+### Market Overview (8 tools)
 
 Cross-sectional cache-only tools that scan all listed equities for a given date. No extra API calls, useful for "what's the overall market doing today?" queries.
 
@@ -618,6 +618,8 @@ Cross-sectional cache-only tools that scan all listed equities for a given date.
 | `get_top_volume` | Top stocks by trading volume (出来高ランキング, share count). Returns code + name + volume + turnover_value. |
 | `get_top_turnover_value` | Top stocks by turnover value (売買代金ランキング, yen). Surfaces high-priced large-caps that dominate institutional flow, distinct from `get_top_volume`. |
 | `get_sector_performance` | Sector-level average daily change (業種別騰落率) grouped by TSE 33 sectors (default) or 17 sectors (`sector_type="s17"`). |
+| `get_dividend_yield_ranking` | High dividend yield stock ranking (高配当利回りランキング). Joins `DivAnn` from `fins_summary` with `AdjC` to compute yield_pct = DivAnn / AdjC × 100. Skips interim reports with empty DivAnn. |
+| `get_market_briefing` | Composite daily briefing (相場ブリーフィング) — advance/decline + 25-day ADR + sector top/bottom + top movers + top turnover + screener highlights + TOPIX change in one call. |
 
 ### Screener (7 tools)
 
