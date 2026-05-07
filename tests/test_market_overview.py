@@ -819,6 +819,38 @@ class TestGetMarketBriefing:
         assert _call(first) == _call(second)
 
     @pytest.mark.asyncio
+    async def test_equities_bars_daily_fetched_once(self, briefing_cache):
+        """get_market_briefing must call get_rows('equities_bars_daily') exactly once.
+
+        The N+1 elimination refactor fetches the full ADR span in one shot and
+        passes pre-fetched rows to all _compute_* helpers.  This test pins that
+        invariant so a future refactor cannot silently reintroduce extra reads.
+        """
+        with patch.object(briefing_cache, "get_rows", wraps=briefing_cache.get_rows) as spy:
+            with (
+                patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+                patch.object(server_module, "_cache", briefing_cache),
+                patch.object(server_module, "_client", None),
+            ):
+                result = await server_module.mcp.call_tool(
+                    "get_market_briefing", {"date": "2026-05-02"}
+                )
+        _call(result)  # assert no error key before checking call count
+        equities_calls = [
+            c for c in spy.call_args_list if c.args and c.args[0] == "equities_bars_daily"
+        ]
+        # Expected breakdown: 1 wide ADR fetch (main computation) +
+        # 3 screener sub-tool reads (detect_ytd_high_low, detect_volume_surge,
+        # detect_price_limit each call get_rows via mcp.call_tool).
+        # Before this refactor the main path alone issued 5+ redundant reads
+        # (one per advance/decline, sector, top-movers-up, top-movers-down,
+        # top-turnover); total was 8+.  Capped at 4 to pin the fix.
+        assert len(equities_calls) <= 4, (
+            f"expected ≤4 get_rows('equities_bars_daily') calls, got {len(equities_calls)}: "
+            f"{[str(c) for c in equities_calls]}"
+        )
+
+    @pytest.mark.asyncio
     async def test_invalid_sector_type(self, mock_briefing):
         result = await mock_briefing.call_tool(
             "get_market_briefing", {"date": "2026-05-02", "sector_type": "s99"}

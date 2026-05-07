@@ -122,6 +122,184 @@ def _rows_to_close_map(rows: list[dict[str, Any]]) -> dict[str, float]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Pure computation helpers — no cache access; accept pre-fetched rows/maps.
+# These are called by both the individual tools and get_market_briefing, so
+# that the briefing can fetch equities_bars_daily exactly once instead of
+# once per sub-tool (N+1 elimination).
+# ---------------------------------------------------------------------------
+
+
+def _compute_advance_decline_summary(
+    today_rows: list[dict[str, Any]],
+    prev_close_map: dict[str, float],
+) -> dict[str, Any]:
+    """Return advance/decline summary dict from pre-fetched rows."""
+    advances, declines, unchanged = _compute_advance_decline(today_rows, prev_close_map)
+    total = advances + declines + unchanged
+    ratio = round(advances / declines, 4) if declines > 0 else None
+    return {
+        "advances": advances,
+        "declines": declines,
+        "unchanged": unchanged,
+        "total": total,
+        "advance_decline_ratio": ratio,
+    }
+
+
+def _compute_advance_decline_ratio(
+    by_date: dict[str, list[dict[str, Any]]],
+    session_dates: list[str],
+) -> dict[str, Any]:
+    """Return ADR dict from pre-grouped rows and ordered session date list."""
+    advances_sum = declines_sum = actual_period = 0
+    for i in range(1, len(session_dates)):
+        prev_d = session_dates[i - 1]
+        today_d = session_dates[i]
+        prev_rows_d = by_date.get(prev_d, [])
+        today_rows_d = by_date.get(today_d, [])
+        if not prev_rows_d or not today_rows_d:
+            continue
+        prev_map = _rows_to_close_map(prev_rows_d)
+        adv, dec, _ = _compute_advance_decline(today_rows_d, prev_map)
+        advances_sum += adv
+        declines_sum += dec
+        actual_period += 1
+    ratio = round(advances_sum / declines_sum * 100, 2) if declines_sum > 0 else None
+    return {
+        "period": actual_period,
+        "ratio": ratio,
+        "advances_sum": advances_sum,
+        "declines_sum": declines_sum,
+    }
+
+
+def _compute_top_movers(
+    today_rows: list[dict[str, Any]],
+    prev_close_map: dict[str, float],
+    name_map: dict[str, str | None],
+    direction: str,
+    n: int,
+) -> list[dict[str, Any]]:
+    """Return top movers list sorted by change_pct from pre-fetched rows."""
+    movers: list[dict[str, Any]] = []
+    for row in today_rows:
+        code = str(row.get("Code") or "")
+        today_close = _as_float(row.get("AdjC"))
+        prev_close = prev_close_map.get(code)
+        if today_close is None or prev_close is None or prev_close == 0:
+            continue
+        change_pct = round((today_close - prev_close) / prev_close * 100, 4)
+        movers.append(
+            {
+                "code": display_code(code),
+                "name": name_map.get(code),
+                "close": today_close,
+                "prev_close": prev_close,
+                "change_pct": change_pct,
+            }
+        )
+    movers.sort(key=lambda x: x["change_pct"], reverse=(direction == "up"))
+    return movers[:n]
+
+
+def _compute_top_turnover_value(
+    today_rows: list[dict[str, Any]],
+    name_map: dict[str, str | None],
+    n: int,
+) -> list[dict[str, Any]]:
+    """Return top turnover value list sorted by Va from pre-fetched rows."""
+    items: list[dict[str, Any]] = []
+    for row in today_rows:
+        code = str(row.get("Code") or "")
+        turnover = _as_float(row.get("Va"))
+        if turnover is None:
+            continue
+        volume = _as_float(row.get("Vo"))
+        items.append(
+            {
+                "code": display_code(code),
+                "name": name_map.get(code),
+                "turnover_value": turnover,
+                "volume": int(volume) if volume is not None else None,
+                "close": _as_float(row.get("C")),
+            }
+        )
+    items.sort(key=lambda x: x["turnover_value"], reverse=True)
+    return items[:n]
+
+
+def _compute_sector_performance(
+    today_rows: list[dict[str, Any]],
+    prev_close_map: dict[str, float],
+    sector_map: dict[str, dict[str, Any]],
+    sector_type: str,
+) -> list[dict[str, Any]]:
+    """Return sector performance list sorted by avg_change_pct from pre-fetched rows."""
+    code_key = sector_type
+    name_key = f"{sector_type}_name"
+
+    # buckets[sector_code] = {"name": str, "advances": int, "declines": int,
+    #                         "unchanged": int, "pct_sum": float, "count": int}
+    buckets: dict[str, dict[str, Any]] = {}
+    for row in today_rows:
+        code = str(row.get("Code") or "")
+        today_close = _as_float(row.get("AdjC"))
+        prev_close = prev_close_map.get(code)
+        if today_close is None or prev_close is None or prev_close == 0:
+            continue
+        sector = sector_map.get(code, {})
+        sec_code = sector.get(code_key) or ""
+        if not sec_code:
+            continue
+        sec_name = sector.get(name_key) or ""
+        change_pct = (today_close - prev_close) / prev_close * 100.0
+        bucket = buckets.setdefault(
+            sec_code,
+            {
+                "name": sec_name,
+                "advances": 0,
+                "declines": 0,
+                "unchanged": 0,
+                "pct_sum": 0.0,
+                "count": 0,
+            },
+        )
+        # The first stock in this sector seeds bucket["name"] via setdefault
+        # above; this branch only fires when that initial seed was an empty
+        # string (rare J-Quants data quality case) and a later stock has
+        # the non-empty form, so we backfill the proper sector name.
+        if not bucket["name"] and sec_name:
+            bucket["name"] = sec_name
+        if today_close > prev_close:
+            bucket["advances"] += 1
+        elif today_close < prev_close:
+            bucket["declines"] += 1
+        else:
+            bucket["unchanged"] += 1
+        bucket["pct_sum"] += change_pct
+        bucket["count"] += 1
+
+    sectors: list[dict[str, Any]] = []
+    for sec_code, bucket in buckets.items():
+        if bucket["count"] == 0:
+            continue
+        sectors.append(
+            {
+                "code": sec_code,
+                "name": bucket["name"] or None,
+                "count": bucket["count"],
+                "advances": bucket["advances"],
+                "declines": bucket["declines"],
+                "unchanged": bucket["unchanged"],
+                "avg_change_pct": round(bucket["pct_sum"] / bucket["count"], 4),
+            }
+        )
+
+    sectors.sort(key=lambda x: x["avg_change_pct"], reverse=True)
+    return sectors
+
+
 def register(
     mcp: FastMCP,
     get_client: Any,  # noqa: ARG001
@@ -191,18 +369,12 @@ def register(
             return format_api_error(e)
 
         prev_close_map = _rows_to_close_map(prev_rows)
-        advances, declines, unchanged = _compute_advance_decline(today_rows, prev_close_map)
-        total = advances + declines + unchanged
-        ratio = round(advances / declines, 4) if declines > 0 else None
+        summary = _compute_advance_decline_summary(today_rows, prev_close_map)
 
         return {
             "date": today_date,
             "previous_date": prev_date,
-            "advances": advances,
-            "declines": declines,
-            "unchanged": unchanged,
-            "total": total,
-            "advance_decline_ratio": ratio,
+            **summary,
         }
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
@@ -267,36 +439,19 @@ def register(
         ) as e:
             return format_api_error(e)
 
-        # Group rows by date
         by_date: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             d = str(row.get("Date") or "")[:10]
             by_date.setdefault(d, []).append(row)
 
-        advances_sum = declines_sum = 0
-        actual_period = 0
-
-        for i in range(1, len(session_dates)):
-            prev_d = session_dates[i - 1]
-            today_d = session_dates[i]
-            prev_rows_d = by_date.get(prev_d, [])
-            today_rows_d = by_date.get(today_d, [])
-            if not prev_rows_d or not today_rows_d:
-                continue
-            prev_map = _rows_to_close_map(prev_rows_d)
-            adv, dec, _ = _compute_advance_decline(today_rows_d, prev_map)
-            advances_sum += adv
-            declines_sum += dec
-            actual_period += 1
-
-        ratio = round(advances_sum / declines_sum * 100, 2) if declines_sum > 0 else None
+        adr = _compute_advance_decline_ratio(by_date, session_dates)
 
         return {
             "date": norm_date,
-            "period": actual_period,
-            "ratio": ratio,
-            "advances_sum": advances_sum,
-            "declines_sum": declines_sum,
+            "period": adr["period"],
+            "ratio": adr["ratio"],
+            "advances_sum": adr["advances_sum"],
+            "declines_sum": adr["declines_sum"],
             "note": "Universe: all listed equities in J-Quants cache (not limited to Nikkei 225 / TOPIX).",
         }
 
@@ -370,31 +525,11 @@ def register(
         prev_close_map = _rows_to_close_map(prev_rows)
         name_map = cache.get_name_map()
 
-        movers: list[dict[str, Any]] = []
-        for row in today_rows:
-            code = str(row.get("Code") or "")
-            today_close = _as_float(row.get("AdjC"))
-            prev_close = prev_close_map.get(code)
-            if today_close is None or prev_close is None or prev_close == 0:
-                continue
-            change_pct = round((today_close - prev_close) / prev_close * 100, 4)
-            movers.append(
-                {
-                    "code": display_code(code),
-                    "name": name_map.get(code),
-                    "close": today_close,
-                    "prev_close": prev_close,
-                    "change_pct": change_pct,
-                }
-            )
-
-        movers.sort(key=lambda x: x["change_pct"], reverse=(direction == "up"))
-
         return {
             "date": today_date,
             "previous_date": prev_date,
             "direction": direction,
-            "items": movers[:n],
+            "items": _compute_top_movers(today_rows, prev_close_map, name_map, direction, n),
         }
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
@@ -534,28 +669,10 @@ def register(
             }
 
         name_map = cache.get_name_map()
-        items: list[dict[str, Any]] = []
-        for row in rows:
-            code = str(row.get("Code") or "")
-            turnover = _as_float(row.get("Va"))
-            if turnover is None:
-                continue
-            volume = _as_float(row.get("Vo"))
-            items.append(
-                {
-                    "code": display_code(code),
-                    "name": name_map.get(code),
-                    "turnover_value": turnover,
-                    "volume": int(volume) if volume is not None else None,
-                    "close": _as_float(row.get("C")),
-                }
-            )
-
-        items.sort(key=lambda x: x["turnover_value"], reverse=True)
 
         return {
             "date": norm_date,
-            "items": items[:n],
+            "items": _compute_top_turnover_value(rows, name_map, n),
         }
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
@@ -640,73 +757,13 @@ def register(
         prev_close_map = _rows_to_close_map(prev_rows)
         sector_map = cache.get_sector_map()
 
-        code_key = sector_type
-        name_key = f"{sector_type}_name"
-
-        # buckets[sector_code] = {"name": str, "advances": int, "declines": int,
-        #                         "unchanged": int, "pct_sum": float, "count": int}
-        buckets: dict[str, dict[str, Any]] = {}
-        for row in today_rows:
-            code = str(row.get("Code") or "")
-            today_close = _as_float(row.get("AdjC"))
-            prev_close = prev_close_map.get(code)
-            if today_close is None or prev_close is None or prev_close == 0:
-                continue
-            sector = sector_map.get(code, {})
-            sec_code = sector.get(code_key) or ""
-            if not sec_code:
-                continue
-            sec_name = sector.get(name_key) or ""
-            change_pct = (today_close - prev_close) / prev_close * 100.0
-            bucket = buckets.setdefault(
-                sec_code,
-                {
-                    "name": sec_name,
-                    "advances": 0,
-                    "declines": 0,
-                    "unchanged": 0,
-                    "pct_sum": 0.0,
-                    "count": 0,
-                },
-            )
-            # The first stock in this sector seeds bucket["name"] via setdefault
-            # above; this branch only fires when that initial seed was an empty
-            # string (rare J-Quants data quality case) and a later stock has
-            # the non-empty form, so we backfill the proper sector name.
-            if not bucket["name"] and sec_name:
-                bucket["name"] = sec_name
-            if today_close > prev_close:
-                bucket["advances"] += 1
-            elif today_close < prev_close:
-                bucket["declines"] += 1
-            else:
-                bucket["unchanged"] += 1
-            bucket["pct_sum"] += change_pct
-            bucket["count"] += 1
-
-        sectors: list[dict[str, Any]] = []
-        for sec_code, bucket in buckets.items():
-            if bucket["count"] == 0:
-                continue
-            sectors.append(
-                {
-                    "code": sec_code,
-                    "name": bucket["name"] or None,
-                    "count": bucket["count"],
-                    "advances": bucket["advances"],
-                    "declines": bucket["declines"],
-                    "unchanged": bucket["unchanged"],
-                    "avg_change_pct": round(bucket["pct_sum"] / bucket["count"], 4),
-                }
-            )
-
-        sectors.sort(key=lambda x: x["avg_change_pct"], reverse=True)
-
         return {
             "date": today_date,
             "previous_date": prev_date,
             "sector_type": sector_type,
-            "sectors": sectors,
+            "sectors": _compute_sector_performance(
+                today_rows, prev_close_map, sector_map, sector_type
+            ),
         }
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
@@ -720,9 +777,9 @@ def register(
         Use for 相場ブリーフィング, 市場概況, マーケットブリーフィング, daily briefing,
         market briefing, market summary, 今日の相場.
         Single call to get a structured snapshot of "what happened in the
-        Japanese market today". Calls existing tools internally and merges
-        the results, so no extra API calls beyond what the underlying tools
-        already do.
+        Japanese market today". Fetches equities_bars_daily once for the full
+        ADR window (26 sessions), then computes all sub-sections in memory —
+        no redundant cache reads.
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily + equities_master + indices_bars_daily_topix
@@ -771,9 +828,7 @@ def register(
             return cached
 
         # Internal helper: call MCP tool by name and unwrap the JSON content.
-        # ``mcp.call_tool`` returns a CallToolResult whose ``content[0].text`` holds
-        # the JSON-encoded dict. We unwrap and JSON-decode here so the briefing can
-        # treat each upstream tool's output as a regular Python dict.
+        # Used for screener tools (registered in screener.register) and TOPIX.
         async def _call_json(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
             import json as _json
 
@@ -790,27 +845,75 @@ def register(
             except (ValueError, TypeError):
                 return {}
 
-        # 1. Core advance/decline summary (also yields previous_date).
-        pc = await detect_price_change(norm_date)
-        if pc.get("error"):
-            return pc
-        previous_date = pc.get("previous_date")
-        today_date = pc.get("date", norm_date)
+        # Fetch equities_bars_daily exactly once — a span wide enough for the
+        # 25-day ADR window (period+1 = 26 session dates). today and prev are
+        # extracted from by_date, so no separate single-date fetches are needed.
+        adr_period = 25
+        session_dates_adr = _get_session_dates(cache, norm_date, adr_period + 1)
+        if len(session_dates_adr) < 2:
+            return {
+                "error": True,
+                "error_type": "InsufficientData",
+                "message": f"Not enough trading days before {norm_date}.",
+            }
+
+        today_date = session_dates_adr[-1]
+        prev_date = session_dates_adr[-2]
+
+        try:
+            adr_rows = cache.get_rows(
+                "equities_bars_daily",
+                key_filter={},
+                date_from=session_dates_adr[0],
+                date_to=today_date,
+            )
+        except (
+            APIError,
+            InvalidAPIKeyError,
+            UserNotConfiguredError,
+            DecryptionError,
+            UserNotAllowedError,
+        ) as e:
+            return format_api_error(e)
+
+        # Group by date once; all sub-computations read from this dict.
+        by_date: dict[str, list[dict[str, Any]]] = {}
+        for row in adr_rows:
+            d = str(row.get("Date") or "")[:10]
+            by_date.setdefault(d, []).append(row)
+
+        today_rows = by_date.get(today_date, [])
+        prev_rows = by_date.get(prev_date, [])
+
+        if not today_rows:
+            return {
+                "error": True,
+                "error_type": "NoTradingData",
+                "message": f"No trading data found for {today_date}. It may be a holiday or non-trading day.",
+            }
+
+        prev_close_map = _rows_to_close_map(prev_rows)
+        name_map = cache.get_name_map()
+        sector_map = cache.get_sector_map()
+
+        # 1. Core advance/decline summary.
+        ad = _compute_advance_decline_summary(today_rows, prev_close_map)
 
         # 2. 25-day advance/decline ratio (騰落レシオ).
-        adr = await get_advance_decline_ratio(norm_date, period=25)
-        adr_value = adr.get("ratio") if not adr.get("error") else None
+        adr = _compute_advance_decline_ratio(by_date, session_dates_adr)
+        adr_value = adr.get("ratio")
 
         # 3. Sector top/bottom (n each side, may overlap when total sectors < 2n).
-        sp = await get_sector_performance(norm_date, sector_type=sector_type)
-        sectors_list = sp.get("sectors", []) if not sp.get("error") else []
+        sectors_list = _compute_sector_performance(
+            today_rows, prev_close_map, sector_map, sector_type
+        )
         sectors_top = sectors_list[:n]
         sectors_bottom = list(reversed(sectors_list[-n:])) if sectors_list else []
 
         # 4. Top movers and top turnover.
-        movers_up = await get_top_movers(norm_date, direction="up", n=n)
-        movers_down = await get_top_movers(norm_date, direction="down", n=n)
-        turnover = await get_top_turnover_value(norm_date, n=n)
+        movers_up = _compute_top_movers(today_rows, prev_close_map, name_map, "up", n)
+        movers_down = _compute_top_movers(today_rows, prev_close_map, name_map, "down", n)
+        turnover_items = _compute_top_turnover_value(today_rows, name_map, n)
 
         # 5. Screener summaries via call_tool (registered by screener.register).
         ytd = await _call_json("detect_ytd_high_low", {"date": norm_date})
@@ -830,12 +933,12 @@ def register(
 
         result: dict[str, Any] = {
             "date": today_date,
-            "previous_date": previous_date,
+            "previous_date": prev_date,
             "sector_type": sector_type,
             "summary": {
-                "advances": pc.get("advances", 0),
-                "declines": pc.get("declines", 0),
-                "unchanged": pc.get("unchanged", 0),
+                "advances": ad["advances"],
+                "declines": ad["declines"],
+                "unchanged": ad["unchanged"],
                 "advance_decline_ratio_25d": adr_value,
                 "topix_change_pct": topix_change_pct,
             },
@@ -843,9 +946,9 @@ def register(
                 "top": sectors_top,
                 "bottom": sectors_bottom,
             },
-            "top_movers_up": movers_up.get("items", []) if not movers_up.get("error") else [],
-            "top_movers_down": movers_down.get("items", []) if not movers_down.get("error") else [],
-            "top_turnover_value": turnover.get("items", []) if not turnover.get("error") else [],
+            "top_movers_up": movers_up,
+            "top_movers_down": movers_down,
+            "top_turnover_value": turnover_items,
             "highlights": {
                 "ytd_new_highs": ytd_new_highs,
                 "ytd_new_lows": ytd_new_lows,
