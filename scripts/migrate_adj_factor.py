@@ -134,6 +134,7 @@ def main() -> None:
     logger.info("DB: %s (%.2f GB)", args.db, db_size_before)
 
     conn = sqlite3.connect(str(args.db))
+    conn.isolation_level = None  # autocommit; manual BEGIN/COMMIT in run_backfill
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
 
