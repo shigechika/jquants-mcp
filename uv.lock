@@ -1127,7 +1127,7 @@ wheels = [
 
 [[package]]
 name = "jquants-mcp"
-version = "0.19.0"
+version = "0.21.1"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
