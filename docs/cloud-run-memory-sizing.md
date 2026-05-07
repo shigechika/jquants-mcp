@@ -1,6 +1,6 @@
-# Cloud Run memory sizing (8 GiB → 6 GiB → 4 GiB)
+# Cloud Run memory sizing (8 GiB → 6 GiB → 4 GiB → 6 GiB)
 
-Date: 2026-04-11 (initial), 2026-04-12 (4 GiB re-test)
+Date: 2026-04-11 (initial), 2026-04-12 (4 GiB re-test), 2026-05-07 (6 GiB restore)
 Issue: [#72](https://github.com/shigechika/jquants-mcp/issues/72)
 PR: [#73](https://github.com/shigechika/jquants-mcp/pull/73)
 
@@ -21,6 +21,17 @@ date trim to `gcs_export_cache.py`, `cache.db` shrank from 3.57 GB to 2.7 GB.
 Re-tested with 4 GiB — all phases passed with 0 errors. Further tested with
 1 vCPU: parallel/burst latency increased ~20-30% but 0 errors. Adopted
 **1 vCPU + 4 GiB** (down from 2 vCPU + 8 GiB — 75% cost reduction).
+
+**Update (May 7):** `get_market_briefing` (PR #276) introduced a composite
+tool that calls 6 market_overview tools + 3 screener tools + indices_topix
+in a single request. Production observed three OOM kills within 11 minutes
+(`exit(137)` at 18:16 / 18:22 / 18:27 JST), each followed by a truncated
+response that user-side appeared as a 300-second timeout. Root cause: the
+peak memory demand of the briefing call (full-universe YTD/volume/limit
+scans accumulated alongside the other rankings) pushed the instance past
+the ~3850 MiB baseline ceiling that 4 GiB barely contained. Restored memory
+to **6 GiB** for headroom. Future optimization tracked in Issue #277
+(`_compute_*` helper extraction) and a forthcoming sub-tool memory audit.
 
 ## Motivation
 
