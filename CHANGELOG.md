@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.21.0](https://github.com/shigechika/jquants-mcp/compare/v0.20.0...v0.21.0) (2026-05-07)
+
+
+### Features
+
+* add get_dividend_yield_ranking tool ([#270](https://github.com/shigechika/jquants-mcp/issues/270)) ([#283](https://github.com/shigechika/jquants-mcp/issues/283)) ([ceb4ce4](https://github.com/shigechika/jquants-mcp/commit/ceb4ce4e87ef1cc1c93b49e6275cc9c0640e9c79))
+
 ## [0.20.0](https://github.com/shigechika/jquants-mcp/compare/v0.19.2...v0.20.0) (2026-05-07)
 
 
