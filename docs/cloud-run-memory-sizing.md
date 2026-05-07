@@ -24,14 +24,14 @@ Re-tested with 4 GiB — all phases passed with 0 errors. Further tested with
 
 **Update (May 7):** `get_market_briefing` (PR #276) introduced a composite
 tool that calls 6 market_overview tools + 3 screener tools + indices_topix
-in a single request. Production observed three OOM kills within 11 minutes
-(`exit(137)` at 18:16 / 18:22 / 18:27 JST), each followed by a truncated
-response that user-side appeared as a 300-second timeout. Root cause: the
-peak memory demand of the briefing call (full-universe YTD/volume/limit
-scans accumulated alongside the other rankings) pushed the instance past
-the ~3850 MiB baseline ceiling that 4 GiB barely contained. Restored memory
-to **6 GiB** for headroom. Future optimization tracked in Issue #277
-(`_compute_*` helper extraction) and a forthcoming sub-tool memory audit.
+in a single request. The peak memory demand of this call — full-universe
+YTD/volume/limit scans accumulated alongside the rankings — pushes the
+instance past the ~3850 MiB baseline ceiling that 4 GiB barely contained,
+which manifests as OOM kills (`exit(137)`) and truncated responses.
+Restored memory to **6 GiB** to recover the ~2.2 GiB headroom of the
+Apr-11 sizing. Memory-footprint reduction is tracked separately in Issue
+\#277 (`_compute_*` helper extraction) and a forthcoming sub-tool memory
+audit; once those land, 4 GiB may again be viable.
 
 ## Motivation
 
