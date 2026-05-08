@@ -11,9 +11,9 @@ question. The examples below show queries that map cleanly to a single tool;
 Claude can also chain several tools (e.g. screen for top movers, then chart
 the leader) without you having to ask.
 
-## Daily market overview
+## Daily market overview & valuation
 
-What's the market doing today as a whole?
+What's the market doing today, and which sectors look cheap?
 
 | Question | Tool |
 |---|---|
@@ -39,8 +39,8 @@ Drill into a specific code:
 
 | Question | Tool |
 |---|---|
-| 「7203 のここ 1 か月の株価」 | `get_equities_bars_daily` |
 | 「8053 住友商事の株価・財務・PER を一覧で」（単銘柄サマリー） | `get_stock_summary` |
+| 「7203 のここ 1 か月の株価」 | `get_equities_bars_daily` |
 | 「8053 住友商事の決算」 | `get_fins_summary` |
 | 「9984 SBG の配当履歴」 | `get_fins_dividend` |
 | 「285A のチャートを 3 か月」 | `render_candlestick` |
