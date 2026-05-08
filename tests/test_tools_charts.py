@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import builtins
+import json
+import sqlite3
+import time
 from datetime import date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -1809,10 +1812,8 @@ def test_register_no_op_when_extras_missing():
 
 def _seed_earnings(cache: CacheStore, code: str, dates: list[str]) -> None:
     """Insert rows into equities_earnings_calendar for testing."""
-    import json
-    import sqlite3
-    import time
-
+    # Access _db_path directly: CacheStore exposes no public "insert raw row" API
+    # and opening a second connection to the same file is safe with WAL mode.
     conn = sqlite3.connect(str(cache._db_path))
     conn.execute(
         "CREATE TABLE IF NOT EXISTS equities_earnings_calendar "
@@ -1896,7 +1897,10 @@ class TestRenderCandlestickAnnotations:
         )
         assert _is_real_png(png_none)
         assert _is_real_png(png_empty)
-        # Both paths should produce visually identical output (same bytes).
+        # Byte-exact equality: mplfinance output is deterministic for identical
+        # inputs on the same Python/matplotlib version, so this guards against
+        # annotations=[] accidentally altering the render path.  If this test
+        # starts failing after a matplotlib upgrade, switch to a visual diff.
         assert png_none == png_empty
 
     async def test_invalid_annotation_returns_error_image(self, mock_env):

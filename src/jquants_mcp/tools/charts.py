@@ -100,6 +100,10 @@ _EARNINGS_LINE_STYLE: dict[str, object] = {
 }
 
 # Colour of earnings vertical lines per style alias.
+# colorblind uses black: it is the only hue guaranteed to be distinguishable
+# across all common colour-vision deficiencies (protanopia, deuteranopia,
+# tritanopia) without relying on the Okabe-Ito palette already used for
+# stock-price lines in that style.
 _EARNINGS_COLORS: dict[str, str] = {
     "default": "purple",
     "dark": "violet",
