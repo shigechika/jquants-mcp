@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 # 銘柄コード:
 #   - 4-5 桁の数字（legacy 4桁、現行 5桁数字。例: 7203, 72030）
@@ -178,3 +179,13 @@ def display_code(code: str) -> str:
     if len(code) == 5 and code.endswith("0"):
         return code[:4]
     return code
+
+
+def float_or_none(value: Any) -> float | None:
+    """Convert a value to float, returning None for empty/null/invalid input."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

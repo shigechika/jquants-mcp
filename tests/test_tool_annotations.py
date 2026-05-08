@@ -73,6 +73,8 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     "detect_ytd_high_low_range": READ_ONLY_CACHE,
     # tools/summary.py — cache only, no API
     "get_stock_summary": READ_ONLY_CACHE,
+    # tools/valuation.py — cache only, no API
+    "get_sector_valuation": READ_ONLY_CACHE,
     # tools/charts.py — cache only, returns Image (when [charts] extra installed)
     "render_candlestick": READ_ONLY_CACHE,
     "render_comparison_chart": READ_ONLY_CACHE,
