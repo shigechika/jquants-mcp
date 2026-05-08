@@ -13,6 +13,8 @@ from ..tool_annotations import READ_ONLY_CACHE
 from ..validators import collect_errors, display_code, make_validation_error_response, validate_code
 from .financials import _annotate_fiscal_period, _apply_split_adjustment
 
+logger = logging.getLogger(__name__)
+
 
 def _api_code(code: str) -> str:
     """Return the 5-digit J-Quants API form of a stock code.
@@ -23,8 +25,6 @@ def _api_code(code: str) -> str:
     """
     return code + "0" if len(code) == 4 else code
 
-
-logger = logging.getLogger(__name__)
 
 # DivAnn disclosures older than this are treated as stale (no-dividend transition).
 # Mirrors the default used by get_dividend_yield_ranking (disc_months=18).
@@ -46,7 +46,7 @@ def _float_or_none(value: Any) -> float | None:
 
 def register(
     mcp: FastMCP,
-    get_client: callable,
+    get_client: callable,  # not used: this tool is cache-only, no live API call
     get_cache: callable,
 ) -> None:
     """Register stock summary tools on the MCP server."""
