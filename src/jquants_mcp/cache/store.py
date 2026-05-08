@@ -605,10 +605,10 @@ class CacheStore:
         return result
 
     def get_sector_map(self) -> dict[str, dict[str, str]]:
-        """Return a mapping of 5-digit code to sector codes/names from equities_master.
+        """Return a mapping of 5-digit code to sector/market info from equities_master.
 
-        Each value is a dict with keys ``s33``, ``s33_name``, ``s17``, ``s17_name``
-        (each may be an empty string if the master row lacks that field).
+        Each value is a dict with keys ``s33``, ``s33_name``, ``s17``, ``s17_name``,
+        ``mkt`` (each may be an empty string if the master row lacks that field).
         Uses the most recent record per code, mirroring ``get_name_map``.
 
         Note: intentionally bypasses ``_build_where_clause`` / plan-based date
@@ -640,6 +640,8 @@ class CacheStore:
                 "s33_name": str(data.get("S33Nm") or ""),
                 "s17": str(data.get("S17") or ""),
                 "s17_name": str(data.get("S17Nm") or ""),
+                "mkt": str(data.get("Mkt") or ""),
+                "mkt_name": str(data.get("MktNm") or ""),
             }
         return result
 
