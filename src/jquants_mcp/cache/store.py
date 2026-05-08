@@ -1034,6 +1034,84 @@ class CacheStore:
         except Exception:
             return None
 
+    def get_all_latest_fy_fins(self) -> dict[str, dict]:
+        """Return the most recent FY financial-summary row for every code in fins_summary.
+
+        Uses a JOIN against a per-code MAX(disc_date) subquery to avoid a full
+        table scan with a correlated subquery.  The FY filter is applied inside
+        the subquery so only full-year rows are considered.
+
+        Returns:
+            Mapping of 5-digit code to raw JSON dict (as stored in the cache).
+            Returns an empty dict when the connection is unavailable.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        _fy_cond = (
+            "  json_extract(data, '$.CurPerType') = 'FY'"
+            "  OR json_extract(data, '$.TypeOfCurrentPeriod') = 'FY'"
+            "  OR json_extract(data, '$.DocType') LIKE 'FYFinancial%'"
+            "  OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%'"
+        )
+        sql = (
+            "SELECT fs.code, fs.data FROM fins_summary fs "
+            "INNER JOIN ("
+            "  SELECT code, MAX(disc_date) AS max_date FROM fins_summary "
+            f" WHERE ({_fy_cond}) GROUP BY code"
+            ") AS latest ON fs.code = latest.code AND fs.disc_date = latest.max_date "
+            f"WHERE ({_fy_cond})"
+        )
+        try:
+            rows = conn.execute(sql).fetchall()
+        except Exception:
+            return {}
+        result: dict[str, dict] = {}
+        for row in rows:
+            code = str(row[0] or "")
+            if not code:
+                continue
+            try:
+                result[code] = json.loads(row[1])
+            except Exception:
+                continue
+        return result
+
+    def get_latest_close_map(self) -> dict[str, float]:
+        """Return a mapping of 5-digit code to latest adjusted-close price.
+
+        Queries ``equities_bars_daily`` for the single most recent date across
+        all codes and returns AdjC (falling back to C) for every row on that date.
+        Returns an empty dict when the table is empty or unavailable.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        try:
+            rows = conn.execute(
+                "SELECT code, "
+                "  COALESCE("
+                "    NULLIF(json_extract(data, '$.AdjC'), ''),"
+                "    NULLIF(json_extract(data, '$.C'), '')"
+                "  ) AS close "
+                "FROM equities_bars_daily "
+                "WHERE date = (SELECT MAX(date) FROM equities_bars_daily)"
+            ).fetchall()
+        except Exception:
+            return {}
+        result: dict[str, float] = {}
+        for row in rows:
+            code = str(row[0] or "")
+            if not code:
+                continue
+            try:
+                close = float(row[1])
+                if close > 0:
+                    result[code] = close
+            except (TypeError, ValueError):
+                continue
+        return result
+
     # ----------------------------------------------------------------
     # Tier 2: レスポンスレベルキャッシュ
     # ----------------------------------------------------------------
