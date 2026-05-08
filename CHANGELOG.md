@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.26.0](https://github.com/shigechika/jquants-mcp/compare/v0.25.1...v0.26.0) (2026-05-08)
+
+
+### Features
+
+* **summary:** add roe field to get_stock_summary ([#302](https://github.com/shigechika/jquants-mcp/issues/302)) ([078ccee](https://github.com/shigechika/jquants-mcp/commit/078cceeb0e79c07a58d32dd0b6f06d3513097127))
+
 ## [0.25.1](https://github.com/shigechika/jquants-mcp/compare/v0.25.0...v0.25.1) (2026-05-08)
 
 
