@@ -5,6 +5,14 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.23.0](https://github.com/shigechika/jquants-mcp/compare/v0.22.0...v0.23.0) (2026-05-08)
+
+
+### Features
+
+* add disc_months/max_yield/market/sector filters to get_dividend_yield_ranking ([#293](https://github.com/shigechika/jquants-mcp/issues/293)) ([4955b2b](https://github.com/shigechika/jquants-mcp/commit/4955b2bf93f0b0a1da66f710d78895355c71e579))
+* add earnings annotation to render_candlestick ([#295](https://github.com/shigechika/jquants-mcp/issues/295)) ([0d16dec](https://github.com/shigechika/jquants-mcp/commit/0d16dec3d8782d158c0516913883fb1bb46adec5))
+
 ## [0.22.0](https://github.com/shigechika/jquants-mcp/compare/v0.21.1...v0.22.0) (2026-05-07)
 
 
