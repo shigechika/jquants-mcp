@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import builtins
+import json
+import sqlite3
+import time
 from datetime import date, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -1800,3 +1803,125 @@ def test_register_no_op_when_extras_missing():
         charts_module.register(mcp_stub, lambda: None, lambda: None)
     # And the tool decorator was never invoked.
     mcp_stub.tool.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Earnings annotations
+# ---------------------------------------------------------------------------
+
+
+def _seed_earnings(cache: CacheStore, code: str, dates: list[str]) -> None:
+    """Insert rows into equities_earnings_calendar for testing."""
+    # Access _db_path directly: CacheStore exposes no public "insert raw row" API
+    # and opening a second connection to the same file is safe with WAL mode.
+    conn = sqlite3.connect(str(cache._db_path))
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS equities_earnings_calendar "
+        "(code TEXT NOT NULL, date TEXT NOT NULL, data TEXT NOT NULL, "
+        "fetched_at REAL NOT NULL, PRIMARY KEY (code, date))"
+    )
+    now = time.time()
+    for d in dates:
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_earnings_calendar "
+            "(code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (code, d, json.dumps({"Code": code, "Date": d}), now),
+        )
+    conn.commit()
+    conn.close()
+
+
+@pytest.mark.asyncio
+class TestRenderCandlestickAnnotations:
+    """Tests for the annotations parameter of render_candlestick."""
+
+    async def test_earnings_annotation_renders_png(self, mock_env):
+        """annotations=["earnings"] with a matching date still produces a valid PNG."""
+        rows = []
+        for i in range(30):
+            d = (datetime(2026, 3, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("13010", d, o=1000 + i, h=1010 + i, low=990 + i, c=1005 + i))
+        _seed(mock_env["cache"], rows)
+        # Plant an earnings date inside the display window
+        _seed_earnings(mock_env["cache"], "13010", ["2026-03-15"])
+
+        png = await _call_image(
+            "render_candlestick",
+            code="13010",
+            from_date="2026-03-01",
+            to_date="2026-03-30",
+            indicators=["volume"],
+            annotations=["earnings"],
+        )
+        assert _is_real_png(png)
+
+    async def test_earnings_annotation_no_dates_renders_normally(self, mock_env):
+        """annotations=["earnings"] with no matching dates falls back to default path."""
+        rows = []
+        for i in range(20):
+            d = (datetime(2026, 3, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("13020", d, o=500, h=510, low=490, c=505))
+        _seed(mock_env["cache"], rows)
+        # No earnings calendar entries seeded → earnings_dates will be empty
+
+        png = await _call_image(
+            "render_candlestick",
+            code="13020",
+            from_date="2026-03-01",
+            to_date="2026-03-20",
+            indicators=["volume"],
+            annotations=["earnings"],
+        )
+        assert _is_real_png(png)
+
+    async def test_no_annotations_unchanged(self, mock_env):
+        """Omitting annotations produces the same output as annotations=[]."""
+        rows = []
+        for i in range(20):
+            d = (datetime(2026, 3, 1) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("13030", d, o=200, h=210, low=190, c=205))
+        _seed(mock_env["cache"], rows)
+
+        png_none = await _call_image(
+            "render_candlestick",
+            code="13030",
+            from_date="2026-03-01",
+            to_date="2026-03-20",
+        )
+        png_empty = await _call_image(
+            "render_candlestick",
+            code="13030",
+            from_date="2026-03-01",
+            to_date="2026-03-20",
+            annotations=[],
+        )
+        assert _is_real_png(png_none)
+        assert _is_real_png(png_empty)
+        # Byte-exact equality: mplfinance output is deterministic for identical
+        # inputs on the same Python/matplotlib version, so this guards against
+        # annotations=[] accidentally altering the render path.  If this test
+        # starts failing after a matplotlib upgrade, switch to a visual diff.
+        assert png_none == png_empty
+
+    async def test_invalid_annotation_returns_error_image(self, mock_env):
+        """Unknown annotation type returns an error PNG (not a crash)."""
+        rows = [_bar("13040", "2026-03-01", o=100, h=110, low=90, c=105)]
+        _seed(mock_env["cache"], rows)
+
+        result = await server_module.mcp.call_tool(
+            "render_candlestick",
+            {
+                "code": "13040",
+                "from_date": "2026-03-01",
+                "to_date": "2026-03-01",
+                "annotations": ["unknown_type"],
+            },
+        )
+        blob = result.content[0]
+        raw = blob.data
+        if isinstance(raw, str):
+            import base64
+
+            raw = base64.b64decode(raw)
+        # An error PNG is still a valid PNG (the _error_image helper).
+        assert _is_png(raw)

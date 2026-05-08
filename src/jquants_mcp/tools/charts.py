@@ -87,6 +87,29 @@ _LOCK_COLORS: dict[str, tuple[str, str]] = {
 # at a glance, narrow enough not to overlap neighbouring bars.
 _LOCK_BAR_HALF_WIDTH = 0.4
 
+# Annotation types accepted by ``render_candlestick``.
+# "earnings" draws a vertical dashed line on each earnings announcement date
+# found in the equities_earnings_calendar Tier 1 cache (~3 months history).
+_VALID_ANNOTATIONS: frozenset[str] = frozenset({"earnings"})
+
+# Vertical line style for earnings annotations.
+_EARNINGS_LINE_STYLE: dict[str, object] = {
+    "linestyle": "--",
+    "linewidth": 1.0,
+    "alpha": 0.65,
+}
+
+# Colour of earnings vertical lines per style alias.
+# colorblind uses black: it is the only hue guaranteed to be distinguishable
+# across all common colour-vision deficiencies (protanopia, deuteranopia,
+# tritanopia) without relying on the Okabe-Ito palette already used for
+# stock-price lines in that style.
+_EARNINGS_COLORS: dict[str, str] = {
+    "default": "purple",
+    "dark": "violet",
+    "colorblind": "black",
+}
+
 _DPI = 100
 
 # Default display range for render_candlestick when from_date / to_date are omitted.
@@ -375,6 +398,7 @@ def register(
         style: str = "default",
         adjusted: bool = True,
         aspect_ratio: str = "square",
+        annotations: list[str] | None = None,
     ) -> Image:
         """Render a stock candlestick chart as a PNG (ローソク足チャート). All plans.
 
@@ -421,9 +445,16 @@ def register(
             aspect_ratio: Chart shape. ``square`` (default, 8×8 in) fits
                 chat and mobile. ``landscape`` (12×6 in) for wide desktop
                 views. ``portrait`` (6×9 in) for tall mobile viewports.
+            annotations: Optional list of overlay annotations. Currently
+                accepted value: ``"earnings"`` — draws a vertical dashed line
+                on each earnings announcement date within the chart window
+                (sourced from equities_earnings_calendar; ~3 months history).
+                Default: null (no annotations). Example: ``["earnings"]``.
         """
         if indicators is None:
             indicators = ["volume", "sma5", "sma25"]
+        if annotations is None:
+            annotations = []
 
         errors = collect_errors(
             validate_code(code),
@@ -437,6 +468,11 @@ def register(
         if unknown:
             return _error_image(
                 f"Unknown indicators: {unknown}. Accepted: {sorted(_VALID_INDICATORS)}"
+            )
+        unknown_ann = sorted(set(annotations) - _VALID_ANNOTATIONS)
+        if unknown_ann:
+            return _error_image(
+                f"Unknown annotations: {unknown_ann}. Accepted: {sorted(_VALID_ANNOTATIONS)}"
             )
         if style not in _STYLE_ALIASES:
             return _error_image(f"Unknown style: {style!r}. Accepted: {sorted(_STYLE_ALIASES)}")
@@ -571,6 +607,11 @@ def register(
 
         lock_days = _detect_lock_days(display_rows, adjusted)
 
+        # Fetch earnings dates within the display window when requested.
+        earnings_dates: list[str] = []
+        if "earnings" in annotations:
+            earnings_dates = cache.get_earnings_dates(norm_code, norm_from, norm_to)
+
         buf = io.BytesIO()
         # mplfinance's addplot validator rejects ``None`` (only dict / list
         # of dicts allowed), so omit the kwarg entirely when there are no
@@ -595,15 +636,14 @@ def register(
         savefig_kwargs = {"fname": buf, "dpi": _DPI, "format": "png", "bbox_inches": "tight"}
 
         try:
-            if lock_days:
-                # Lock days (O=H=L=C with UL/LL set) render as invisible
-                # doji lines under default mplfinance behaviour, so we
-                # take the ``returnfig`` path and overlay short coloured
-                # horizontal bars in the up/down candle colour.
+            if lock_days or earnings_dates:
+                # Take the ``returnfig`` path whenever we need to draw custom
+                # overlays: lock-day horizontal bars and/or earnings vertical lines.
                 plot_kwargs["returnfig"] = True
                 fig, axes = mpf.plot(df, **plot_kwargs)
                 try:
                     price_ax = axes[0]
+                    # Lock days: invisible doji lines → replace with short hlines.
                     up_color, down_color = _LOCK_COLORS[style]
                     for lock in lock_days:
                         lock_date = pd.to_datetime(lock["date"])
@@ -618,6 +658,14 @@ def register(
                             colors=color,
                             linewidth=2.0,
                         )
+                    # Earnings annotations: vertical dashed lines.
+                    earn_color = _EARNINGS_COLORS[style]
+                    for earn_date in earnings_dates:
+                        earn_ts = pd.to_datetime(earn_date)
+                        if earn_ts not in df.index:
+                            continue
+                        x_idx = df.index.get_loc(earn_ts)
+                        price_ax.axvline(x=x_idx, color=earn_color, **_EARNINGS_LINE_STYLE)
                     # Reuse the same savefig kwargs as the default path
                     # so the two visual outputs match exactly.
                     fig.savefig(**savefig_kwargs)

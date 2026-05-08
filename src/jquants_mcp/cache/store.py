@@ -645,6 +645,33 @@ class CacheStore:
             }
         return result
 
+    def get_earnings_dates(self, code: str, date_from: str, date_to: str) -> list[str]:
+        """Return sorted earnings announcement dates for a stock within a date range.
+
+        Queries ``equities_earnings_calendar`` Tier 1 table which is populated
+        daily by ``daily_fetch.py`` and retains ~3 months of history.
+        Returns an empty list when the table is missing, the code has no entries
+        in the range, or the connection is unavailable.
+
+        Args:
+            code: 5-digit stock code.
+            date_from: Start date inclusive (YYYY-MM-DD).
+            date_to:   End date inclusive (YYYY-MM-DD).
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT date FROM equities_earnings_calendar "
+                "WHERE code = ? AND date >= ? AND date <= ? "
+                "ORDER BY date",
+                (code, date_from, date_to),
+            ).fetchall()
+        except Exception:
+            return []
+        return [str(row[0]) for row in rows]
+
     def get_div_ann_map(self) -> dict[str, tuple[float, str]]:
         """Return a mapping of 5-digit code to (annual dividend per share, disclosure date).
 
