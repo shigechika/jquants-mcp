@@ -1299,3 +1299,199 @@ class TestGetDividendYieldRanking:
         # cum_factor == 1.0 because split on disc_date is excluded
         assert item["div_ann"] == pytest.approx(86.0, rel=1e-3)
         assert item["yield_pct"] == pytest.approx(86.0 / 220.0 * 100, rel=1e-3)
+
+    # ------------------------------------------------------------------
+    # disc_months / max_yield / market / sector filters
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_disc_months_excludes_stale(self, tmp_path):
+        """disc_date older than disc_months cutoff is excluded.
+
+        query_date=2026-05-02, disc_months=18 → cutoff ≈ 2024-09-22.
+        13010 disc_date=2024-01-01 (stale) → excluded.
+        13020 disc_date=2025-01-01 (fresh) → included.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "13010", "2026-05-02", 1000.0)
+        _insert_fins_summary(conn, "13010", "2024-01-01", 100.0)  # stale
+        _insert_master(conn, "13010", "古い配当")
+
+        _insert_bar(conn, "13020", "2026-05-02", 1000.0)
+        _insert_fins_summary(conn, "13020", "2025-01-01", 100.0)  # fresh
+        _insert_master(conn, "13020", "新しい配当")
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-02", "min_yield": 0.0, "disc_months": 18},
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        assert data["items"][0]["code"] == "1302"  # 13020 only
+
+    @pytest.mark.asyncio
+    async def test_max_yield_filter(self, mock_yield_server):
+        """max_yield caps the upper bound of reported yield."""
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking",
+            {"date": "2026-05-02", "min_yield": 0.0, "max_yield": 6.0},
+        )
+        data = _call(result)
+        # 13030 yield=8% excluded, 13010 yield=5% included, 13020 yield=2% included
+        assert data["count"] == 2
+        yields = [item["yield_pct"] for item in data["items"]]
+        assert all(y <= 6.0 for y in yields)
+
+    @pytest.mark.asyncio
+    async def test_market_filter(self, tmp_path):
+        """market='prime' keeps only Mkt=111 stocks."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "13010", "2026-05-02", 1000.0)
+        _insert_fins_summary(conn, "13010", "2025-06-01", 100.0)
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "13010",
+                "2026-05-01",
+                '{"Code":"13010","CoName":"プライム銘柄","Mkt":111,"MktNm":"プライム","S33":"50","S33Nm":"水産"}',
+                0.0,
+            ),
+        )
+
+        _insert_bar(conn, "13020", "2026-05-02", 1000.0)
+        _insert_fins_summary(conn, "13020", "2025-06-01", 100.0)
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "13020",
+                "2026-05-01",
+                '{"Code":"13020","CoName":"グロース銘柄","Mkt":113,"MktNm":"グロース","S33":"50","S33Nm":"水産"}',
+                0.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-02", "min_yield": 0.0, "market": "prime"},
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        assert data["items"][0]["code"] == "1301"
+        assert data["items"][0]["market"] == "プライム"
+
+    @pytest.mark.asyncio
+    async def test_sector_filter(self, tmp_path):
+        """sector='50' keeps only S33='50' stocks."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "13010", "2026-05-02", 1000.0)
+        _insert_fins_summary(conn, "13010", "2025-06-01", 100.0)
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "13010",
+                "2026-05-01",
+                '{"Code":"13010","CoName":"水産A","Mkt":111,"MktNm":"プライム","S33":"50","S33Nm":"水産・農林業"}',
+                0.0,
+            ),
+        )
+
+        _insert_bar(conn, "13020", "2026-05-02", 1000.0)
+        _insert_fins_summary(conn, "13020", "2025-06-01", 100.0)
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "13020",
+                "2026-05-01",
+                '{"Code":"13020","CoName":"銀行B","Mkt":111,"MktNm":"プライム","S33":"7050","S33Nm":"銀行業"}',
+                0.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-02", "min_yield": 0.0, "sector": "50"},
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        assert data["items"][0]["code"] == "1301"
+        assert data["items"][0]["sector"] == "水産・農林業"
+
+    @pytest.mark.asyncio
+    async def test_filters_in_response(self, mock_yield_server):
+        """Response includes applied filters under 'filters' key."""
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking",
+            {"date": "2026-05-02", "min_yield": 2.0, "max_yield": 9.0, "disc_months": 12},
+        )
+        data = _call(result)
+        assert data["filters"]["min_yield"] == 2.0
+        assert data["filters"]["max_yield"] == 9.0
+        assert data["filters"]["disc_months"] == 12
+        assert data["filters"]["market"] is None
+        assert data["filters"]["sector"] is None
+
+    @pytest.mark.asyncio
+    async def test_invalid_market(self, mock_yield_server):
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking",
+            {"date": "2026-05-02", "market": "tokyo_stock_exchange"},
+        )
+        data = _call(result)
+        assert data.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_invalid_disc_months(self, mock_yield_server):
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking",
+            {"date": "2026-05-02", "disc_months": 0},
+        )
+        data = _call(result)
+        assert data.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_max_yield_below_min_yield(self, mock_yield_server):
+        result = await mock_yield_server.call_tool(
+            "get_dividend_yield_ranking",
+            {"date": "2026-05-02", "min_yield": 5.0, "max_yield": 3.0},
+        )
+        data = _call(result)
+        assert data.get("error") is True

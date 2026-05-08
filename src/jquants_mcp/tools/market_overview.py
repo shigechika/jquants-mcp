@@ -51,6 +51,39 @@ def _validate_min_yield(min_yield: float) -> str | None:
     return "min_yield must be >= 0" if min_yield < 0 else None
 
 
+# market segment name → equities_master Mkt integer code
+_MARKET_CODE_MAP: dict[str, int] = {
+    "prime": 111,
+    "standard": 112,
+    "growth": 113,
+    "tokyo_pro": 105,
+}
+
+_VALID_MARKETS: frozenset[str] = frozenset(_MARKET_CODE_MAP)
+
+
+def _validate_market(market: str | None) -> str | None:
+    if market is None:
+        return None
+    if market not in _VALID_MARKETS:
+        return f"market must be one of {sorted(_VALID_MARKETS)} or null"
+    return None
+
+
+def _validate_disc_months(disc_months: int) -> str | None:
+    return "disc_months must be between 1 and 120" if not (1 <= disc_months <= 120) else None
+
+
+def _validate_max_yield(max_yield: float | None, min_yield: float) -> str | None:
+    if max_yield is None:
+        return None
+    if max_yield < 0:
+        return "max_yield must be >= 0"
+    if max_yield < min_yield:
+        return "max_yield must be >= min_yield"
+    return None
+
+
 def _validate_period(period: int) -> str | None:
     return (
         f"period must be between 1 and {_MAX_PERIOD}" if not (1 <= period <= _MAX_PERIOD) else None
@@ -775,6 +808,10 @@ def register(
     async def get_dividend_yield_ranking(
         n: int = 20,
         min_yield: float = 3.0,
+        max_yield: float | None = None,
+        disc_months: int = 18,
+        market: str | None = None,
+        sector: str | None = None,
         date: str | None = None,
     ) -> dict[str, Any]:
         """Return high dividend yield stock ranking (高配当利回りランキング).
@@ -793,6 +830,10 @@ def register(
         value is multiplied by the cumulative split factor so it is comparable
         with the split-adjusted AdjC.  yield_pct = adj_DivAnn / AdjC × 100.
 
+        Stale dividend data (disclosures older than ``disc_months``) is excluded
+        to avoid inflated yields from companies that have since cut or abolished
+        dividends.
+
         Note: ``DivAnn`` is the ordinary dividend only; special dividends are
         recorded in a separate ``FDivAnn`` field (not included here).
 
@@ -802,6 +843,15 @@ def register(
         Args:
             n: Number of stocks to return (1–100). Default: 20.
             min_yield: Minimum dividend yield percentage to include (>= 0). Default: 3.0.
+            max_yield: Maximum dividend yield percentage to include. Use to exclude
+                       suspiciously high yields (e.g. ``max_yield=15.0``). Default: null (no cap).
+            disc_months: Maximum age of the DivAnn disclosure in months. Disclosures older
+                         than this cutoff are excluded to filter out stale data from companies
+                         that have since cut or abolished dividends. Default: 18.
+            market: Filter by market segment. One of ``"prime"``, ``"standard"``,
+                    ``"growth"``, ``"tokyo_pro"``. Default: null (all markets).
+            sector: Filter by S33 industry sector code (e.g. ``"50"`` for 水産・農林業).
+                    Default: null (all sectors).
             date: Trading date in YYYY-MM-DD or YYYYMMDD format (default: latest
                   cached trading day). Automatically rounds back to the nearest
                   past trading day so weekend/holiday inputs work.
@@ -810,15 +860,24 @@ def register(
             dict with keys:
             - date: the resolved trading date used for closing prices
             - count: number of stocks returned
-            - min_yield: the applied minimum yield filter
+            - filters: applied filter values (min_yield, max_yield, disc_months, market, sector)
             - items: list of up to *n* dicts sorted by yield_pct desc, each with:
                 - code: stock code (4- or 5-digit display form)
                 - name: company name (from equities_master) or null
+                - market: market segment name (e.g. "プライム")
+                - sector: S33 sector name (e.g. "水産・農林業")
                 - div_ann: split-adjusted annual dividend per share in yen
+                - disc_date: disclosure date of the DivAnn used
                 - close: split-adjusted closing price (AdjC)
                 - yield_pct: dividend yield in percent (adj_DivAnn / AdjC × 100)
         """
-        errors = collect_errors(_validate_n(n), _validate_min_yield(min_yield))
+        errors = collect_errors(
+            _validate_n(n),
+            _validate_min_yield(min_yield),
+            _validate_max_yield(max_yield, min_yield),
+            _validate_disc_months(disc_months),
+            _validate_market(market),
+        )
         if date is not None:
             errors += collect_errors(validate_date(date, "date"))
         if errors:
@@ -843,7 +902,15 @@ def register(
 
         cache_key = make_cache_key(
             "tool:get_dividend_yield_ranking",
-            {"date": norm_date, "n": n, "min_yield": min_yield},
+            {
+                "date": norm_date,
+                "n": n,
+                "min_yield": min_yield,
+                "max_yield": max_yield,
+                "disc_months": disc_months,
+                "market": market,
+                "sector": sector,
+            },
         )
         cached = cache.get_response(cache_key)
         if cached is not None:
@@ -871,6 +938,18 @@ def register(
 
         div_ann_map = cache.get_div_ann_map()
         name_map = cache.get_name_map()
+        sector_map = cache.get_sector_map()
+
+        # disc_months cutoff: exclude stale DivAnn disclosures.
+        # Use 31 days/month intentionally: slightly over-estimates so borderline
+        # disclosures (e.g. filed on the exact cutoff day) are consistently excluded
+        # rather than flickering in/out across month-length differences.
+        cutoff_date = (
+            datetime.strptime(norm_date, "%Y-%m-%d") - timedelta(days=disc_months * 31)
+        ).strftime("%Y-%m-%d")
+
+        # market filter: resolve to Mkt integer string
+        mkt_code: str | None = str(_MARKET_CODE_MAP[market]) if market is not None else None
 
         code_disc_dates = {code: disc for code, (_, disc) in div_ann_map.items()}
         split_factors = cache.get_split_factors_after(code_disc_dates)
@@ -882,16 +961,35 @@ def register(
             entry = div_ann_map.get(code)
             if adj_c is None or adj_c <= 0 or entry is None:
                 continue
-            div_ann, _ = entry
+            div_ann, disc_date = entry
+
+            # exclude stale disclosures
+            if disc_date < cutoff_date:
+                continue
+
+            # market filter
+            info = sector_map.get(code, {})
+            if mkt_code is not None and info.get("mkt") != mkt_code:
+                continue
+
+            # sector filter (S33 code as string)
+            if sector is not None and info.get("s33") != str(sector):
+                continue
+
             adj_div_ann = div_ann * split_factors.get(code, 1.0)
             yield_pct = round(adj_div_ann / adj_c * 100, 4)
             if yield_pct < min_yield:
+                continue
+            if max_yield is not None and yield_pct > max_yield:
                 continue
             items.append(
                 {
                     "code": display_code(code),
                     "name": name_map.get(code),
+                    "market": info.get("mkt_name") or info.get("mkt", ""),
+                    "sector": info.get("s33_name", ""),
                     "div_ann": round(adj_div_ann, 4),
+                    "disc_date": disc_date,
                     "close": adj_c,
                     "yield_pct": yield_pct,
                 }
@@ -901,7 +999,13 @@ def register(
         result: dict[str, Any] = {
             "date": norm_date,
             "count": min(len(items), n),
-            "min_yield": min_yield,
+            "filters": {
+                "min_yield": min_yield,
+                "max_yield": max_yield,
+                "disc_months": disc_months,
+                "market": market,
+                "sector": sector,
+            },
             "items": items[:n],
         }
         cache.put_response(cache_key, result, ttl_seconds=3600)
