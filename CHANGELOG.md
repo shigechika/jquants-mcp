@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.25.0](https://github.com/shigechika/jquants-mcp/compare/v0.24.0...v0.25.0) (2026-05-08)
+
+
+### Features
+
+* add get_sector_valuation tool (sector-level median PER/PBR/ROE) ([#298](https://github.com/shigechika/jquants-mcp/issues/298)) ([31435a8](https://github.com/shigechika/jquants-mcp/commit/31435a8d27b9da5df3e55c26a28cc0a28ac1e806))
+
 ## [0.24.0](https://github.com/shigechika/jquants-mcp/compare/v0.23.0...v0.24.0) (2026-05-08)
 
 
