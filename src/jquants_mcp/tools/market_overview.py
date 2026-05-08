@@ -940,7 +940,10 @@ def register(
         name_map = cache.get_name_map()
         sector_map = cache.get_sector_map()
 
-        # disc_months cutoff: exclude stale DivAnn disclosures
+        # disc_months cutoff: exclude stale DivAnn disclosures.
+        # Use 31 days/month intentionally: slightly over-estimates so borderline
+        # disclosures (e.g. filed on the exact cutoff day) are consistently excluded
+        # rather than flickering in/out across month-length differences.
         cutoff_date = (
             datetime.strptime(norm_date, "%Y-%m-%d") - timedelta(days=disc_months * 31)
         ).strftime("%Y-%m-%d")
