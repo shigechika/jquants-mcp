@@ -234,6 +234,14 @@ class TestGetStockSummary:
         # PBR = 1050 / 1000 = 1.05
         assert val["pbr"] == pytest.approx(1.05, rel=1e-3)
 
+    async def test_valuation_roe(self, mock_env):
+        result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13010"})
+        data = _call(result)
+
+        val = data["valuation"]
+        # ROE = EPS / BPS * 100 = 100 / 1000 * 100 = 10.0
+        assert val["roe"] == pytest.approx(10.0, rel=1e-3)
+
     async def test_dividend_yield(self, mock_env):
         result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13010"})
         data = _call(result)
@@ -263,6 +271,7 @@ class TestGetStockSummary:
 
         cache.close()
         assert data["valuation"]["per"] is None
+        assert data["valuation"]["roe"] is None  # ROE also null when EPS <= 0
         assert data["valuation"]["pbr"] is not None  # PBR still valid
 
     async def test_stale_div_ann_yields_null(self, tmp_path):
@@ -318,6 +327,8 @@ class TestGetStockSummary:
         # With split adj:    PER = 1600 / 100 = 16.0 (correct)
         assert val["per"] == pytest.approx(16.0, rel=1e-3)
         assert val["pbr"] == pytest.approx(1600 / 1000, rel=1e-3)  # AdjBPS = 2000 * 0.5 = 1000
+        # ROE = AdjEPS / AdjBPS * 100 = 100 / 1000 * 100 = 10.0 (split-invariant: 200/2000*100 = 10.0)
+        assert val["roe"] == pytest.approx(10.0, rel=1e-3)
 
     async def test_no_price_data_returns_error(self, tmp_path):
         cache = _make_cache(tmp_path)

@@ -153,6 +153,11 @@ def register(
             if adj_close and bps and bps > 0:
                 pbr = round(adj_close / bps, 2)
 
+        # ROE = EPS / BPS * 100; split factor cancels in the ratio, so no extra adjustment needed
+        roe: float | None = None
+        if eps is not None and bps is not None and bps > 0 and eps > 0:
+            roe = round(eps / bps * 100, 2)
+
         # --- 4. Dividend yield -------------------------------------------------------
         div_yield: float | None = None
         if div_per_share and adj_close and adj_close > 0:
@@ -185,6 +190,7 @@ def register(
             "valuation": {
                 "per": per,
                 "pbr": pbr,
+                "roe": roe,
                 "eps": eps,
                 "bps": bps,
                 "div_per_share": div_per_share,
