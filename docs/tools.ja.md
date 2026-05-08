@@ -40,10 +40,10 @@ jquants-mcp で Claude に何ができるか、ユースケース別ツアー。
 | 質問 | ツール |
 |---|---|
 | 「8053 住友商事の株価・財務・PER を一覧で」（単銘柄サマリー） | `get_stock_summary` |
-| 「7203 のここ 1 か月の株価」 | `get_equities_bars_daily` |
+| 「7203（トヨタ）のここ 1 か月の株価」 | `get_equities_bars_daily` |
 | 「8053 住友商事の決算」 | `get_fins_summary` |
 | 「9984 SBG の配当履歴」 | `get_fins_dividend` |
-| 「285A のチャートを 3 か月」 | `render_candlestick` |
+| 「285A（キオクシア）のチャートを 3 か月」 | `render_candlestick` |
 | 「住友商事のコードを教えて」 | `search_equities` |
 
 `render_candlestick` は省略時 91 日窓 + `volume + sma5 + sma25` がデフォルト。
