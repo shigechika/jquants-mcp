@@ -11,18 +11,21 @@ question. The examples below show queries that map cleanly to a single tool;
 Claude can also chain several tools (e.g. screen for top movers, then chart
 the leader) without you having to ask.
 
-## Daily market overview
+## Daily market overview & valuation
 
-What's the market doing today as a whole?
+What's the market doing today, and which sectors look cheap?
 
 | Question | Tool |
 |---|---|
-| 「今日の値上がり/値下がり銘柄数」 | `detect_price_change` |
-| 「25 日騰落レシオ」 | `get_advance_decline_ratio` |
-| 「今日の値上がり率トップ 10」 | `get_top_movers` |
-| 「出来高ランキング」 | `get_top_volume` |
-| 「売買代金ランキング」（金額ベース、機関投資家フロー把握向け） | `get_top_turnover_value` |
-| 「業種別騰落率」（東証 33 業種または 17 業種） | `get_sector_performance` |
+| "How many stocks advanced vs declined today?" | `detect_price_change` |
+| "25-day advance/decline ratio" | `get_advance_decline_ratio` |
+| "Top 10 gainers today" | `get_top_movers` |
+| "Volume ranking" | `get_top_volume` |
+| "Turnover value ranking" (yen-based, institutional flow) | `get_top_turnover_value` |
+| "Sector performance today" (TSE 33 sectors or 17 sectors) | `get_sector_performance` |
+| "Sector PER/PBR/ROE — which sectors look cheap?" | `get_sector_valuation` |
+| "High dividend yield ranking" | `get_dividend_yield_ranking` |
+| "Today's market briefing" (one-call composite summary) | `get_market_briefing` |
 
 These all run against the local cache — no API call, no rate limit.
 
@@ -36,11 +39,12 @@ Drill into a specific code:
 
 | Question | Tool |
 |---|---|
-| 「7203 のここ 1 か月の株価」 | `get_equities_bars_daily` |
-| 「8053 住友商事の決算」 | `get_fins_summary` |
-| 「9984 SBG の配当履歴」 | `get_fins_dividend` |
-| 「285A のチャートを 3 か月」 | `render_candlestick` |
-| 「住友商事のコードを教えて」 | `search_equities` |
+| "8053 (Sumitomo Corp) — price, financials, and PER at a glance" | `get_stock_summary` |
+| "7203 (Toyota) — past month daily prices" | `get_equities_bars_daily` |
+| "8053 Sumitomo Corp earnings summary" | `get_fins_summary` |
+| "9984 SoftBank dividend history" | `get_fins_dividend` |
+| "285A (Kioxia) — 3-month candlestick chart" | `render_candlestick` |
+| "What's the code for Sumitomo Corp?" | `search_equities` |
 
 `render_candlestick` defaults to a 91-day window with `volume + sma5 + sma25`
 overlays. SMAs are warmed up from earlier bars so the moving averages are
@@ -56,11 +60,11 @@ Find stocks matching a signal:
 
 | Question | Tool |
 |---|---|
-| 「年初来高値を更新した銘柄」 | `detect_ytd_high_low` |
-| 「52 週高値を更新した銘柄」 | `detect_52w_high_low` |
-| 「ストップ高/安銘柄」（引け / 寄らずの内訳付き） | `detect_price_limit` |
-| 「20 日平均の 2 倍以上の出来高」 | `detect_volume_surge` |
-| 「VWAP より上で引けた銘柄」 | `compare_close_vs_vwap` |
+| "Stocks hitting new year-to-date highs" | `detect_ytd_high_low` |
+| "Stocks hitting new 52-week highs" | `detect_52w_high_low` |
+| "Stocks at daily price limit (ストップ高/安)" (close vs. locked-limit breakdown) | `detect_price_limit` |
+| "Stocks with volume 2× the 20-day average" | `detect_volume_surge` |
+| "Stocks that closed above VWAP" | `compare_close_vs_vwap` |
 
 All screeners are pure-Python over the cached daily bars — no extra API calls
 even for full-universe scans.
@@ -69,7 +73,7 @@ even for full-universe scans.
 
 Side-by-side return comparison for up to 10 codes:
 
-> 5 大商社（8001 8002 8031 8053 8058）の年初来リターンを比較して
+> Compare year-to-date returns for the five major trading houses (8001 8002 8031 8053 8058)
 
 Claude calls `render_comparison_chart` with `mode="return_pct"` (the default),
 producing a return chart with each series normalised to 0% at the first bar.
@@ -83,27 +87,27 @@ Add `mode="price"` if you want the raw split-adjusted close instead.
 
 | Question | Tool |
 |---|---|
-| 「投資部門別売買代金」 | `get_equities_investor_types` |
-| 「業種別空売り比率」 | `get_markets_short_ratio` |
-| 「信用取引残高」 | `get_markets_margin_interest` |
-| 「増担保規制銘柄」 | `get_markets_margin_alert` |
+| "Investor-type turnover breakdown" | `get_equities_investor_types` |
+| "Short-sale ratio by sector" | `get_markets_short_ratio` |
+| "Margin trading balance" | `get_markets_margin_interest` |
+| "Stocks under additional margin requirement" | `get_markets_margin_alert` |
 
 ## Calendar and reference
 
 | Question | Tool |
 |---|---|
-| 「今週の決算発表予定」 | `get_equities_earnings_calendar` |
-| 「来週の祝日」 | `get_markets_calendar` |
-| 「上場銘柄一覧」 | `get_equities_master` |
+| "Earnings announcements this week" | `get_equities_earnings_calendar` |
+| "Public holidays next week" | `get_markets_calendar` |
+| "Listed equities master list" | `get_equities_master` |
 
 ## Utility / admin
 
 | Question | Tool |
 |---|---|
-| 「サーバーの状態を教えて」 | `health_check` |
-| 「キャッシュの状況」 | `cache_status` |
-| 「キャッシュをクリアして」 | `cache_clear` |
+| "Server health status" | `health_check` |
+| "Cache statistics" | `cache_status` |
+| "Clear the cache" | `cache_clear` |
 
-The full list of 45 tools (with endpoints, plan requirements, and parameter
+The full list of 47 tools (with endpoints, plan requirements, and parameter
 tables) is on the
 [Available Tools section of the GitHub README](https://github.com/shigechika/jquants-mcp#available-tools).

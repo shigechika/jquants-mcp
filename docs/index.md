@@ -3,7 +3,7 @@
 **Talk through Japanese stocks with Claude — backed by the [J-Quants API v2](https://jpx-jquants.com/).**
 
 jquants-mcp is a Japanese-equities-focused [MCP (Model Context Protocol)](https://modelcontextprotocol.io/)
-server. It gives Claude — Desktop, CLI, or mobile — 45 specialist tools and
+server. It gives Claude — Desktop, CLI, or mobile — 47 specialist tools and
 a local SQLite cache, turning it into a hands-on companion for your stock
 research rather than a one-off query tool.
 
@@ -21,12 +21,12 @@ research rather than a one-off query tool.
 
 Once jquants-mcp is connected, conversational queries like these just work:
 
-- 「今日の業種別騰落率は？」 — sector-by-sector performance ranking
-- 「キオクシアのチャートを 3 か月分」 — split-adjusted candlestick with SMA overlays
-- 「5 大商社の今期業績ダイジェスト」 — pulls the latest fins_summary rows for each
-- 「年初来高値を更新した銘柄を一覧」 — `detect_ytd_high_low` screener
-- 「ソフトバンクのコードを教えて」 — reverse-lookup via `search_equities`
-- 「TOPIX と日経225 の 1 年リターンを比較」 — multi-stock comparison chart
+- "Sector performance ranking today" — sector-by-sector advance/decline
+- "Kioxia (285A) — 3-month candlestick chart" — split-adjusted with SMA overlays
+- "Q4 earnings digest for the five major trading houses" — pulls the latest fins_summary rows for each
+- "Stocks hitting new year-to-date highs" — `detect_ytd_high_low` screener
+- "What's the code for SoftBank?" — reverse-lookup via `search_equities`
+- "Compare TOPIX vs Nikkei 225 over 1 year" — multi-stock comparison chart
 
 ## Why this exists
 
