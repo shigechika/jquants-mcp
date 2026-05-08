@@ -15,21 +15,12 @@ from ..validators import (
     display_code,
     float_or_none,
     make_validation_error_response,
+    normalize_code,
     validate_code,
 )
 from .financials import _annotate_fiscal_period, _apply_split_adjustment
 
 logger = logging.getLogger(__name__)
-
-
-def _api_code(code: str) -> str:
-    """Return the 5-digit J-Quants API form of a stock code.
-
-    J-Quants stores ordinary shares as 5-digit codes (e.g. ``"13010"``).
-    A 4-digit input is the display/user form; pad with ``"0"`` to get the
-    cache key.
-    """
-    return code + "0" if len(code) == 4 else code
 
 
 # DivAnn disclosures older than this are treated as stale (no-dividend transition).
@@ -71,7 +62,7 @@ def register(
 
         # J-Quants stores 5-digit codes in the cache.  Display code is 4-digit
         # for ordinary shares (trailing "0" stripped).
-        cache_code = _api_code(code)
+        cache_code = normalize_code(code)
         out_code = display_code(cache_code)
         cache: CacheStore = get_cache()
 

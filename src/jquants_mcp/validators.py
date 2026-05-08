@@ -161,6 +161,21 @@ def make_validation_error_response(errors: list[str]) -> dict:
     }
 
 
+def normalize_code(code: str) -> str:
+    """Return the 5-digit J-Quants API form of a stock code.
+
+    J-Quants stores ordinary shares as 5-digit codes (trailing digit ``0``).
+    A 4-digit input (the investor-facing display form) is padded with ``"0"``
+    to match the cache/API key.
+
+    Examples:
+        ``"7203"``  → ``"72030"``
+        ``"130A"``  → ``"130A0"``
+        ``"72030"`` → ``"72030"`` (already 5 chars, unchanged)
+    """
+    return code + "0" if len(code) == 4 else code
+
+
 def display_code(code: str) -> str:
     """Return the investor-facing display form of a J-Quants stock code.
 

@@ -57,6 +57,7 @@ from ..validators import (
     collect_errors,
     display_code,
     make_validation_error_response,
+    normalize_code,
     validate_code,
     validate_date,
 )
@@ -93,16 +94,6 @@ def _normalize_date(date: str) -> str:
     if "-" in date:
         return date
     return f"{date[0:4]}-{date[4:6]}-{date[6:8]}"
-
-
-def _normalize_code(code: str) -> str:
-    """Pad a 4-digit code to the 5-digit (ordinary-share) form.
-
-    Mirrors the convention in ``tools/equities.py``: J-Quants stores
-    5-digit codes, and a 4-digit input refers to the ordinary share
-    (5th digit = 0).
-    """
-    return code + "0" if len(code) == 4 else code
 
 
 def _cache_window_cutoff() -> str:
@@ -220,7 +211,7 @@ def register(
 
         key_filter: dict[str, str] = {}
         if code:
-            key_filter["code"] = _normalize_code(code)
+            key_filter["code"] = normalize_code(code)
 
         try:
             rows = cache.get_rows(
@@ -319,7 +310,7 @@ def register(
 
         cache: CacheStore = get_cache()
 
-        norm_code = _normalize_code(code)
+        norm_code = normalize_code(code)
         if date:
             start = end = _normalize_date(date)
         else:
@@ -666,7 +657,7 @@ def register(
         start = _calendar_window_start(norm_date, baseline_days + 1)
         key_filter: dict[str, str] = {}
         if code:
-            key_filter["code"] = _normalize_code(code)
+            key_filter["code"] = normalize_code(code)
 
         try:
             rows = cache.get_rows(
@@ -982,7 +973,7 @@ async def _high_low_signals(
     """
     key_filter: dict[str, str] = {}
     if code:
-        key_filter["code"] = _normalize_code(code)
+        key_filter["code"] = normalize_code(code)
 
     try:
         rows = cache.get_rows(
