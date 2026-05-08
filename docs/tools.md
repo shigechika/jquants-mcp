@@ -23,6 +23,9 @@ What's the market doing today as a whole?
 | 「出来高ランキング」 | `get_top_volume` |
 | 「売買代金ランキング」（金額ベース、機関投資家フロー把握向け） | `get_top_turnover_value` |
 | 「業種別騰落率」（東証 33 業種または 17 業種） | `get_sector_performance` |
+| 「業種別 PER/PBR/ROE」（セクターバリュエーション、割安業種探し） | `get_sector_valuation` |
+| 「高配当利回りランキング」 | `get_dividend_yield_ranking` |
+| 「今日の相場ブリーフィング」（総合サマリー 1 コール） | `get_market_briefing` |
 
 These all run against the local cache — no API call, no rate limit.
 
@@ -37,6 +40,7 @@ Drill into a specific code:
 | Question | Tool |
 |---|---|
 | 「7203 のここ 1 か月の株価」 | `get_equities_bars_daily` |
+| 「8053 住友商事の株価・財務・PER を一覧で」（単銘柄サマリー） | `get_stock_summary` |
 | 「8053 住友商事の決算」 | `get_fins_summary` |
 | 「9984 SBG の配当履歴」 | `get_fins_dividend` |
 | 「285A のチャートを 3 か月」 | `render_candlestick` |
@@ -104,6 +108,6 @@ Add `mode="price"` if you want the raw split-adjusted close instead.
 | 「キャッシュの状況」 | `cache_status` |
 | 「キャッシュをクリアして」 | `cache_clear` |
 
-The full list of 45 tools (with endpoints, plan requirements, and parameter
+The full list of 47 tools (with endpoints, plan requirements, and parameter
 tables) is on the
 [Available Tools section of the GitHub README](https://github.com/shigechika/jquants-mcp#available-tools).

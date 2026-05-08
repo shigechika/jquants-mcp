@@ -30,7 +30,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ## Features
 
-- **45 MCP tools** — 22 J-Quants API v2 endpoints, 8 market overview, 7 offline screener, 1 cache-only equity search, 2 chart renderers (opt-in), and 5 server utilities
+- **47 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 7 offline screener, 1 single-stock summary, 1 cache-only equity search, 2 chart renderers (opt-in), and 5 server utilities
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -606,9 +606,9 @@ On first use, Claude Desktop opens a browser window for GitHub OAuth. After auth
 | `get_bulk_list` | `/bulk/list` | Light+ | List downloadable CSV files |
 | `get_bulk_download_url` | `/bulk/get` | Light+ | Get signed download URL |
 
-### Market Overview (8 tools)
+### Market Overview & Valuation (9 tools)
 
-Cross-sectional cache-only tools that scan all listed equities for a given date. No extra API calls, useful for "what's the overall market doing today?" queries.
+Cross-sectional cache-only tools that scan all listed equities. No extra API calls, useful for "what's the overall market doing today?" and sector valuation queries.
 
 | Tool | Description |
 |---|---|
@@ -618,6 +618,7 @@ Cross-sectional cache-only tools that scan all listed equities for a given date.
 | `get_top_volume` | Top stocks by trading volume (出来高ランキング, share count). Returns code + name + volume + turnover_value. |
 | `get_top_turnover_value` | Top stocks by turnover value (売買代金ランキング, yen). Surfaces high-priced large-caps that dominate institutional flow, distinct from `get_top_volume`. |
 | `get_sector_performance` | Sector-level average daily change (業種別騰落率) grouped by TSE 33 sectors (default) or 17 sectors (`sector_type="s17"`). |
+| `get_sector_valuation` | Sector-level median PER, PBR, and ROE (セクター別バリュエーション) aggregated from the most recent FY financials. Split-adjusted. Sorted by PER ascending (cheapest first). |
 | `get_dividend_yield_ranking` | High dividend yield stock ranking (高配当利回りランキング). Joins `DivAnn` from `fins_summary` with `AdjC` to compute yield_pct = DivAnn / AdjC × 100. Skips interim reports with empty DivAnn. |
 | `get_market_briefing` | Composite daily briefing (相場ブリーフィング) — advance/decline + 25-day ADR + sector top/bottom + top movers + top turnover + screener highlights + TOPIX change in one call. |
 
@@ -634,6 +635,14 @@ Offline tools that compute signals directly from the cached `equities_bars_daily
 | `detect_ytd_high_low` | New year-to-date (年初来) high/low (Kabutan / JPX / Yahoo!ファイナンス convention). Same four signals against the YTD prior window. |
 | `detect_ytd_high_low_range` | Same as above but across a date range (`date_from`–`date_to`). Use this instead of repeated single-date calls. |
 | `detect_volume_surge` | List stocks whose volume on `date` exceeds the trailing 20-day average by a configurable `multiplier` (default 2.0). |
+
+### Single Stock Summary (1 tool)
+
+Cache-only tool that assembles a one-page snapshot for a single stock from cached data. No extra API calls.
+
+| Tool | Description |
+|---|---|
+| `get_stock_summary` | One-page summary for a single stock (株式サマリー): latest price (close, change_pct, volume, OHLC), most recent FY financials (revenue, operating profit, net income), and valuation ratios (PER, PBR, EPS, BPS, dividend yield). All figures are split-adjusted. PER is null when EPS ≤ 0 (net-loss period). Dividend yield uses the most recent DivAnn disclosed within the past 18 months. |
 
 ### Charts (2 tools, opt-in)
 
