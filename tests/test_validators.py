@@ -4,6 +4,7 @@ from jquants_mcp.validators import (
     collect_errors,
     display_code,
     make_validation_error_response,
+    normalize_code,
     validate_code,
     validate_date,
     validate_section,
@@ -196,6 +197,22 @@ def test_make_validation_error_response():
     assert resp["error_type"] == "ValidationError"
     assert "msg1" in resp["message"]
     assert "msg2" in resp["message"]
+
+
+class TestNormalizeCode:
+    def test_4digit_numeric(self):
+        assert normalize_code("7203") == "72030"
+
+    def test_4digit_alphanumeric(self):
+        assert normalize_code("130A") == "130A0"
+
+    def test_5digit_passthrough(self):
+        assert normalize_code("72030") == "72030"
+        assert normalize_code("130A0") == "130A0"
+
+    def test_5digit_non_ordinary_passthrough(self):
+        # Non-ordinary shares (last digit ≠ 0) must not be modified.
+        assert normalize_code("25935") == "25935"
 
 
 class TestDisplayCode:
