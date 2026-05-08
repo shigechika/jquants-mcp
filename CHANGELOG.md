@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.25.1](https://github.com/shigechika/jquants-mcp/compare/v0.25.0...v0.25.1) (2026-05-08)
+
+
+### Documentation
+
+* add get_stock_summary and get_sector_valuation to README and docs ([#300](https://github.com/shigechika/jquants-mcp/issues/300)) ([de09012](https://github.com/shigechika/jquants-mcp/commit/de09012e7903999baa6f07e4d3c75164a2e3acc9))
+
 ## [0.25.0](https://github.com/shigechika/jquants-mcp/compare/v0.24.0...v0.25.0) (2026-05-08)
 
 
