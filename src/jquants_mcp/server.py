@@ -793,6 +793,7 @@ def _register_tools() -> None:
         market_overview,
         markets,
         screener,
+        summary,
     )
 
     equities.register(mcp, _get_user_client, _get_cache)
@@ -803,6 +804,7 @@ def _register_tools() -> None:
     bulk.register(mcp, _get_user_client, _get_cache)
     screener.register(mcp, _get_user_client, _get_cache)
     market_overview.register(mcp, _get_user_client, _get_cache)
+    summary.register(mcp, _get_user_client, _get_cache)
 
     # Optional: chart rendering needs the [charts] extra. The module's
     # own register() returns silently if mplfinance/matplotlib are
