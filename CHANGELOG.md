@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.24.0](https://github.com/shigechika/jquants-mcp/compare/v0.23.0...v0.24.0) (2026-05-08)
+
+
+### Features
+
+* add get_stock_summary tool (single-stock one-page report) ([#296](https://github.com/shigechika/jquants-mcp/issues/296)) ([6c5c6f0](https://github.com/shigechika/jquants-mcp/commit/6c5c6f07a878056a9d4b5bbdeb10fa45b5687cbb))
+
 ## [0.23.0](https://github.com/shigechika/jquants-mcp/compare/v0.22.0...v0.23.0) (2026-05-08)
 
 
