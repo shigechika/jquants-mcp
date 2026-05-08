@@ -973,6 +973,67 @@ class CacheStore:
             return None
         return float(row["adj_factor"])
 
+    def get_latest_bars(self, code: str, n: int = 2) -> list[dict]:
+        """Return the n most recent daily bars for a stock (newest-first).
+
+        Rows are field-normalised (legacy field names mapped to current short
+        names) and returned as plain dicts.  Returns an empty list when no
+        cached data is available.
+
+        Args:
+            code: 5-digit stock code.
+            n:    Maximum number of bars to return (default 2 — current + prev).
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT data FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT ?",
+                (code, n),
+            ).fetchall()
+        except Exception:
+            return []
+        return [_normalize_fields(json.loads(row["data"])) for row in rows]
+
+    def get_latest_fins_row(self, code: str) -> dict | None:
+        """Return the most recent FY financial-summary row for a stock.
+
+        Queries ``fins_summary`` for the latest full-year (FY) disclosure
+        using either the ``CurPerType`` / ``TypeOfCurrentPeriod`` field or
+        the ``DocType`` / ``TypeOfDocument`` prefix.  Returns ``None`` when
+        no FY row is cached or the connection is unavailable.
+
+        The returned dict is the raw JSON blob stored in the cache — callers
+        should apply split adjustment (``_apply_split_adjustment``) and
+        period annotation (``_annotate_fiscal_period``) before use.
+
+        Args:
+            code: 5-digit stock code.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return None
+        try:
+            row = conn.execute(
+                "SELECT data FROM fins_summary WHERE code = ? "
+                "AND ("
+                "  json_extract(data, '$.CurPerType') = 'FY' "
+                "  OR json_extract(data, '$.TypeOfCurrentPeriod') = 'FY' "
+                "  OR json_extract(data, '$.DocType') LIKE 'FYFinancial%' "
+                "  OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%'"
+                ") ORDER BY disc_date DESC LIMIT 1",
+                (code,),
+            ).fetchone()
+        except Exception:
+            return None
+        if row is None:
+            return None
+        try:
+            return json.loads(row["data"])
+        except Exception:
+            return None
+
     # ----------------------------------------------------------------
     # Tier 2: レスポンスレベルキャッシュ
     # ----------------------------------------------------------------
