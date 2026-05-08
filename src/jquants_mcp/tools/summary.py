@@ -10,7 +10,13 @@ from fastmcp import FastMCP
 
 from ..cache.store import CacheStore, make_cache_key
 from ..tool_annotations import READ_ONLY_CACHE
-from ..validators import collect_errors, display_code, make_validation_error_response, validate_code
+from ..validators import (
+    collect_errors,
+    display_code,
+    float_or_none,
+    make_validation_error_response,
+    validate_code,
+)
 from .financials import _annotate_fiscal_period, _apply_split_adjustment
 
 logger = logging.getLogger(__name__)
@@ -32,16 +38,6 @@ def _api_code(code: str) -> str:
 # disclosures are consistently excluded rather than flickering in/out.
 _DISC_MONTHS_DEFAULT = 18
 _DISC_DAYS_CUTOFF = _DISC_MONTHS_DEFAULT * 31
-
-
-def _float_or_none(value: Any) -> float | None:
-    """Convert a value to float, returning None for empty/null/invalid."""
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def register(
@@ -97,15 +93,15 @@ def register(
 
         latest = bars[0]
         price_date = str(latest.get("Date") or "")
-        adj_close = _float_or_none(latest.get("AdjC") or latest.get("C"))
-        adj_open = _float_or_none(latest.get("AdjO") or latest.get("O"))
-        adj_high = _float_or_none(latest.get("AdjH") or latest.get("H"))
-        adj_low = _float_or_none(latest.get("AdjL") or latest.get("L"))
-        volume = _float_or_none(latest.get("Vo"))
+        adj_close = float_or_none(latest.get("AdjC") or latest.get("C"))
+        adj_open = float_or_none(latest.get("AdjO") or latest.get("O"))
+        adj_high = float_or_none(latest.get("AdjH") or latest.get("H"))
+        adj_low = float_or_none(latest.get("AdjL") or latest.get("L"))
+        volume = float_or_none(latest.get("Vo"))
 
         change_pct: float | None = None
         if len(bars) >= 2:
-            prev_adj_close = _float_or_none(bars[1].get("AdjC") or bars[1].get("C"))
+            prev_adj_close = float_or_none(bars[1].get("AdjC") or bars[1].get("C"))
             if adj_close is not None and prev_adj_close and prev_adj_close != 0:
                 change_pct = round((adj_close - prev_adj_close) / prev_adj_close * 100, 2)
 
@@ -134,17 +130,17 @@ def register(
             fiscal_year_end = str(row.get("FiscalYearEndDate") or "")
             fins_disc_date = str(row.get("DiscDate") or row.get("disc_date") or "")
 
-            revenue = _float_or_none(row.get("NetSales"))
-            op_profit = _float_or_none(row.get("OperatingProfit"))
-            ord_profit = _float_or_none(row.get("OrdinaryProfit"))
-            net_income = _float_or_none(row.get("Profit"))
+            revenue = float_or_none(row.get("NetSales"))
+            op_profit = float_or_none(row.get("OperatingProfit"))
+            ord_profit = float_or_none(row.get("OrdinaryProfit"))
+            net_income = float_or_none(row.get("Profit"))
 
             # Prefer Adj variants: _apply_split_adjustment fills AdjEPS/AdjBPS/AdjDivAnn
-            eps = _float_or_none(row.get("AdjEPS") or row.get("EPS"))
-            bps = _float_or_none(row.get("AdjBPS") or row.get("BPS"))
+            eps = float_or_none(row.get("AdjEPS") or row.get("EPS"))
+            bps = float_or_none(row.get("AdjBPS") or row.get("BPS"))
 
             # DivAnn staleness filter — reject disclosures older than 18 months
-            div_raw = _float_or_none(row.get("AdjDivAnn") or row.get("DivAnn"))
+            div_raw = float_or_none(row.get("AdjDivAnn") or row.get("DivAnn"))
             if div_raw and fins_disc_date:
                 cutoff = (datetime.now() - timedelta(days=_DISC_DAYS_CUTOFF)).strftime("%Y-%m-%d")
                 if fins_disc_date >= cutoff:

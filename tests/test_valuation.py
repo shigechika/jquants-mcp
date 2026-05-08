@@ -172,7 +172,7 @@ class TestGetSectorValuation:
     async def test_response_shape(self, mock_env):
         result = await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
         data = _call(result)
-        assert "price_date" in data
+        assert data["price_date"] == "2026-05-02"
         assert data["sector_type"] == "s33"
         assert isinstance(data["sectors"], list)
 

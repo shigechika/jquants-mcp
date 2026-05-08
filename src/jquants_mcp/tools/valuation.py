@@ -8,22 +8,11 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from ..cache.store import CacheStore, make_cache_key
+from ..cache.store import CacheStore, TTL_6H, make_cache_key
 from ..tool_annotations import READ_ONLY_CACHE
-from ..validators import make_validation_error_response
+from ..validators import float_or_none, make_validation_error_response
 
 logger = logging.getLogger(__name__)
-
-_TTL_6H = 6 * 3600
-
-
-def _float_or_none(value: Any) -> float | None:
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
 
 
 def register(
@@ -131,8 +120,8 @@ def register(
 
             factor = split_factors.get(code, 1.0)
 
-            eps_raw = _float_or_none(fins_row.get("EPS"))
-            bps_raw = _float_or_none(fins_row.get("BPS"))
+            eps_raw = float_or_none(fins_row.get("EPS"))
+            bps_raw = float_or_none(fins_row.get("BPS"))
 
             eps_adj = eps_raw * factor if eps_raw is not None else None
             bps_adj = bps_raw * factor if bps_raw is not None else None
@@ -176,5 +165,5 @@ def register(
             "sector_type": sector_type,
             "sectors": sectors,
         }
-        cache.put_response(cache_key, result, ttl_seconds=_TTL_6H)
+        cache.put_response(cache_key, result, ttl_seconds=TTL_6H)
         return result
