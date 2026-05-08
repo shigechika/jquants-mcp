@@ -39,6 +39,7 @@ from ..tool_annotations import READ_ONLY_CACHE
 from ..validators import (
     collect_errors,
     display_code,
+    normalize_code,
     validate_code,
     validate_date,
 )
@@ -172,10 +173,6 @@ def _normalize_date(d: str) -> str:
     if "-" in d:
         return d
     return f"{d[0:4]}-{d[4:6]}-{d[6:8]}"
-
-
-def _normalize_code(code: str) -> str:
-    return code + "0" if len(code) == 4 else code
 
 
 def _get_company_name(cache: CacheStore, code: str) -> str | None:
@@ -493,7 +490,7 @@ def register(
         if norm_from > norm_to:
             return _error_image("`from_date` must be <= `to_date`.")
 
-        norm_code = _normalize_code(code)
+        norm_code = normalize_code(code)
 
         # Extend the fetch window backwards so rolling-average indicators
         # (SMA, Bollinger) are fully warmed before the first displayed bar.
@@ -775,7 +772,7 @@ def register(
 
         series_map: dict[str, pd.Series] = {}
         for idx, code in enumerate(codes):
-            norm_code = _normalize_code(code)
+            norm_code = normalize_code(code)
             try:
                 rows = cache.get_rows(
                     "equities_bars_daily",
