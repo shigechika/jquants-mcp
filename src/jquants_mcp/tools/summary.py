@@ -56,9 +56,9 @@ def register(
         dividend yield).  All figures use split-adjusted values (AdjC, AdjEPS, AdjBPS)
         so PER/PBR remain accurate even after stock splits.
 
-        PER is null when EPS <= 0 (net-loss period).  Dividend yield uses the most
-        recent annual dividend (DivAnn) disclosed within the past 18 months; null when
-        no recent disclosure exists (company stopped paying dividends).
+        PER and ROE are null when EPS <= 0 (net-loss period).  Dividend yield uses the
+        most recent annual dividend (DivAnn) disclosed within the past 18 months; null
+        when no recent disclosure exists (company stopped paying dividends).
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no live API call)
 
@@ -110,6 +110,7 @@ def register(
 
         per: float | None = None
         pbr: float | None = None
+        roe: float | None = None
         revenue: float | None = None
         op_profit: float | None = None
         ord_profit: float | None = None
@@ -153,10 +154,9 @@ def register(
             if adj_close and bps and bps > 0:
                 pbr = round(adj_close / bps, 2)
 
-        # ROE = EPS / BPS * 100; split factor cancels in the ratio, so no extra adjustment needed
-        roe: float | None = None
-        if eps is not None and bps is not None and bps > 0 and eps > 0:
-            roe = round(eps / bps * 100, 2)
+            # ROE: split factor cancels in the ratio (AdjEPS / AdjBPS = EPS_raw / BPS_raw)
+            if eps is not None and bps is not None and bps > 0 and eps > 0:
+                roe = round(eps / bps * 100, 2)
 
         # --- 4. Dividend yield -------------------------------------------------------
         div_yield: float | None = None
