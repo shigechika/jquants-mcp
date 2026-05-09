@@ -39,6 +39,11 @@ def _make_cache(tmp_path: Path) -> CacheStore:
         "(code TEXT NOT NULL, date TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'standard', "
         "data TEXT, fetched_at REAL, PRIMARY KEY (code, date))"
     )
+    conn.execute(
+        "CREATE TABLE markets_margin_interest "
+        "(code TEXT NOT NULL, date TEXT NOT NULL, "
+        "data TEXT NOT NULL, fetched_at REAL, PRIMARY KEY (code, date))"
+    )
     conn.commit()
     conn.close()
     settings = Settings()
@@ -80,6 +85,21 @@ def _insert_bar(
     }
     conn.execute(
         "INSERT OR REPLACE INTO equities_bars_daily (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+        (code, date, json.dumps(data), 0.0),
+    )
+
+
+def _insert_margin(
+    conn: sqlite3.Connection,
+    code: str,
+    date: str,
+    *,
+    long_vol: float = 10_000.0,
+    short_vol: float = 5_000.0,
+) -> None:
+    data = {"Code": code, "Date": date, "LongVol": long_vol, "ShrtVol": short_vol}
+    conn.execute(
+        "INSERT OR REPLACE INTO markets_margin_interest (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
         (code, date, json.dumps(data), 0.0),
     )
 
@@ -737,6 +757,11 @@ class TestGetMarketBriefing:
         _insert_bar(conn, "53010", "2026-05-01", 1000.0, vo=100_000)
         _insert_bar(conn, "53010", "2026-05-02", 1000.0, vo=100_000)  # 0%
         _insert_master_with_sector(conn, "53010", "新日鉄", "3450", "鉄鋼", "3", "素材・化学")
+        # Margin data: ratios 2.0, 3.0, 1.0, 4.0 → median = 2.5
+        _insert_margin(conn, "83060", "2026-05-02", long_vol=20_000.0, short_vol=10_000.0)  # 2.0
+        _insert_margin(conn, "83160", "2026-05-02", long_vol=9_000.0, short_vol=3_000.0)  # 3.0
+        _insert_margin(conn, "97660", "2026-05-02", long_vol=5_000.0, short_vol=5_000.0)  # 1.0
+        _insert_margin(conn, "53010", "2026-05-02", long_vol=12_000.0, short_vol=3_000.0)  # 4.0
         conn.commit()
         conn.close()
         return cache
@@ -767,6 +792,8 @@ class TestGetMarketBriefing:
         assert "declines" in data["summary"]
         assert "unchanged" in data["summary"]
         assert "advance_decline_ratio_25d" in data["summary"]
+        assert "market_margin_ratio_median" in data["summary"]
+        assert "market_margin_ratio_count" in data["summary"]
         # TOPIX best-effort: with no client, fail-soft to None
         assert data["summary"]["topix_change_pct"] is None
         # Sectors top/bottom present
@@ -891,6 +918,38 @@ class TestGetMarketBriefing:
         result = await mock_briefing.call_tool("get_market_briefing", {"date": "2099-01-01"})
         data = _call(result)
         assert data.get("error_type") == "CacheNotReady"
+
+    @pytest.mark.asyncio
+    async def test_market_margin_ratio_median(self, mock_briefing):
+        """market_margin_ratio_median is the median of per-stock ratios across all stocks."""
+        result = await mock_briefing.call_tool("get_market_briefing", {"date": "2026-05-02"})
+        data = _call(result)
+        summary = data["summary"]
+        # ratios: 2.0, 3.0, 1.0, 4.0 → sorted: 1.0, 2.0, 3.0, 4.0 → median = 2.5
+        assert summary["market_margin_ratio_median"] == pytest.approx(2.5, rel=1e-3)
+        assert summary["market_margin_ratio_count"] == 4
+
+    @pytest.mark.asyncio
+    async def test_market_margin_ratio_null_when_no_data(self, tmp_path):
+        """market_margin_ratio_median is null when markets_margin_interest has no rows."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "13010", "2026-05-01", 1000.0)
+        _insert_bar(conn, "13010", "2026-05-02", 1050.0)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        assert data["summary"]["market_margin_ratio_median"] is None
+        assert data["summary"]["market_margin_ratio_count"] == 0
 
     @pytest.mark.asyncio
     async def test_topix_change_pct_from_seeded_cache(self, tmp_path):

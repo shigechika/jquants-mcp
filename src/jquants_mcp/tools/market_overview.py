@@ -20,6 +20,7 @@ Exposed tools:
 from __future__ import annotations
 
 import logging
+import statistics
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -1028,8 +1029,9 @@ def register(
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily + equities_master + indices_bars_daily_topix
-                 (Tier 1 / Tier 2 cache; underlying tools may make API calls
-                 if the cache is cold)
+                 + markets_margin_interest (Tier 1 / Tier 2 cache; underlying tools
+                 may make API calls if the cache is cold; margin fields are null
+                 when markets_margin_interest is not cached)
 
         Args:
             date: Trading date in YYYY-MM-DD or YYYYMMDD format.
@@ -1041,7 +1043,9 @@ def register(
             dict with keys:
             - date / previous_date: the trading date and comparison base
             - summary: {advances, declines, unchanged, advance_decline_ratio_25d,
-                topix_change_pct (null on TOPIX fetch failure)}
+                topix_change_pct (null on TOPIX fetch failure),
+                market_margin_ratio_median (null when not cached),
+                market_margin_ratio_count}
             - sectors: {top: [...], bottom: [...]} — top n and bottom n sectors
                 by avg_change_pct
             - top_movers_up / top_movers_down: TopN by daily change_pct
@@ -1144,6 +1148,18 @@ def register(
         name_map = cache.get_name_map()
         sector_map = cache.get_sector_map()
 
+        # Market-wide margin ratio (optional — empty dict when not cached)
+        margin_map = cache.get_all_latest_margin_interest()
+        margin_ratios = []
+        for mrow in margin_map.values():
+            long_v = _as_float(mrow.get("LongVol"))
+            short_v = _as_float(mrow.get("ShrtVol"))
+            if long_v is not None and short_v is not None and short_v > 0:
+                margin_ratios.append(long_v / short_v)
+        market_margin_ratio_median = (
+            round(statistics.median(margin_ratios), 2) if margin_ratios else None
+        )
+
         # 1. Core advance/decline summary.
         ad = _compute_advance_decline_summary(today_rows, prev_close_map)
 
@@ -1189,6 +1205,8 @@ def register(
                 "unchanged": ad["unchanged"],
                 "advance_decline_ratio_25d": adr_value,
                 "topix_change_pct": topix_change_pct,
+                "market_margin_ratio_median": market_margin_ratio_median,
+                "market_margin_ratio_count": len(margin_ratios),
             },
             "sectors": {
                 "top": sectors_top,
