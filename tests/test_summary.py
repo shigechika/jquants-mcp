@@ -43,6 +43,11 @@ def _make_cache(tmp_path: Path) -> CacheStore:
         "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
         "data TEXT NOT NULL, fetched_at REAL, PRIMARY KEY (code, disc_date))"
     )
+    conn.execute(
+        "CREATE TABLE markets_margin_interest "
+        "(code TEXT NOT NULL, date TEXT NOT NULL, "
+        "data TEXT NOT NULL, fetched_at REAL, PRIMARY KEY (code, date))"
+    )
     conn.commit()
     conn.close()
     settings = Settings()
@@ -140,6 +145,30 @@ def _insert_fins(
     )
 
 
+def _insert_margin(
+    conn: sqlite3.Connection,
+    code: str,
+    date: str,
+    *,
+    long_vol: float = 10_000.0,
+    short_vol: float = 5_000.0,
+) -> None:
+    data = {
+        "Code": code,
+        "Date": date,
+        "LongVol": long_vol,
+        "ShrtVol": short_vol,
+        "LongNegVol": 0.0,
+        "ShrtNegVol": 0.0,
+        "LongStdVol": long_vol,
+        "ShrtStdVol": short_vol,
+    }
+    conn.execute(
+        "INSERT OR REPLACE INTO markets_margin_interest (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+        (code, date, json.dumps(data), time.time()),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -150,7 +179,7 @@ def mock_env(tmp_path):
     cache = _make_cache(tmp_path)
     conn = sqlite3.connect(str(tmp_path / "cache.db"))
 
-    # 13010: two bars + master + fins_summary (FY)
+    # 13010: two bars + master + fins_summary (FY) + margin
     _insert_bar(conn, "13010", "2026-05-01", 1000.0)
     _insert_bar(conn, "13010", "2026-05-02", 1050.0)
     _insert_master(conn, "13010", "Test Corp")
@@ -166,6 +195,7 @@ def mock_env(tmp_path):
         bps=1_000.0,
         div_ann=20.0,
     )
+    _insert_margin(conn, "13010", "2026-05-02", long_vol=10_000.0, short_vol=5_000.0)
     conn.commit()
     conn.close()
 
@@ -379,3 +409,61 @@ class TestGetStockBriefing:
         assert data["valuation"]["per"] is None
         assert data["valuation"]["pbr"] is None
         assert data["financials"]["revenue"] is None
+
+    async def test_margin_ratio(self, mock_env):
+        """margin.ratio = long_vol / short_vol (margin ratio)."""
+        data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"}))
+        margin = data["margin"]
+        assert margin["date"] == "2026-05-02"
+        assert margin["long_vol"] == 10_000.0
+        assert margin["short_vol"] == 5_000.0
+        # 10000 / 5000 = 2.0
+        assert margin["ratio"] == pytest.approx(2.0, rel=1e-3)
+
+    async def test_margin_ratio_null_when_short_zero(self, tmp_path):
+        """margin.ratio must be null when short_vol == 0 (division by zero guard)."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "13060", "2026-05-02", 1000.0)
+        _insert_master(conn, "13060", "Zero Short Corp")
+        _insert_margin(conn, "13060", "2026-05-02", long_vol=5_000.0, short_vol=0.0)
+        conn.commit()
+        conn.close()
+
+        settings = Settings()
+        settings.jquants_plan = "premium"
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_cache", cache),
+        ):
+            data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "13060"}))
+
+        cache.close()
+        assert data["margin"]["ratio"] is None
+        assert data["margin"]["long_vol"] == 5_000.0
+        assert data["margin"]["short_vol"] == 0.0
+
+    async def test_margin_null_when_no_data(self, tmp_path):
+        """margin fields are all null when no markets_margin_interest row exists."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "13070", "2026-05-02", 1000.0)
+        _insert_master(conn, "13070", "No Margin Corp")
+        # Intentionally no margin row
+        conn.commit()
+        conn.close()
+
+        settings = Settings()
+        settings.jquants_plan = "premium"
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_cache", cache),
+        ):
+            data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "13070"}))
+
+        cache.close()
+        margin = data["margin"]
+        assert margin["ratio"] is None
+        assert margin["long_vol"] is None
+        assert margin["short_vol"] is None
+        assert margin["date"] is None
