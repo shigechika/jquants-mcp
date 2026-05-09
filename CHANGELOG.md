@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.28.0](https://github.com/shigechika/jquants-mcp/compare/v0.27.0...v0.28.0) (2026-05-09)
+
+
+### Features
+
+* **summary:** add margin ratio (信用倍率) to get_stock_briefing ([#307](https://github.com/shigechika/jquants-mcp/issues/307)) ([83b0350](https://github.com/shigechika/jquants-mcp/commit/83b03504c28b93291742237ef84a0b579879321f))
+
 ## [0.27.0](https://github.com/shigechika/jquants-mcp/compare/v0.26.0...v0.27.0) (2026-05-09)
 
 
