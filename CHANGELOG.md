@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.27.0](https://github.com/shigechika/jquants-mcp/compare/v0.26.0...v0.27.0) (2026-05-09)
+
+
+### Features
+
+* rename stock_summary→stock_briefing, sector_valuation→sector_briefing ([#305](https://github.com/shigechika/jquants-mcp/issues/305)) ([7db8c80](https://github.com/shigechika/jquants-mcp/commit/7db8c80949607590a7d6d5ddc8d752faf4a20307))
+
 ## [0.26.0](https://github.com/shigechika/jquants-mcp/compare/v0.25.1...v0.26.0) (2026-05-08)
 
 
