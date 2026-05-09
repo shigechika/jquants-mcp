@@ -1034,6 +1034,29 @@ class CacheStore:
         except Exception:
             return None
 
+    def get_latest_margin_interest_row(self, code: str) -> dict | None:
+        """Return the most recent markets_margin_interest row for a stock.
+
+        Args:
+            code: 5-digit stock code.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return None
+        try:
+            row = conn.execute(
+                "SELECT data FROM markets_margin_interest WHERE code = ? ORDER BY date DESC LIMIT 1",
+                (code,),
+            ).fetchone()
+        except Exception:
+            return None
+        if row is None:
+            return None
+        try:
+            return json.loads(row["data"])
+        except Exception:
+            return None
+
     def get_all_latest_fy_fins(self) -> dict[str, dict]:
         """Return the most recent FY financial-summary row for every code in fins_summary.
 

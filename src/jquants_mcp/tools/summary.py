@@ -40,21 +40,24 @@ def register(
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def get_stock_briefing(code: str) -> dict[str, Any]:
-        """One-page briefing for a single stock: price, financials, and valuation (株式ブリーフィング).
+        """One-page briefing for a single stock: price, financials, valuation, and margin (株式ブリーフィング).
 
         Returns the latest price (close, change_pct, volume), most recent FY financial
-        metrics (revenue, operating profit, net income), and valuation ratios (PER, PBR,
-        dividend yield).  All figures use split-adjusted values (AdjC, AdjEPS, AdjBPS)
-        so PER/PBR remain accurate even after stock splits.
+        metrics (revenue, operating profit, net income), valuation ratios (PER, PBR,
+        dividend yield), and margin trading data (信用倍率 = long_vol / short_vol).
+        All figures use split-adjusted values (AdjC, AdjEPS, AdjBPS) so PER/PBR remain
+        accurate even after stock splits.
 
         PER and ROE are null when EPS <= 0 (net-loss period).  Dividend yield uses the
         most recent annual dividend (DivAnn) disclosed within the past 18 months; null
         when no recent disclosure exists (company stopped paying dividends).
+        Margin ratio is null when short_vol == 0 or no margin data is cached.
 
         See also: ``get_sector_briefing`` for sector-level aggregation,
         ``get_market_briefing`` for market-wide overview.
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no live API call)
+        Margin data requires markets_margin_interest cache (populated by import_csv_to_cache.py).
 
         Args:
             code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
@@ -157,6 +160,22 @@ def register(
         if div_per_share and adj_close and adj_close > 0:
             div_yield = round(div_per_share / adj_close * 100, 2)
 
+        # --- 5. Margin interest (信用倍率) -------------------------------------------
+        margin_ratio: float | None = None
+        margin_long_vol: float | None = None
+        margin_short_vol: float | None = None
+        margin_date: str | None = None
+
+        margin_row = cache.get_latest_margin_interest_row(cache_code)
+        if margin_row:
+            margin_date = str(margin_row.get("Date") or "")
+            long_v = float_or_none(margin_row.get("LongVol"))
+            short_v = float_or_none(margin_row.get("ShrtVol"))
+            margin_long_vol = long_v
+            margin_short_vol = short_v
+            if short_v is not None and short_v > 0 and long_v is not None:
+                margin_ratio = round(long_v / short_v, 2)
+
         result: dict[str, Any] = {
             "code": out_code,
             "name": name,
@@ -189,6 +208,12 @@ def register(
                 "bps": bps,
                 "div_per_share": div_per_share,
                 "dividend_yield_pct": div_yield,
+            },
+            "margin": {
+                "date": margin_date,
+                "ratio": margin_ratio,
+                "long_vol": margin_long_vol,
+                "short_vol": margin_short_vol,
             },
         }
 
