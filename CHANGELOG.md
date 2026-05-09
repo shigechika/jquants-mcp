@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.30.0](https://github.com/shigechika/jquants-mcp/compare/v0.29.0...v0.30.0) (2026-05-09)
+
+
+### Features
+
+* **market:** add market-wide margin ratio median to get_market_briefing ([#311](https://github.com/shigechika/jquants-mcp/issues/311)) ([fd213f0](https://github.com/shigechika/jquants-mcp/commit/fd213f0d21fe3778c4e033b98380d05cc632a42e))
+
 ## [0.29.0](https://github.com/shigechika/jquants-mcp/compare/v0.28.0...v0.29.0) (2026-05-09)
 
 
