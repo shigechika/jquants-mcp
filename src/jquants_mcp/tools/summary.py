@@ -44,7 +44,7 @@ def register(
 
         Returns the latest price (close, change_pct, volume), most recent FY financial
         metrics (revenue, operating profit, net income), valuation ratios (PER, PBR,
-        dividend yield), and margin trading data (信用倍率 = long_vol / short_vol).
+        dividend yield), and margin trading data (margin ratio = long_vol / short_vol).
         All figures use split-adjusted values (AdjC, AdjEPS, AdjBPS) so PER/PBR remain
         accurate even after stock splits.
 
