@@ -26,24 +26,29 @@ def register(
     async def get_sector_briefing(
         sector_type: str = "s33",
     ) -> dict[str, Any]:
-        """Return sector-level median PER, PBR, and ROE aggregated across all listed stocks (業種別ブリーフィング).
+        """Return sector-level median PER, PBR, ROE, and margin ratio aggregated across all listed stocks (業種別ブリーフィング).
 
         Use for セクターバリュエーション, 業種別PER, 業種別PBR, 割安セクター, セクター比較,
-        業種別ブリーフィング.
-        Aggregates PER (price/earnings), PBR (price/book), and ROE (return on equity)
-        at the TSE sector level using the most recent full-year (FY) financial disclosures.
+        業種別ブリーフィング, 業種別信用倍率.
+        Aggregates PER (price/earnings), PBR (price/book), ROE (return on equity), and
+        margin ratio (LongVol/ShrtVol) at the TSE sector level using the most recent
+        full-year (FY) financial disclosures and margin interest data.
         All metrics use split-adjusted values so a 1:2 stock split does not distort ratios.
 
         PER and ROE exclude stocks in a net-loss period (EPS ≤ 0); PBR excludes
-        negative-book stocks.  ``per_count`` / ``pbr_count`` / ``roe_count`` report
+        negative-book stocks; margin ratio excludes stocks with ShrtVol == 0.
+        ``per_count`` / ``pbr_count`` / ``roe_count`` / ``margin_ratio_count`` report
         how many stocks contributed to each median, letting you judge sector coverage.
+        Margin data requires markets_margin_interest cache (populated by daily_fetch.py
+        for Standard/Premium plans); margin fields are null when not cached.
 
         See also: ``get_market_briefing`` for market-wide overview,
         ``get_stock_briefing`` for single-stock detail,
         ``get_sector_performance`` for sector-level daily price change (騰落率).
 
         [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily + fins_summary + equities_master Tier 1 cache (no API call)
+        [Source] equities_bars_daily + fins_summary + equities_master + markets_margin_interest
+        Tier 1 cache (no API call)
 
         Args:
             sector_type: ``"s33"`` (default, 33 TSE sub-sectors) or ``"s17"`` (17 top-level sectors).
@@ -62,6 +67,8 @@ def register(
                 - pbr_count: stocks contributing to pbr_median
                 - roe_median: median ROE in percent (null when no stocks have positive BPS)
                 - roe_count: stocks contributing to roe_median
+                - margin_ratio_median: median margin ratio LongVol/ShrtVol (null when not cached)
+                - margin_ratio_count: stocks contributing to margin_ratio_median
         """
         if sector_type not in ("s33", "s17"):
             return make_validation_error_response(["sector_type must be 's33' or 's17'"])
@@ -87,6 +94,9 @@ def register(
         fins_map = cache.get_all_latest_fy_fins()
         if not fins_map:
             return {"error": "No financial data cached. Run daily_fetch first."}
+
+        # Latest margin interest for all codes (optional — empty dict if not cached)
+        margin_map = cache.get_all_latest_margin_interest()
 
         # Batch split-factor lookup: disc_date per code
         code_disc_dates: dict[str, str] = {}
@@ -120,6 +130,7 @@ def register(
                     "pers": [],
                     "pbrs": [],
                     "roes": [],
+                    "margin_ratios": [],
                 }
             buckets[sec_code]["count"] += 1
 
@@ -139,6 +150,13 @@ def register(
             if eps_raw is not None and bps_raw is not None and bps_raw > 0:
                 buckets[sec_code]["roes"].append(eps_raw / bps_raw * 100)
 
+            margin_row = margin_map.get(code)
+            if margin_row:
+                long_v = float_or_none(margin_row.get("LongVol"))
+                short_v = float_or_none(margin_row.get("ShrtVol"))
+                if long_v is not None and short_v is not None and short_v > 0:
+                    buckets[sec_code]["margin_ratios"].append(long_v / short_v)
+
         # Build sector list; sort by per_median ascending (cheapest first),
         # with null-PER sectors pushed to the end.
         sectors = []
@@ -146,9 +164,11 @@ def register(
             pers = bucket["pers"]
             pbrs = bucket["pbrs"]
             roes = bucket["roes"]
+            margin_ratios = bucket["margin_ratios"]
             per_med = round(statistics.median(pers), 2) if pers else None
             pbr_med = round(statistics.median(pbrs), 2) if pbrs else None
             roe_med = round(statistics.median(roes), 2) if roes else None
+            margin_ratio_med = round(statistics.median(margin_ratios), 2) if margin_ratios else None
             sectors.append(
                 {
                     "code": sec_code,
@@ -160,6 +180,8 @@ def register(
                     "pbr_count": len(pbrs),
                     "roe_median": roe_med,
                     "roe_count": len(roes),
+                    "margin_ratio_median": margin_ratio_med,
+                    "margin_ratio_count": len(margin_ratios),
                 }
             )
 

@@ -1100,6 +1100,39 @@ class CacheStore:
                 continue
         return result
 
+    def get_all_latest_margin_interest(self) -> dict[str, dict]:
+        """Return the most recent markets_margin_interest row for every code.
+
+        Uses a JOIN against a per-code MAX(date) subquery to avoid N+1 queries.
+
+        Returns:
+            Mapping of 5-digit code to raw JSON dict (as stored in the cache).
+            Returns an empty dict when the table is unavailable or empty.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        sql = (
+            "SELECT m.code, m.data FROM markets_margin_interest m "
+            "INNER JOIN ("
+            "  SELECT code, MAX(date) AS max_date FROM markets_margin_interest GROUP BY code"
+            ") latest ON m.code = latest.code AND m.date = latest.max_date"
+        )
+        try:
+            rows = conn.execute(sql).fetchall()
+        except Exception:
+            return {}
+        result: dict[str, dict] = {}
+        for row in rows:
+            code = str(row[0] or "")
+            if not code:
+                continue
+            try:
+                result[code] = json.loads(row[1])
+            except Exception:
+                continue
+        return result
+
     def get_latest_close_map(self) -> dict[str, float]:
         """Return a mapping of 5-digit code to latest adjusted-close price.
 
