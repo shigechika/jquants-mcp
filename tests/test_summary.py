@@ -1,4 +1,4 @@
-"""Tests for tools/summary.py (get_stock_summary)."""
+"""Tests for tools/summary.py (get_stock_briefing)."""
 
 from __future__ import annotations
 
@@ -188,7 +188,7 @@ def mock_env(tmp_path):
 @pytest.mark.asyncio
 class TestGetStockSummary:
     async def test_basic_fields_returned(self, mock_env):
-        result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13010"})
+        result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"})
         data = _call(result)
 
         # display_code strips trailing "0" → "13010" becomes "1301"
@@ -199,7 +199,7 @@ class TestGetStockSummary:
         assert data["sector_33"] == "Electric Machinery"
 
     async def test_latest_price(self, mock_env):
-        result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13010"})
+        result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"})
         data = _call(result)
 
         price = data["price"]
@@ -208,14 +208,14 @@ class TestGetStockSummary:
         assert price["volume"] == 10_000
 
     async def test_change_pct(self, mock_env):
-        result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13010"})
+        result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"})
         data = _call(result)
 
         # (1050 - 1000) / 1000 * 100 = 5.0 %
         assert data["price"]["change_pct"] == pytest.approx(5.0, rel=1e-3)
 
     async def test_financials(self, mock_env):
-        result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13010"})
+        result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"})
         data = _call(result)
 
         fins = data["financials"]
@@ -225,7 +225,7 @@ class TestGetStockSummary:
         assert fins["fiscal_period"] == "FY"
 
     async def test_valuation_per_pbr(self, mock_env):
-        result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13010"})
+        result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"})
         data = _call(result)
 
         val = data["valuation"]
@@ -235,7 +235,7 @@ class TestGetStockSummary:
         assert val["pbr"] == pytest.approx(1.05, rel=1e-3)
 
     async def test_valuation_roe(self, mock_env):
-        result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13010"})
+        result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"})
         data = _call(result)
 
         val = data["valuation"]
@@ -243,7 +243,7 @@ class TestGetStockSummary:
         assert val["roe"] == pytest.approx(10.0, rel=1e-3)
 
     async def test_dividend_yield(self, mock_env):
-        result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13010"})
+        result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"})
         data = _call(result)
 
         val = data["valuation"]
@@ -266,7 +266,7 @@ class TestGetStockSummary:
             patch.object(server_module, "_settings", settings),
             patch.object(server_module, "_cache", cache),
         ):
-            result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13020"})
+            result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13020"})
             data = _call(result)
 
         cache.close()
@@ -291,7 +291,7 @@ class TestGetStockSummary:
             patch.object(server_module, "_settings", settings),
             patch.object(server_module, "_cache", cache),
         ):
-            result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13030"})
+            result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13030"})
             data = _call(result)
 
         cache.close()
@@ -318,7 +318,7 @@ class TestGetStockSummary:
             patch.object(server_module, "_settings", settings),
             patch.object(server_module, "_cache", cache),
         ):
-            result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13040"})
+            result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13040"})
             data = _call(result)
 
         cache.close()
@@ -338,21 +338,21 @@ class TestGetStockSummary:
             patch.object(server_module, "_settings", settings),
             patch.object(server_module, "_cache", cache),
         ):
-            result = await server_module.mcp.call_tool("get_stock_summary", {"code": "99999"})
+            result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "99999"})
             data = _call(result)
 
         cache.close()
         assert "error" in data
 
     async def test_invalid_code_returns_validation_error(self, mock_env):
-        result = await server_module.mcp.call_tool("get_stock_summary", {"code": "XXXX"})
+        result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "XXXX"})
         data = _call(result)
         assert "error" in data or "errors" in data
 
     async def test_tier2_cache_hit(self, mock_env):
         """Second call must return the cached result (same dict)."""
-        r1 = _call(await server_module.mcp.call_tool("get_stock_summary", {"code": "13010"}))
-        r2 = _call(await server_module.mcp.call_tool("get_stock_summary", {"code": "13010"}))
+        r1 = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"}))
+        r2 = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"}))
         assert r1 == r2
 
     async def test_no_fins_data_returns_null_valuation(self, tmp_path):
@@ -372,7 +372,7 @@ class TestGetStockSummary:
             patch.object(server_module, "_settings", settings),
             patch.object(server_module, "_cache", cache),
         ):
-            result = await server_module.mcp.call_tool("get_stock_summary", {"code": "13050"})
+            result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13050"})
             data = _call(result)
 
         cache.close()

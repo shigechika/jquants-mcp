@@ -618,7 +618,7 @@ jquants-mcp -t streamable-http --port 8080 \
 | `get_top_volume` | 出来高ランキング（株数ベース、code + name + volume + turnover_value を返す） |
 | `get_top_turnover_value` | 売買代金ランキング（金額ベース）。`get_top_volume` と異なり高単価大型株が上位に来るので機関投資家フローの把握に最適 |
 | `get_sector_performance` | 業種別騰落率。デフォルトは東証33業種、`sector_type="s17"` で17業種に切替 |
-| `get_sector_valuation` | 業種別バリュエーション（セクター別 PER/PBR/ROE 中央値）。最新 FY 財務データを分割補正して集計。PER 昇順（割安順）で返却。`sector_type="s17"` で17業種に切替可。 |
+| `get_sector_briefing` | 業種別ブリーフィング（セクター別 PER/PBR/ROE 中央値）。最新 FY 財務データを分割補正して集計。PER 昇順（割安順）で返却。`sector_type="s17"` で17業種に切替可。 |
 | `get_dividend_yield_ranking` | 高配当利回りランキング。`fins_summary` の `DivAnn`（年間配当額）と `AdjC`（調整後終値）から yield_pct = DivAnn / AdjC × 100 を計算。中間報告の空 DivAnn はスキップ |
 | `get_market_briefing` | 相場ブリーフィング（composite）— 値上がり/値下がり + 騰落レシオ 25 日 + 業種上位/下位 + 値上がりランキング + 売買代金 + screener ハイライト + TOPIX 変化率を 1 回のコールで取得 |
 
@@ -636,13 +636,13 @@ jquants-mcp -t streamable-http --port 8080 \
 | `detect_ytd_high_low_range` | 上記の期間版（`date_from`〜`date_to`）。複数日分を単日ツールの繰り返しではなくこちらで取得。 |
 | `detect_volume_surge` | 指定日の出来高が直近 20 営業日平均の `multiplier` 倍（既定 2.0）以上の銘柄を列挙。 |
 
-### 単銘柄サマリー (Single Stock Summary) — 1ツール
+### 単銘柄ブリーフィング (Single Stock Briefing) — 1ツール
 
 キャッシュ済みデータから単一銘柄の一覧表を組み立てるキャッシュ専用ツール。追加 API コールなし。
 
 | ツール名 | 説明 |
 |---|---|
-| `get_stock_summary` | 単銘柄の一覧表（株式サマリー）: 最新株価（終値・変化率・出来高・OHLC）、直近 FY 財務（売上・営業利益・純利益）、バリュエーション指標（PER・PBR・EPS・BPS・配当利回り）を 1 回で返す。すべて分割調整済み。EPS ≤ 0（赤字期）は PER を null、開示日が 18 ヶ月超の DivAnn は配当利回りを null とする。 |
+| `get_stock_briefing` | 単銘柄ブリーフィング（株式ブリーフィング）: 最新株価（終値・変化率・出来高・OHLC）、直近 FY 財務（売上・営業利益・純利益）、バリュエーション指標（PER・PBR・ROE・EPS・BPS・配当利回り）を 1 回で返す。すべて分割調整済み。EPS ≤ 0（赤字期）は PER・ROE を null、開示日が 18 ヶ月超の DivAnn は配当利回りを null とする。 |
 
 ### チャート描画 (Charts) — 2ツール（opt-in）
 

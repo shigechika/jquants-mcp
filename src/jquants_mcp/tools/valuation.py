@@ -20,15 +20,16 @@ def register(
     get_client: callable,  # not used: cache-only tool
     get_cache: callable,
 ) -> None:
-    """Register sector valuation tools on the MCP server."""
+    """Register sector briefing tools on the MCP server."""
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
-    async def get_sector_valuation(
+    async def get_sector_briefing(
         sector_type: str = "s33",
     ) -> dict[str, Any]:
-        """Return sector-level median PER, PBR, and ROE aggregated across all listed stocks (セクター別バリュエーション).
+        """Return sector-level median PER, PBR, and ROE aggregated across all listed stocks (業種別ブリーフィング).
 
-        Use for セクターバリュエーション, 業種別PER, 業種別PBR, 割安セクター, セクター比較.
+        Use for セクターバリュエーション, 業種別PER, 業種別PBR, 割安セクター, セクター比較,
+        業種別ブリーフィング.
         Aggregates PER (price/earnings), PBR (price/book), and ROE (return on equity)
         at the TSE sector level using the most recent full-year (FY) financial disclosures.
         All metrics use split-adjusted values so a 1:2 stock split does not distort ratios.
@@ -36,6 +37,10 @@ def register(
         PER and ROE exclude stocks in a net-loss period (EPS ≤ 0); PBR excludes
         negative-book stocks.  ``per_count`` / ``pbr_count`` / ``roe_count`` report
         how many stocks contributed to each median, letting you judge sector coverage.
+
+        See also: ``get_market_briefing`` for market-wide overview,
+        ``get_stock_briefing`` for single-stock detail,
+        ``get_sector_performance`` for sector-level daily price change (騰落率).
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily + fins_summary + equities_master Tier 1 cache (no API call)
@@ -63,7 +68,7 @@ def register(
 
         cache: CacheStore = get_cache()
 
-        cache_key = make_cache_key("get_sector_valuation", {"sector_type": sector_type})
+        cache_key = make_cache_key("get_sector_briefing", {"sector_type": sector_type})
         cached = cache.get_response(cache_key)
         if cached is not None:
             return cached

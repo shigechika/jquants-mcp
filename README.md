@@ -618,7 +618,7 @@ Cross-sectional cache-only tools that scan all listed equities. No extra API cal
 | `get_top_volume` | Top stocks by trading volume (出来高ランキング, share count). Returns code + name + volume + turnover_value. |
 | `get_top_turnover_value` | Top stocks by turnover value (売買代金ランキング, yen). Surfaces high-priced large-caps that dominate institutional flow, distinct from `get_top_volume`. |
 | `get_sector_performance` | Sector-level average daily change (業種別騰落率) grouped by TSE 33 sectors (default) or 17 sectors (`sector_type="s17"`). |
-| `get_sector_valuation` | Sector-level median PER, PBR, and ROE (セクター別バリュエーション) aggregated from the most recent FY financials. Split-adjusted. Sorted by PER ascending (cheapest first). |
+| `get_sector_briefing` | Sector-level median PER, PBR, and ROE (業種別ブリーフィング) aggregated from the most recent FY financials. Split-adjusted. Sorted by PER ascending (cheapest first). |
 | `get_dividend_yield_ranking` | High dividend yield stock ranking (高配当利回りランキング). Joins `DivAnn` from `fins_summary` with `AdjC` to compute yield_pct = DivAnn / AdjC × 100. Skips interim reports with empty DivAnn. |
 | `get_market_briefing` | Composite daily briefing (相場ブリーフィング) — advance/decline + 25-day ADR + sector top/bottom + top movers + top turnover + screener highlights + TOPIX change in one call. |
 
@@ -636,13 +636,13 @@ Offline tools that compute signals directly from the cached `equities_bars_daily
 | `detect_ytd_high_low_range` | Same as above but across a date range (`date_from`–`date_to`). Use this instead of repeated single-date calls. |
 | `detect_volume_surge` | List stocks whose volume on `date` exceeds the trailing 20-day average by a configurable `multiplier` (default 2.0). |
 
-### Single Stock Summary (1 tool)
+### Single Stock Briefing (1 tool)
 
 Cache-only tool that assembles a one-page snapshot for a single stock from cached data. No extra API calls.
 
 | Tool | Description |
 |---|---|
-| `get_stock_summary` | One-page summary for a single stock (株式サマリー): latest price (close, change_pct, volume, OHLC), most recent FY financials (revenue, operating profit, net income), and valuation ratios (PER, PBR, EPS, BPS, dividend yield). All figures are split-adjusted. PER is null when EPS ≤ 0 (net-loss period). Dividend yield uses the most recent DivAnn disclosed within the past 18 months. |
+| `get_stock_briefing` | One-page briefing for a single stock (株式ブリーフィング): latest price (close, change_pct, volume, OHLC), most recent FY financials (revenue, operating profit, net income), and valuation ratios (PER, PBR, ROE, EPS, BPS, dividend yield). All figures are split-adjusted. PER and ROE are null when EPS ≤ 0 (net-loss period). Dividend yield uses the most recent DivAnn disclosed within the past 18 months. |
 
 ### Charts (2 tools, opt-in)
 

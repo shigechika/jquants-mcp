@@ -1,4 +1,4 @@
-"""Tests for tools/valuation.py (get_sector_valuation)."""
+"""Tests for tools/valuation.py (get_sector_briefing)."""
 
 from __future__ import annotations
 
@@ -170,7 +170,7 @@ def mock_env(tmp_path):
 @pytest.mark.asyncio
 class TestGetSectorValuation:
     async def test_response_shape(self, mock_env):
-        result = await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
+        result = await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
         data = _call(result)
         assert data["price_date"] == "2026-05-02"
         assert data["sector_type"] == "s33"
@@ -178,14 +178,14 @@ class TestGetSectorValuation:
 
     async def test_sector_count(self, mock_env):
         data = _call(
-            await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
+            await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
         )
         # Two distinct s33 sectors in fixture
         assert len(data["sectors"]) == 2
 
     async def test_per_median_two_stocks(self, mock_env):
         data = _call(
-            await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
+            await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
         )
         elec = next(s for s in data["sectors"] if s["code"] == "3050")
         # PER values: 1000/100=10.0, 2000/200=10.0 → median = 10.0
@@ -194,7 +194,7 @@ class TestGetSectorValuation:
 
     async def test_pbr_median_two_stocks(self, mock_env):
         data = _call(
-            await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
+            await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
         )
         elec = next(s for s in data["sectors"] if s["code"] == "3050")
         # PBR values: 1000/1000=1.0, 2000/1500≈1.333 → median = 1.1666... → round(,2) = 1.17
@@ -203,7 +203,7 @@ class TestGetSectorValuation:
 
     async def test_roe_median(self, mock_env):
         data = _call(
-            await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
+            await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
         )
         elec = next(s for s in data["sectors"] if s["code"] == "3050")
         # ROE: 100/1000*100=10%, 200/1500*100≈13.33% → median ≈ 11.67%
@@ -212,7 +212,7 @@ class TestGetSectorValuation:
 
     async def test_single_sector_stock(self, mock_env):
         data = _call(
-            await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
+            await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
         )
         chem = next(s for s in data["sectors"] if s["code"] == "5050")
         assert chem["per_median"] == pytest.approx(500.0 / 50.0, rel=1e-3)
@@ -220,7 +220,7 @@ class TestGetSectorValuation:
 
     async def test_sorted_by_per_ascending(self, mock_env):
         data = _call(
-            await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
+            await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
         )
         pers = [s["per_median"] for s in data["sectors"] if s["per_median"] is not None]
         assert pers == sorted(pers)
@@ -241,7 +241,7 @@ class TestGetSectorValuation:
             patch.object(server_module, "_cache", cache),
         ):
             data = _call(
-                await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
+                await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
             )
         cache.close()
 
@@ -273,7 +273,7 @@ class TestGetSectorValuation:
             patch.object(server_module, "_cache", cache),
         ):
             data = _call(
-                await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
+                await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
             )
         cache.close()
 
@@ -287,7 +287,7 @@ class TestGetSectorValuation:
     async def test_s17_aggregation(self, mock_env):
         """s17 should produce sector groupings using the s17 column."""
         data = _call(
-            await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s17"})
+            await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s17"})
         )
         assert data["sector_type"] == "s17"
         # Fixture uses same s17 code "3050" for all three stocks
@@ -297,17 +297,13 @@ class TestGetSectorValuation:
 
     async def test_invalid_sector_type(self, mock_env):
         data = _call(
-            await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s99"})
+            await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s99"})
         )
         assert "error" in data or "errors" in data
 
     async def test_tier2_cache_hit(self, mock_env):
-        r1 = _call(
-            await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
-        )
-        r2 = _call(
-            await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
-        )
+        r1 = _call(await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"}))
+        r2 = _call(await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"}))
         assert r1 == r2
 
     async def test_no_price_data_returns_error(self, tmp_path):
@@ -319,7 +315,7 @@ class TestGetSectorValuation:
             patch.object(server_module, "_cache", cache),
         ):
             data = _call(
-                await server_module.mcp.call_tool("get_sector_valuation", {"sector_type": "s33"})
+                await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
             )
         cache.close()
         assert "error" in data

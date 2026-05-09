@@ -23,7 +23,7 @@ jquants-mcp で Claude に何ができるか、ユースケース別ツアー。
 | 「出来高ランキング」 | `get_top_volume` |
 | 「売買代金ランキング」（金額ベース、機関投資家フロー把握向け） | `get_top_turnover_value` |
 | 「業種別騰落率」（東証 33 業種または 17 業種） | `get_sector_performance` |
-| 「業種別 PER/PBR/ROE」（セクターバリュエーション、割安業種探し） | `get_sector_valuation` |
+| 「業種別 PER/PBR/ROE」（セクターブリーフィング、割安業種探し） | `get_sector_briefing` |
 | 「高配当利回りランキング」（`DivAnn / AdjC × 100`、中間報告の空配当はスキップ） | `get_dividend_yield_ranking` |
 | 「今日の相場ブリーフィング」（値上がり/値下がり + 騰落レシオ + 33業種別 + ランキング + TOPIX 変化率 + screener ハイライトを 1 コールで） | `get_market_briefing` |
 
@@ -39,7 +39,7 @@ jquants-mcp で Claude に何ができるか、ユースケース別ツアー。
 
 | 質問 | ツール |
 |---|---|
-| 「8053 住友商事の株価・財務・PER を一覧で」（単銘柄サマリー） | `get_stock_summary` |
+| 「8053 住友商事の株価・財務・PER を一覧で」（株式ブリーフィング） | `get_stock_briefing` |
 | 「7203（トヨタ）のここ 1 か月の株価」 | `get_equities_bars_daily` |
 | 「8053 住友商事の決算」 | `get_fins_summary` |
 | 「9984 SBG の配当履歴」 | `get_fins_dividend` |
