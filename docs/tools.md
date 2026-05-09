@@ -23,7 +23,7 @@ What's the market doing today, and which sectors look cheap?
 | "Volume ranking" | `get_top_volume` |
 | "Turnover value ranking" (yen-based, institutional flow) | `get_top_turnover_value` |
 | "Sector performance today" (TSE 33 sectors or 17 sectors) | `get_sector_performance` |
-| "Sector PER/PBR/ROE — which sectors look cheap?" | `get_sector_valuation` |
+| "Sector PER/PBR/ROE — which sectors look cheap?" | `get_sector_briefing` |
 | "High dividend yield ranking" | `get_dividend_yield_ranking` |
 | "Today's market briefing" (one-call composite summary) | `get_market_briefing` |
 
@@ -39,7 +39,7 @@ Drill into a specific code:
 
 | Question | Tool |
 |---|---|
-| "8053 (Sumitomo Corp) — price, financials, and PER at a glance" | `get_stock_summary` |
+| "8053 (Sumitomo Corp) — price, financials, and PER at a glance" | `get_stock_briefing` |
 | "7203 (Toyota) — past month daily prices" | `get_equities_bars_daily` |
 | "8053 Sumitomo Corp earnings summary" | `get_fins_summary` |
 | "9984 SoftBank dividend history" | `get_fins_dividend` |

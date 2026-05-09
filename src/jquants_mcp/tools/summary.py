@@ -36,11 +36,11 @@ def register(
     get_client: callable,  # not used: this tool is cache-only, no live API call
     get_cache: callable,
 ) -> None:
-    """Register stock summary tools on the MCP server."""
+    """Register stock briefing tools on the MCP server."""
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
-    async def get_stock_summary(code: str) -> dict[str, Any]:
-        """One-page summary for a single stock: price, financials, and valuation (株式サマリー).
+    async def get_stock_briefing(code: str) -> dict[str, Any]:
+        """One-page briefing for a single stock: price, financials, and valuation (株式ブリーフィング).
 
         Returns the latest price (close, change_pct, volume), most recent FY financial
         metrics (revenue, operating profit, net income), and valuation ratios (PER, PBR,
@@ -50,6 +50,9 @@ def register(
         PER and ROE are null when EPS <= 0 (net-loss period).  Dividend yield uses the
         most recent annual dividend (DivAnn) disclosed within the past 18 months; null
         when no recent disclosure exists (company stopped paying dividends).
+
+        See also: ``get_sector_briefing`` for sector-level aggregation,
+        ``get_market_briefing`` for market-wide overview.
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no live API call)
 
@@ -66,7 +69,7 @@ def register(
         out_code = display_code(cache_code)
         cache: CacheStore = get_cache()
 
-        cache_key = make_cache_key("get_stock_summary", {"code": out_code})
+        cache_key = make_cache_key("get_stock_briefing", {"code": out_code})
         cached = cache.get_response(cache_key)
         if cached is not None:
             return cached
