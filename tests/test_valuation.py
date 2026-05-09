@@ -201,6 +201,9 @@ class TestGetSectorBriefing:
         assert data["price_date"] == "2026-05-02"
         assert data["sector_type"] == "s33"
         assert isinstance(data["sectors"], list)
+        elec = data["sectors"][0]
+        assert "margin_ratio_median" in elec
+        assert "margin_ratio_count" in elec
 
     async def test_sector_count(self, mock_env):
         data = _call(
