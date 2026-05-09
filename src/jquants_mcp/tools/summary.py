@@ -57,7 +57,7 @@ def register(
         ``get_market_briefing`` for market-wide overview.
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no live API call)
-        Margin data requires markets_margin_interest cache (populated by import_csv_to_cache.py).
+        Margin data requires markets_margin_interest cache (populated by daily_fetch.py for Standard/Premium plans).
 
         Args:
             code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
@@ -160,7 +160,7 @@ def register(
         if div_per_share and adj_close and adj_close > 0:
             div_yield = round(div_per_share / adj_close * 100, 2)
 
-        # --- 5. Margin interest (信用倍率) -------------------------------------------
+        # --- 5. Margin interest ---------------------------------------------------
         margin_ratio: float | None = None
         margin_long_vol: float | None = None
         margin_short_vol: float | None = None

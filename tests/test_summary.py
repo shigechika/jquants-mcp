@@ -411,7 +411,7 @@ class TestGetStockBriefing:
         assert data["financials"]["revenue"] is None
 
     async def test_margin_ratio(self, mock_env):
-        """margin.ratio = long_vol / short_vol (信用倍率)."""
+        """margin.ratio = long_vol / short_vol (margin ratio)."""
         data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"}))
         margin = data["margin"]
         assert margin["date"] == "2026-05-02"
