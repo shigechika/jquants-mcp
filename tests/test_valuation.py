@@ -168,7 +168,7 @@ def mock_env(tmp_path):
 
 
 @pytest.mark.asyncio
-class TestGetSectorValuation:
+class TestGetSectorBriefing:
     async def test_response_shape(self, mock_env):
         result = await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
         data = _call(result)

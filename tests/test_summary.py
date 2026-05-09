@@ -186,7 +186,7 @@ def mock_env(tmp_path):
 
 
 @pytest.mark.asyncio
-class TestGetStockSummary:
+class TestGetStockBriefing:
     async def test_basic_fields_returned(self, mock_env):
         result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"})
         data = _call(result)
