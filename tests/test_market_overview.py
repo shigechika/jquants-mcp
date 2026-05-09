@@ -97,12 +97,10 @@ def _insert_margin(
     long_vol: float = 10_000.0,
     short_vol: float = 5_000.0,
 ) -> None:
-    import time
-
     data = {"Code": code, "Date": date, "LongVol": long_vol, "ShrtVol": short_vol}
     conn.execute(
         "INSERT OR REPLACE INTO markets_margin_interest (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
-        (code, date, json.dumps(data), time.time()),
+        (code, date, json.dumps(data), 0.0),
     )
 
 
