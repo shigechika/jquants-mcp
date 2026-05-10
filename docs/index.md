@@ -27,19 +27,26 @@ Once jquants-mcp is connected, conversational queries like these just work:
 - "Stocks hitting new year-to-date highs" — `detect_ytd_high_low` screener
 - "What's the code for SoftBank?" — reverse-lookup via `search_equities`
 - "Compare TOPIX vs Nikkei 225 over 1 year" — multi-stock comparison chart
+- "Show me the sector briefing" — advance/decline count, AD ratio, top/bottom 5 sectors by return, and cheapest-PER sector ranking, all in one call
 
-## Why this exists
+<p align="center">
+  <video controls width="330" preload="metadata" playsinline
+         poster="screenshots/jquants-mcp-demo-briefing-market.png">
+    <source src="screenshots/jquants-mcp-demo-briefing.mp4" type="video/mp4">
+    Your browser does not support inline video. The clip demonstrates the market
+    briefing, sector PER ranking, and individual stock briefing on the Claude iPhone app.
+  </video>
+</p>
 
-J-Quants provides institutional-quality Japanese equities data, but drilling
-into a single stock through the raw API gets repetitive fast — the same code
-fetched again and again (per-stock pagination, 5–500 req/min plan caps,
-unfamiliar JSON field names, etc.). So jquants-mcp:
+## Features
 
-- Caches everything locally so repeat queries are instant.
-- Adapts to your J-Quants plan automatically (Free / Light / Standard / Premium).
-- Exposes high-level tools that Claude can compose ("show me top movers and
-  draw the chart for the leader") rather than forcing it through low-level
-  endpoint calls.
+- Ask in plain English or Japanese — jquants-mcp picks the right tool
+  and returns a clean answer. No tool names to memorise.
+- Instant responses — market data is cached locally, so most queries
+  never hit the network at all.
+- Works on any J-Quants plan — Free through Premium, auto-detected.
+- Chains naturally — "screen for top movers, then chart the leader"
+  works as a single request.
 
 ## Get started
 
