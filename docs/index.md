@@ -38,18 +38,15 @@ Once jquants-mcp is connected, conversational queries like these just work:
   </video>
 </p>
 
-## Why this exists
+## Features
 
-J-Quants provides institutional-quality Japanese equities data, but drilling
-into a single stock through the raw API gets repetitive fast — the same code
-fetched again and again (per-stock pagination, 5–500 req/min plan caps,
-unfamiliar JSON field names, etc.). So jquants-mcp:
-
-- Caches everything locally so repeat queries are instant.
-- Adapts to your J-Quants plan automatically (Free / Light / Standard / Premium).
-- Exposes high-level tools that Claude can compose ("show me top movers and
-  draw the chart for the leader") rather than forcing it through low-level
-  endpoint calls.
+- Ask in plain English or Japanese — jquants-mcp picks the right tool
+  and returns a clean answer. No tool names to memorise.
+- Instant responses — market data is cached locally, so most queries
+  never hit the network at all.
+- Works on any J-Quants plan — Free through Premium, auto-detected.
+- Chains naturally — "screen for top movers, then chart the leader"
+  works as a single request.
 
 ## Get started
 
