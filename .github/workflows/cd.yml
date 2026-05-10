@@ -88,6 +88,7 @@ jobs:
             --service-account ${{ vars.GCP_SERVICE_ACCOUNT }} \
             --source . \
             --execution-environment gen2 \
+            --traffic LATEST \
             --memory 6Gi \
             --cpu 2 \
             --no-cpu-throttling \
@@ -111,6 +112,44 @@ jobs:
               GITHUB_CLIENT_SECRET=github-oauth-client-secret:latest,\
               OAUTH_JWT_SIGNING_KEY=OAUTH_JWT_SIGNING_KEY:latest,\
               JQUANTS_ALLOWED_EMAILS=jquants-allowed-emails:latest"
+
+      - name: Verify Cloud Run deployment
+        if: steps.gate.outputs.should_deploy == 'true'
+        run: |
+          set -eu
+
+          # 1. Confirm spec.traffic is latestRevision rather than a pinned revisionName,
+          #    and capture the serving revision in a single gcloud call.
+          #    --format="value(f1,f2)" outputs tab-separated fields on one line.
+          #    If Cloud Run's reconciler re-pins the traffic after this deploy the next
+          #    run will catch it, but we verify now that --traffic LATEST took effect.
+          read -r TRAFFIC_MODE SERVING < <(gcloud run services describe ${{ vars.CLOUDRUN_SERVICE }} \
+            --project ${{ vars.GCP_PROJECT }} \
+            --region ${{ vars.GCP_REGION }} \
+            --format="value(spec.traffic[0].latestRevision,status.traffic[0].revisionName)")
+          if [[ "$TRAFFIC_MODE" != "True" ]]; then
+            echo "::error::spec.traffic is pinned to a specific revision — \
+          --traffic LATEST may have had no effect; check Cloud Run console"
+            exit 1
+          fi
+          echo "Traffic routing: latestRevision=true ✓"
+          echo "Serving revision: $SERVING"
+
+          # 2. Smoke-test the MCP endpoint.
+          #    The endpoint is OAuth-protected, so a successful response is 401.
+          #    Any 5xx or network failure (reported as 000) means the revision is crashing.
+          #    Assumes OAUTH_BASE_URL has no trailing slash (e.g. https://jquants-mcp.aikawa.jp).
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 30 \
+            -X POST \
+            "${{ vars.OAUTH_BASE_URL }}/mcp" || echo "000")
+          echo "MCP endpoint HTTP status: $HTTP_STATUS"
+          if [[ "$HTTP_STATUS" == 5* ]] || [[ "$HTTP_STATUS" == "000" ]]; then
+            echo "::error::MCP endpoint returned HTTP $HTTP_STATUS — \
+          revision $SERVING may be unhealthy; check Cloud Run logs"
+            exit 1
+          fi
+          echo "MCP endpoint smoke test passed: HTTP $HTTP_STATUS ✓"
 
       - name: Log in to GHCR
         if: steps.gate.outputs.should_deploy == 'true'
