@@ -5,6 +5,14 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.30.1](https://github.com/shigechika/jquants-mcp/compare/v0.30.0...v0.30.1) (2026-05-10)
+
+
+### Bug Fixes
+
+* **cd:** add --traffic LATEST to gcloud run deploy ([#313](https://github.com/shigechika/jquants-mcp/issues/313)) ([988d55e](https://github.com/shigechika/jquants-mcp/commit/988d55e5919ba4939ef6dcc8ec08790503769463))
+* **cd:** use update-traffic --to-latest instead of --traffic LATEST ([#315](https://github.com/shigechika/jquants-mcp/issues/315)) ([132329e](https://github.com/shigechika/jquants-mcp/commit/132329e11132a34ba55d7f54b8a616a9df58ea56))
+
 ## [0.30.0](https://github.com/shigechika/jquants-mcp/compare/v0.29.0...v0.30.0) (2026-05-09)
 
 
