@@ -27,6 +27,16 @@ Once jquants-mcp is connected, conversational queries like these just work:
 - "Stocks hitting new year-to-date highs" — `detect_ytd_high_low` screener
 - "What's the code for SoftBank?" — reverse-lookup via `search_equities`
 - "Compare TOPIX vs Nikkei 225 over 1 year" — multi-stock comparison chart
+- "Show me the sector briefing" — advance/decline count, AD ratio, top/bottom 5 sectors by return, and cheapest-PER sector ranking, all in one call
+
+<p align="center">
+  <video controls width="330" preload="metadata" playsinline
+         poster="screenshots/jquants-mcp-demo-briefing-market.png">
+    <source src="screenshots/jquants-mcp-demo-briefing.mp4" type="video/mp4">
+    Your browser does not support inline video. The clip demonstrates the market
+    briefing, sector PER ranking, and individual stock briefing on the Claude iPhone app.
+  </video>
+</p>
 
 ## Why this exists
 
