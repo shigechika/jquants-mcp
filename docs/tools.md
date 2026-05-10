@@ -40,9 +40,9 @@ sector valuation, or single-stock detail — without you having to chain multipl
 
 | Question | Tool |
 |---|---|
-| "今日の相場ブリーフィング" / "Today's market briefing" | `get_market_briefing` |
-| "業種別バリュエーション、割安順で" / "Sector PER/PBR/ROE cheapest first" | `get_sector_briefing` |
-| "485A のブリーフィング" / "485A stock briefing" | `get_stock_briefing` |
+| "Today's market briefing" | `get_market_briefing` |
+| "Sector PER/PBR/ROE — cheapest first" | `get_sector_briefing` |
+| "485A stock briefing" | `get_stock_briefing` |
 
 <p align="center" markdown>
 ![Market briefing on the Claude iPhone app — advance/decline count, AD ratio, top and bottom 5 sectors by daily return](screenshots/jquants-mcp-demo-briefing-market.png){ width="280" }
