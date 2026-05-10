@@ -88,7 +88,6 @@ jobs:
             --service-account ${{ vars.GCP_SERVICE_ACCOUNT }} \
             --source . \
             --execution-environment gen2 \
-            --traffic LATEST \
             --memory 6Gi \
             --cpu 2 \
             --no-cpu-throttling \
@@ -118,18 +117,22 @@ jobs:
         run: |
           set -eu
 
-          # 1. Confirm spec.traffic is latestRevision rather than a pinned revisionName,
-          #    and capture the serving revision in a single gcloud call.
-          #    --format="value(f1,f2)" outputs tab-separated fields on one line.
-          #    If Cloud Run's reconciler re-pins the traffic after this deploy the next
-          #    run will catch it, but we verify now that --traffic LATEST took effect.
+          # 1. Ensure spec.traffic uses latestRevision rather than a pinned revisionName.
+          #    gcloud run deploy does not support --traffic; we call update-traffic separately.
+          #    This also overrides any prior explicit pin left by Cloud Run's reconciler.
+          gcloud run services update-traffic ${{ vars.CLOUDRUN_SERVICE }} \
+            --project ${{ vars.GCP_PROJECT }} \
+            --region ${{ vars.GCP_REGION }} \
+            --to-latest
+
+          # 2. Confirm --to-latest took effect, and capture the serving revision
+          #    in a single gcloud call (--format="value(f1,f2)" → tab-separated).
           read -r TRAFFIC_MODE SERVING < <(gcloud run services describe ${{ vars.CLOUDRUN_SERVICE }} \
             --project ${{ vars.GCP_PROJECT }} \
             --region ${{ vars.GCP_REGION }} \
             --format="value(spec.traffic[0].latestRevision,status.traffic[0].revisionName)")
           if [[ "$TRAFFIC_MODE" != "True" ]]; then
-            echo "::error::spec.traffic is pinned to a specific revision — \
-          --traffic LATEST may have had no effect; check Cloud Run console"
+            echo "::error::spec.traffic is still pinned to a specific revision after update-traffic --to-latest"
             exit 1
           fi
           echo "Traffic routing: latestRevision=true ✓"
