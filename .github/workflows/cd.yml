@@ -118,30 +118,27 @@ jobs:
         run: |
           set -eu
 
-          # 1. Confirm spec.traffic is latestRevision rather than a pinned revisionName.
+          # 1. Confirm spec.traffic is latestRevision rather than a pinned revisionName,
+          #    and capture the serving revision in a single gcloud call.
+          #    --format="value(f1,f2)" outputs tab-separated fields on one line.
           #    If Cloud Run's reconciler re-pins the traffic after this deploy the next
           #    run will catch it, but we verify now that --traffic LATEST took effect.
-          TRAFFIC_MODE=$(gcloud run services describe ${{ vars.CLOUDRUN_SERVICE }} \
+          read -r TRAFFIC_MODE SERVING < <(gcloud run services describe ${{ vars.CLOUDRUN_SERVICE }} \
             --project ${{ vars.GCP_PROJECT }} \
             --region ${{ vars.GCP_REGION }} \
-            --format="value(spec.traffic[0].latestRevision)")
+            --format="value(spec.traffic[0].latestRevision,status.traffic[0].revisionName)")
           if [[ "$TRAFFIC_MODE" != "True" ]]; then
             echo "::error::spec.traffic is pinned to a specific revision — \
           --traffic LATEST may have had no effect; check Cloud Run console"
             exit 1
           fi
           echo "Traffic routing: latestRevision=true ✓"
-
-          # 2. Report which revision is now serving.
-          SERVING=$(gcloud run services describe ${{ vars.CLOUDRUN_SERVICE }} \
-            --project ${{ vars.GCP_PROJECT }} \
-            --region ${{ vars.GCP_REGION }} \
-            --format="value(status.traffic[0].revisionName)")
           echo "Serving revision: $SERVING"
 
-          # 3. Smoke-test the MCP endpoint.
+          # 2. Smoke-test the MCP endpoint.
           #    The endpoint is OAuth-protected, so a successful response is 401.
           #    Any 5xx or network failure (reported as 000) means the revision is crashing.
+          #    Assumes OAUTH_BASE_URL has no trailing slash (e.g. https://jquants-mcp.aikawa.jp).
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 30 \
             -X POST \
