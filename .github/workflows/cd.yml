@@ -88,6 +88,7 @@ jobs:
             --service-account ${{ vars.GCP_SERVICE_ACCOUNT }} \
             --source . \
             --execution-environment gen2 \
+            --traffic LATEST \
             --memory 6Gi \
             --cpu 2 \
             --no-cpu-throttling \
