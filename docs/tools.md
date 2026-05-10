@@ -33,6 +33,29 @@ These all run against the local cache — no API call, no rate limit.
 ![Top turnover ranking on the Claude iPhone app](screenshots/jquants-mcp-demo3.png){ width="280" }
 </p>
 
+## One-call briefings
+
+Ask for a morning brief and Claude returns a composite narrative — market overview,
+sector valuation, or single-stock detail — without you having to chain multiple tools:
+
+| Question | Tool |
+|---|---|
+| "今日の相場ブリーフィング" / "Today's market briefing" | `get_market_briefing` |
+| "業種別バリュエーション、割安順で" / "Sector PER/PBR/ROE cheapest first" | `get_sector_briefing` |
+| "485A のブリーフィング" / "485A stock briefing" | `get_stock_briefing` |
+
+<p align="center" markdown>
+![Market briefing on the Claude iPhone app — advance/decline count, AD ratio, top and bottom 5 sectors by daily return](screenshots/jquants-mcp-demo-briefing-market.png){ width="280" }
+</p>
+
+<p align="center" markdown>
+![Sector briefing — 33 TSE sectors ranked by median PER with a valuation cross-check](screenshots/jquants-mcp-demo-briefing-sector.png){ width="280" }
+</p>
+
+<p align="center" markdown>
+![Stock briefing for PowerX (485A) — price, financials, valuation ratios, and margin trading summary](screenshots/jquants-mcp-demo-briefing-stock.png){ width="280" }
+</p>
+
 ## Per-stock data
 
 Drill into a specific code:

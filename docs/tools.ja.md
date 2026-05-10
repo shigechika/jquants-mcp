@@ -33,6 +33,29 @@ jquants-mcp で Claude に何ができるか、ユースケース別ツアー。
 ![Claude iPhone アプリ上の売買代金ランキング](screenshots/jquants-mcp-demo3.png){ width="280" }
 </p>
 
+## ワンコールブリーフィング
+
+「朝のブリーフィングをお願い」と頼むだけで、Claude が相場概況・業種バリュエーション・
+個別株サマリーをまとめて返します — 複数ツールを連鎖させる必要はありません：
+
+| 質問 | ツール |
+|---|---|
+| 「今日の相場ブリーフィング」 | `get_market_briefing` |
+| 「業種別バリュエーション、割安順で」 | `get_sector_briefing` |
+| 「485A のブリーフィング」 | `get_stock_briefing` |
+
+<p align="center" markdown>
+![Claude iPhone アプリ上の相場ブリーフィング — 値上がり/値下がり数、騰落レシオ、強い/弱い業種トップ5](screenshots/jquants-mcp-demo-briefing-market.png){ width="280" }
+</p>
+
+<p align="center" markdown>
+![業種別ブリーフィング — 東証 33 業種を中央値 PER で割安順にソート、バリュエーション評価付き](screenshots/jquants-mcp-demo-briefing-sector.png){ width="280" }
+</p>
+
+<p align="center" markdown>
+![パワーエックス（485A）株式ブリーフィング — 株価・財務・バリュエーション指標・信用取引残高を一覧](screenshots/jquants-mcp-demo-briefing-stock.png){ width="280" }
+</p>
+
 ## 銘柄ごとのデータ
 
 特定の銘柄を深掘り：
