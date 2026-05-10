@@ -4,7 +4,7 @@
 
 jquants-mcp は日本株向け [MCP (Model Context Protocol)](https://modelcontextprotocol.io/)
 サーバーです。Claude（Desktop / CLI / モバイル）に日本株ならではの
-45 種類のツールとキャッシュ機能を内蔵し、あなたの投資活動を支援します。
+47 種類のツールとキャッシュ機能を内蔵し、あなたの投資活動を支援します。
 
 <p align="center">
   <video controls width="330" preload="metadata" playsinline
