@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.30.2](https://github.com/shigechika/jquants-mcp/compare/v0.30.1...v0.30.2) (2026-05-10)
+
+
+### Documentation
+
+* add one-call briefing demo screenshots and video ([#316](https://github.com/shigechika/jquants-mcp/issues/316)) ([e317f64](https://github.com/shigechika/jquants-mcp/commit/e317f6455f3daf1756d85c73df83da3786008bd8))
+
 ## [0.30.1](https://github.com/shigechika/jquants-mcp/compare/v0.30.0...v0.30.1) (2026-05-10)
 
 
