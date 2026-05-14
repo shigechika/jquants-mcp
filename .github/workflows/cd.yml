@@ -91,6 +91,7 @@ jobs:
             --memory 6Gi \
             --cpu 2 \
             --no-cpu-throttling \
+            --timeout 3600 \
             --clear-volumes --clear-volume-mounts \
             --cpu-boost \
             --set-env-vars "\
