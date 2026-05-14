@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.30.3](https://github.com/shigechika/jquants-mcp/compare/v0.30.2...v0.30.3) (2026-05-14)
+
+
+### Bug Fixes
+
+* **cd:** set Cloud Run request timeout to 3600s ([#318](https://github.com/shigechika/jquants-mcp/issues/318)) ([4fb3c46](https://github.com/shigechika/jquants-mcp/commit/4fb3c463ef005817f76e20cfc9bbc7ca633e83d7))
+
 ## [0.30.2](https://github.com/shigechika/jquants-mcp/compare/v0.30.1...v0.30.2) (2026-05-10)
 
 
