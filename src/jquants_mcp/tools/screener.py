@@ -42,6 +42,7 @@ date-range gating applied by the cache layer.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -89,6 +90,13 @@ _DEFAULT_MIN_PRIOR_SESSIONS = 60
 # Sourced from ``cache.screener_compute`` so the writer-side prune
 # retention and the reader-side rejection cutoff cannot drift apart.
 _CACHE_LOOKBACK_WEEKS = SCREENER_CACHE_LOOKBACK_WEEKS
+
+# Distribution day / follow-through day (IBD method adapted for TOPIX).
+# Rolling σ window matches BB20; session window and min count follow IBD convention.
+_DIST_DAY_SIGMA_WINDOW = 20
+_DIST_DAY_SESSION_WINDOW = 25
+_DIST_DAY_MIN_COUNT = 4
+_DIST_DAY_DEFAULT_SIGMA_MULT = 2.0
 
 
 def _normalize_date(date: str) -> str:
@@ -995,10 +1003,323 @@ def register(
         )
         return result if detail else _summarise_high_low(result)
 
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def detect_distribution_days(
+        date: str | None = None,
+        sigma_multiplier: float = _DIST_DAY_DEFAULT_SIGMA_MULT,
+        window_sessions: int = _DIST_DAY_SESSION_WINDOW,
+        min_dist_days: int = _DIST_DAY_MIN_COUNT,
+    ) -> dict[str, Any]:
+        """Count TOPIX distribution days (institutional selling pressure) in a rolling window.
+
+        Use when the user asks whether the market is "under distribution", showing
+        institutional selling, or whether the current uptrend is at risk.  Also use
+        before confirming a follow-through day — a market already under heavy
+        distribution is less likely to sustain a rally.
+
+        A **distribution day** is a session where TOPIX falls ≥ ``sigma_multiplier`` σ
+        below the 20-session rolling mean of daily returns (z-score ≤ −``sigma_multiplier``).
+        At the default 2.0 σ threshold this fires ~9 times per year, capturing only
+        genuine institutional-selling episodes (SVB crisis, yen carry-trade unwind,
+        Trump tariff shock) rather than routine volatility.  Four or more within
+        ``window_sessions`` (25) sessions signals that the uptrend may be failing.
+
+        Each distribution day entry includes ``volume_confirmed`` — whether total
+        market turnover (``SUM(Va)``) exceeded the prior session, which strengthens
+        the institutional-selling interpretation.
+
+        See also: ``detect_follow_through_day`` — confirms a new uptrend after a bottom.
+
+        [Supported plans] Free / Light / Standard / Premium
+        [Source] indices_bars_daily_topix + equities_bars_daily (no API call)
+        **Data availability:** ~17:15 JST on trading days.
+
+        Args:
+            date: Target date (YYYYMMDD or YYYY-MM-DD). Defaults to the latest
+                cached trading date.
+            sigma_multiplier: z-score threshold for a distribution day (default 2.0).
+                Uses 20-session rolling σ of TOPIX daily returns.
+            window_sessions: Rolling session window for counting distribution days
+                (default 25, IBD convention).
+            min_dist_days: Count at which ``warning`` is set to ``true``
+                (default 4, IBD convention).
+        """
+        cache: CacheStore = get_cache()
+
+        latest_date = cache.get_latest_equities_date()
+        norm_date = _normalize_date(date) if date else (latest_date or "")
+        if not norm_date:
+            return {
+                "error": True,
+                "error_type": "CacheNotReady",
+                "message": "Cache has no data yet.",
+            }
+
+        errors = collect_errors(validate_date(norm_date))
+        if errors:
+            return make_validation_error_response(errors)
+        if latest_date is not None and norm_date > latest_date:
+            return _cache_not_ready_error(norm_date, latest_date)
+        if sigma_multiplier <= 0:
+            return make_validation_error_response(["`sigma_multiplier` must be > 0."])
+        if window_sessions < 5:
+            return make_validation_error_response(["`window_sessions` must be >= 5."])
+
+        # Warm-up (σ) + count window sessions; pad calendar days for holidays.
+        total_sessions = _DIST_DAY_SIGMA_WINDOW + window_sessions
+        start = _calendar_window_start(norm_date, total_sessions)
+
+        topix_series = _load_topix_series(cache, start, norm_date)
+        if len(topix_series) < _DIST_DAY_SIGMA_WINDOW + 2:
+            return {
+                "error": True,
+                "error_type": "InsufficientData",
+                "message": (
+                    f"Insufficient TOPIX data for {norm_date}. "
+                    f"Need at least {_DIST_DAY_SIGMA_WINDOW + 2} sessions."
+                ),
+            }
+
+        zscore_series = _compute_topix_zscore_series(topix_series)
+        window = zscore_series[-window_sessions:]
+
+        if not window or window[-1][0] != norm_date:
+            latest = zscore_series[-1][0] if zscore_series else None
+            return _cache_not_ready_error(norm_date, latest)
+
+        va_by_date = cache.get_market_va_by_date(start, norm_date)
+        sorted_va_dates = sorted(va_by_date)
+
+        dist_days: list[dict[str, Any]] = []
+        for d, pct, z, sigma, close in window:
+            if z > -sigma_multiplier:
+                continue
+            va_today = va_by_date.get(d)
+            prev_va_dates = [pd for pd in sorted_va_dates if pd < d]
+            va_prev = va_by_date.get(prev_va_dates[-1]) if prev_va_dates else None
+            vol_confirmed = va_today is not None and va_prev is not None and va_today > va_prev
+            dist_days.append(
+                {
+                    "date": d,
+                    "topix_close": round(close, 2),
+                    "topix_change_pct": round(pct, 2),
+                    "z_score": round(z, 2),
+                    "sigma": round(sigma, 4),
+                    "volume_confirmed": vol_confirmed,
+                    "market_va": int(va_today) if va_today is not None else None,
+                }
+            )
+
+        count = len(dist_days)
+        return {
+            "date": norm_date,
+            "topix_close": round(window[-1][4], 2),
+            "window_sessions": window_sessions,
+            "sigma_window": _DIST_DAY_SIGMA_WINDOW,
+            "sigma_multiplier": sigma_multiplier,
+            "distribution_count": count,
+            "warning": count >= min_dist_days,
+            "min_dist_days": min_dist_days,
+            "distribution_days": dist_days,
+        }
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def detect_follow_through_day(
+        rally_start: str,
+        date: str | None = None,
+        sigma_multiplier: float = _DIST_DAY_DEFAULT_SIGMA_MULT,
+    ) -> dict[str, Any]:
+        """Check whether a follow-through day (フォロースルーデイ) confirms a new uptrend.
+
+        Use when the user asks whether a recent market bottom or bounce has been
+        confirmed, or whether the current rally attempt "is for real".
+
+        A **follow-through day** (IBD method) requires all three conditions:
+        1. TOPIX rises ≥ ``sigma_multiplier`` σ above the 20-session rolling mean
+           (z-score ≥ +``sigma_multiplier``).
+        2. Occurs on session **4 or later** from ``rally_start`` (the reversal/low day).
+           Sessions 1–3 are too close to the bottom to be reliable.
+        3. Total market turnover (``SUM(Va)``) is higher than the prior session.
+
+        To use: identify the low or reversal day as ``rally_start``, then call with
+        each subsequent date until a confirmed follow-through (or distribution) occurs.
+
+        See also: ``detect_distribution_days`` — run before confirming a rally to
+        check whether the market is already under distribution pressure.
+
+        [Supported plans] Free / Light / Standard / Premium
+        [Source] indices_bars_daily_topix + equities_bars_daily (no API call)
+        **Data availability:** ~17:15 JST on trading days.
+
+        Args:
+            rally_start: First day of the rally attempt — the low or reversal day
+                (YYYYMMDD or YYYY-MM-DD).  This counts as session 1.
+            date: Date to check for the follow-through signal
+                (YYYYMMDD or YYYY-MM-DD). Defaults to the latest cached date.
+            sigma_multiplier: z-score threshold for the price condition
+                (default 2.0, symmetric with ``detect_distribution_days``).
+        """
+        cache: CacheStore = get_cache()
+
+        norm_rally_start = _normalize_date(rally_start)
+        norm_date = _normalize_date(date) if date else (cache.get_latest_equities_date() or "")
+        if not norm_date:
+            return {
+                "error": True,
+                "error_type": "CacheNotReady",
+                "message": "Cache has no data yet.",
+            }
+
+        errors = collect_errors(validate_date(norm_rally_start), validate_date(norm_date))
+        if errors:
+            return make_validation_error_response(errors)
+        if norm_rally_start > norm_date:
+            return make_validation_error_response(["`rally_start` must be on or before `date`."])
+        if sigma_multiplier <= 0:
+            return make_validation_error_response(["`sigma_multiplier` must be > 0."])
+
+        # Pad calendar window so σ can be computed before rally_start.
+        pre_start = _calendar_window_start(norm_rally_start, _DIST_DAY_SIGMA_WINDOW)
+        topix_series = _load_topix_series(cache, pre_start, norm_date)
+
+        if len(topix_series) < _DIST_DAY_SIGMA_WINDOW + 2:
+            return {
+                "error": True,
+                "error_type": "InsufficientData",
+                "message": (
+                    f"Insufficient TOPIX data. Need at least {_DIST_DAY_SIGMA_WINDOW + 2} sessions."
+                ),
+            }
+
+        zscore_series = _compute_topix_zscore_series(topix_series)
+        rally_sessions = [
+            (d, pct, z, s, c) for d, pct, z, s, c in zscore_series if d >= norm_rally_start
+        ]
+
+        if not rally_sessions:
+            return {
+                "error": True,
+                "error_type": "InsufficientData",
+                "message": (
+                    f"No TOPIX sessions found from rally_start={norm_rally_start} to {norm_date}."
+                ),
+            }
+
+        target = None
+        session_number = None
+        for i, row in enumerate(rally_sessions):
+            if row[0] == norm_date:
+                target = row
+                session_number = i + 1
+                break
+
+        if target is None:
+            latest = rally_sessions[-1][0]
+            return _cache_not_ready_error(norm_date, latest)
+
+        d, pct, z, sigma, close = target
+
+        va_by_date = cache.get_market_va_by_date(pre_start, norm_date)
+        va_today = va_by_date.get(norm_date)
+        prev_va_dates = [pd for pd in sorted(va_by_date) if pd < norm_date]
+        va_prev_date = prev_va_dates[-1] if prev_va_dates else None
+        va_prev = va_by_date.get(va_prev_date) if va_prev_date else None
+        vol_confirmed = va_today is not None and va_prev is not None and va_today > va_prev
+
+        rally_start_close: float | None = None
+        for rd, rc in topix_series:
+            if rd == norm_rally_start:
+                rally_start_close = round(rc, 2)
+                break
+
+        price_confirmed = z >= sigma_multiplier
+        day_confirmed = session_number >= 4
+        confirmed = price_confirmed and day_confirmed and vol_confirmed
+
+        reasons: list[str] = []
+        if not day_confirmed:
+            reasons.append(
+                f"Session {session_number} is before day 4 (minimum for FTD confirmation)."
+            )
+        if not price_confirmed:
+            reasons.append(f"TOPIX z-score {z:.2f} < +{sigma_multiplier}σ threshold.")
+        if not vol_confirmed:
+            reasons.append("Market turnover did not increase vs prior session.")
+
+        return {
+            "date": norm_date,
+            "rally_start": norm_rally_start,
+            "rally_start_topix": rally_start_close,
+            "session_number": session_number,
+            "confirmed": confirmed,
+            "reason": " ".join(reasons) if reasons else "All conditions met.",
+            "topix_close": round(close, 2),
+            "topix_change_pct": round(pct, 2),
+            "z_score": round(z, 2),
+            "sigma": round(sigma, 4),
+            "sigma_multiplier": sigma_multiplier,
+            "price_confirmed": price_confirmed,
+            "day_confirmed": day_confirmed,
+            "volume_confirmed": vol_confirmed,
+            "market_va_today": int(va_today) if va_today is not None else None,
+            "market_va_prev": int(va_prev) if va_prev is not None else None,
+        }
+
 
 # ----------------------------------------------------------------
 # helpers
 # ----------------------------------------------------------------
+
+
+def _load_topix_series(
+    cache: CacheStore,
+    date_from: str,
+    date_to: str,
+) -> list[tuple[str, float]]:
+    """Return (date, close) pairs sorted ascending for TOPIX.
+
+    Reads ``indices_bars_daily_topix`` via the cache layer; ``date_from``
+    must be padded by the caller to cover the σ warm-up window.
+    """
+    rows = cache.get_rows("indices_bars_daily_topix", {}, date_from=date_from, date_to=date_to)
+    series: list[tuple[str, float]] = []
+    for row in rows:
+        d = str(row.get("Date") or "")[:10]
+        c = _as_float(row.get("C") or row.get("Close"))
+        if d and c is not None:
+            series.append((d, c))
+    series.sort()
+    return series
+
+
+def _compute_topix_zscore_series(
+    topix_series: list[tuple[str, float]],
+    sigma_window: int = _DIST_DAY_SIGMA_WINDOW,
+) -> list[tuple[str, float, float, float, float]]:
+    """Compute rolling z-scores from a TOPIX close series.
+
+    Returns a list of ``(date, pct_change, z_score, sigma, close)`` tuples
+    for each session once the ``sigma_window``-session window is fully
+    populated.  Sessions before the warm-up window are omitted.
+    """
+    rets: list[tuple[str, float, float]] = []
+    for i in range(1, len(topix_series)):
+        prev_c = topix_series[i - 1][1]
+        curr_d, curr_c = topix_series[i]
+        if prev_c > 0:
+            pct = (curr_c - prev_c) / prev_c * 100
+            rets.append((curr_d, pct, curr_c))
+
+    results: list[tuple[str, float, float, float, float]] = []
+    for i in range(sigma_window, len(rets)):
+        window_rets = [p for _, p, _ in rets[i - sigma_window : i]]
+        mean = sum(window_rets) / sigma_window
+        variance = sum((r - mean) ** 2 for r in window_rets) / (sigma_window - 1)
+        sigma = math.sqrt(variance) if variance > 0 else 0.0
+        d, pct, close = rets[i]
+        z = (pct - mean) / sigma if sigma > 0 else 0.0
+        results.append((d, pct, z, sigma, close))
+    return results
 
 
 def _as_int(v: Any) -> int | None:
