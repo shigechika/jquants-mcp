@@ -67,11 +67,17 @@ Drill into a specific code:
 | "8053 Sumitomo Corp earnings summary" | `get_fins_summary` |
 | "9984 SoftBank dividend history" | `get_fins_dividend` |
 | "285A (Kioxia) — 3-month candlestick chart" | `render_candlestick` |
+| "7203 SMA25 above or below? RSI?" | `get_technical_indicators` |
 | "What's the code for Sumitomo Corp?" | `search_equities` |
 
 `render_candlestick` defaults to a 91-day window with `volume + sma5 + sma25`
 overlays. SMAs are warmed up from earlier bars so the moving averages are
 fully populated from the first displayed candle.
+
+`get_technical_indicators` returns SMA (5/25/75), Bollinger Bands (bb20), and
+RSI (rsi14) as numeric values — useful when you want to ask "is the close above
+SMA25?" or "is RSI in overbought territory?" without rendering a chart.
+All values use split-adjusted close so results are consistent across stock splits.
 
 <p align="center" markdown>
 ![Quarterly financial summary for the five major Japanese trading houses](screenshots/jquants-mcp-demo6.png){ width="280" }
