@@ -160,6 +160,7 @@ def compute_high_low_signals(
             close_vs_vwap = "above" if raw_close > vwap else "below"
 
         # volume_ratio = today Vo / mean(last _VOLUME_BASELINE_SESSIONS prior sessions)
+        # volume_ratio_sessions reports the actual baseline used (< 20 near year-start)
         baseline = prior[-_VOLUME_BASELINE_SESSIONS:]
         prior_vols = [_as_float(s.get("Vo")) for s in baseline]
         prior_vols = [v for v in prior_vols if v is not None and v > 0]
@@ -185,6 +186,7 @@ def compute_high_low_signals(
                 "new_low_close": new_low_close,
                 "close_vs_vwap": close_vs_vwap,
                 "volume_ratio": volume_ratio,
+                "volume_ratio_sessions": len(prior_vols),
             }
         )
     return {"count": len(matches), "mode": mode_label, "data": matches}

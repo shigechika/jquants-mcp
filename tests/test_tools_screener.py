@@ -395,6 +395,8 @@ class TestDetect52wHighLow:
         assert r["close_vs_vwap"] == "above"
         # volume_ratio: today Vo=2000, prior-20 avg=1000 → 2.0
         assert r["volume_ratio"] == pytest.approx(2.0)
+        # volume_ratio_sessions: 25 prior bars → baseline = last 20 → all 20 have Vo>0
+        assert r["volume_ratio_sessions"] == 20
 
     async def test_close_below_vwap(self, mock_env):
         """close_vs_vwap = 'below' when close < Va/Vo."""
@@ -492,6 +494,41 @@ class TestDetectYtdHighLow:
             "detect_ytd_high_low", date="2026-01-05", code="27800", min_prior_sessions=1
         )
         assert result["count"] == 0
+
+    async def test_new_fields_present(self, mock_env):
+        """AdjO, close_vs_vwap, volume_ratio, volume_ratio_sessions appear in ytd output."""
+        rows = []
+        for i in range(20):
+            d = (datetime(2026, 1, 5) + timedelta(days=i * 5)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, o=98.0, c=100.0, vo=1_000.0, va=100_000.0))
+        final_date = "2026-04-26"
+        rows.append(
+            _bar(
+                "27800",
+                final_date,
+                o=160.0,
+                h=210.0,
+                low=155.0,
+                c=200.0,
+                vo=2_000.0,
+                va=300_000.0,  # VWAP=150; C=200 > 150 → above
+            )
+        )
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "detect_ytd_high_low",
+            date=final_date,
+            code="27800",
+            min_prior_sessions=1,
+            detail=True,
+        )
+        assert result["count"] == 1
+        r = result["data"][0]
+        assert r["AdjO"] == pytest.approx(160.0)
+        assert r["close_vs_vwap"] == "above"
+        assert r["volume_ratio"] == pytest.approx(2.0)
+        assert r["volume_ratio_sessions"] == 20
 
     async def test_validation_error(self, mock_env):
         result = await _call("detect_ytd_high_low", date="2026/01/01")
