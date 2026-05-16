@@ -1,9 +1,8 @@
 """Screener tools for jquants-mcp.
 
-All five tools operate on the ``equities_bars_daily`` Tier 1 cache.
-Most are pure-Python (stdlib only, no numpy/pandas) and require no API
-calls. Two per-code tools fall back to the J-Quants API when the
-requested code/date is absent from the local cache:
+Most tools operate on the ``equities_bars_daily`` Tier 1 cache.
+Two per-code tools fall back to the J-Quants API when the requested
+code/date is absent from the local cache:
 
 - ``compare_close_vs_vwap`` — always per-code; fetches the requested
   date range from the API when not cached, then stores the result.
@@ -28,15 +27,22 @@ Exposed tools:
 - ``detect_52w_high_low_range`` / ``detect_ytd_high_low_range`` —
   multi-date variants of the high/low detectors. Use these when
   scanning more than one date to avoid parallel-dispatch timeouts.
+- ``detect_distribution_days`` — count TOPIX distribution days (IBD method)
+  within a rolling 25-session window using a 20-session rolling σ threshold.
+  Uses ``indices_bars_daily_topix`` for price and ``equities_bars_daily``
+  Va aggregate for volume.
+- ``detect_follow_through_day`` — check whether a TOPIX follow-through day
+  (day 4+ of a rally attempt, z ≥ +σ threshold, volume increase) has
+  occurred from a specified ``rally_start`` date.
 
 The 52w/YTD detectors are also backed by the ``screener_results``
 pre-compute cache (default-params cross-sectional outputs are
 populated nightly by ``scripts/daily_fetch.py`` on the self-hosted publisher), so
 default-params calls return in sub-second.
 
-Plan note: the underlying table is available from the Free plan onwards,
-so these tools impose no extra plan restriction beyond the normal
-date-range gating applied by the cache layer.
+Plan note: equity screener tools are available from the Free plan onwards.
+The distribution-day / follow-through-day tools use TOPIX data, which is
+subject to the same plan-based date gating as other cache tables.
 """
 
 from __future__ import annotations
@@ -1070,13 +1076,17 @@ def register(
         start = _calendar_window_start(norm_date, total_sessions)
 
         topix_series = _load_topix_series(cache, start, norm_date)
-        if len(topix_series) < _DIST_DAY_SIGMA_WINDOW + 2:
+        # Minimum sessions: sigma_window (warm-up) + window_sessions + 1 so that
+        # zscore_series has at least window_sessions entries covering norm_date.
+        min_sessions = _DIST_DAY_SIGMA_WINDOW + window_sessions + 1
+        if len(topix_series) < min_sessions:
             return {
                 "error": True,
                 "error_type": "InsufficientData",
                 "message": (
                     f"Insufficient TOPIX data for {norm_date}. "
-                    f"Need at least {_DIST_DAY_SIGMA_WINDOW + 2} sessions."
+                    f"Need at least {min_sessions} sessions "
+                    f"({_DIST_DAY_SIGMA_WINDOW} warm-up + {window_sessions} window)."
                 ),
             }
 
@@ -1161,8 +1171,9 @@ def register(
         """
         cache: CacheStore = get_cache()
 
+        latest_date = cache.get_latest_equities_date()
         norm_rally_start = _normalize_date(rally_start)
-        norm_date = _normalize_date(date) if date else (cache.get_latest_equities_date() or "")
+        norm_date = _normalize_date(date) if date else (latest_date or "")
         if not norm_date:
             return {
                 "error": True,
@@ -1173,6 +1184,8 @@ def register(
         errors = collect_errors(validate_date(norm_rally_start), validate_date(norm_date))
         if errors:
             return make_validation_error_response(errors)
+        if latest_date is not None and norm_date > latest_date:
+            return _cache_not_ready_error(norm_date, latest_date)
         if norm_rally_start > norm_date:
             return make_validation_error_response(["`rally_start` must be on or before `date`."])
         if sigma_multiplier <= 0:
@@ -1182,6 +1195,7 @@ def register(
         pre_start = _calendar_window_start(norm_rally_start, _DIST_DAY_SIGMA_WINDOW)
         topix_series = _load_topix_series(cache, pre_start, norm_date)
 
+        # Need sigma_window sessions for warm-up + at least 1 for z-score computation.
         if len(topix_series) < _DIST_DAY_SIGMA_WINDOW + 2:
             return {
                 "error": True,

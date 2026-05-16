@@ -1350,6 +1350,10 @@ class CacheStore:
         Used by distribution-day / follow-through-day detection as a
         volume proxy for the broad market.
 
+        Note: intentionally bypasses ``_build_where_clause`` / plan-based date
+        restrictions — only a numeric aggregate is returned, no individual stock
+        data is exposed.  Callers are responsible for bounding date ranges.
+
         Args:
             date_from: Start date (YYYY-MM-DD, inclusive).
             date_to:   End date (YYYY-MM-DD, inclusive).

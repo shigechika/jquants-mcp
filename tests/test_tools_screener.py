@@ -1690,7 +1690,7 @@ class TestDetectDistributionDays:
         assert result.get("error_type") == "CacheNotReady"
 
     async def test_insufficient_data(self, mock_env):
-        """Fewer than 22 sessions → InsufficientData."""
+        """Fewer than sigma_window + window_sessions + 1 sessions → InsufficientData."""
         topix_rows = _build_topix_series(n_warmup=5, window_data=[0.0] * 3)
         _seed_topix(mock_env["cache"], topix_rows)
         target = topix_rows[-1]["Date"][:10]

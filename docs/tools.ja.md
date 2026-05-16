@@ -93,6 +93,17 @@ RSI のチャート描画は現時点で未対応です — RSI 数値は `get_t
 | 「ストップ高/安銘柄」（引け / 寄らずの内訳付き） | `detect_price_limit` |
 | 「20 日平均の 2 倍以上の出来高」 | `detect_volume_surge` |
 | 「VWAP より上で引けた銘柄」 | `compare_close_vs_vwap` |
+| 「相場はディストリビューション（機関投資家の売り圧力）？」 | `detect_distribution_days` |
+| 「この反騰はフォロースルーデイが出た？」 | `detect_follow_through_day` |
+
+`detect_distribution_days` は TOPIX を市場指標、東証全銘柄の売買代金合計（`SUM(Va)`）を出来高代替として使用します。
+TOPIX 日次リターンが 20 日ローリング平均から 2.0σ 以上下落した日をディストリビューションデイとし、
+25 日間に 4 日以上でトレンド悪化警告を発します（IBD メソッドを TOPIX 向けに校正 — 2021〜2026 年のデータで年約 9 回発火）。
+各エントリには `volume_confirmed`（当日の市場売買代金が前日を上回ったか）が含まれます。
+
+`detect_follow_through_day` は新しい上昇トレンドを確認します。`rally_start`（安値・反転日 = セッション 1）から
+4 日目以降に TOPIX が 2.0σ 以上上昇し、かつ市場出来高が前日を上回った日がフォロースルーデイです。
+`rally_start` に反転日を渡し、シグナルが出るまで各日付でチェックしてください。
 
 `detect_ytd_high_low` と `detect_52w_high_low` には 4 つのフィールドが追加されています：
 `AdjO`（分割調整済み始値 — 陽線・陰線の判定用）、`close_vs_vwap`（`"above"` / `"below"` —
