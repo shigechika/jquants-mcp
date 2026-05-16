@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.30.4](https://github.com/shigechika/jquants-mcp/compare/v0.30.3...v0.30.4) (2026-05-16)
+
+
+### Bug Fixes
+
+* **screener:** add API fallback for per-code cache misses ([#320](https://github.com/shigechika/jquants-mcp/issues/320)) ([bd03370](https://github.com/shigechika/jquants-mcp/commit/bd033705e83fed6ea59508cc3aebc587390ca780))
+
 ## [0.30.3](https://github.com/shigechika/jquants-mcp/compare/v0.30.2...v0.30.3) (2026-05-14)
 
 
