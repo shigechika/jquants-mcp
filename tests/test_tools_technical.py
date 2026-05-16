@@ -295,6 +295,20 @@ class TestGetTechnicalIndicators:
         assert result["count"] == 1
         assert result["data"][0]["sma5"] is not None
 
+    async def test_yyyymmdd_date_format(self, mock_env):
+        """YYYYMMDD date format is normalised and treated identically to YYYY-MM-DD."""
+        rows = self._make_rows("27800", n=30)
+        _seed(mock_env["cache"], rows)
+        result = await _call(
+            "get_technical_indicators",
+            code="27800",
+            date="20250204",
+            indicators=["sma5"],
+        )
+        assert result["count"] == 1
+        assert result["data"][0]["Date"] == "2025-02-04"
+        assert result["data"][0]["sma5"] == pytest.approx(127.0)
+
     async def test_warmup_rows_not_in_output(self, mock_env):
         """Rows fetched for warmup are not included in the returned data."""
         rows = self._make_rows("27800", n=30)

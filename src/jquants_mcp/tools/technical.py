@@ -145,14 +145,15 @@ def register(
             display_end = _normalize_date(date_to) if date_to else None
 
         # Guard against future dates
-        if display_end is not None:
+        check_date = display_end or display_start
+        if check_date is not None:
             latest_date = cache.get_latest_equities_date()
-            if latest_date is not None and display_end > latest_date:
+            if latest_date is not None and check_date > latest_date:
                 return {
                     "error": True,
                     "error_type": "CacheNotReady",
                     "message": (
-                        f"Data for {display_end} not yet available. "
+                        f"Data for {check_date} not yet available. "
                         f"Latest cache date: {latest_date}."
                     ),
                     "hint": "Try again after 17:15 JST on trading days.",
@@ -162,7 +163,7 @@ def register(
         max_period = max(_INDICATORS[i] for i in ind_list)
         warmup_start = _calendar_warmup_start(
             display_start or display_end or datetime.today().strftime("%Y-%m-%d"),
-            max_period * 2,
+            max_period,
         )
 
         try:
