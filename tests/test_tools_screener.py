@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -162,6 +162,19 @@ class TestCompareCloseVsVwap:
         result = await _call("compare_close_vs_vwap", code="27800")
         assert result.get("error") is True
         assert result.get("error_type") == "ValidationError"
+
+    async def test_api_fallback_on_cache_miss(self, mock_env):
+        """Empty cache triggers API fetch; result is computed from the fetched row."""
+        api_row = _bar("27800", "2026-04-01", c=110, vo=1000, va=100_000)
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=[api_row]
+        ) as mock_api:
+            result = await _call("compare_close_vs_vwap", code="27800", date="2026-04-01")
+        mock_api.assert_called_once()
+        assert result["count"] == 1
+        row = result["data"][0]
+        assert row["vwap"] == pytest.approx(100.0)
+        assert row["close_above_vwap"] is True
 
 
 class TestDetect52wHighLow:
@@ -462,6 +475,33 @@ class TestDetectVolumeSurge:
         result = await _call("detect_volume_surge", date="2026-04-01", baseline_days=1)
         assert result.get("error") is True
         assert result.get("error_type") == "ValidationError"
+
+    async def test_api_fallback_per_code_on_cache_miss(self, mock_env):
+        """When code is given and cache is empty, API is called and surge is detected."""
+        api_rows = [
+            _bar("27800", "2026-03-30", vo=500),
+            _bar("27800", "2026-03-31", vo=600),
+            _bar("27800", "2026-04-01", vo=3000),  # surge: 3000 / avg(550) ≈ 5.45×
+        ]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=api_rows
+        ) as mock_api:
+            result = await _call(
+                "detect_volume_surge",
+                code="27800",
+                date="2026-04-01",
+                multiplier=2.0,
+                baseline_days=2,
+            )
+        mock_api.assert_called_once()
+        assert result["count"] == 1
+
+    async def test_no_api_fallback_for_cross_sectional(self, mock_env):
+        """Without code, cross-sectional queries do NOT call the API on cache miss."""
+        with patch.object(mock_env["client"], "get_all_pages", new_callable=AsyncMock) as mock_api:
+            result = await _call("detect_volume_surge", date="2026-04-01")
+        mock_api.assert_not_called()
+        assert result["count"] == 0
 
 
 # ----------------------------------------------------------------

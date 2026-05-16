@@ -1,8 +1,14 @@
 """Screener tools for jquants-mcp.
 
-All five tools operate on the ``equities_bars_daily`` Tier 1 cache and
-require no extra API calls. They are pure Python (stdlib only) — no
-numpy/pandas.
+All five tools operate on the ``equities_bars_daily`` Tier 1 cache.
+Most are pure-Python (stdlib only, no numpy/pandas) and require no API
+calls. Two per-code tools fall back to the J-Quants API when the
+requested code/date is absent from the local cache:
+
+- ``compare_close_vs_vwap`` — always per-code; fetches the requested
+  date range from the API when not cached, then stores the result.
+- ``detect_volume_surge`` — when a specific ``code`` is given; fetches
+  the baseline window from the API when not cached.
 
 Exposed tools:
 
@@ -52,7 +58,7 @@ from ..exceptions import (
     UserNotConfiguredError,
     format_api_error,
 )
-from ..tool_annotations import READ_ONLY_CACHE
+from ..tool_annotations import READ_ONLY_API, READ_ONLY_CACHE
 from ..validators import (
     collect_errors,
     display_code,
@@ -160,7 +166,7 @@ def _calendar_window_start(end_date: str, trading_days: int) -> str:
 
 def register(
     mcp: FastMCP,
-    get_client: Any,  # noqa: ARG001 — kept for signature parity with other tool modules
+    get_client: Any,
     get_cache: Any,
 ) -> None:
     """Register screener tools on the MCP server."""
@@ -261,7 +267,7 @@ def register(
         full = {"count": len(matches), "data": matches}
         return full if detail else _summarise_price_limit(full)
 
-    @mcp.tool(annotations=READ_ONLY_CACHE)
+    @mcp.tool(annotations=READ_ONLY_API)
     async def compare_close_vs_vwap(
         code: str,
         date: str | None = None,
@@ -329,6 +335,32 @@ def register(
                 date_from=start,
                 date_to=end,
             )
+            # API fallback: Cloud Run cache may lag by a few trading days
+            # after the last GCS export. Fetch and store for this code when absent.
+            if not rows:
+                client = await get_client()
+                params: dict[str, Any] = {"code": code}
+                if date:
+                    params["date"] = date
+                else:
+                    if start:
+                        params["from"] = start
+                    if end:
+                        params["to"] = end
+                api_data = await client.get_all_pages("/equities/bars/daily", params)
+                if api_data:
+                    cache.put_rows(
+                        "equities_bars_daily",
+                        api_data,
+                        key_columns=["Code", "Date"],
+                        adj_factor_key="AdjFactor",
+                    )
+                    rows = cache.get_rows(
+                        "equities_bars_daily",
+                        key_filter={"code": norm_code},
+                        date_from=start,
+                        date_to=end,
+                    )
         except (
             APIError,
             InvalidAPIKeyError,
@@ -595,7 +627,7 @@ def register(
         )
         return result if detail else _summarise_high_low(result)
 
-    @mcp.tool(annotations=READ_ONLY_CACHE)
+    @mcp.tool(annotations=READ_ONLY_API)
     async def detect_volume_surge(
         date: str,
         multiplier: float = 2.0,
@@ -666,6 +698,26 @@ def register(
                 date_from=start,
                 date_to=norm_date,
             )
+            # API fallback for per-code queries when the code is absent from cache
+            if not rows and code:
+                client = await get_client()
+                api_data = await client.get_all_pages(
+                    "/equities/bars/daily",
+                    {"code": code, "from": start, "to": norm_date},
+                )
+                if api_data:
+                    cache.put_rows(
+                        "equities_bars_daily",
+                        api_data,
+                        key_columns=["Code", "Date"],
+                        adj_factor_key="AdjFactor",
+                    )
+                    rows = cache.get_rows(
+                        "equities_bars_daily",
+                        key_filter=key_filter,
+                        date_from=start,
+                        date_to=norm_date,
+                    )
         except (
             APIError,
             InvalidAPIKeyError,

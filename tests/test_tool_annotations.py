@@ -63,12 +63,12 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     "get_sector_performance": READ_ONLY_CACHE,
     "get_dividend_yield_ranking": READ_ONLY_CACHE,
     "get_market_briefing": READ_ONLY_CACHE,
-    # tools/screener.py — cache only, no API
+    # tools/screener.py
     "detect_price_limit": READ_ONLY_CACHE,
-    "compare_close_vs_vwap": READ_ONLY_CACHE,
+    "compare_close_vs_vwap": READ_ONLY_API,  # has API fallback for per-code cache miss
     "detect_52w_high_low": READ_ONLY_CACHE,
     "detect_ytd_high_low": READ_ONLY_CACHE,
-    "detect_volume_surge": READ_ONLY_CACHE,
+    "detect_volume_surge": READ_ONLY_API,  # has API fallback when code is given
     "detect_52w_high_low_range": READ_ONLY_CACHE,
     "detect_ytd_high_low_range": READ_ONLY_CACHE,
     # tools/summary.py — cache only, no API
