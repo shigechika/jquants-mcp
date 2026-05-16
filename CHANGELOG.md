@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.31.0](https://github.com/shigechika/jquants-mcp/compare/v0.30.4...v0.31.0) (2026-05-16)
+
+
+### Features
+
+* **technical:** add get_technical_indicators tool (SMA / BB / RSI) ([#322](https://github.com/shigechika/jquants-mcp/issues/322)) ([b2dd454](https://github.com/shigechika/jquants-mcp/commit/b2dd4542af28aedaf3a896315515671b70bd5cbf))
+
 ## [0.30.4](https://github.com/shigechika/jquants-mcp/compare/v0.30.3...v0.30.4) (2026-05-16)
 
 
