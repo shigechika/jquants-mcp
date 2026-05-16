@@ -67,10 +67,15 @@ jquants-mcp で Claude に何ができるか、ユースケース別ツアー。
 | 「8053 住友商事の決算」 | `get_fins_summary` |
 | 「9984 SBG の配当履歴」 | `get_fins_dividend` |
 | 「285A（キオクシア）のチャートを 3 か月」 | `render_candlestick` |
+| 「7203 は SMA25 の上？RSI は？」 | `get_technical_indicators` |
 | 「住友商事のコードを教えて」 | `search_equities` |
 
 `render_candlestick` は省略時 91 日窓 + `volume + sma5 + sma25` がデフォルト。
 SMA は前倒しで計算されているので、表示開始バーから完全に温まった状態で描画されます。
+
+`get_technical_indicators` は SMA（5/25/75）・ボリンジャーバンド（bb20）・RSI（rsi14）を数値で返します。
+「終値は SMA25 を上抜けたか？」「RSI は過熱していないか？」をチャートを描かずに確認できます。
+すべての値は分割調整済み終値（AdjC）を使用します。
 
 <p align="center" markdown>
 ![5 大商社の四半期決算ダイジェスト](screenshots/jquants-mcp-demo6.png){ width="280" }

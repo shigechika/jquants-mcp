@@ -71,6 +71,8 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     "detect_volume_surge": READ_ONLY_API,  # has API fallback when code is given
     "detect_52w_high_low_range": READ_ONLY_CACHE,
     "detect_ytd_high_low_range": READ_ONLY_CACHE,
+    # tools/technical.py — API fallback on cache miss
+    "get_technical_indicators": READ_ONLY_API,
     # tools/summary.py — cache only, no API
     "get_stock_briefing": READ_ONLY_CACHE,
     # tools/valuation.py — cache only, no API
