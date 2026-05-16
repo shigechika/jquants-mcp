@@ -58,7 +58,7 @@ from ..exceptions import (
     UserNotConfiguredError,
     format_api_error,
 )
-from ..tool_annotations import READ_ONLY_CACHE
+from ..tool_annotations import READ_ONLY_API, READ_ONLY_CACHE
 from ..validators import (
     collect_errors,
     display_code,
@@ -267,7 +267,7 @@ def register(
         full = {"count": len(matches), "data": matches}
         return full if detail else _summarise_price_limit(full)
 
-    @mcp.tool(annotations=READ_ONLY_CACHE)
+    @mcp.tool(annotations=READ_ONLY_API)
     async def compare_close_vs_vwap(
         code: str,
         date: str | None = None,
@@ -338,7 +338,7 @@ def register(
             # API fallback: Cloud Run cache may lag by a few trading days
             # after the last GCS export. Fetch and store for this code when absent.
             if not rows:
-                client = get_client()
+                client = await get_client()
                 params: dict[str, Any] = {"code": code}
                 if date:
                     params["date"] = date
@@ -627,7 +627,7 @@ def register(
         )
         return result if detail else _summarise_high_low(result)
 
-    @mcp.tool(annotations=READ_ONLY_CACHE)
+    @mcp.tool(annotations=READ_ONLY_API)
     async def detect_volume_surge(
         date: str,
         multiplier: float = 2.0,
@@ -700,7 +700,7 @@ def register(
             )
             # API fallback for per-code queries when the code is absent from cache
             if not rows and code:
-                client = get_client()
+                client = await get_client()
                 api_data = await client.get_all_pages(
                     "/equities/bars/daily",
                     {"code": code, "from": start, "to": norm_date},
