@@ -1053,6 +1053,11 @@ def register(
             - highlights: {ytd_new_highs, ytd_new_lows, volume_surges,
                 limit_high_close, limit_high_touched, limit_low_close,
                 limit_low_touched}
+            - trend_signals: {distribution, follow_through} — distribution day
+                count/warning (null when TOPIX data insufficient) and
+                follow-through day status with auto-detected rally_start
+                (null when TOPIX unavailable; {"status": "no_rally_attempt"}
+                when TOPIX has not recovered ≥ 1% from the detected bottom)
         """
         if sector_type not in ("s33", "s17"):
             return make_validation_error_response(["sector_type must be 's33' or 's17'"])
@@ -1195,6 +1200,9 @@ def register(
         # 6. TOPIX change percentage — best effort, fail-soft to None.
         topix_change_pct = await _topix_change_pct_best_effort(_call_json, norm_date)
 
+        # 7. Trend signals: distribution days + follow-through day, both fail-soft.
+        trend_signals = await _trend_signals_best_effort(_call_json, norm_date)
+
         result: dict[str, Any] = {
             "date": today_date,
             "previous_date": prev_date,
@@ -1224,6 +1232,7 @@ def register(
                 "limit_low_close": plimit.get("limit_low_close", 0),
                 "limit_low_touched": plimit.get("limit_low_touched", 0),
             },
+            "trend_signals": trend_signals,
         }
 
         # 1h response cache so reloading "今日の相場" within the hour is instant.
@@ -1258,3 +1267,89 @@ async def _topix_change_pct_best_effort(call_json, norm_date: str) -> float | No
     if prev_close == 0:
         return None
     return round((today_close - prev_close) / prev_close * 100, 4)
+
+
+async def _trend_signals_best_effort(
+    call_json, norm_date: str, rally_window: int = 30
+) -> dict[str, Any]:
+    """Assemble distribution-day count and follow-through day status for the briefing.
+
+    Both sub-sections are fail-soft: a null value means insufficient TOPIX data
+    or an API error; the briefing is never aborted.
+
+    Distribution section: ``detect_distribution_days`` result summarised to the
+    count, warning flag, and the most recent two entries.
+
+    Follow-through section: auto-detects ``rally_start`` as the minimum TOPIX
+    close over the last ``rally_window`` sessions (90 calendar days padded).
+    When TOPIX has not recovered at least 1 % from that bottom
+    (current_close < rally_start_close × 1.01) the section is set to
+    ``{"status": "no_rally_attempt", "auto_rally_start": "..."}`` so the
+    briefing conveys that the market is still in a downtrend or too early
+    to confirm.
+    """
+    # -- Distribution days --------------------------------------------------
+    dist_raw = await call_json("detect_distribution_days", {"date": norm_date})
+    dist_section: dict[str, Any] | None = None
+    if not dist_raw.get("error"):
+        all_days = dist_raw.get("distribution_days") or []
+        dist_section = {
+            "distribution_count": dist_raw.get("distribution_count", 0),
+            "warning": dist_raw.get("warning", False),
+            "window_sessions": dist_raw.get("window_sessions", 25),
+            "sigma_multiplier": dist_raw.get("sigma_multiplier", 2.0),
+            "recent_distribution_days": all_days[-2:],
+        }
+
+    # -- Follow-through day: auto-detect rally_start from TOPIX --------------
+    topix_start = (datetime.strptime(norm_date, "%Y-%m-%d") - timedelta(days=90)).strftime(
+        "%Y-%m-%d"
+    )
+    topix_payload = await call_json(
+        "get_indices_bars_daily_topix", {"date_from": topix_start, "date_to": norm_date}
+    )
+    ftd_section: dict[str, Any] | None = None
+    if not topix_payload.get("error"):
+        rows = sorted(
+            topix_payload.get("data") or [],
+            key=lambda r: str(r.get("Date") or ""),
+        )
+        if rows:
+
+            def _c(row: dict) -> float:
+                v = row.get("Close") or row.get("C")
+                try:
+                    return float(v) if v is not None else float("inf")
+                except (TypeError, ValueError):
+                    return float("inf")
+
+            recent = rows[-rally_window:] if len(rows) >= rally_window else rows
+            min_row = min(recent, key=_c)
+            auto_rally_start = str(min_row.get("Date") or "")[:10]
+            rally_start_close = _c(min_row)
+            current_close = _c(rows[-1])
+
+            if (
+                auto_rally_start
+                and rally_start_close != float("inf")
+                and current_close != float("inf")
+            ):
+                if current_close >= rally_start_close * 1.01:
+                    ftd_raw = await call_json(
+                        "detect_follow_through_day",
+                        {"rally_start": auto_rally_start, "date": norm_date},
+                    )
+                    if not ftd_raw.get("error"):
+                        ftd_section = {**ftd_raw, "auto_detected": True}
+                    else:
+                        ftd_section = {
+                            "status": "unavailable",
+                            "auto_rally_start": auto_rally_start,
+                        }
+                else:
+                    ftd_section = {
+                        "status": "no_rally_attempt",
+                        "auto_rally_start": auto_rally_start,
+                    }
+
+    return {"distribution": dist_section, "follow_through": ftd_section}

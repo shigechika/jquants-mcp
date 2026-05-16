@@ -25,7 +25,7 @@ jquants-mcp で Claude に何ができるか、ユースケース別ツアー。
 | 「業種別騰落率」（東証 33 業種または 17 業種） | `get_sector_performance` |
 | 「業種別 PER/PBR/ROE」（セクターブリーフィング、割安業種探し） | `get_sector_briefing` |
 | 「高配当利回りランキング」（`DivAnn / AdjC × 100`、中間報告の空配当はスキップ） | `get_dividend_yield_ranking` |
-| 「今日の相場ブリーフィング」（値上がり/値下がり + 騰落レシオ + 33業種別 + ランキング + TOPIX 変化率 + screener ハイライトを 1 コールで） | `get_market_briefing` |
+| 「今日の相場ブリーフィング」（値上がり/値下がり + 騰落レシオ + 33業種別 + ランキング + TOPIX 変化率 + screener ハイライト + **ディストリビューションデイ数・フォロースルーデイ判定**を 1 コールで） | `get_market_briefing` |
 
 すべてローカルキャッシュ上で動作 — API コール無し、レート制限無し。
 
@@ -104,6 +104,10 @@ TOPIX 日次リターンが 20 日ローリング平均から 2.0σ 以上下落
 `detect_follow_through_day` は新しい上昇トレンドを確認します。`rally_start`（安値・反転日 = セッション 1）から
 4 日目以降に TOPIX が 2.0σ 以上上昇し、かつ市場出来高が前日を上回った日がフォロースルーデイです。
 `rally_start` に反転日を渡し、シグナルが出るまで各日付でチェックしてください。
+
+両シグナルは `get_market_briefing` の `trend_signals` キーにも自動組み込みされています — ブリーフィングが
+TOPIX 直近 30 セッション安値を `rally_start` として自動検出するため、`rally_start` を手動で指定しなくても
+1 コールでディストリビューションデイ数・フォロースルーデイ判定を取得できます。
 
 `detect_ytd_high_low` と `detect_52w_high_low` には 4 つのフィールドが追加されています：
 `AdjO`（分割調整済み始値 — 陽線・陰線の判定用）、`close_vs_vwap`（`"above"` / `"below"` —

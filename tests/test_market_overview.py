@@ -814,6 +814,10 @@ class TestGetMarketBriefing:
             "limit_low_touched",
         ):
             assert key in data["highlights"]
+        # trend_signals always present (null sub-sections when TOPIX data absent)
+        assert "trend_signals" in data
+        assert "distribution" in data["trend_signals"]
+        assert "follow_through" in data["trend_signals"]
 
     @pytest.mark.asyncio
     async def test_advances_declines_match(self, mock_briefing):
@@ -1049,6 +1053,147 @@ class TestGetMarketBriefing:
             )
         data = _call(result)
         assert data["summary"]["topix_change_pct"] == pytest.approx(2.0, abs=1e-3)
+
+    # ------------------------------------------------------------------
+    # trend_signals tests — require TOPIX data in cache
+    # ------------------------------------------------------------------
+
+    def _make_topix_rows(
+        self,
+        n: int = 50,
+        last_date: str = "2026-05-02",
+        drops_at: list[int] | None = None,
+        downtrend: bool = False,
+    ) -> list[dict]:
+        """Generate n TOPIX rows as consecutive calendar dates ending on last_date.
+
+        drops_at: list of 0-based indices where return is -2.5% instead of ±0.5%.
+        downtrend: if True, each session is -0.3% so current close is the minimum.
+        """
+        from datetime import date as date_, timedelta
+
+        end = date_.fromisoformat(last_date)
+        dates = [(end - timedelta(days=n - 1 - i)).isoformat() for i in range(n)]
+        close = 3000.0
+        rows = []
+        for i, d in enumerate(dates):
+            rows.append(
+                {
+                    "Date": f"{d} 00:00:00",
+                    "O": close,
+                    "H": close * 1.001,
+                    "L": close * 0.999,
+                    "C": close,
+                }
+            )
+            if downtrend:
+                close *= 0.997
+            elif drops_at and i in drops_at:
+                close *= 0.975  # -2.5%
+            else:
+                close *= 1.005 if i % 2 == 0 else 0.995
+        return rows
+
+    @pytest.mark.asyncio
+    async def test_trend_signals_distribution_present(self, tmp_path):
+        """With 50 TOPIX sessions and normal returns, distribution section is populated."""
+        from unittest.mock import MagicMock
+
+        from jquants_mcp.client import JQuantsClient
+
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+        conn.commit()
+        conn.close()
+        # 50 rows: alternating ±0.5% — no big drops, so distribution_count=0
+        cache.put_rows(
+            "indices_bars_daily_topix", self._make_topix_rows(n=50), key_columns=["Date"]
+        )
+        stub_client = MagicMock(spec=JQuantsClient)
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", stub_client),
+            patch.object(server_module, "_plan_detected", True),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        dist = data["trend_signals"]["distribution"]
+        assert dist is not None
+        assert isinstance(dist["distribution_count"], int)
+        assert dist["warning"] is False
+        assert isinstance(dist["recent_distribution_days"], list)
+
+    @pytest.mark.asyncio
+    async def test_trend_signals_distribution_warning_fires(self, tmp_path):
+        """With 4 big-drop sessions in the last 25-session window, warning is True."""
+        from unittest.mock import MagicMock
+
+        from jquants_mcp.client import JQuantsClient
+
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+        conn.commit()
+        conn.close()
+        # 50 rows: 4 big drops at indices 26–29 (within the 25-session window of session 49)
+        rows = self._make_topix_rows(n=50, drops_at=[26, 27, 28, 29])
+        cache.put_rows("indices_bars_daily_topix", rows, key_columns=["Date"])
+        stub_client = MagicMock(spec=JQuantsClient)
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", stub_client),
+            patch.object(server_module, "_plan_detected", True),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        dist = data["trend_signals"]["distribution"]
+        assert dist is not None
+        assert dist["distribution_count"] >= 4
+        assert dist["warning"] is True
+
+    @pytest.mark.asyncio
+    async def test_trend_signals_no_rally_attempt(self, tmp_path):
+        """Downtrend TOPIX (current close is the minimum) → follow_through no_rally_attempt."""
+        from unittest.mock import MagicMock
+
+        from jquants_mcp.client import JQuantsClient
+
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+        conn.commit()
+        conn.close()
+        # 50 rows in continuous downtrend: current close is the minimum
+        rows = self._make_topix_rows(n=50, downtrend=True)
+        cache.put_rows("indices_bars_daily_topix", rows, key_columns=["Date"])
+        stub_client = MagicMock(spec=JQuantsClient)
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", stub_client),
+            patch.object(server_module, "_plan_detected", True),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        ftd = data["trend_signals"]["follow_through"]
+        assert ftd is not None
+        assert ftd["status"] == "no_rally_attempt"
+        assert "auto_rally_start" in ftd
 
 
 # ---------------------------------------------------------------------------

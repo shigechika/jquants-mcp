@@ -25,7 +25,7 @@ What's the market doing today, and which sectors look cheap?
 | "Sector performance today" (TSE 33 sectors or 17 sectors) | `get_sector_performance` |
 | "Sector PER/PBR/ROE — which sectors look cheap?" | `get_sector_briefing` |
 | "High dividend yield ranking" | `get_dividend_yield_ranking` |
-| "Today's market briefing" (one-call composite summary) | `get_market_briefing` |
+| "Today's market briefing" (one-call composite — advance/decline + ADR + sectors + rankings + TOPIX change + screener highlights + **distribution-day count + follow-through day signal**) | `get_market_briefing` |
 
 These all run against the local cache — no API call, no rate limit.
 
@@ -110,6 +110,11 @@ times/year at the default threshold). Each entry includes `volume_confirmed`
 session 4 or later from `rally_start` (the low/reversal day) with higher market
 volume. Provide the first day of the rally attempt as `rally_start`; check
 each subsequent date until the signal fires or distribution resumes.
+
+Both signals are also embedded automatically in `get_market_briefing` under the
+`trend_signals` key — the briefing auto-detects the potential rally start as the
+TOPIX 30-session low, so you get distribution count + follow-through status in a
+single call without specifying `rally_start` manually.
 
 `detect_ytd_high_low` and `detect_52w_high_low` now include four extra fields per
 match: `AdjO` (split-adjusted open, for candle direction), `close_vs_vwap`
