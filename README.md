@@ -30,7 +30,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ## Features
 
-- **47 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 7 offline screener, 1 single-stock summary, 1 cache-only equity search, 2 chart renderers (opt-in), and 5 server utilities
+- **48 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 7 offline screener, 1 technical indicators, 1 single-stock summary, 1 cache-only equity search, 2 chart renderers (opt-in), and 5 server utilities
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -630,9 +630,9 @@ Offline tools that compute signals directly from the cached `equities_bars_daily
 |---|---|
 | `detect_price_limit` | Find stocks that touched the daily upper/lower price limit (ストップ高/安) using the `UL`/`LL` flags. Optional close-at-limit refinement via `C == H` / `C == L`. |
 | `compare_close_vs_vwap` | Compute the daily VWAP (`Va / Vo`) and compare to the close for a given code + date or date range. |
-| `detect_52w_high_low` | New 52-week rolling high/low (Yahoo / Bloomberg / TradingView convention). Returns `new_high` / `new_high_close` / `new_low` / `new_low_close`. |
+| `detect_52w_high_low` | New 52-week rolling high/low (Yahoo / Bloomberg / TradingView convention). Returns `new_high` / `new_high_close` / `new_low` / `new_low_close` plus conviction context: `AdjO`, `close_vs_vwap` (`"above"`/`"below"`), `volume_ratio`, `volume_ratio_sessions`. |
 | `detect_52w_high_low_range` | Same as above but across a date range (`date_from`–`date_to`). Use this instead of repeated single-date calls. |
-| `detect_ytd_high_low` | New year-to-date (年初来) high/low (Kabutan / JPX / Yahoo!ファイナンス convention). Same four signals against the YTD prior window. |
+| `detect_ytd_high_low` | New year-to-date (年初来) high/low (Kabutan / JPX / Yahoo!ファイナンス convention). Same four signals against the YTD prior window plus `AdjO`, `close_vs_vwap`, `volume_ratio`, `volume_ratio_sessions`. |
 | `detect_ytd_high_low_range` | Same as above but across a date range (`date_from`–`date_to`). Use this instead of repeated single-date calls. |
 | `detect_volume_surge` | List stocks whose volume on `date` exceeds the trailing 20-day average by a configurable `multiplier` (default 2.0). |
 
@@ -643,6 +643,16 @@ Cache-only tool that assembles a one-page snapshot for a single stock from cache
 | Tool | Description |
 |---|---|
 | `get_stock_briefing` | One-page briefing for a single stock (株式ブリーフィング): latest price (close, change_pct, volume, OHLC), most recent FY financials (revenue, operating profit, net income), and valuation ratios (PER, PBR, ROE, EPS, BPS, dividend yield). All figures are split-adjusted. PER and ROE are null when EPS ≤ 0 (net-loss period). Dividend yield uses the most recent DivAnn disclosed within the past 18 months. |
+
+### Technical Indicators (1 tool)
+
+Pure-Python SMA / Bollinger Bands / RSI computation over the cached daily bars. No extra API call for codes already in cache; falls back to the J-Quants API on a cache miss and stores the result.
+
+| Tool | Description |
+|---|---|
+| `get_technical_indicators` | Compute SMA (5/25/75), Bollinger Bands (bb20, ±2σ sample std), and RSI (rsi14, Wilder smoothing) for a single code over a date or date range. Returns numeric values — useful for "is close above SMA25?" or "is RSI overbought?" without rendering a chart. All values use split-adjusted close (AdjC). Indicators not yet warmed up are returned as `null`. |
+
+> **RSI in charts**: `render_candlestick` does not yet render an RSI sub-panel. Use `get_technical_indicators` for numeric RSI values.
 
 ### Charts (2 tools, opt-in)
 

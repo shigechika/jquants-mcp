@@ -40,6 +40,13 @@ SCREENER_CACHE_LOOKBACK_WEEKS = 52
 TOOL_DETECT_52W = "detect_52w_high_low"
 TOOL_DETECT_YTD = "detect_ytd_high_low"
 
+# Bump when compute_high_low_signals output schema changes so that stale
+# pre-computed Tier-2 cache entries are bypassed rather than served.
+_SCHEMA_VERSION = 2
+
+# Number of prior sessions used for volume_ratio baseline.
+_VOLUME_BASELINE_SESSIONS = 20
+
 
 def params_hash(params: dict[str, Any]) -> str:
     """Return a deterministic 16-char hash of screener parameters.
@@ -60,6 +67,7 @@ def default_params_hash_52w(
     """Hash for ``detect_52w_high_low`` default-shaped parameters."""
     return params_hash(
         {
+            "schema_version": _SCHEMA_VERSION,
             "window_sessions": window_sessions,
             "min_prior_sessions": min_prior_sessions,
         }
@@ -70,7 +78,9 @@ def default_params_hash_ytd(
     min_prior_sessions: int = DEFAULT_MIN_PRIOR_SESSIONS,
 ) -> str:
     """Hash for ``detect_ytd_high_low`` default-shaped parameters."""
-    return params_hash({"min_prior_sessions": min_prior_sessions})
+    return params_hash(
+        {"schema_version": _SCHEMA_VERSION, "min_prior_sessions": min_prior_sessions}
+    )
 
 
 def _as_float(v: Any) -> float | None:
@@ -127,6 +137,7 @@ def compute_high_low_signals(
         today_high = _as_float(today.get("AdjH"))
         today_low = _as_float(today.get("AdjL"))
         today_close = _as_float(today.get("AdjC"))
+        today_open = _as_float(today.get("AdjO"))
 
         prior_high = max(prior_highs)
         prior_low = min(prior_lows)
@@ -139,11 +150,31 @@ def compute_high_low_signals(
         if code is None and not (new_high or new_low or new_high_close or new_low_close):
             continue
 
+        # VWAP = Va / Vo (raw yen per share); compare raw close vs VWAP
+        va = _as_float(today.get("Va"))
+        vo = _as_float(today.get("Vo"))
+        raw_close = _as_float(today.get("C"))
+        vwap = va / vo if (va is not None and vo is not None and vo > 0) else None
+        close_vs_vwap: str | None = None
+        if raw_close is not None and vwap is not None:
+            close_vs_vwap = "above" if raw_close > vwap else "below"
+
+        # volume_ratio = today Vo / mean(last _VOLUME_BASELINE_SESSIONS prior sessions)
+        # volume_ratio_sessions reports the actual baseline used (< 20 near year-start)
+        baseline = prior[-_VOLUME_BASELINE_SESSIONS:]
+        prior_vols = [_as_float(s.get("Vo")) for s in baseline]
+        prior_vols = [v for v in prior_vols if v is not None and v > 0]
+        vol_avg = sum(prior_vols) / len(prior_vols) if prior_vols else None
+        volume_ratio: float | None = None
+        if vo is not None and vol_avg is not None:
+            volume_ratio = round(vo / vol_avg, 2)
+
         matches.append(
             {
                 "Code": c,
                 "Date": norm_date,
                 "prior_sessions": len(prior),
+                "AdjO": today_open,
                 "AdjH": today_high,
                 "AdjL": today_low,
                 "AdjC": today_close,
@@ -153,6 +184,9 @@ def compute_high_low_signals(
                 "new_low": new_low,
                 "new_high_close": new_high_close,
                 "new_low_close": new_low_close,
+                "close_vs_vwap": close_vs_vwap,
+                "volume_ratio": volume_ratio,
+                "volume_ratio_sessions": len(prior_vols),
             }
         )
     return {"count": len(matches), "mode": mode_label, "data": matches}
