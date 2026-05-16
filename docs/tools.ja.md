@@ -72,6 +72,7 @@ jquants-mcp で Claude に何ができるか、ユースケース別ツアー。
 
 `render_candlestick` は省略時 91 日窓 + `volume + sma5 + sma25` がデフォルト。
 SMA は前倒しで計算されているので、表示開始バーから完全に温まった状態で描画されます。
+RSI のチャート描画は現時点で未対応です — RSI 数値は `get_technical_indicators` をご利用ください。
 
 `get_technical_indicators` は SMA（5/25/75）・ボリンジャーバンド（bb20）・RSI（rsi14）を数値で返します。
 「終値は SMA25 を上抜けたか？」「RSI は過熱していないか？」をチャートを描かずに確認できます。

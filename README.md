@@ -30,7 +30,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ## Features
 
-- **47 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 7 offline screener, 1 single-stock summary, 1 cache-only equity search, 2 chart renderers (opt-in), and 5 server utilities
+- **48 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 7 offline screener, 1 technical indicators, 1 single-stock summary, 1 cache-only equity search, 2 chart renderers (opt-in), and 5 server utilities
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -643,6 +643,16 @@ Cache-only tool that assembles a one-page snapshot for a single stock from cache
 | Tool | Description |
 |---|---|
 | `get_stock_briefing` | One-page briefing for a single stock (株式ブリーフィング): latest price (close, change_pct, volume, OHLC), most recent FY financials (revenue, operating profit, net income), and valuation ratios (PER, PBR, ROE, EPS, BPS, dividend yield). All figures are split-adjusted. PER and ROE are null when EPS ≤ 0 (net-loss period). Dividend yield uses the most recent DivAnn disclosed within the past 18 months. |
+
+### Technical Indicators (1 tool)
+
+Pure-Python SMA / Bollinger Bands / RSI computation over the cached daily bars. No extra API call for codes already in cache; falls back to the J-Quants API on a cache miss and stores the result.
+
+| Tool | Description |
+|---|---|
+| `get_technical_indicators` | Compute SMA (5/25/75), Bollinger Bands (bb20, ±2σ sample std), and RSI (rsi14, Wilder smoothing) for a single code over a date or date range. Returns numeric values — useful for "is close above SMA25?" or "is RSI overbought?" without rendering a chart. All values use split-adjusted close (AdjC). Indicators not yet warmed up are returned as `null`. |
+
+> **RSI in charts**: `render_candlestick` does not yet render an RSI sub-panel. Use `get_technical_indicators` for numeric RSI values.
 
 ### Charts (2 tools, opt-in)
 

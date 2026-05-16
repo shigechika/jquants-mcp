@@ -72,7 +72,8 @@ Drill into a specific code:
 
 `render_candlestick` defaults to a 91-day window with `volume + sma5 + sma25`
 overlays. SMAs are warmed up from earlier bars so the moving averages are
-fully populated from the first displayed candle.
+fully populated from the first displayed candle. RSI is not yet available as a
+chart overlay — use `get_technical_indicators` for numeric RSI values.
 
 `get_technical_indicators` returns SMA (5/25/75), Bollinger Bands (bb20), and
 RSI (rsi14) as numeric values — useful when you want to ask "is the close above
