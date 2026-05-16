@@ -426,6 +426,13 @@ def register(
         ``>=`` (not strict ``>``) so days that tie the prior extreme
         also flag, matching standard market-data convention.
 
+        Each row also includes conviction context fields:
+
+        - ``AdjO``                — split-adjusted open (``AdjO < AdjC`` = bullish candle)
+        - ``close_vs_vwap``       — ``"above"`` / ``"below"`` (raw close vs ``Va/Vo``)
+        - ``volume_ratio``        — today ``Vo`` / 20-session prior average (≥1.5 = surge)
+        - ``volume_ratio_sessions`` — actual sessions used in the baseline (< 20 near year-start)
+
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily Tier 1 cache (cross-sectional
         results for default parameters are pre-computed nightly and
@@ -544,6 +551,13 @@ def register(
         Edge case: the very first trading day of the year has no prior
         YTD sessions and is skipped (the row would be empty by
         definition; "新年最初" is not a meaningful screening signal).
+
+        Each row also includes conviction context fields:
+
+        - ``AdjO``                — split-adjusted open (``AdjO < AdjC`` = bullish candle)
+        - ``close_vs_vwap``       — ``"above"`` / ``"below"`` (raw close vs ``Va/Vo``)
+        - ``volume_ratio``        — today ``Vo`` / 20-session prior average (≥1.5 = surge)
+        - ``volume_ratio_sessions`` — actual sessions used in the baseline (< 20 in January)
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily Tier 1 cache (cross-sectional

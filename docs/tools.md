@@ -95,13 +95,14 @@ Find stocks matching a signal:
 | "Stocks with volume 2× the 20-day average" | `detect_volume_surge` |
 | "Stocks that closed above VWAP" | `compare_close_vs_vwap` |
 
-`detect_ytd_high_low` and `detect_52w_high_low` now include three extra fields per
+`detect_ytd_high_low` and `detect_52w_high_low` now include four extra fields per
 match: `AdjO` (split-adjusted open, for candle direction), `close_vs_vwap`
 (`"above"` / `"below"`, comparing the raw close against the daily VWAP `Va/Vo`),
-and `volume_ratio` (today's volume divided by the 20-session average — values
-above 1.5 suggest conviction). Together these let you ask "was the new high
-confirmed by a bullish candle with above-average volume, closing above VWAP?"
-without rendering a chart.
+`volume_ratio` (today's volume divided by the 20-session average — values above
+1.5 suggest conviction), and `volume_ratio_sessions` (the actual number of
+sessions used in the baseline, which can be fewer than 20 near year-start).
+Together these let you ask "was the new high confirmed by a bullish candle with
+above-average volume, closing above VWAP?" without rendering a chart.
 
 All screeners are pure-Python over the cached daily bars — no extra API calls
 even for full-universe scans.
