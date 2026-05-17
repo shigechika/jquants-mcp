@@ -25,7 +25,7 @@ jquants-mcp で Claude に何ができるか、ユースケース別ツアー。
 | 「業種別騰落率」（東証 33 業種または 17 業種） | `get_sector_performance` |
 | 「業種別 PER/PBR/ROE」（セクターブリーフィング、割安業種探し） | `get_sector_briefing` |
 | 「高配当利回りランキング」（`DivAnn / AdjC × 100`、中間報告の空配当はスキップ） | `get_dividend_yield_ranking` |
-| 「今日の相場ブリーフィング」（値上がり/値下がり + 騰落レシオ + 33業種別 + ランキング + TOPIX 変化率 + screener ハイライトを 1 コールで） | `get_market_briefing` |
+| 「今日の相場ブリーフィング」（値上がり/値下がり + 騰落レシオ + 33業種別 + ランキング + TOPIX 変化率 + screener ハイライト + ディストリビューションデイ・フォロースルーデイ判定を 1 コールで） | `get_market_briefing` |
 
 すべてローカルキャッシュ上で動作 — API コール無し、レート制限無し。
 
@@ -93,6 +93,21 @@ RSI のチャート描画は現時点で未対応です — RSI 数値は `get_t
 | 「ストップ高/安銘柄」（引け / 寄らずの内訳付き） | `detect_price_limit` |
 | 「20 日平均の 2 倍以上の出来高」 | `detect_volume_surge` |
 | 「VWAP より上で引けた銘柄」 | `compare_close_vs_vwap` |
+| 「相場はディストリビューション（機関投資家の売り圧力）？」 | `detect_distribution_days` |
+| 「この反騰はフォロースルーデイが出た？」 | `detect_follow_through_day` |
+
+`detect_distribution_days` は TOPIX を市場指標、東証全銘柄の売買代金合計（`SUM(Va)`）を出来高代替として使用します。
+TOPIX 日次リターンが 20 日ローリング平均から 2.0σ 以上下落した日をディストリビューションデイとし、
+25 日間に 4 日以上でトレンド悪化警告を発します（IBD — Investor's Business Daily、ディストリビューションデイ手法を開発した米国の投資専門紙 — のメソッドを TOPIX 向けに校正、2021〜2026 年のデータで年約 9 回発火）。
+各エントリには `volume_confirmed`（当日の市場売買代金が前日を上回ったか）が含まれます。
+
+`detect_follow_through_day` は新しい上昇トレンドを確認します。`rally_start`（安値・反転日 = セッション 1）から
+4 日目以降に TOPIX が 2.0σ 以上上昇し、かつ市場出来高が前日を上回った日がフォロースルーデイです。
+`rally_start` に反転日を渡し、シグナルが出るまで各日付でチェックしてください。
+
+両シグナルは `get_market_briefing` の `trend_signals` キーにも自動組み込みされています — ブリーフィングが
+TOPIX 直近 30 セッション安値を `rally_start` として自動検出するため、`rally_start` を手動で指定しなくても
+1 コールでディストリビューションデイ・フォロースルーデイ判定を取得できます。
 
 `detect_ytd_high_low` と `detect_52w_high_low` には 4 つのフィールドが追加されています：
 `AdjO`（分割調整済み始値 — 陽線・陰線の判定用）、`close_vs_vwap`（`"above"` / `"below"` —

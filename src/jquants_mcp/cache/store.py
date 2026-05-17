@@ -1342,6 +1342,41 @@ class CacheStore:
         except sqlite3.OperationalError:
             return None
 
+    def get_market_va_by_date(self, date_from: str, date_to: str) -> dict[str, float]:
+        """Return total market turnover value (sum of Va) per trading date.
+
+        Aggregates ``Va`` (yen turnover) across all equities in
+        ``equities_bars_daily`` for each date in [date_from, date_to].
+        Used by distribution-day / follow-through-day detection as a
+        volume proxy for the broad market.
+
+        Note: intentionally bypasses ``_build_where_clause`` / plan-based date
+        restrictions — only a numeric aggregate is returned, no individual stock
+        data is exposed.  Callers are responsible for bounding date ranges.
+
+        Args:
+            date_from: Start date (YYYY-MM-DD, inclusive).
+            date_to:   End date (YYYY-MM-DD, inclusive).
+
+        Returns:
+            Dict mapping ISO date string to total Va (float, yen).
+            Empty dict when the connection is unavailable or no rows match.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        try:
+            rows = conn.execute(
+                "SELECT date, SUM(json_extract(data, '$.Va')) AS total_va "
+                "FROM equities_bars_daily "
+                "WHERE date >= ? AND date <= ? "
+                "GROUP BY date ORDER BY date",
+                (date_from, date_to),
+            ).fetchall()
+        except Exception:
+            return {}
+        return {str(r[0])[:10]: float(r[1]) for r in rows if r[1] is not None}
+
     def get_trading_date_today(self) -> str:
         """Return today's date if it is a trading day, else the most recent trading day.
 

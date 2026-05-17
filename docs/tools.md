@@ -25,7 +25,7 @@ What's the market doing today, and which sectors look cheap?
 | "Sector performance today" (TSE 33 sectors or 17 sectors) | `get_sector_performance` |
 | "Sector PER/PBR/ROE — which sectors look cheap?" | `get_sector_briefing` |
 | "High dividend yield ranking" | `get_dividend_yield_ranking` |
-| "Today's market briefing" (one-call composite summary) | `get_market_briefing` |
+| "Today's market briefing" (one-call composite — advance/decline + ADR + sectors + rankings + TOPIX change + screener highlights + distribution-day + follow-through-day signal) | `get_market_briefing` |
 
 These all run against the local cache — no API call, no rate limit.
 
@@ -95,6 +95,28 @@ Find stocks matching a signal:
 | "Stocks at daily price limit (ストップ高/安)" (close vs. locked-limit breakdown) | `detect_price_limit` |
 | "Stocks with volume 2× the 20-day average" | `detect_volume_surge` |
 | "Stocks that closed above VWAP" | `compare_close_vs_vwap` |
+| "Is the market under distribution? (機関投資家の売り圧力)" | `detect_distribution_days` |
+| "Did the current rally get a follow-through day confirmation?" | `detect_follow_through_day` |
+
+`detect_distribution_days` uses TOPIX as the market proxy and total market
+turnover (`SUM(Va)`) as the volume signal. A distribution day fires when TOPIX
+falls ≥ 2.0 σ below the 20-session rolling mean (same window as BB20). Four or
+more within 25 sessions is a warning that the uptrend may be failing (IBD —
+Investor's Business Daily, a US investment research publication that
+developed this distribution-day methodology — method adapted for TOPIX,
+calibrated against 2021–2026 data, fires ~9 times/year at the default
+threshold). Each entry includes `volume_confirmed` (whether total market Va
+exceeded the prior session).
+
+`detect_follow_through_day` confirms a new uptrend: TOPIX must rise ≥ 2.0 σ on
+session 4 or later from `rally_start` (the low/reversal day) with higher market
+volume. Provide the first day of the rally attempt as `rally_start`; check
+each subsequent date until the signal fires or distribution resumes.
+
+Both signals are also embedded automatically in `get_market_briefing` under the
+`trend_signals` key — the briefing auto-detects the potential rally start as the
+TOPIX 30-session low, so you get distribution + follow-through status in a
+single call without specifying `rally_start` manually.
 
 `detect_ytd_high_low` and `detect_52w_high_low` now include four extra fields per
 match: `AdjO` (split-adjusted open, for candle direction), `close_vs_vwap`

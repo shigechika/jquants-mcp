@@ -1524,3 +1524,308 @@ class TestNameFieldInjection:
         )
         names = [r.get("name") for r in result.get("data", [])]
         assert "YTDキャッシュ株" in names
+
+
+# ----------------------------------------------------------------
+# Helpers for distribution-day / follow-through-day tests
+# ----------------------------------------------------------------
+
+
+def _topix_row(date_str: str, close: float, open_: float | None = None) -> dict:
+    """Build a minimal TOPIX bar row."""
+    o = open_ if open_ is not None else close
+    return {
+        "Date": f"{date_str} 00:00:00",
+        "O": o,
+        "H": close * 1.001,
+        "L": close * 0.999,
+        "C": close,
+    }
+
+
+def _seed_topix(cache: CacheStore, rows: list[dict]) -> None:
+    cache.put_rows("indices_bars_daily_topix", rows, key_columns=["Date"])
+
+
+def _seed_ebd_va(cache: CacheStore, date_str: str, total_va: float, n_stocks: int = 5) -> None:
+    """Seed equities_bars_daily rows so that SUM(Va) == total_va on date_str."""
+    va_each = total_va / n_stocks
+    eq_rows = [
+        {
+            "Code": f"9{i:04d}0",
+            "Date": date_str,
+            "O": 100.0,
+            "H": 110.0,
+            "L": 90.0,
+            "C": 100.0,
+            "UL": 0,
+            "LL": 0,
+            "Vo": 1000.0,
+            "Va": va_each,
+            "AdjFactor": 1.0,
+            "AdjO": 100.0,
+            "AdjH": 110.0,
+            "AdjL": 90.0,
+            "AdjC": 100.0,
+            "AdjVo": 1000.0,
+        }
+        for i in range(n_stocks)
+    ]
+    cache.put_rows(
+        "equities_bars_daily", eq_rows, key_columns=["Code", "Date"], adj_factor_key="AdjFactor"
+    )
+
+
+def _build_topix_series(
+    start_close: float = 2000.0,
+    n_warmup: int = 22,
+    window_data: list[float] | None = None,
+    base_date: str = "2025-01-01",
+) -> list[dict]:
+    """Build a TOPIX series: n_warmup alternating ±0.8% sessions, then window_data returns.
+
+    window_data: list of % returns for the window sessions (e.g. [-3.0, 0.0, 0.5, ...]).
+    Returns topix rows starting from base_date + n_warmup + len(window_data) trading days.
+    """
+    from datetime import date as date_, timedelta
+
+    if window_data is None:
+        window_data = []
+
+    rows = []
+    d = date_.fromisoformat(base_date)
+    close = start_close
+
+    for i in range(n_warmup):
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        rows.append(_topix_row(d.isoformat(), close))
+        # alternate +0.8% / -0.8% so σ is non-zero
+        close = close * (1.008 if i % 2 == 0 else 0.992)
+        d += timedelta(days=1)
+
+    for ret_pct in window_data:
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        close = close * (1 + ret_pct / 100)
+        rows.append(_topix_row(d.isoformat(), close))
+        d += timedelta(days=1)
+
+    return rows
+
+
+class TestDetectDistributionDays:
+    async def test_no_distribution_no_warning(self, mock_env):
+        """All window sessions flat → count 0, warning False."""
+        cache = mock_env["cache"]
+        # 22 warm-up alternating ±0.8%, then 25 flat window sessions
+        window = [0.0] * 25
+        topix_rows = _build_topix_series(n_warmup=22, window_data=window)
+        _seed_topix(cache, topix_rows)
+        target_date = topix_rows[-1]["Date"][:10]
+        # Seed Va for each session (constant 1e12)
+        for r in topix_rows:
+            _seed_ebd_va(cache, r["Date"][:10], 1_000_000_000_000)
+
+        result = await _call("detect_distribution_days", date=target_date)
+        assert result["distribution_count"] == 0
+        assert result["warning"] is False
+        assert result["distribution_days"] == []
+
+    async def test_four_dist_days_triggers_warning(self, mock_env):
+        """Four sessions with large drops (> 2σ) → warning True."""
+        cache = mock_env["cache"]
+        # Use alternating ±0.5% throughout so σ stays > 0 in all windows.
+        # Four sessions have -5% drops: z ≈ -10σ → clearly distribution days.
+        window = [0.5 if i % 2 == 0 else -0.5 for i in range(25)]
+        for pos in [21, 22, 23, 24]:
+            window[pos] = -5.0
+        topix_rows = _build_topix_series(n_warmup=22, window_data=window)
+        _seed_topix(cache, topix_rows)
+        target_date = topix_rows[-1]["Date"][:10]
+
+        for i, r in enumerate(topix_rows):
+            d = r["Date"][:10]
+            va = 2_000_000_000_000 if i >= len(topix_rows) - 4 else 1_000_000_000_000
+            _seed_ebd_va(cache, d, va)
+
+        result = await _call("detect_distribution_days", date=target_date)
+        assert result["distribution_count"] >= 4
+        assert result["warning"] is True
+
+    async def test_volume_confirmed_field(self, mock_env):
+        """distribution_days entries include volume_confirmed."""
+        cache = mock_env["cache"]
+        # Alternating ±0.5% so σ > 0; last session has -5% (z ≈ -10) → dist day.
+        window = [0.5 if i % 2 == 0 else -0.5 for i in range(24)] + [-5.0]
+        topix_rows = _build_topix_series(n_warmup=22, window_data=window)
+        _seed_topix(cache, topix_rows)
+        target_date = topix_rows[-1]["Date"][:10]
+
+        for r in topix_rows[:-1]:
+            _seed_ebd_va(cache, r["Date"][:10], 1_000_000_000_000)
+        # today Va > prev → volume_confirmed = True
+        _seed_ebd_va(cache, target_date, 2_000_000_000_000)
+
+        result = await _call("detect_distribution_days", date=target_date)
+        assert result["distribution_count"] == 1
+        dist = result["distribution_days"][0]
+        assert dist["date"] == target_date
+        assert dist["volume_confirmed"] is True
+        assert dist["market_va"] > 0
+
+    async def test_cache_not_ready_future_date(self, mock_env):
+        """Requesting a date beyond the latest equities date returns CacheNotReady."""
+        cache = mock_env["cache"]
+        # Seed equities bars so get_latest_equities_date() returns a known date.
+        window = [0.5 if i % 2 == 0 else -0.5 for i in range(25)]
+        topix_rows = _build_topix_series(n_warmup=22, window_data=window)
+        _seed_topix(cache, topix_rows)
+        latest_date = topix_rows[-1]["Date"][:10]
+        _seed_ebd_va(cache, latest_date, 1_000_000_000_000)
+
+        future = "2099-01-01"
+        result = await _call("detect_distribution_days", date=future)
+        assert result.get("error") is True
+        assert result.get("error_type") == "CacheNotReady"
+
+    async def test_insufficient_data(self, mock_env):
+        """Fewer than sigma_window + window_sessions + 1 sessions → InsufficientData."""
+        topix_rows = _build_topix_series(n_warmup=5, window_data=[0.0] * 3)
+        _seed_topix(mock_env["cache"], topix_rows)
+        target = topix_rows[-1]["Date"][:10]
+        result = await _call("detect_distribution_days", date=target)
+        assert result.get("error") is True
+        assert result.get("error_type") == "InsufficientData"
+
+    async def test_validation_bad_date(self, mock_env):
+        result = await _call("detect_distribution_days", date="not-a-date")
+        assert result.get("error") is True
+        assert result.get("error_type") == "ValidationError"
+
+    async def test_validation_sigma_multiplier(self, mock_env):
+        result = await _call("detect_distribution_days", date="2025-06-01", sigma_multiplier=0.0)
+        assert result.get("error") is True
+
+
+class TestDetectFollowThroughDay:
+    async def test_confirmed_on_day_4(self, mock_env):
+        """Day 4 from rally_start with large up-move and volume → confirmed True."""
+        cache = mock_env["cache"]
+        # 22 warm-up, then rally_start + 3 prior sessions + target (day 4)
+        # target: +3% (well above 2σ ≈ 1.6%)
+        window = [0.0, 0.0, 0.0, 3.0]
+        topix_rows = _build_topix_series(n_warmup=22, window_data=window)
+        _seed_topix(cache, topix_rows)
+
+        rally_start = topix_rows[-4]["Date"][:10]
+        target_date = topix_rows[-1]["Date"][:10]
+
+        for i, r in enumerate(topix_rows[:-1]):
+            _seed_ebd_va(cache, r["Date"][:10], 1_000_000_000_000)
+        # target Va > prev → volume_confirmed
+        _seed_ebd_va(cache, target_date, 2_000_000_000_000)
+
+        result = await _call("detect_follow_through_day", rally_start=rally_start, date=target_date)
+        assert result["confirmed"] is True
+        assert result["session_number"] == 4
+        assert result["day_confirmed"] is True
+        assert result["price_confirmed"] is True
+        assert result["volume_confirmed"] is True
+
+    async def test_not_confirmed_day_3(self, mock_env):
+        """Session 3 from rally_start → day_confirmed False even with good price."""
+        cache = mock_env["cache"]
+        window = [0.0, 0.0, 3.0]
+        topix_rows = _build_topix_series(n_warmup=22, window_data=window)
+        _seed_topix(cache, topix_rows)
+
+        rally_start = topix_rows[-3]["Date"][:10]
+        target_date = topix_rows[-1]["Date"][:10]
+
+        for r in topix_rows:
+            _seed_ebd_va(cache, r["Date"][:10], 1_000_000_000_000)
+        _seed_ebd_va(cache, target_date, 2_000_000_000_000)
+
+        result = await _call("detect_follow_through_day", rally_start=rally_start, date=target_date)
+        assert result["confirmed"] is False
+        assert result["session_number"] == 3
+        assert result["day_confirmed"] is False
+
+    async def test_not_confirmed_low_return(self, mock_env):
+        """Day 4+ but z-score below threshold → price_confirmed False."""
+        cache = mock_env["cache"]
+        window = [0.0, 0.0, 0.0, 0.1]  # tiny gain, z << 2σ
+        topix_rows = _build_topix_series(n_warmup=22, window_data=window)
+        _seed_topix(cache, topix_rows)
+
+        rally_start = topix_rows[-4]["Date"][:10]
+        target_date = topix_rows[-1]["Date"][:10]
+
+        for r in topix_rows:
+            _seed_ebd_va(cache, r["Date"][:10], 1_000_000_000_000)
+        _seed_ebd_va(cache, target_date, 2_000_000_000_000)
+
+        result = await _call("detect_follow_through_day", rally_start=rally_start, date=target_date)
+        assert result["confirmed"] is False
+        assert result["price_confirmed"] is False
+
+    async def test_not_confirmed_volume_lower(self, mock_env):
+        """Day 4+ with large price move but volume lower → volume_confirmed False."""
+        cache = mock_env["cache"]
+        window = [0.0, 0.0, 0.0, 3.0]
+        topix_rows = _build_topix_series(n_warmup=22, window_data=window)
+        _seed_topix(cache, topix_rows)
+
+        rally_start = topix_rows[-4]["Date"][:10]
+        target_date = topix_rows[-1]["Date"][:10]
+
+        for r in topix_rows:
+            _seed_ebd_va(cache, r["Date"][:10], 2_000_000_000_000)
+        # target Va < prev → volume_confirmed False
+        _seed_ebd_va(cache, target_date, 1_000_000_000_000)
+
+        result = await _call("detect_follow_through_day", rally_start=rally_start, date=target_date)
+        assert result["confirmed"] is False
+        assert result["volume_confirmed"] is False
+
+    async def test_rally_start_after_date_error(self, mock_env):
+        result = await _call(
+            "detect_follow_through_day",
+            rally_start="2026-06-01",
+            date="2026-05-01",
+        )
+        assert result.get("error") is True
+
+    async def test_response_fields_present(self, mock_env):
+        """All expected fields appear in the response."""
+        cache = mock_env["cache"]
+        window = [0.0, 0.0, 0.0, 3.0]
+        topix_rows = _build_topix_series(n_warmup=22, window_data=window)
+        _seed_topix(cache, topix_rows)
+        rally_start = topix_rows[-4]["Date"][:10]
+        target_date = topix_rows[-1]["Date"][:10]
+        for r in topix_rows:
+            _seed_ebd_va(cache, r["Date"][:10], 1_000_000_000_000)
+        _seed_ebd_va(cache, target_date, 2_000_000_000_000)
+
+        result = await _call("detect_follow_through_day", rally_start=rally_start, date=target_date)
+        for field in (
+            "date",
+            "rally_start",
+            "rally_start_topix",
+            "session_number",
+            "confirmed",
+            "reason",
+            "topix_close",
+            "topix_change_pct",
+            "z_score",
+            "sigma",
+            "sigma_multiplier",
+            "price_confirmed",
+            "day_confirmed",
+            "volume_confirmed",
+            "market_va_today",
+            "market_va_prev",
+        ):
+            assert field in result, f"Missing field: {field}"
