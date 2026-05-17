@@ -5,6 +5,24 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.33.0](https://github.com/shigechika/jquants-mcp/compare/v0.32.2...v0.33.0) (2026-05-17)
+
+
+### Features
+
+* add /.well-known/openid-configuration and oauth-protected-resource endpoints ([#335](https://github.com/shigechika/jquants-mcp/issues/335)) ([d7bce9a](https://github.com/shigechika/jquants-mcp/commit/d7bce9a94d5cf3d19111ea76653e3e5ac4bd184d))
+* add cache_bypass_auth for self-hosted cache read access ([#337](https://github.com/shigechika/jquants-mcp/issues/337)) ([3767081](https://github.com/shigechika/jquants-mcp/commit/37670812a40da1a94dcae79b960a4d42c63fb203))
+
+
+### Bug Fixes
+
+* **server:** narrow except clause and add well-known endpoint tests ([#336](https://github.com/shigechika/jquants-mcp/issues/336)) ([d746f34](https://github.com/shigechika/jquants-mcp/commit/d746f34c694ec3ff2e30f29f18f520da621ceb1c))
+
+
+### Documentation
+
+* add reverse proxy path prefix section ([#333](https://github.com/shigechika/jquants-mcp/issues/333)) ([ea6e6ee](https://github.com/shigechika/jquants-mcp/commit/ea6e6eed10a939b84a21723d32b542e1f981fde1))
+
 ## [0.32.2](https://github.com/shigechika/jquants-mcp/compare/v0.32.1...v0.32.2) (2026-05-17)
 
 
