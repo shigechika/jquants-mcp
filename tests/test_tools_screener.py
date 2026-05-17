@@ -1713,16 +1713,15 @@ class TestDetectDistributionDays:
 
         # Seed an equities bar 3 days *after* the last TOPIX date so that
         # get_latest_equities_date() returns a newer date than TOPIX.
-        from datetime import date as date_, timedelta
-
-        future_date = (date_.fromisoformat(topix_latest) + timedelta(days=3)).isoformat()
+        future_date = (date.fromisoformat(topix_latest) + timedelta(days=3)).isoformat()
         _seed_ebd_va(cache, future_date, 1_000_000_000_000)
 
         # Request the future equities date — TOPIX is behind, should fall back.
         result = await _call("detect_distribution_days", date=future_date)
         assert result.get("error") is not True
         assert result["date"] == topix_latest  # fell back to latest available TOPIX date
-        assert isinstance(result["distribution_count"], int)
+        assert isinstance(result.get("distribution_days"), list)
+        assert result["distribution_count"] == len(result["distribution_days"])
 
     async def test_validation_bad_date(self, mock_env):
         result = await _call("detect_distribution_days", date="not-a-date")

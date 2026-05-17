@@ -1104,7 +1104,7 @@ def register(
             # rather than returning CacheNotReady.
             norm_date = window[-1][0]
         elif window[-1][0] > norm_date:
-            latest = zscore_series[-1][0]
+            latest = zscore_series[-1][0] if zscore_series else None
             return _cache_not_ready_error(norm_date, latest)
 
         va_by_date = cache.get_market_va_by_date(start, norm_date)
