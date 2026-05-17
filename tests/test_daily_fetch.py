@@ -622,16 +622,18 @@ class TestFetchShortRatio:
         count = fetch_short_ratio(cli, db_conn, plan="standard")
 
         assert count == 2
+        assert cli.get_mkt_short_ratio.call_count == 2
         # Tier 1 に保存されていること
         tier1 = db_conn.execute("SELECT COUNT(*) FROM markets_short_ratio").fetchone()[0]
         assert tier1 == 2
-        # Tier 2 に保存されていること
+        # Tier 2 に {"count": N, "data": [...]} 形式で保存されていること
         row = db_conn.execute(
             "SELECT data FROM response_cache WHERE cache_key = '/markets/short-ratio'"
         ).fetchone()
         assert row is not None
-        data = json.loads(row[0])
-        assert len(data) == 2
+        stored = json.loads(row[0])
+        assert stored["count"] == 2
+        assert len(stored["data"]) == 2
 
     def test_tier2_error_does_not_abort(self, db_conn):
         """Tier 2 フェッチ失敗でも Tier 1 の結果を返すこと。"""
@@ -654,7 +656,7 @@ class TestFetchShortRatio:
 class TestFetchShortSaleReport:
     """fetch_short_sale_report が正しいキーで Tier 2 に保存すること。"""
 
-    def test_tier2_key_no_trailing_pipe(self, db_conn):
+    def test_tier2_key_and_format(self, db_conn):
         rows = [{"Code": "27800", "DiscDate": "2026-05-17", "ShortBalance": 100}]
         df = FakeDataFrame(rows)
         cli = MagicMock()
@@ -664,7 +666,11 @@ class TestFetchShortSaleReport:
 
         # キーに末尾 | がついていないこと
         row = db_conn.execute(
-            "SELECT cache_key FROM response_cache WHERE cache_key LIKE '/markets/short-sale-report%'"
+            "SELECT cache_key, data FROM response_cache WHERE cache_key LIKE '/markets/short-sale-report%'"
         ).fetchone()
         assert row is not None
         assert row[0] == "/markets/short-sale-report"
+        # {"count": N, "data": [...]} 形式で保存されていること
+        stored = json.loads(row[1])
+        assert stored["count"] == 1
+        assert len(stored["data"]) == 1
