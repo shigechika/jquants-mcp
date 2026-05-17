@@ -291,6 +291,47 @@ When OAuth is enabled, the server provides a browser-based settings page at `htt
 
 This is equivalent to calling `register_api_key` via Claude, but accessible directly from any browser without an MCP client.
 
+### Reverse Proxy with Path Prefix
+
+When serving jquants-mcp under a path prefix (e.g. `https://mcp.example.com/jquants-mcp/mcp`) via a reverse proxy, two things are required — no code changes needed:
+
+**1. Strip the prefix in the reverse proxy:**
+
+Caddy:
+
+```caddy
+handle /jquants-mcp/* {
+    uri strip_prefix /jquants-mcp
+    reverse_proxy localhost:8080
+}
+```
+
+nginx (named capture group avoids numbered-backreference vulnerabilities):
+
+```nginx
+location /jquants-mcp/ {
+    rewrite ^/jquants-mcp(?<path>/.*)$ $path break;
+    proxy_pass http://localhost:8080;
+}
+```
+
+**2. Set `OAUTH_BASE_URL` to the full prefixed URL:**
+
+```bash
+export OAUTH_BASE_URL=https://mcp.example.com/jquants-mcp
+```
+
+Or via `config.ini`:
+
+```ini
+[oauth]
+base_url = https://mcp.example.com/jquants-mcp
+```
+
+FastMCP derives all OAuth endpoints (`/oauth/callback`, `/settings`, `/.well-known/oauth-authorization-server`) from `OAUTH_BASE_URL`, so setting it to the prefixed public URL ensures the OAuth flow and settings page work correctly after the proxy strips the prefix.
+
+> **Google OAuth note:** Add both `https://mcp.example.com` to *Authorized JavaScript origins* and `https://mcp.example.com/jquants-mcp/oauth/callback` to *Authorized redirect URIs* in the Google Cloud Console.
+
 ## Multi-user Mode
 
 When GitHub OAuth 2.1 and `MCP_ENCRYPTION_KEY` are both configured, the server operates in **multi-user mode**: each authenticated user stores their own J-Quants API key on the server, and all data tools use that key automatically. All users share the read cache; each user gets an independent J-Quants client with isolated rate limiting.
