@@ -5,6 +5,14 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.32.2](https://github.com/shigechika/jquants-mcp/compare/v0.32.1...v0.32.2) (2026-05-17)
+
+
+### Bug Fixes
+
+* **screener:** restore zscore_series guard and strengthen stale-fallback test ([#330](https://github.com/shigechika/jquants-mcp/issues/330)) ([c4eb479](https://github.com/shigechika/jquants-mcp/commit/c4eb479bf973867637bcd60e36bcfddd74b27e13))
+* **topix:** normalize timestamp dates in daily_fetch; guard cached_dates in _get_topix_with_cache ([#331](https://github.com/shigechika/jquants-mcp/issues/331)) ([6a3ec5e](https://github.com/shigechika/jquants-mcp/commit/6a3ec5ed74483c2cc8aa615853b1bb56bbb4746e))
+
 ## [0.32.1](https://github.com/shigechika/jquants-mcp/compare/v0.32.0...v0.32.1) (2026-05-17)
 
 
