@@ -1141,7 +1141,8 @@ class TestGetMarketBriefing:
         _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
         conn.commit()
         conn.close()
-        # 50 rows: 4 big drops at indices 26–29 (within the 25-session window of session 49)
+        # drops_at=[26,27,28,29]: the -2.5% return fires on the *next* row after each
+        # index (rows 27–30), placing all 4 distribution days within the 25-session window.
         rows = _make_topix_rows(n=50, drops_at=[26, 27, 28, 29])
         cache.put_rows("indices_bars_daily_topix", rows, key_columns=["Date"])
         stub_client = MagicMock(spec=JQuantsClient)

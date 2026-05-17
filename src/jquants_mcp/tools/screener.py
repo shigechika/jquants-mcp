@@ -48,6 +48,7 @@ subject to the same plan-based date gating as other cache tables.
 
 from __future__ import annotations
 
+import bisect
 import logging
 import math
 from datetime import date, datetime, timedelta
@@ -1106,8 +1107,8 @@ def register(
             if z > -sigma_multiplier:
                 continue
             va_today = va_by_date.get(d)
-            prev_va_dates = [pd for pd in sorted_va_dates if pd < d]
-            va_prev = va_by_date.get(prev_va_dates[-1]) if prev_va_dates else None
+            idx = bisect.bisect_left(sorted_va_dates, d)
+            va_prev = va_by_date.get(sorted_va_dates[idx - 1]) if idx > 0 else None
             vol_confirmed = va_today is not None and va_prev is not None and va_today > va_prev
             dist_days.append(
                 {
@@ -1236,8 +1237,9 @@ def register(
 
         va_by_date = cache.get_market_va_by_date(pre_start, norm_date)
         va_today = va_by_date.get(norm_date)
-        prev_va_dates = [pd for pd in sorted(va_by_date) if pd < norm_date]
-        va_prev_date = prev_va_dates[-1] if prev_va_dates else None
+        sorted_va_dates_ftd = sorted(va_by_date)
+        idx = bisect.bisect_left(sorted_va_dates_ftd, norm_date)
+        va_prev_date = sorted_va_dates_ftd[idx - 1] if idx > 0 else None
         va_prev = va_by_date.get(va_prev_date) if va_prev_date else None
         vol_confirmed = va_today is not None and va_prev is not None and va_today > va_prev
 
