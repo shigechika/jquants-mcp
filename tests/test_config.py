@@ -205,3 +205,22 @@ def test_jquants_api_toml_path_env_with_tilde(tmp_path, monkeypatch):
         mock_load.return_value = configparser.ConfigParser()
         s = Settings()
         assert s.jquants_api_key == "tilde-key"
+
+
+def test_cache_bypass_auth_default_false():
+    """cache_bypass_auth defaults to False."""
+    s = Settings(jquants_api_key="dummy")
+    assert s.cache_bypass_auth is False
+
+
+def test_cache_bypass_auth_env_true(monkeypatch):
+    """CACHE_BYPASS_AUTH=true enables the bypass."""
+    monkeypatch.setenv("CACHE_BYPASS_AUTH", "true")
+    s = Settings(jquants_api_key="dummy")
+    assert s.cache_bypass_auth is True
+
+
+def test_cache_bypass_auth_override():
+    """cache_bypass_auth can be overridden via constructor."""
+    s = Settings(jquants_api_key="dummy", cache_bypass_auth="true")
+    assert s.cache_bypass_auth is True

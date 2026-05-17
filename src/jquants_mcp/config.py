@@ -90,6 +90,11 @@ _CONFIG_DEFS: list[_ConfigDef] = [
     # Email allowlist for restricting Cloud Run access. Comma-separated list.
     # Empty value means "allow any authenticated user" (self-host default).
     _ConfigDef("allowed_emails", "server", "allowed_emails", "JQUANTS_ALLOWED_EMAILS", ""),
+    # When true, OAuth users without a registered API key fall back to the
+    # global client instead of raising UserNotConfiguredError. Intended for
+    # self-hosted deployments where cache.db is pre-populated and read-only
+    # tool access should be granted without per-user key registration.
+    _ConfigDef("cache_bypass_auth", "server", "cache_bypass_auth", "CACHE_BYPASS_AUTH", "false"),
 ]
 
 # 型変換テーブル
@@ -102,7 +107,7 @@ _TYPE_MAP: dict[str, type] = {
 }
 
 # 真偽値設定 — 文字列変換後に bool として扱う
-_BOOL_SETTINGS: frozenset[str] = frozenset({"oauth_require_consent"})
+_BOOL_SETTINGS: frozenset[str] = frozenset({"oauth_require_consent", "cache_bypass_auth"})
 
 # J-Quants official config file default path. Tests patch this directly,
 # so keep it as a plain module-level constant.

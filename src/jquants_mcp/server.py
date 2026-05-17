@@ -575,6 +575,10 @@ async def _get_user_client() -> JQuantsClient:
         if user_db.has_corrupted_key(user_id):
             # DB にキーは存在するが復号に失敗 — 対処方法を提示するエラーを返す
             raise DecryptionError()
+        if _get_settings().cache_bypass_auth:
+            # Bypass: fall back to global client so cache reads succeed without
+            # per-user API key registration (self-hosted with pre-populated cache).
+            return _get_client()
         raise UserNotConfiguredError(user_id)
 
     # ユーザー別クライアントが未キャッシュなら作成
