@@ -1288,6 +1288,19 @@ async def _trend_signals_best_effort(
     briefing conveys that the market is still in a downtrend or too early
     to confirm.
     """
+    # -- Fetch TOPIX first so Tier 1 cache is populated before READ_ONLY_CACHE tools run.
+    # detect_distribution_days and detect_follow_through_day read only from Tier 1 cache;
+    # calling get_indices_bars_daily_topix first ensures the rows are available even when
+    # the local cache.db is stale (e.g. Cloud Run startup copy is a few days old).
+    # 90 calendar days covers the 45 sessions (20 σ warm-up + 25 window) needed for
+    # distribution-day detection, so one fetch serves both sub-sections.
+    topix_start = (datetime.strptime(norm_date, "%Y-%m-%d") - timedelta(days=90)).strftime(
+        "%Y-%m-%d"
+    )
+    topix_payload = await call_json(
+        "get_indices_bars_daily_topix", {"date_from": topix_start, "date_to": norm_date}
+    )
+
     # -- Distribution days --------------------------------------------------
     dist_raw = await call_json("detect_distribution_days", {"date": norm_date})
     dist_section: dict[str, Any] | None = None
@@ -1300,14 +1313,6 @@ async def _trend_signals_best_effort(
             "sigma_multiplier": dist_raw.get("sigma_multiplier", 2.0),
             "recent_distribution_days": all_days[-2:],
         }
-
-    # -- Follow-through day: auto-detect rally_start from TOPIX --------------
-    topix_start = (datetime.strptime(norm_date, "%Y-%m-%d") - timedelta(days=90)).strftime(
-        "%Y-%m-%d"
-    )
-    topix_payload = await call_json(
-        "get_indices_bars_daily_topix", {"date_from": topix_start, "date_to": norm_date}
-    )
 
     def _c(row: dict) -> float:
         v = row.get("Close") or row.get("C")
