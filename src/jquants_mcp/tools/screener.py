@@ -1095,8 +1095,16 @@ def register(
         zscore_series = _compute_topix_zscore_series(topix_series)
         window = zscore_series[-window_sessions:]
 
-        if not window or window[-1][0] != norm_date:
-            latest = zscore_series[-1][0] if zscore_series else None
+        if not window:
+            return _cache_not_ready_error(norm_date, None)
+        if window[-1][0] < norm_date:
+            # TOPIX Tier 1 cache is behind norm_date (e.g. Cloud Run startup copy is
+            # a few days old and the user's plan does not permit an API refresh).
+            # Degrade gracefully: run the analysis on the latest available TOPIX date
+            # rather than returning CacheNotReady.
+            norm_date = window[-1][0]
+        elif window[-1][0] > norm_date:
+            latest = zscore_series[-1][0]
             return _cache_not_ready_error(norm_date, latest)
 
         va_by_date = cache.get_market_va_by_date(start, norm_date)

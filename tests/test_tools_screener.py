@@ -1698,6 +1698,32 @@ class TestDetectDistributionDays:
         assert result.get("error") is True
         assert result.get("error_type") == "InsufficientData"
 
+    async def test_stale_topix_falls_back_to_latest_date(self, mock_env):
+        """TOPIX data ends before norm_date → falls back to latest TOPIX date, no error."""
+        cache = mock_env["cache"]
+        # Seed TOPIX up to topix_latest (lag behind equities by a few days).
+        window = [0.5 if i % 2 == 0 else -0.5 for i in range(25)]
+        topix_rows = _build_topix_series(n_warmup=22, window_data=window)
+        _seed_topix(cache, topix_rows)
+        topix_latest = topix_rows[-1]["Date"][:10]
+
+        # Seed equities Va for the TOPIX range.
+        for r in topix_rows:
+            _seed_ebd_va(cache, r["Date"][:10], 1_000_000_000_000)
+
+        # Seed an equities bar 3 days *after* the last TOPIX date so that
+        # get_latest_equities_date() returns a newer date than TOPIX.
+        from datetime import date as date_, timedelta
+
+        future_date = (date_.fromisoformat(topix_latest) + timedelta(days=3)).isoformat()
+        _seed_ebd_va(cache, future_date, 1_000_000_000_000)
+
+        # Request the future equities date — TOPIX is behind, should fall back.
+        result = await _call("detect_distribution_days", date=future_date)
+        assert result.get("error") is not True
+        assert result["date"] == topix_latest  # fell back to latest available TOPIX date
+        assert isinstance(result["distribution_count"], int)
+
     async def test_validation_bad_date(self, mock_env):
         result = await _call("detect_distribution_days", date="not-a-date")
         assert result.get("error") is True
