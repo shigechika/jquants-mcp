@@ -5,6 +5,14 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.32.0](https://github.com/shigechika/jquants-mcp/compare/v0.31.0...v0.32.0) (2026-05-17)
+
+
+### Features
+
+* **screener:** add AdjO, close_vs_vwap, volume_ratio to high/low signals ([#325](https://github.com/shigechika/jquants-mcp/issues/325)) ([1aba2ba](https://github.com/shigechika/jquants-mcp/commit/1aba2ba2f006c3a57e43d139c3a72026fa06713c))
+* **screener:** add detect_distribution_days and detect_follow_through_day ([#327](https://github.com/shigechika/jquants-mcp/issues/327)) ([e6c8e4a](https://github.com/shigechika/jquants-mcp/commit/e6c8e4a613a885dda20b6aa1921cfb6251deecbf))
+
 ## [0.31.0](https://github.com/shigechika/jquants-mcp/compare/v0.30.4...v0.31.0) (2026-05-16)
 
 
