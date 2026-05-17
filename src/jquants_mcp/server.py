@@ -336,7 +336,7 @@ async def _handle_openid_configuration(request: Request) -> Response:
             media_type="application/json",
             headers={"Cache-Control": "public, max-age=3600"},
         )
-    except Exception as exc:
+    except httpx.RequestError as exc:
         logger.warning("/.well-known/openid-configuration proxy failed: %s", exc)
         return Response(
             status_code=503,
