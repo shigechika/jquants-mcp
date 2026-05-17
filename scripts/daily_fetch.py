@@ -564,14 +564,24 @@ def fetch_short_ratio(
     conn: sqlite3.Connection,
     plan: str,
 ) -> int:
-    """Fetch sector short-selling ratios into Tier 1 cache (Standard+)."""
-    return _fetch_markets_tier1(
+    """Fetch sector short-selling ratios into Tier 1 and Tier 2 cache (Standard+)."""
+    count = _fetch_markets_tier1(
         cli.get_mkt_short_ratio,
         conn,
         table="markets_short_ratio",
         key_mapping=[("S33", "s33"), ("Date", "date")],
         plan=plan,
     )
+    # Populate Tier 2 cache for no-params tool calls
+    try:
+        df_all = cli.get_mkt_short_ratio()
+        if df_all is not None and len(df_all) > 0:
+            records = [_sanitize_row(r.to_dict()) for _, r in df_all.iterrows()]
+            _store_response_cache(conn, "/markets/short-ratio", records, TTL_24H)
+            print(f"  Tier 2: {len(records)} 件")
+    except Exception as e:
+        print(f"  Tier 2 エラー: {e}")
+    return count
 
 
 def fetch_margin_interest(

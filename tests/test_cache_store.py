@@ -35,6 +35,14 @@ class TestMakeCacheKey:
         key = make_cache_key("/test", {"a": "1", "b": None})
         assert key == "/test|a=1"
 
+    def test_all_none_params_no_trailing_pipe(self):
+        """All-None params must not produce a trailing | (regression for short_sale_report)."""
+        key = make_cache_key("/markets/short-sale-report", {"code": None, "disc_date": None})
+        assert key == "/markets/short-sale-report"
+
+    def test_empty_dict_same_as_no_params(self):
+        assert make_cache_key("/test", {}) == make_cache_key("/test")
+
 
 class TestTier1RowCache:
     """Tier 1 行レベルキャッシュのテスト。"""

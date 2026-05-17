@@ -1627,5 +1627,6 @@ def make_cache_key(endpoint: str, params: dict[str, Any] | None = None) -> str:
     parts = [endpoint]
     if params:
         sorted_params = sorted((k, str(v)) for k, v in params.items() if v is not None)
-        parts.append("&".join(f"{k}={v}" for k, v in sorted_params))
+        if sorted_params:
+            parts.append("&".join(f"{k}={v}" for k, v in sorted_params))
     return "|".join(parts)
