@@ -25,7 +25,7 @@ What's the market doing today, and which sectors look cheap?
 | "Sector performance today" (TSE 33 sectors or 17 sectors) | `get_sector_performance` |
 | "Sector PER/PBR/ROE — which sectors look cheap?" | `get_sector_briefing` |
 | "High dividend yield ranking" | `get_dividend_yield_ranking` |
-| "Today's market briefing" (one-call composite — advance/decline + ADR + sectors + rankings + TOPIX change + screener highlights + **distribution-day count + follow-through day signal**) | `get_market_briefing` |
+| "Today's market briefing" (one-call composite — advance/decline + ADR + sectors + rankings + TOPIX change + screener highlights + distribution-day count + follow-through day signal) | `get_market_briefing` |
 
 These all run against the local cache — no API call, no rate limit.
 

@@ -25,7 +25,7 @@ jquants-mcp で Claude に何ができるか、ユースケース別ツアー。
 | 「業種別騰落率」（東証 33 業種または 17 業種） | `get_sector_performance` |
 | 「業種別 PER/PBR/ROE」（セクターブリーフィング、割安業種探し） | `get_sector_briefing` |
 | 「高配当利回りランキング」（`DivAnn / AdjC × 100`、中間報告の空配当はスキップ） | `get_dividend_yield_ranking` |
-| 「今日の相場ブリーフィング」（値上がり/値下がり + 騰落レシオ + 33業種別 + ランキング + TOPIX 変化率 + screener ハイライト + **ディストリビューションデイ・フォロースルーデイ判定**を 1 コールで） | `get_market_briefing` |
+| 「今日の相場ブリーフィング」（値上がり/値下がり + 騰落レシオ + 33業種別 + ランキング + TOPIX 変化率 + screener ハイライト + ディストリビューションデイ・フォロースルーデイ判定を 1 コールで） | `get_market_briefing` |
 
 すべてローカルキャッシュ上で動作 — API コール無し、レート制限無し。
 
