@@ -303,6 +303,19 @@ def register(
 # ------------------------------------------------------------------
 
 
+def _normalize_disc_date(row: dict[str, Any]) -> None:
+    """Normalize DiscDate in-place to YYYY-MM-DD, stripping any time suffix."""
+    raw = row.get("DiscDate")
+    if isinstance(raw, str) and len(raw) > 10:
+        row["DiscDate"] = raw[:10]
+
+
+def _dedup_key(row: dict[str, Any]) -> str:
+    """Return a dedup key that is stable regardless of DiscDate time-suffix format."""
+    disc = (row.get("DiscDate") or "")[:10]
+    return f"{row.get('Code')}_{disc}_{row.get('DiscNo', '')}"
+
+
 async def _get_fins_summary_with_cache(
     client: JQuantsClient,
     cache: CacheStore,
@@ -348,12 +361,13 @@ async def _get_fins_summary_with_cache(
             seen_keys: set[str] = set()
             merged: list[dict[str, Any]] = []
             for row in api_data:
-                key = f"{row.get('Code')}_{row.get('DiscDate')}_{row.get('DiscNo', '')}"
+                key = _dedup_key(row)
                 if key not in seen_keys:
                     seen_keys.add(key)
                     merged.append(row)
             for row in cached_data:
-                key = f"{row.get('Code')}_{row.get('DiscDate')}_{row.get('DiscNo', '')}"
+                _normalize_disc_date(row)
+                key = _dedup_key(row)
                 if key not in seen_keys:
                     seen_keys.add(key)
                     merged.append(row)
