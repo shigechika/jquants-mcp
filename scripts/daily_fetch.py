@@ -462,22 +462,29 @@ def fetch_investor_types(
 def _store_response_cache(
     conn: sqlite3.Connection,
     cache_key: str,
-    records: list[dict],
+    data: "list[dict] | dict",
     ttl: int,
 ) -> int:
-    """Store records in Tier 2 response cache."""
-    if not records:
+    """Store data in Tier 2 response cache.
+
+    data must be either a plain list[dict] or a pre-wrapped
+    {"count": N, "data": [...]} dict to match the format stored by the MCP
+    tool itself when it falls back to the API.
+    """
+    if not data:
         print("  データなし")
         return 0
 
-    response_data = json.dumps(records, ensure_ascii=False, default=str)
+    response_data = json.dumps(data, ensure_ascii=False, default=str)
     now = time.time()
     conn.execute(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
         (cache_key, response_data, now, ttl),
     )
     conn.commit()
-    return len(records)
+    if isinstance(data, dict):
+        return len(data.get("data", []))
+    return len(data)
 
 
 # ------------------------------------------------------------------
@@ -564,14 +571,26 @@ def fetch_short_ratio(
     conn: sqlite3.Connection,
     plan: str,
 ) -> int:
-    """Fetch sector short-selling ratios into Tier 1 cache (Standard+)."""
-    return _fetch_markets_tier1(
+    """Fetch sector short-selling ratios into Tier 1 and Tier 2 cache (Standard+)."""
+    count = _fetch_markets_tier1(
         cli.get_mkt_short_ratio,
         conn,
         table="markets_short_ratio",
         key_mapping=[("S33", "s33"), ("Date", "date")],
         plan=plan,
     )
+    # Populate Tier 2 cache for no-params tool calls
+    try:
+        df_all = cli.get_mkt_short_ratio()
+        if df_all is not None and len(df_all) > 0:
+            records = [_sanitize_row(r.to_dict()) for _, r in df_all.iterrows()]
+            _store_response_cache(
+                conn, "/markets/short-ratio", {"count": len(records), "data": records}, TTL_24H
+            )
+            print(f"  Tier 2: {len(records)} 件")
+    except Exception as e:
+        print(f"  Tier 2 エラー: {e}")
+    return count
 
 
 def fetch_margin_interest(
@@ -634,7 +653,9 @@ def fetch_short_sale_report(
         return 0
 
     records = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
-    return _store_response_cache(conn, "/markets/short-sale-report", records, TTL_24H)
+    return _store_response_cache(
+        conn, "/markets/short-sale-report", {"count": len(records), "data": records}, TTL_24H
+    )
 
 
 def fetch_breakdown(

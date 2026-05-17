@@ -36,6 +36,8 @@ from daily_fetch import (  # noqa: E402
     fetch_earnings_calendar,
     fetch_fins_summary,
     fetch_investor_types,
+    fetch_short_ratio,
+    fetch_short_sale_report,
     fetch_topix,
 )
 
@@ -598,3 +600,77 @@ class TestFetchMarketsTier1:
         data = json.loads(row[0])
         assert data["val"] is None
         assert data["ok"] == 1.0
+
+
+# ============================================================
+# fetch_short_ratio（Tier 1 + Tier 2）
+# ============================================================
+
+
+class TestFetchShortRatio:
+    """fetch_short_ratio が Tier 1 と Tier 2 の両方に保存すること。"""
+
+    def test_tier1_and_tier2_populated(self, db_conn):
+        rows = [
+            {"S33": "0050", "Date": "2026-05-17", "Ratio": 0.35},
+            {"S33": "0051", "Date": "2026-05-17", "Ratio": 0.40},
+        ]
+        df = FakeDataFrame(rows)
+        cli = MagicMock()
+        cli.get_mkt_short_ratio.return_value = df
+
+        count = fetch_short_ratio(cli, db_conn, plan="standard")
+
+        assert count == 2
+        assert cli.get_mkt_short_ratio.call_count == 2
+        # Tier 1 に保存されていること
+        tier1 = db_conn.execute("SELECT COUNT(*) FROM markets_short_ratio").fetchone()[0]
+        assert tier1 == 2
+        # Tier 2 に {"count": N, "data": [...]} 形式で保存されていること
+        row = db_conn.execute(
+            "SELECT data FROM response_cache WHERE cache_key = '/markets/short-ratio'"
+        ).fetchone()
+        assert row is not None
+        stored = json.loads(row[0])
+        assert stored["count"] == 2
+        assert len(stored["data"]) == 2
+
+    def test_tier2_error_does_not_abort(self, db_conn):
+        """Tier 2 フェッチ失敗でも Tier 1 の結果を返すこと。"""
+        df_tier1 = FakeDataFrame([{"S33": "0050", "Date": "2026-05-17", "Ratio": 0.35}])
+        cli = MagicMock()
+        # Tier 1 call returns data; Tier 2 (second call) raises
+        cli.get_mkt_short_ratio.side_effect = [df_tier1, Exception("timeout")]
+
+        count = fetch_short_ratio(cli, db_conn, plan="standard")
+        assert count == 1
+        tier1 = db_conn.execute("SELECT COUNT(*) FROM markets_short_ratio").fetchone()[0]
+        assert tier1 == 1
+
+
+# ============================================================
+# fetch_short_sale_report（Tier 2 キャッシュキー確認）
+# ============================================================
+
+
+class TestFetchShortSaleReport:
+    """fetch_short_sale_report が正しいキーで Tier 2 に保存すること。"""
+
+    def test_tier2_key_and_format(self, db_conn):
+        rows = [{"Code": "27800", "DiscDate": "2026-05-17", "ShortBalance": 100}]
+        df = FakeDataFrame(rows)
+        cli = MagicMock()
+        cli.get_mkt_short_sale_report.return_value = df
+
+        fetch_short_sale_report(cli, db_conn, plan="standard")
+
+        # キーに末尾 | がついていないこと
+        row = db_conn.execute(
+            "SELECT cache_key, data FROM response_cache WHERE cache_key LIKE '/markets/short-sale-report%'"
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "/markets/short-sale-report"
+        # {"count": N, "data": [...]} 形式で保存されていること
+        stored = json.loads(row[1])
+        assert stored["count"] == 1
+        assert len(stored["data"]) == 1
