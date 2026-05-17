@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
 import time
 from typing import Any
+
+import httpx
 
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
@@ -274,6 +277,72 @@ async def _reload_cache_background() -> None:
         logger.error("Cache reload background task failed: %s", exc)
     finally:
         _reload_in_progress = False
+
+
+@mcp.custom_route("/.well-known/oauth-protected-resource/mcp", methods=["GET", "OPTIONS"])
+async def _handle_protected_resource_metadata(request: Request) -> Response:
+    """RFC 9728: OAuth 2.0 Protected Resource Metadata.
+
+    Lets MCP clients discover the authorization server from the resource URL.
+    Only handles root-level deployments (resource = {base_url}/mcp).
+    When deployed behind a path-prefix reverse proxy the proxy must serve the
+    RFC 9728 well-known URL at the domain root level.
+    """
+    base_url = _get_settings().oauth_base_url.rstrip("/")
+    if not base_url:
+        return Response(
+            status_code=404,
+            content='{"error":"OAuth not configured"}',
+            media_type="application/json",
+        )
+    data = {
+        "resource": f"{base_url}/mcp",
+        "authorization_servers": [base_url],
+    }
+    return Response(
+        content=json.dumps(data),
+        status_code=200,
+        media_type="application/json",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@mcp.custom_route("/.well-known/openid-configuration", methods=["GET", "OPTIONS"])
+async def _handle_openid_configuration(request: Request) -> Response:
+    """OIDC discovery — alias for OAuth 2.0 Authorization Server Metadata (RFC 8414).
+
+    Claude Desktop and its backend probe this endpoint before the MCP-spec
+    RFC 8414 path.  jquants-mcp uses GitHub OAuth (not OpenID Connect), but
+    returning the OAuth server metadata here is sufficient for clients to
+    discover the authorization and token endpoints.
+    """
+    if not _get_settings().oauth_base_url:
+        return Response(
+            status_code=404,
+            content='{"error":"OAuth not configured"}',
+            media_type="application/json",
+        )
+    host, port = request.scope.get("server", ("127.0.0.1", 8080))
+    host_str = f"[{host}]" if ":" in str(host) else host
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"http://{host_str}:{port}/.well-known/oauth-authorization-server",
+                timeout=5.0,
+            )
+        return Response(
+            content=resp.content,
+            status_code=resp.status_code,
+            media_type="application/json",
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+    except Exception as exc:
+        logger.warning("/.well-known/openid-configuration proxy failed: %s", exc)
+        return Response(
+            status_code=503,
+            content='{"error":"service unavailable"}',
+            media_type="application/json",
+        )
 
 
 @mcp.custom_route("/internal/reload", methods=["POST"])
