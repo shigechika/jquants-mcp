@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.33.2](https://github.com/shigechika/jquants-mcp/compare/v0.33.1...v0.33.2) (2026-05-17)
+
+
+### Bug Fixes
+
+* **financials:** deduplicate fins_summary cache merge by normalized DiscDate ([#342](https://github.com/shigechika/jquants-mcp/issues/342)) ([4f4b269](https://github.com/shigechika/jquants-mcp/commit/4f4b2693eb940edadd1fa80fcf9b5f479b875713))
+
 ## [0.33.1](https://github.com/shigechika/jquants-mcp/compare/v0.33.0...v0.33.1) (2026-05-17)
 
 
