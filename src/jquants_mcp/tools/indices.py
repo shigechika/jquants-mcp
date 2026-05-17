@@ -123,10 +123,10 @@ async def _get_topix_with_cache(
         if date_to:
             params["to"] = date_to
 
-        # Filter out malformed keys ("None", "", timestamps with spaces) that would
-        # corrupt params["from"] after client-side hyphen stripping.
-        # e.g. "2026-05-15 00:00:00" → "20260515 00:00:00" → API 400.
-        valid_dates = {d for d in cached_dates if d and d[0].isdigit() and " " not in d}
+        # Filter out malformed keys ("None", "", timestamps with spaces/T-separator)
+        # that would corrupt params["from"] after client-side hyphen stripping.
+        # Only accept "YYYY-MM-DD" (10) or "YYYYMMDD" (8) — the two formats the API accepts.
+        valid_dates = {d for d in cached_dates if d and d[0].isdigit() and len(d) in (8, 10)}
         if valid_dates:
             # 増分取得: キャッシュの最新日付以降を取得
             latest_cached = max(valid_dates)
