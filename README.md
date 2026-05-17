@@ -295,7 +295,9 @@ This is equivalent to calling `register_api_key` via Claude, but accessible dire
 
 When serving jquants-mcp under a path prefix (e.g. `https://mcp.example.com/jquants-mcp/mcp`) via a reverse proxy, two things are required — no code changes needed:
 
-**1. Strip the prefix in the reverse proxy (Caddy example):**
+**1. Strip the prefix in the reverse proxy:**
+
+Caddy:
 
 ```caddy
 handle /jquants-mcp/* {
@@ -304,10 +306,26 @@ handle /jquants-mcp/* {
 }
 ```
 
+nginx (named capture group avoids numbered-backreference vulnerabilities):
+
+```nginx
+location /jquants-mcp/ {
+    rewrite ^/jquants-mcp(?<path>/.*)$ $path break;
+    proxy_pass http://localhost:8080;
+}
+```
+
 **2. Set `OAUTH_BASE_URL` to the full prefixed URL:**
 
 ```bash
 export OAUTH_BASE_URL=https://mcp.example.com/jquants-mcp
+```
+
+Or via `config.ini`:
+
+```ini
+[oauth]
+base_url = https://mcp.example.com/jquants-mcp
 ```
 
 FastMCP derives all OAuth endpoints (`/oauth/callback`, `/settings`, `/.well-known/oauth-authorization-server`) from `OAUTH_BASE_URL`, so setting it to the prefixed public URL ensures the OAuth flow and settings page work correctly after the proxy strips the prefix.
