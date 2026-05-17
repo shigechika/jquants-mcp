@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.32.1](https://github.com/shigechika/jquants-mcp/compare/v0.32.0...v0.32.1) (2026-05-17)
+
+
+### Bug Fixes
+
+* **market_overview:** prefetch TOPIX before distribution/FTD detection ([#328](https://github.com/shigechika/jquants-mcp/issues/328)) ([4952b4a](https://github.com/shigechika/jquants-mcp/commit/4952b4abbdf8354099a9432e4d1282f20cd14041))
+
 ## [0.32.0](https://github.com/shigechika/jquants-mcp/compare/v0.31.0...v0.32.0) (2026-05-17)
 
 
