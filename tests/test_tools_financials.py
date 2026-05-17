@@ -238,6 +238,61 @@ class TestFinsSummarySplitAdjustment:
             result = await _call("get_fins_summary", date="2024-02-06")
             assert result.get("split_adjustment") == "not_applied"
 
+    async def test_no_duplicate_when_cache_has_datetime_format(self, mock_env):
+        """Cache row with 'YYYY-MM-DD 00:00:00' DiscDate must not duplicate API row."""
+        cache = mock_env["cache"]
+
+        # Seed cache with the old datetime-string format in the JSON blob.
+        # put_rows normalises the key column but stores the raw JSON unchanged.
+        cache.put_rows(
+            "fins_summary",
+            [{"Code": "72030", "DiscDate": "2026-05-08 00:00:00", "DiscNo": "0", "Sales": 100}],
+            key_columns=["Code", "DiscDate"],
+        )
+        # Verify the blob actually retains the old format so the test premise holds.
+        cached_rows = cache.get_rows(
+            "fins_summary", key_filter={"code": "72030"}, date_column="disc_date"
+        )
+        assert cached_rows[0]["DiscDate"] == "2026-05-08 00:00:00", (
+            "Test setup failed: expected blob to retain datetime format, "
+            f"got {cached_rows[0]['DiscDate']!r}"
+        )
+
+        # API now returns the same record with the normalised date format.
+        api_data = [{"Code": "72030", "DiscDate": "2026-05-08", "DiscNo": "0", "Sales": 100}]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=api_data
+        ):
+            result = await _call("get_fins_summary", code="72030")
+
+        assert result["count"] == 1, (
+            f"Expected 1 record, got {result['count']}; "
+            f"DiscDates={[r['DiscDate'] for r in result['data']]}"
+        )
+
+    async def test_cached_disc_date_normalised_in_output(self, mock_env):
+        """DiscDate in cached rows is normalised to YYYY-MM-DD in the merged output."""
+        cache = mock_env["cache"]
+
+        # Old cached row (pre-normalisation era)
+        cache.put_rows(
+            "fins_summary",
+            [{"Code": "72030", "DiscDate": "2024-11-05 00:00:00", "DiscNo": "0", "Sales": 50}],
+            key_columns=["Code", "DiscDate"],
+        )
+
+        # API returns a newer record that the cache doesn't have yet.
+        api_data = [{"Code": "72030", "DiscDate": "2026-05-08", "DiscNo": "0", "Sales": 100}]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=api_data
+        ):
+            result = await _call("get_fins_summary", code="72030")
+
+        disc_dates = [r["DiscDate"] for r in result["data"]]
+        assert all(len(d) == 10 for d in disc_dates), (
+            f"All DiscDate values should be YYYY-MM-DD, got: {disc_dates}"
+        )
+
 
 class TestFinsSummaryFiscalPeriod:
     """Derived ``FiscalPeriod`` field on fins_summary rows."""
