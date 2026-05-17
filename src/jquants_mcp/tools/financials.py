@@ -361,6 +361,7 @@ async def _get_fins_summary_with_cache(
             seen_keys: set[str] = set()
             merged: list[dict[str, Any]] = []
             for row in api_data:
+                _normalize_disc_date(row)
                 key = _dedup_key(row)
                 if key not in seen_keys:
                     seen_keys.add(key)

@@ -249,6 +249,14 @@ class TestFinsSummarySplitAdjustment:
             [{"Code": "72030", "DiscDate": "2026-05-08 00:00:00", "DiscNo": "0", "Sales": 100}],
             key_columns=["Code", "DiscDate"],
         )
+        # Verify the blob actually retains the old format so the test premise holds.
+        cached_rows = cache.get_rows(
+            "fins_summary", key_filter={"code": "72030"}, date_column="disc_date"
+        )
+        assert cached_rows[0]["DiscDate"] == "2026-05-08 00:00:00", (
+            "Test setup failed: expected blob to retain datetime format, "
+            f"got {cached_rows[0]['DiscDate']!r}"
+        )
 
         # API now returns the same record with the normalised date format.
         api_data = [{"Code": "72030", "DiscDate": "2026-05-08", "DiscNo": "0", "Sales": 100}]
