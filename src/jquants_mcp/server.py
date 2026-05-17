@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import signal
 import time
 from typing import Any
+
+import httpx
 
 from fastmcp import FastMCP
 from starlette.middleware import Middleware
@@ -285,15 +288,19 @@ async def _handle_protected_resource_metadata(request: Request) -> Response:
     When deployed behind a path-prefix reverse proxy the proxy must serve the
     RFC 9728 well-known URL at the domain root level.
     """
-    import json as _json
-
     base_url = _get_settings().oauth_base_url.rstrip("/")
+    if not base_url:
+        return Response(
+            status_code=404,
+            content='{"error":"OAuth not configured"}',
+            media_type="application/json",
+        )
     data = {
         "resource": f"{base_url}/mcp",
         "authorization_servers": [base_url],
     }
     return Response(
-        content=_json.dumps(data),
+        content=json.dumps(data),
         status_code=200,
         media_type="application/json",
         headers={"Cache-Control": "public, max-age=3600"},
@@ -309,13 +316,18 @@ async def _handle_openid_configuration(request: Request) -> Response:
     returning the OAuth server metadata here is sufficient for clients to
     discover the authorization and token endpoints.
     """
-    import httpx as _httpx
-
+    if not _get_settings().oauth_base_url:
+        return Response(
+            status_code=404,
+            content='{"error":"OAuth not configured"}',
+            media_type="application/json",
+        )
     host, port = request.scope.get("server", ("127.0.0.1", 8080))
+    host_str = f"[{host}]" if ":" in str(host) else host
     try:
-        async with _httpx.AsyncClient() as client:
+        async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"http://{host}:{port}/.well-known/oauth-authorization-server",
+                f"http://{host_str}:{port}/.well-known/oauth-authorization-server",
                 timeout=5.0,
             )
         return Response(
@@ -326,7 +338,11 @@ async def _handle_openid_configuration(request: Request) -> Response:
         )
     except Exception as exc:
         logger.warning("/.well-known/openid-configuration proxy failed: %s", exc)
-        return Response(status_code=503, content=b"Service unavailable")
+        return Response(
+            status_code=503,
+            content='{"error":"service unavailable"}',
+            media_type="application/json",
+        )
 
 
 @mcp.custom_route("/internal/reload", methods=["POST"])
