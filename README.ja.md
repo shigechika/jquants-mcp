@@ -291,6 +291,29 @@ OAuth が有効な場合、`https://mcp.example.com/settings` でブラウザか
 
 MCP クライアントなしでブラウザから直接 `register_api_key` 相当の操作が可能です。
 
+### リバースプロキシ（パスプレフィックス）
+
+`https://mcp.example.com/jquants-mcp/mcp` のようにパスプレフィックス配下で動かす場合、コード変更は不要で以下の 2 点だけ設定します。
+
+**① リバースプロキシでプレフィックスをストリップ（Caddy の例）：**
+
+```caddy
+handle /jquants-mcp/* {
+    uri strip_prefix /jquants-mcp
+    reverse_proxy localhost:8080
+}
+```
+
+**② `OAUTH_BASE_URL` をプレフィックス込みの公開 URL に設定：**
+
+```bash
+export OAUTH_BASE_URL=https://mcp.example.com/jquants-mcp
+```
+
+FastMCP はすべての OAuth エンドポイント（`/oauth/callback`、`/settings`、`/.well-known/oauth-authorization-server`）を `OAUTH_BASE_URL` から導出します。プレフィックス込みの公開 URL を設定することで、プロキシがプレフィックスをストリップした後も OAuth フローと settings ページが正しく動作します。
+
+> **Google OAuth の注意：** Google Cloud Console で *Authorized JavaScript origins* に `https://mcp.example.com`、*Authorized redirect URIs* に `https://mcp.example.com/jquants-mcp/oauth/callback` を追加してください。
+
 ## マルチユーザーモード
 
 GitHub OAuth 2.1 と `MCP_ENCRYPTION_KEY` を両方設定すると、**マルチユーザーモード**で動作します。認証された各ユーザーが自分の J-Quants API キーをサーバーに登録でき、データ取得ツールは自動的にそのキーを使用します。キャッシュは全ユーザーで共有され、レート制限はユーザーごとに独立します。
