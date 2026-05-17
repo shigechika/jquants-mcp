@@ -262,7 +262,8 @@ def _store_tier1(
 
     count = 0
     for row in rows:
-        key_values = [str(row.get(api_col, "")) for api_col, _ in key_mapping]
+        # Normalize values: str(pandas.Timestamp) → "YYYY-MM-DD HH:MM:SS"; strip to date only
+        key_values = [str(row.get(api_col, "")).split(" ")[0].split("T")[0] for api_col, _ in key_mapping]
         data_json = json.dumps(row, ensure_ascii=False, default=str)
         conn.execute(sql, key_values + [data_json, now])
         count += 1
@@ -303,11 +304,15 @@ def fetch_topix(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan: str) -
     now = time.time()
     count = 0
     for _, r in df.iterrows():
-        data_json = json.dumps(_sanitize_row(r.to_dict()), ensure_ascii=False, default=str)
+        # str(pandas.Timestamp) produces "YYYY-MM-DD HH:MM:SS"; strip to date only
+        date_str = str(r["Date"])[:10]
+        row_dict = _sanitize_row(r.to_dict())
+        row_dict["Date"] = date_str
+        data_json = json.dumps(row_dict, ensure_ascii=False)
         conn.execute(
             "INSERT OR REPLACE INTO indices_bars_daily_topix "
             "(date, data, fetched_at) VALUES (?, ?, ?)",
-            (str(r["Date"]), data_json, now),
+            (date_str, data_json, now),
         )
         count += 1
 
