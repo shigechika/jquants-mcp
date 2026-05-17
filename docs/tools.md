@@ -101,10 +101,12 @@ Find stocks matching a signal:
 `detect_distribution_days` uses TOPIX as the market proxy and total market
 turnover (`SUM(Va)`) as the volume signal. A distribution day fires when TOPIX
 falls ≥ 2.0 σ below the 20-session rolling mean (same window as BB20). Four or
-more within 25 sessions is a warning that the uptrend may be failing (IBD
-method adapted for TOPIX — calibrated against 2021–2026 data, fires ~9
-times/year at the default threshold). Each entry includes `volume_confirmed`
-(whether total market Va exceeded the prior session).
+more within 25 sessions is a warning that the uptrend may be failing (IBD —
+Investor's Business Daily, a US investment research publication that
+developed this distribution-day methodology — method adapted for TOPIX,
+calibrated against 2021–2026 data, fires ~9 times/year at the default
+threshold). Each entry includes `volume_confirmed` (whether total market Va
+exceeded the prior session).
 
 `detect_follow_through_day` confirms a new uptrend: TOPIX must rise ≥ 2.0 σ on
 session 4 or later from `rally_start` (the low/reversal day) with higher market
@@ -113,7 +115,7 @@ each subsequent date until the signal fires or distribution resumes.
 
 Both signals are also embedded automatically in `get_market_briefing` under the
 `trend_signals` key — the briefing auto-detects the potential rally start as the
-TOPIX 30-session low, so you get distribution count + follow-through status in a
+TOPIX 30-session low, so you get distribution + follow-through status in a
 single call without specifying `rally_start` manually.
 
 `detect_ytd_high_low` and `detect_52w_high_low` now include four extra fields per

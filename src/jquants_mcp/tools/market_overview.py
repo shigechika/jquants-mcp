@@ -1308,6 +1308,14 @@ async def _trend_signals_best_effort(
     topix_payload = await call_json(
         "get_indices_bars_daily_topix", {"date_from": topix_start, "date_to": norm_date}
     )
+
+    def _c(row: dict) -> float:
+        v = row.get("Close") or row.get("C")
+        try:
+            return float(v) if v is not None else float("inf")
+        except (TypeError, ValueError):
+            return float("inf")
+
     ftd_section: dict[str, Any] | None = None
     if not topix_payload.get("error"):
         rows = sorted(
@@ -1315,14 +1323,6 @@ async def _trend_signals_best_effort(
             key=lambda r: str(r.get("Date") or ""),
         )
         if rows:
-
-            def _c(row: dict) -> float:
-                v = row.get("Close") or row.get("C")
-                try:
-                    return float(v) if v is not None else float("inf")
-                except (TypeError, ValueError):
-                    return float("inf")
-
             recent = rows[-rally_window:] if len(rows) >= rally_window else rows
             min_row = min(recent, key=_c)
             auto_rally_start = str(min_row.get("Date") or "")[:10]

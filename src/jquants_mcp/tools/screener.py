@@ -27,8 +27,9 @@ Exposed tools:
 - ``detect_52w_high_low_range`` / ``detect_ytd_high_low_range`` —
   multi-date variants of the high/low detectors. Use these when
   scanning more than one date to avoid parallel-dispatch timeouts.
-- ``detect_distribution_days`` — count TOPIX distribution days (IBD method)
-  within a rolling 25-session window using a 20-session rolling σ threshold.
+- ``detect_distribution_days`` — count TOPIX distribution days (IBD —
+  Investor's Business Daily — method) within a rolling 25-session window
+  using a 20-session rolling σ threshold.
   Uses ``indices_bars_daily_topix`` for price and ``equities_bars_daily``
   Va aggregate for volume.
 - ``detect_follow_through_day`` — check whether a TOPIX follow-through day

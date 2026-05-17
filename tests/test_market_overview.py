@@ -104,6 +104,42 @@ def _insert_margin(
     )
 
 
+def _make_topix_rows(
+    n: int = 50,
+    last_date: str = "2026-05-02",
+    drops_at: list[int] | None = None,
+    downtrend: bool = False,
+) -> list[dict]:
+    """Generate n TOPIX rows as consecutive calendar dates ending on last_date.
+
+    drops_at: list of 0-based indices where return is -2.5% instead of ±0.5%.
+    downtrend: if True, each session is -0.3% so current close is the minimum.
+    """
+    from datetime import date as date_, timedelta
+
+    end = date_.fromisoformat(last_date)
+    dates = [(end - timedelta(days=n - 1 - i)).isoformat() for i in range(n)]
+    close = 3000.0
+    rows = []
+    for i, d in enumerate(dates):
+        rows.append(
+            {
+                "Date": f"{d} 00:00:00",
+                "O": close,
+                "H": close * 1.001,
+                "L": close * 0.999,
+                "C": close,
+            }
+        )
+        if downtrend:
+            close *= 0.997
+        elif drops_at and i in drops_at:
+            close *= 0.975  # -2.5%
+        else:
+            close *= 1.005 if i % 2 == 0 else 0.995
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -1058,42 +1094,6 @@ class TestGetMarketBriefing:
     # trend_signals tests — require TOPIX data in cache
     # ------------------------------------------------------------------
 
-    def _make_topix_rows(
-        self,
-        n: int = 50,
-        last_date: str = "2026-05-02",
-        drops_at: list[int] | None = None,
-        downtrend: bool = False,
-    ) -> list[dict]:
-        """Generate n TOPIX rows as consecutive calendar dates ending on last_date.
-
-        drops_at: list of 0-based indices where return is -2.5% instead of ±0.5%.
-        downtrend: if True, each session is -0.3% so current close is the minimum.
-        """
-        from datetime import date as date_, timedelta
-
-        end = date_.fromisoformat(last_date)
-        dates = [(end - timedelta(days=n - 1 - i)).isoformat() for i in range(n)]
-        close = 3000.0
-        rows = []
-        for i, d in enumerate(dates):
-            rows.append(
-                {
-                    "Date": f"{d} 00:00:00",
-                    "O": close,
-                    "H": close * 1.001,
-                    "L": close * 0.999,
-                    "C": close,
-                }
-            )
-            if downtrend:
-                close *= 0.997
-            elif drops_at and i in drops_at:
-                close *= 0.975  # -2.5%
-            else:
-                close *= 1.005 if i % 2 == 0 else 0.995
-        return rows
-
     @pytest.mark.asyncio
     async def test_trend_signals_distribution_present(self, tmp_path):
         """With 50 TOPIX sessions and normal returns, distribution section is populated."""
@@ -1109,9 +1109,7 @@ class TestGetMarketBriefing:
         conn.commit()
         conn.close()
         # 50 rows: alternating ±0.5% — no big drops, so distribution_count=0
-        cache.put_rows(
-            "indices_bars_daily_topix", self._make_topix_rows(n=50), key_columns=["Date"]
-        )
+        cache.put_rows("indices_bars_daily_topix", _make_topix_rows(n=50), key_columns=["Date"])
         stub_client = MagicMock(spec=JQuantsClient)
         with (
             patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
@@ -1144,7 +1142,7 @@ class TestGetMarketBriefing:
         conn.commit()
         conn.close()
         # 50 rows: 4 big drops at indices 26–29 (within the 25-session window of session 49)
-        rows = self._make_topix_rows(n=50, drops_at=[26, 27, 28, 29])
+        rows = _make_topix_rows(n=50, drops_at=[26, 27, 28, 29])
         cache.put_rows("indices_bars_daily_topix", rows, key_columns=["Date"])
         stub_client = MagicMock(spec=JQuantsClient)
         with (
@@ -1177,7 +1175,7 @@ class TestGetMarketBriefing:
         conn.commit()
         conn.close()
         # 50 rows in continuous downtrend: current close is the minimum
-        rows = self._make_topix_rows(n=50, downtrend=True)
+        rows = _make_topix_rows(n=50, downtrend=True)
         cache.put_rows("indices_bars_daily_topix", rows, key_columns=["Date"])
         stub_client = MagicMock(spec=JQuantsClient)
         with (

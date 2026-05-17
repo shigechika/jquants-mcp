@@ -635,7 +635,7 @@ jquants-mcp -t streamable-http --port 8080 \
 | `detect_ytd_high_low` | 年初来高値・安値を判定。Kabutan / JPX / Yahoo!ファイナンス慣習。同じ 4 シグナル＋確信度フィールド（`AdjO`・`close_vs_vwap`・`volume_ratio`・`volume_ratio_sessions`）。 |
 | `detect_ytd_high_low_range` | 上記の期間版（`date_from`〜`date_to`）。複数日分を単日ツールの繰り返しではなくこちらで取得。 |
 | `detect_volume_surge` | 指定日の出来高が直近 20 営業日平均の `multiplier` 倍（既定 2.0）以上の銘柄を列挙。 |
-| `detect_distribution_days` | TOPIX を市場指標、東証全銘柄の売買代金合計（`SUM(Va)`）を出来高代替として、ディストリビューションデイ（機関投資家の売り圧力）を検出。TOPIX の日次リターンが 20 日ローリング平均から `sigma_multiplier` σ（既定 2.0）以上下落した日をディストリビューションデイとし、`window_sessions`（既定 25）日間に 4 日以上でトレンド悪化警告を発する（IBD メソッドを TOPIX 向けに校正）。各エントリには `volume_confirmed`（当日の市場売買代金が前日を上回ったか）が含まれる。 |
+| `detect_distribution_days` | TOPIX を市場指標、東証全銘柄の売買代金合計（`SUM(Va)`）を出来高代替として、ディストリビューションデイ（機関投資家の売り圧力）を検出。TOPIX の日次リターンが 20 日ローリング平均から `sigma_multiplier` σ（既定 2.0）以上下落した日をディストリビューションデイとし、`window_sessions`（既定 25）日間に 4 日以上でトレンド悪化警告を発する（IBD — Investor's Business Daily、ディストリビューションデイ手法を開発した米国の投資専門紙 — のメソッドを TOPIX 向けに校正）。各エントリには `volume_confirmed`（当日の市場売買代金が前日を上回ったか）が含まれる。 |
 | `detect_follow_through_day` | 新しい上昇トレンドを確認するフォロースルーデイを検出。`rally_start`（安値・反転日 = セッション 1）から 4 日目以降に TOPIX が 20 日ローリング平均から `sigma_multiplier` σ（既定 2.0）以上上昇し、かつ市場売買代金が前日を上回った日がフォロースルーデイ。`rally_start` に反転日を渡し、シグナルが出るまで各日付でチェックする。 |
 
 ### 単銘柄ブリーフィング (Single Stock Briefing) — 1ツール
