@@ -578,7 +578,12 @@ async def _get_user_client() -> JQuantsClient:
         if _get_settings().cache_bypass_auth:
             # Bypass: fall back to global client so cache reads succeed without
             # per-user API key registration (self-hosted with pre-populated cache).
-            return _get_client()
+            # Do NOT enable on Cloud Run — all bypass users share the global API
+            # key quota, which can exhaust it in multi-user deployments.
+            audit("cache_bypass_used", user_id=user_id)
+            client = _get_client()
+            await _ensure_plan_detected(client)
+            return client
         raise UserNotConfiguredError(user_id)
 
     # ユーザー別クライアントが未キャッシュなら作成

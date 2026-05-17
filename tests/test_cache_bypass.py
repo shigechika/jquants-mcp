@@ -29,7 +29,7 @@ def _make_env(tmp_path, cache_bypass_auth: str = "false"):
         jquants_api_key="global-key",
         jquants_plan="standard",
         jquants_cache_dir=str(tmp_path),
-        encryption_key="A" * 32,  # enables user_db path
+        encryption_key="A" * 32,  # non-empty so Settings validates; _get_user_db is patched
         cache_bypass_auth=cache_bypass_auth,
     )
     client = JQuantsClient(settings)
