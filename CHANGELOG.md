@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.33.1](https://github.com/shigechika/jquants-mcp/compare/v0.33.0...v0.33.1) (2026-05-17)
+
+
+### Bug Fixes
+
+* short_sale_report/short_ratio (no-params) always miss Tier 2 cache ([#339](https://github.com/shigechika/jquants-mcp/issues/339)) ([e8305dd](https://github.com/shigechika/jquants-mcp/commit/e8305ddb88ba61e1e026eb850ad9fb8e53c6a671))
+
 ## [0.33.0](https://github.com/shigechika/jquants-mcp/compare/v0.32.2...v0.33.0) (2026-05-17)
 
 
