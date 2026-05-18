@@ -11,7 +11,7 @@ import jquants_mcp.server as server_module
 from jquants_mcp.cache.store import CacheStore
 from jquants_mcp.client import JQuantsClient
 from jquants_mcp.config import Settings
-from jquants_mcp.exceptions import APIError
+from jquants_mcp.exceptions import APIError, PlanRestrictionError
 
 
 @pytest.fixture()
@@ -117,6 +117,42 @@ class TestGetMarketsMarginInterest:
             result = await _call("get_markets_margin_interest", code="99999")
             assert result["error"] is True
 
+    async def test_no_params_api_failure_falls_back_to_tier1(self, mock_env):
+        """No-params path: API fails (e.g. PlanRestrictionError) → returns Tier 1 snapshot."""
+        from datetime import date, timedelta
+
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        seed_rows = [
+            {"Code": "72030", "Date": recent_date, "LoanBalance": 9999},
+            {"Code": "72031", "Date": recent_date, "LoanBalance": 8888},
+        ]
+        mock_env["cache"].put_rows(
+            "markets_margin_interest",
+            seed_rows,
+            key_columns=["Code", "Date"],
+        )
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_margin_interest")
+        assert result.get("error") is not True
+        assert result["count"] == 2
+        assert result["source"] == "cache"
+
+    async def test_no_params_api_failure_no_tier1_returns_error(self, mock_env):
+        """No-params path: API fails and Tier 1 is empty → returns error dict."""
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_margin_interest")
+        assert result["error"] is True
+
 
 class TestGetMarketsMarginAlert:
     async def test_returns_data(self, mock_env):
@@ -185,6 +221,42 @@ class TestGetMarketsShortRatio:
             assert result["count"] == 1
             assert result["source"] == "cache"
             assert mock_fn.call_count == 1
+
+    async def test_no_params_api_failure_falls_back_to_tier1(self, mock_env):
+        """No-params path: API fails → returns Tier 1 snapshot."""
+        from datetime import date, timedelta
+
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        seed_rows = [
+            {"Date": recent_date, "S33": "0050", "ShortSaleRatio": 40.5},
+            {"Date": recent_date, "S33": "0100", "ShortSaleRatio": 35.2},
+        ]
+        mock_env["cache"].put_rows(
+            "markets_short_ratio",
+            seed_rows,
+            key_columns=["S33", "Date"],
+        )
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_short_ratio")
+        assert result.get("error") is not True
+        assert result["count"] == 2
+        assert result["source"] == "cache"
+
+    async def test_no_params_api_failure_no_tier1_returns_error(self, mock_env):
+        """No-params path: API fails and Tier 1 is empty → returns error dict."""
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_short_ratio")
+        assert result["error"] is True
 
 
 class TestGetMarketsShortSaleReport:

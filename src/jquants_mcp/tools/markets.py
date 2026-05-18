@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import date as _date
+from datetime import timedelta
 from typing import Any
 
 from fastmcp import FastMCP
@@ -90,8 +92,14 @@ def register(
                 date_to=date_to,
             )
 
-        # パラメータなし: Tier 2 フォールバック
-        return await _tier2_fallback(client, cache, "/markets/margin-interest", {})
+        # パラメータなし: Tier 2 フォールバック（API 失敗時は Tier 1 スナップショット）
+        return await _tier2_fallback(
+            client,
+            cache,
+            "/markets/margin-interest",
+            {},
+            tier1_table="markets_margin_interest",
+        )
 
     @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_margin_alert(
@@ -189,7 +197,13 @@ def register(
                 date_to=date_to,
             )
 
-        return await _tier2_fallback(client, cache, "/markets/short-ratio", {})
+        return await _tier2_fallback(
+            client,
+            cache,
+            "/markets/short-ratio",
+            {},
+            tier1_table="markets_short_ratio",
+        )
 
     @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_short_sale_report(
@@ -427,13 +441,38 @@ async def _get_with_tier1_cache(
         return format_api_error(e)
 
 
+def _get_latest_tier1_snapshot(
+    cache: CacheStore,
+    table: str,
+    date_col: str = "date",
+) -> list[dict[str, Any]]:
+    """Return the most recent available rows from a Tier 1 table (30-day lookback)."""
+    cutoff = (_date.today() - timedelta(days=30)).isoformat()
+    cached_dates = cache.get_cached_dates(
+        table, key_filter={}, date_column=date_col, date_from=cutoff
+    )
+    if not cached_dates:
+        return []
+    latest = max(cached_dates)
+    return cache.get_rows(
+        table, key_filter={}, date_column=date_col, date_from=latest, date_to=latest
+    )
+
+
 async def _tier2_fallback(
     client: JQuantsClient,
     cache: CacheStore,
     endpoint: str,
     params: dict[str, Any],
+    tier1_table: str | None = None,
+    tier1_date_col: str = "date",
 ) -> dict[str, Any]:
-    """Tier 2 fallback for calls without parameters."""
+    """Tier 2 fallback for calls without parameters.
+
+    When ``tier1_table`` is given and the API call fails, the most recent
+    Tier 1 snapshot is returned so callers get cached data even on plan
+    restriction or network errors.
+    """
     cache_key = make_cache_key(endpoint, params)
     cached = cache.get_response(cache_key)
     if cached is not None:
@@ -451,6 +490,15 @@ async def _tier2_fallback(
         DecryptionError,
         UserNotAllowedError,
     ) as e:
+        if tier1_table:
+            rows = _get_latest_tier1_snapshot(cache, tier1_table, tier1_date_col)
+            if rows:
+                logger.warning(
+                    "API call to %s failed; returning Tier 1 snapshot (%d rows)",
+                    endpoint,
+                    len(rows),
+                )
+                return {"count": len(rows), "data": rows, "source": "cache"}
         return format_api_error(e)
 
 
