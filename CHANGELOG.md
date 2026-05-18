@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.34.0](https://github.com/shigechika/jquants-mcp/compare/v0.33.4...v0.34.0) (2026-05-18)
+
+
+### Features
+
+* **markets:** add detail param to margin_interest and short_ratio ([#350](https://github.com/shigechika/jquants-mcp/issues/350)) ([c9da29e](https://github.com/shigechika/jquants-mcp/commit/c9da29e00a6daff29317539e3484192ab1e7f124))
+
 ## [0.33.4](https://github.com/shigechika/jquants-mcp/compare/v0.33.3...v0.33.4) (2026-05-18)
 
 
