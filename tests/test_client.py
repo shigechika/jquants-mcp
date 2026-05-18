@@ -102,6 +102,16 @@ class TestAPIErrors:
         assert d["status_code"] == 400
         assert d["body"] == '{"message":"date range out of bounds"}'
 
+    @respx.mock
+    async def test_4xx_no_approval_received_raises_plan_restriction(self, client):
+        """4xx with 'No approval received' in body is treated as PlanRestrictionError."""
+        route = respx.get("https://api.example.com/v2/markets/margin-interest")
+        route.respond(400, json={"message": "No approval received"})
+        with pytest.raises(PlanRestrictionError) as exc_info:
+            await client.get("/markets/margin-interest")
+        assert exc_info.value.status_code == 400
+        assert route.call_count == 1
+
 
 class TestAPIErrorToDict:
     """APIError.to_dict() のテスト。"""

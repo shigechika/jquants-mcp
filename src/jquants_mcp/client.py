@@ -129,6 +129,18 @@ class JQuantsClient:
                     body=response.text,
                 )
 
+            if 400 <= response.status_code < 500 and response.status_code not in (401, 429):
+                try:
+                    body_json = response.json()
+                    if "No approval received" in body_json.get("message", ""):
+                        raise PlanRestrictionError(
+                            "This endpoint is not available on your current plan.",
+                            status_code=response.status_code,
+                            body=response.text,
+                        )
+                except (ValueError, KeyError):
+                    pass
+
             if response.status_code == 429:
                 retry_after = response.headers.get("Retry-After")
                 wait = (
