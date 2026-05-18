@@ -1232,6 +1232,11 @@ def register(
                     }
                 )
         sector_short_ratios.sort(key=lambda x: x["short_sale_ratio"], reverse=True)
+        if short_ratio_map and not sector_short_ratios:
+            logger.warning(
+                "short_ratio cache has %d rows but all ratios are null — API field names may have changed",
+                len(short_ratio_map),
+            )
 
         # 4. Top movers and top turnover.
         movers_up = _compute_top_movers(today_rows, prev_close_map, name_map, "up", n)
