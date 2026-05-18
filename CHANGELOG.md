@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.35.0](https://github.com/shigechika/jquants-mcp/compare/v0.34.0...v0.35.0) (2026-05-18)
+
+
+### Features
+
+* **briefing:** add sector short-sale ratio to market and stock briefings ([#352](https://github.com/shigechika/jquants-mcp/issues/352)) ([9bf6170](https://github.com/shigechika/jquants-mcp/commit/9bf6170133cec0e61b40d57409376ed9e63ffb82))
+
 ## [0.34.0](https://github.com/shigechika/jquants-mcp/compare/v0.33.4...v0.34.0) (2026-05-18)
 
 
