@@ -322,3 +322,57 @@ class TestGetTechnicalIndicators:
         # Only the requested date should be in output
         assert result["count"] == 1
         assert result["data"][0]["Date"] == "2025-02-04"
+
+    async def test_empty_string_close_does_not_crash(self, mock_env):
+        """Rows with empty-string AdjC/C (low-volume stocks) are skipped without error."""
+        from datetime import date, timedelta
+
+        base = date(2025, 1, 6)
+        rows = []
+        for i in range(30):
+            d = (base + timedelta(days=i)).strftime("%Y-%m-%d")
+            r = _bar("49760", d, c=float(100 + i))
+            if i % 5 == 0:
+                # Simulate non-trading day with empty string prices
+                r["AdjC"] = ""
+                r["C"] = ""
+            rows.append(r)
+        _seed(mock_env["cache"], rows)
+        result = await _call(
+            "get_technical_indicators",
+            code="49760",
+            date_from="2025-01-06",
+            date_to="2025-02-04",
+            indicators=["sma5"],
+        )
+        assert result.get("error") is not True
+        # Rows with empty prices are excluded from output
+        assert result["count"] > 0
+        for row in result["data"]:
+            assert row["AdjC"] not in (None, "")
+        # sma5 should be computed for rows with enough prior data
+        assert any(row["sma5"] is not None for row in result["data"])
+
+    async def test_all_empty_close_returns_empty(self, mock_env):
+        """All rows with empty-string close returns count=0 without error."""
+        from datetime import date, timedelta
+
+        base = date(2025, 1, 6)
+        rows = []
+        for i in range(10):
+            d = (base + timedelta(days=i)).strftime("%Y-%m-%d")
+            r = _bar("49760", d, c=100.0)
+            r["AdjC"] = ""
+            r["C"] = ""
+            rows.append(r)
+        _seed(mock_env["cache"], rows)
+        result = await _call(
+            "get_technical_indicators",
+            code="49760",
+            date_from="2025-01-06",
+            date_to="2025-01-15",
+            indicators=["sma5"],
+        )
+        assert result.get("error") is not True
+        assert result["count"] == 0
+        assert result["data"] == []
