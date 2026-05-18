@@ -50,11 +50,17 @@ def register(
         date: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
+        detail: bool = False,
     ) -> dict[str, Any]:
         """Per-stock margin balance: 買残・売残・貸借倍率 (信用残). Standard+ only.
 
         Use for 信用残, 買い残, 売り残, 貸借倍率, margin loan/short balance.
         For margin trading restrictions (追証・増担保規制), use get_markets_margin_alert instead.
+
+        When called with no parameters, returns a compact summary by default
+        (``detail=False``): ``{count, latest_date, source}``. Pass ``detail=True``
+        to retrieve full row data for the latest available date. Specifying any
+        filter parameter (``code``, ``date``, etc.) always returns full data.
 
         [Supported plans] Standard / Premium
 
@@ -63,6 +69,7 @@ def register(
             date: Date (YYYYMMDD or YYYY-MM-DD)
             date_from: Start date for range query
             date_to: End date for range query
+            detail: When True and no filter params given, return full row data instead of summary.
         """
         errors = collect_errors(
             validate_code(code),
@@ -92,13 +99,16 @@ def register(
             )
 
         # パラメータなし: Tier 2 フォールバック（API 失敗時は Tier 1 スナップショット）
-        return await _tier2_fallback(
+        result = await _tier2_fallback(
             client,
             cache,
             "/markets/margin-interest",
             {},
             tier1_table="markets_margin_interest",
         )
+        if not detail and "error" not in result:
+            return _summarise(result)
+        return result
 
     @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_margin_alert(
@@ -155,12 +165,18 @@ def register(
         date: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
+        detail: bool = False,
     ) -> dict[str, Any]:
         """TSE 33-sector short selling ratio (業種別空売り比率). Standard+ only.
 
         Use for 業種別空売り比率, sector-level 空売り動向, industry short selling trends.
         Keyed by s33 sector code — not per stock. For per-stock institutional short
         positions (大量空売り残高), use get_markets_short_sale_report instead.
+
+        When called with no parameters, returns a compact summary by default
+        (``detail=False``): ``{count, latest_date, source}``. Pass ``detail=True``
+        to retrieve full row data for the latest available date. Specifying any
+        filter parameter (``s33``, ``date``, etc.) always returns full data.
 
         [Supported plans] Standard / Premium
 
@@ -169,6 +185,7 @@ def register(
             date: Date (YYYYMMDD or YYYY-MM-DD)
             date_from: Start date for range query
             date_to: End date for range query
+            detail: When True and no filter params given, return full row data instead of summary.
         """
         errors = collect_errors(
             validate_sector33(s33, "s33"),
@@ -196,13 +213,16 @@ def register(
                 date_to=date_to,
             )
 
-        return await _tier2_fallback(
+        result = await _tier2_fallback(
             client,
             cache,
             "/markets/short-ratio",
             {},
             tier1_table="markets_short_ratio",
         )
+        if not detail and "error" not in result:
+            return _summarise(result)
+        return result
 
     @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_short_sale_report(
@@ -438,6 +458,17 @@ async def _get_with_tier1_cache(
         UserNotAllowedError,
     ) as e:
         return format_api_error(e)
+
+
+def _summarise(result: dict[str, Any]) -> dict[str, Any]:
+    """Return a compact summary of a no-params result (omits data rows)."""
+    data = result.get("data", [])
+    return {
+        "count": result.get("count", len(data)),
+        "latest_date": data[0].get("Date") if data else None,
+        "source": result.get("source"),
+        "note": "Use detail=True or specify code/date for full data.",
+    }
 
 
 def _get_latest_tier1_snapshot(
