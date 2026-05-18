@@ -1133,13 +1133,30 @@ class CacheStore:
                 continue
         return result
 
+    @staticmethod
+    def _norm_s33(raw: str) -> str:
+        """Normalize a raw S33 key to its integer string form.
+
+        The /markets/short-ratio API has historically returned S33 as both an
+        integer (50) and a zero-padded string ("0050").  Converting through int
+        collapses both forms to the same key ("50") so lookups are consistent.
+        Non-numeric values are returned unchanged.
+        """
+        try:
+            return str(int(raw))
+        except (ValueError, TypeError):
+            return raw
+
     def get_all_latest_short_ratio(self) -> dict[str, dict]:
         """Return the most recent markets_short_ratio row for every S33 sector.
 
         Uses a JOIN against a per-sector MAX(date) subquery to avoid N+1 queries.
+        S33 keys are normalised via ``_norm_s33`` so that legacy zero-padded
+        entries (e.g. ``"0050"``) and integer-derived entries (``"50"``) are
+        merged into a single key (``"50"``).
 
         Returns:
-            Mapping of S33 sector code to raw JSON dict (as stored in the cache).
+            Mapping of normalised S33 sector code to raw JSON dict.
             Returns an empty dict when the table is unavailable or empty.
         """
         conn = self._ensure_connection()
@@ -1157,8 +1174,8 @@ class CacheStore:
             return {}
         result: dict[str, dict] = {}
         for row in rows:
-            s33 = str(row[0] or "")
-            if not s33:
+            s33 = self._norm_s33(str(row[0] or ""))
+            if not s33 or s33 in result:
                 continue
             try:
                 result[s33] = json.loads(row[1])
@@ -1169,16 +1186,22 @@ class CacheStore:
     def get_latest_short_ratio_row(self, s33_code: str) -> dict | None:
         """Return the most recent markets_short_ratio row for a single S33 sector.
 
+        Accepts any S33 format (integer string or zero-padded) and searches
+        both the normalised form and the original to handle legacy cache entries.
+
         Args:
-            s33_code: TSE 33-sector code (e.g. ``"0050"``).
+            s33_code: TSE 33-sector code in any format (e.g. ``"50"`` or ``"0050"``).
         """
         conn = self._ensure_connection()
         if conn is None:
             return None
+        norm = self._norm_s33(s33_code)
         try:
             row = conn.execute(
-                "SELECT data FROM markets_short_ratio WHERE s33 = ? ORDER BY date DESC LIMIT 1",
-                (s33_code,),
+                "SELECT data FROM markets_short_ratio"
+                " WHERE CAST(CAST(s33 AS INTEGER) AS TEXT) = ?"
+                " ORDER BY date DESC LIMIT 1",
+                (norm,),
             ).fetchone()
         except Exception:
             return None

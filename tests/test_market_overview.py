@@ -1801,3 +1801,47 @@ class TestGetMarketBriefingShortRatio:
         # short_sale_ratio in sector entries should be null
         for entry in data["sectors"]["top"] + data["sectors"]["bottom"]:
             assert entry["short_sale_ratio"] is None
+
+    @pytest.mark.asyncio
+    async def test_sector_short_ratios_dedup_s33_formats(self, tmp_path):
+        """sector_short_ratios deduplicates '0050' and '50' to a single entry."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+        conn.commit()
+        conn.close()
+        # Seed both "0050" (legacy zero-padded) and "50" (int-derived) for the same sector
+        cache.put_rows(
+            "markets_short_ratio",
+            [
+                {
+                    "S33": "0050",
+                    "Date": "2026-05-01",
+                    "SellExShortVa": 615000000,
+                    "ShrtWithResVa": 300000000,
+                    "ShrtNoResVa": 85000000,
+                },
+                {
+                    "S33": "50",
+                    "Date": "2026-05-02",
+                    "SellExShortVa": 615000000,
+                    "ShrtWithResVa": 300000000,
+                    "ShrtNoResVa": 85000000,
+                },
+            ],
+            key_columns=["S33", "Date"],
+        )
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        codes = [e["sector_code"] for e in data["sector_short_ratios"]]
+        assert codes.count("50") <= 1, "sector_code '50' must not appear more than once"
+        assert "0050" not in codes, "legacy '0050' must be merged into '50'"
