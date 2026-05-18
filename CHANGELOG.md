@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.35.1](https://github.com/shigechika/jquants-mcp/compare/v0.35.0...v0.35.1) (2026-05-18)
+
+
+### Bug Fixes
+
+* **markets:** apply Tier 1 fallback to margin_alert and breakdown no-params path ([#354](https://github.com/shigechika/jquants-mcp/issues/354)) ([34b222d](https://github.com/shigechika/jquants-mcp/commit/34b222d7918689d3f5f2650a5cead131521570c2))
+
 ## [0.35.0](https://github.com/shigechika/jquants-mcp/compare/v0.34.0...v0.35.0) (2026-05-18)
 
 
