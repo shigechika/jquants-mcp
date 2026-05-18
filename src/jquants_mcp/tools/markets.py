@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date as _date
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Any
 
 from fastmcp import FastMCP
@@ -447,7 +446,7 @@ def _get_latest_tier1_snapshot(
     date_col: str = "date",
 ) -> list[dict[str, Any]]:
     """Return the most recent available rows from a Tier 1 table (30-day lookback)."""
-    cutoff = (_date.today() - timedelta(days=30)).isoformat()
+    cutoff = (date.today() - timedelta(days=30)).isoformat()
     cached_dates = cache.get_cached_dates(
         table, key_filter={}, date_column=date_col, date_from=cutoff
     )
