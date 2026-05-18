@@ -224,6 +224,41 @@ class TestGetMarketsMarginAlert:
             assert result["source"] == "cache"
             assert mock_fn.call_count == 1
 
+    async def test_no_params_api_failure_falls_back_to_tier1(self, mock_env):
+        """No-params path: API fails → returns Tier 1 snapshot."""
+        from datetime import date, timedelta
+
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        mock_env["cache"].put_rows(
+            "markets_margin_alert",
+            [
+                {"Code": "72030", "Date": recent_date, "AlertType": "1"},
+                {"Code": "72031", "Date": recent_date, "AlertType": "2"},
+            ],
+            key_columns=["Code", "Date"],
+        )
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_margin_alert")
+        assert result.get("error") is not True
+        assert result["count"] == 2
+        assert result["source"] == "cache"
+
+    async def test_no_params_api_failure_no_tier1_returns_error(self, mock_env):
+        """No-params path: API fails and Tier 1 is empty → returns error dict."""
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_margin_alert")
+        assert result.get("error") is True
+
 
 class TestGetMarketsShortRatio:
     async def test_returns_data(self, mock_env):
@@ -421,6 +456,41 @@ class TestGetMarketsBreakdown:
         ):
             result = await _call("get_markets_breakdown", code="72030")
             assert result["error"] is True
+
+    async def test_no_params_api_failure_falls_back_to_tier1(self, mock_env):
+        """No-params path: API fails → returns Tier 1 snapshot."""
+        from datetime import date, timedelta
+
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        mock_env["cache"].put_rows(
+            "markets_breakdown",
+            [
+                {"Code": "72030", "Date": recent_date, "FrgnBuy": 500000},
+                {"Code": "72031", "Date": recent_date, "FrgnBuy": 300000},
+            ],
+            key_columns=["Code", "Date"],
+        )
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_breakdown")
+        assert result.get("error") is not True
+        assert result["count"] == 2
+        assert result["source"] == "cache"
+
+    async def test_no_params_api_failure_no_tier1_returns_error(self, mock_env):
+        """No-params path: API fails and Tier 1 is empty → returns error dict."""
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_breakdown")
+        assert result.get("error") is True
 
 
 class TestGetMarketsCalendar:

@@ -157,7 +157,13 @@ def register(
                 date_field="PubDate",
             )
 
-        return await _tier2_fallback(client, cache, "/markets/margin-alert", {})
+        return await _tier2_fallback(
+            client,
+            cache,
+            "/markets/margin-alert",
+            {},
+            tier1_table="markets_margin_alert",
+        )
 
     @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_short_ratio(
@@ -315,7 +321,13 @@ def register(
                 date_to=date_to,
             )
 
-        return await _tier2_fallback(client, cache, "/markets/breakdown", {})
+        return await _tier2_fallback(
+            client,
+            cache,
+            "/markets/breakdown",
+            {},
+            tier1_table="markets_breakdown",
+        )
 
     @mcp.tool(annotations=READ_ONLY_API)
     async def get_markets_calendar(
