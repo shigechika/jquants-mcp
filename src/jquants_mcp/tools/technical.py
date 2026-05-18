@@ -224,10 +224,11 @@ def register(
         # Sort by date and extract adjusted close prices
         rows.sort(key=lambda r: r.get("Date") or "")
         # Filter rows where close price is unavailable (e.g., non-trading days with empty strings)
-        valid = [
-            (str(r.get("Date") or ""), _safe_float(r.get("AdjC")) or _safe_float(r.get("C")), r)
-            for r in rows
-        ]
+        valid = []
+        for r in rows:
+            adj = _safe_float(r.get("AdjC"))
+            close = adj if adj is not None else _safe_float(r.get("C"))
+            valid.append((str(r.get("Date") or ""), close, r))
         valid = [(d, c, r) for d, c, r in valid if c is not None]
         if not valid:
             return {"count": 0, "data": []}

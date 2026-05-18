@@ -345,7 +345,34 @@ class TestGetTechnicalIndicators:
             date_to="2025-02-04",
             indicators=["sma5"],
         )
-        assert "error" not in result or result.get("error") is not True
+        assert result.get("error") is not True
         # Rows with empty prices are excluded from output
-        for row in result.get("data", []):
-            assert row["AdjC"] not in (None, "") or row["C"] not in (None, "")
+        assert result["count"] > 0
+        for row in result["data"]:
+            assert row["AdjC"] not in (None, "")
+        # sma5 should be computed for rows with enough prior data
+        assert any(row["sma5"] is not None for row in result["data"])
+
+    async def test_all_empty_close_returns_empty(self, mock_env):
+        """All rows with empty-string close returns count=0 without error."""
+        from datetime import date, timedelta
+
+        base = date(2025, 1, 6)
+        rows = []
+        for i in range(10):
+            d = (base + timedelta(days=i)).strftime("%Y-%m-%d")
+            r = _bar("49760", d, c=100.0)
+            r["AdjC"] = ""
+            r["C"] = ""
+            rows.append(r)
+        _seed(mock_env["cache"], rows)
+        result = await _call(
+            "get_technical_indicators",
+            code="49760",
+            date_from="2025-01-06",
+            date_to="2025-01-15",
+            indicators=["sma5"],
+        )
+        assert result.get("error") is not True
+        assert result["count"] == 0
+        assert result["data"] == []
