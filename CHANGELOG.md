@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.33.3](https://github.com/shigechika/jquants-mcp/compare/v0.33.2...v0.33.3) (2026-05-18)
+
+
+### Bug Fixes
+
+* **client:** treat 4xx 'No approval received' as PlanRestrictionError ([#344](https://github.com/shigechika/jquants-mcp/issues/344)) ([d83fd7c](https://github.com/shigechika/jquants-mcp/commit/d83fd7c61883e55d1c1941e7cd37322ab09fdfcb))
+
 ## [0.33.2](https://github.com/shigechika/jquants-mcp/compare/v0.33.1...v0.33.2) (2026-05-17)
 
 
