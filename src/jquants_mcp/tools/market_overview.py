@@ -1029,9 +1029,8 @@ def register(
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] equities_bars_daily + equities_master + indices_bars_daily_topix
-                 + markets_margin_interest (Tier 1 / Tier 2 cache; underlying tools
-                 may make API calls if the cache is cold; margin fields are null
-                 when markets_margin_interest is not cached)
+                 + markets_margin_interest (margin fields null when not cached)
+                 + markets_short_ratio (sector_short_ratios empty when not cached; Standard+)
 
         Args:
             date: Trading date in YYYY-MM-DD or YYYYMMDD format.
@@ -1047,7 +1046,10 @@ def register(
                 market_margin_ratio_median (null when not cached),
                 market_margin_ratio_count}
             - sectors: {top: [...], bottom: [...]} — top n and bottom n sectors
-                by avg_change_pct
+                by avg_change_pct; each entry includes short_sale_ratio (null when
+                markets_short_ratio not cached)
+            - sector_short_ratios: full list of all S33 sectors sorted by
+                short_sale_ratio descending (empty list when not cached)
             - top_movers_up / top_movers_down: TopN by daily change_pct
             - top_turnover_value: TopN by trading value (yen)
             - highlights: {ytd_new_highs, ytd_new_lows, volume_surges,
@@ -1165,6 +1167,16 @@ def register(
             round(statistics.median(margin_ratios), 2) if margin_ratios else None
         )
 
+        # Sector short-sale ratios (optional — empty dict when not cached; Standard+)
+        short_ratio_map = cache.get_all_latest_short_ratio()
+        # Build s33_code → name from sector_map for label enrichment
+        s33_name_map: dict[str, str] = {}
+        for info in sector_map.values():
+            sc = info.get("s33", "")
+            sn = info.get("s33_name", "")
+            if sc and sn and sc not in s33_name_map:
+                s33_name_map[sc] = sn
+
         # 1. Core advance/decline summary.
         ad = _compute_advance_decline_summary(today_rows, prev_close_map)
 
@@ -1178,6 +1190,30 @@ def register(
         )
         sectors_top = sectors_list[:n]
         sectors_bottom = list(reversed(sectors_list[-n:])) if sectors_list else []
+
+        # Enrich each sector entry with short_sale_ratio (null when not cached).
+        for entry in sectors_top + sectors_bottom:
+            sr_row = short_ratio_map.get(entry["code"])
+            entry["short_sale_ratio"] = (
+                round(_as_float(sr_row.get("ShortSaleRatio")), 2)
+                if sr_row and _as_float(sr_row.get("ShortSaleRatio")) is not None
+                else None
+            )
+
+        # Full sector short-sale ratio list sorted by ratio descending.
+        sector_short_ratios: list[dict[str, Any]] = []
+        for s33_code, sr_row in short_ratio_map.items():
+            ratio = _as_float(sr_row.get("ShortSaleRatio"))
+            if ratio is not None:
+                sector_short_ratios.append(
+                    {
+                        "sector_code": s33_code,
+                        "sector_name": s33_name_map.get(s33_code, ""),
+                        "short_sale_ratio": round(ratio, 2),
+                        "date": str(sr_row.get("Date") or ""),
+                    }
+                )
+        sector_short_ratios.sort(key=lambda x: x["short_sale_ratio"], reverse=True)
 
         # 4. Top movers and top turnover.
         movers_up = _compute_top_movers(today_rows, prev_close_map, name_map, "up", n)
@@ -1220,6 +1256,7 @@ def register(
                 "top": sectors_top,
                 "bottom": sectors_bottom,
             },
+            "sector_short_ratios": sector_short_ratios,
             "top_movers_up": movers_up,
             "top_movers_down": movers_down,
             "top_turnover_value": turnover_items,
