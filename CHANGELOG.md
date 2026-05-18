@@ -5,6 +5,14 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.33.4](https://github.com/shigechika/jquants-mcp/compare/v0.33.3...v0.33.4) (2026-05-18)
+
+
+### Bug Fixes
+
+* **markets:** fall back to Tier 1 snapshot when no-params API call fails ([#348](https://github.com/shigechika/jquants-mcp/issues/348)) ([2fbfe55](https://github.com/shigechika/jquants-mcp/commit/2fbfe556749576ee7c3e14c63551e18591f0fbbc))
+* **technical:** skip empty-string close price rows to avoid ValueError ([#346](https://github.com/shigechika/jquants-mcp/issues/346)) ([3c3c2aa](https://github.com/shigechika/jquants-mcp/commit/3c3c2aaa582776fcd4a9fcc52507da99b797537f))
+
 ## [0.33.3](https://github.com/shigechika/jquants-mcp/compare/v0.33.2...v0.33.3) (2026-05-18)
 
 
