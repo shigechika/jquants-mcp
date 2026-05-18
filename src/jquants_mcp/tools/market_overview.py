@@ -1047,9 +1047,10 @@ def register(
                 market_margin_ratio_count}
             - sectors: {top: [...], bottom: [...]} — top n and bottom n sectors
                 by avg_change_pct; each entry includes short_sale_ratio (null when
-                markets_short_ratio not cached)
+                markets_short_ratio not cached or sector_type="s17" since S17 codes
+                do not map to S33 short-ratio keys)
             - sector_short_ratios: full list of all S33 sectors sorted by
-                short_sale_ratio descending (empty list when not cached)
+                short_sale_ratio descending (always S33-based; empty when not cached)
             - top_movers_up / top_movers_down: TopN by daily change_pct
             - top_turnover_value: TopN by trading value (yen)
             - highlights: {ytd_new_highs, ytd_new_lows, volume_surges,
@@ -1192,6 +1193,9 @@ def register(
         sectors_bottom = list(reversed(sectors_list[-n:])) if sectors_list else []
 
         # Enrich each sector entry with short_sale_ratio (null when not cached).
+        # Note: when sector_type="s17", entry["code"] is an S17 code (e.g. "7")
+        # which never matches the S33 keys in short_ratio_map → always null.
+        # sector_short_ratios below is always S33-based regardless of sector_type.
         for entry in sectors_top + sectors_bottom:
             sr_row = short_ratio_map.get(entry["code"])
             entry["short_sale_ratio"] = (
