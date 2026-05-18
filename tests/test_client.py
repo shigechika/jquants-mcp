@@ -112,6 +112,16 @@ class TestAPIErrors:
         assert exc_info.value.status_code == 400
         assert route.call_count == 1
 
+    @respx.mock
+    async def test_400_other_message_stays_api_error(self, client):
+        """4xx without 'No approval received' remains a generic APIError."""
+        route = respx.get("https://api.example.com/v2/markets/margin-interest")
+        route.respond(400, json={"message": "date range out of bounds"})
+        with pytest.raises(APIError) as exc_info:
+            await client.get("/markets/margin-interest")
+        assert not isinstance(exc_info.value, PlanRestrictionError)
+        assert route.call_count == 1
+
 
 class TestAPIErrorToDict:
     """APIError.to_dict() のテスト。"""

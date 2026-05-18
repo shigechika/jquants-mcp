@@ -138,7 +138,7 @@ class JQuantsClient:
                             status_code=response.status_code,
                             body=response.text,
                         )
-                except (ValueError, KeyError):
+                except ValueError:
                     pass
 
             if response.status_code == 429:
