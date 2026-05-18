@@ -117,30 +117,30 @@ class TestGetMarketsMarginInterest:
             result = await _call("get_markets_margin_interest", code="99999")
             assert result["error"] is True
 
-    async def test_no_params_api_failure_falls_back_to_tier1(self, mock_env):
-        """No-params path: API fails (e.g. PlanRestrictionError) → returns Tier 1 snapshot."""
-        from datetime import date, timedelta
-
-        recent_date = (date.today() - timedelta(days=3)).isoformat()
-        seed_rows = [
+    async def _seed_margin_interest(self, cache, recent_date):
+        rows = [
             {"Code": "72030", "Date": recent_date, "LoanBalance": 9999},
             {"Code": "72031", "Date": recent_date, "LoanBalance": 8888},
         ]
-        mock_env["cache"].put_rows(
-            "markets_margin_interest",
-            seed_rows,
-            key_columns=["Code", "Date"],
-        )
+        cache.put_rows("markets_margin_interest", rows, key_columns=["Code", "Date"])
+
+    async def test_no_params_api_failure_falls_back_to_tier1(self, mock_env):
+        """No-params + detail=True: API fails → returns full Tier 1 snapshot."""
+        from datetime import date, timedelta
+
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        await self._seed_margin_interest(mock_env["cache"], recent_date)
         with patch.object(
             mock_env["client"],
             "get_all_pages",
             new_callable=AsyncMock,
             side_effect=PlanRestrictionError("plan restriction", status_code=403),
         ):
-            result = await _call("get_markets_margin_interest")
+            result = await _call("get_markets_margin_interest", detail=True)
         assert result.get("error") is not True
         assert result["count"] == 2
         assert result["source"] == "cache"
+        assert "data" in result
 
     async def test_no_params_api_failure_no_tier1_returns_error(self, mock_env):
         """No-params path: API fails and Tier 1 is empty → returns error dict."""
@@ -152,6 +152,43 @@ class TestGetMarketsMarginInterest:
         ):
             result = await _call("get_markets_margin_interest")
         assert result["error"] is True
+
+    async def test_no_params_detail_false_returns_summary(self, mock_env):
+        """No-params + detail=False (default): returns summary without data rows."""
+        from datetime import date, timedelta
+
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        await self._seed_margin_interest(mock_env["cache"], recent_date)
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_margin_interest")
+        assert result.get("error") is not True
+        assert result["count"] == 2
+        assert result["latest_date"] == recent_date
+        assert result["source"] == "cache"
+        assert "data" not in result
+        assert "note" in result
+
+    async def test_no_params_detail_true_returns_full_data(self, mock_env):
+        """No-params + detail=True: returns full data rows."""
+        from datetime import date, timedelta
+
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        await self._seed_margin_interest(mock_env["cache"], recent_date)
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_margin_interest", detail=True)
+        assert result.get("error") is not True
+        assert "data" in result
+        assert len(result["data"]) == 2
 
 
 class TestGetMarketsMarginAlert:
@@ -222,30 +259,30 @@ class TestGetMarketsShortRatio:
             assert result["source"] == "cache"
             assert mock_fn.call_count == 1
 
-    async def test_no_params_api_failure_falls_back_to_tier1(self, mock_env):
-        """No-params path: API fails → returns Tier 1 snapshot."""
-        from datetime import date, timedelta
-
-        recent_date = (date.today() - timedelta(days=3)).isoformat()
-        seed_rows = [
+    async def _seed_short_ratio(self, cache, recent_date):
+        rows = [
             {"Date": recent_date, "S33": "0050", "ShortSaleRatio": 40.5},
             {"Date": recent_date, "S33": "0100", "ShortSaleRatio": 35.2},
         ]
-        mock_env["cache"].put_rows(
-            "markets_short_ratio",
-            seed_rows,
-            key_columns=["S33", "Date"],
-        )
+        cache.put_rows("markets_short_ratio", rows, key_columns=["S33", "Date"])
+
+    async def test_no_params_api_failure_falls_back_to_tier1(self, mock_env):
+        """No-params + detail=True: API fails → returns full Tier 1 snapshot."""
+        from datetime import date, timedelta
+
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        await self._seed_short_ratio(mock_env["cache"], recent_date)
         with patch.object(
             mock_env["client"],
             "get_all_pages",
             new_callable=AsyncMock,
             side_effect=PlanRestrictionError("plan restriction", status_code=403),
         ):
-            result = await _call("get_markets_short_ratio")
+            result = await _call("get_markets_short_ratio", detail=True)
         assert result.get("error") is not True
         assert result["count"] == 2
         assert result["source"] == "cache"
+        assert "data" in result
 
     async def test_no_params_api_failure_no_tier1_returns_error(self, mock_env):
         """No-params path: API fails and Tier 1 is empty → returns error dict."""
@@ -257,6 +294,43 @@ class TestGetMarketsShortRatio:
         ):
             result = await _call("get_markets_short_ratio")
         assert result["error"] is True
+
+    async def test_no_params_detail_false_returns_summary(self, mock_env):
+        """No-params + detail=False (default): returns summary without data rows."""
+        from datetime import date, timedelta
+
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        await self._seed_short_ratio(mock_env["cache"], recent_date)
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_short_ratio")
+        assert result.get("error") is not True
+        assert result["count"] == 2
+        assert result["latest_date"] == recent_date
+        assert result["source"] == "cache"
+        assert "data" not in result
+        assert "note" in result
+
+    async def test_no_params_detail_true_returns_full_data(self, mock_env):
+        """No-params + detail=True: returns full data rows."""
+        from datetime import date, timedelta
+
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        await self._seed_short_ratio(mock_env["cache"], recent_date)
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=PlanRestrictionError("plan restriction", status_code=403),
+        ):
+            result = await _call("get_markets_short_ratio", detail=True)
+        assert result.get("error") is not True
+        assert "data" in result
+        assert len(result["data"]) == 2
 
 
 class TestGetMarketsShortSaleReport:
