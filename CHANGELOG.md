@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.35.3](https://github.com/shigechika/jquants-mcp/compare/v0.35.2...v0.35.3) (2026-05-18)
+
+
+### Bug Fixes
+
+* **briefing:** deduplicate S33 codes with mixed zero-padding ([#358](https://github.com/shigechika/jquants-mcp/issues/358)) ([0c3c107](https://github.com/shigechika/jquants-mcp/commit/0c3c10758928369f9b86f4333d1948c706751867))
+
 ## [0.35.2](https://github.com/shigechika/jquants-mcp/compare/v0.35.1...v0.35.2) (2026-05-18)
 
 
