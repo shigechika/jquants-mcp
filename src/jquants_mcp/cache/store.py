@@ -1133,6 +1133,62 @@ class CacheStore:
                 continue
         return result
 
+    def get_all_latest_short_ratio(self) -> dict[str, dict]:
+        """Return the most recent markets_short_ratio row for every S33 sector.
+
+        Uses a JOIN against a per-sector MAX(date) subquery to avoid N+1 queries.
+
+        Returns:
+            Mapping of S33 sector code to raw JSON dict (as stored in the cache).
+            Returns an empty dict when the table is unavailable or empty.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        sql = (
+            "SELECT m.s33, m.data FROM markets_short_ratio m "
+            "INNER JOIN ("
+            "  SELECT s33, MAX(date) AS max_date FROM markets_short_ratio GROUP BY s33"
+            ") latest ON m.s33 = latest.s33 AND m.date = latest.max_date"
+        )
+        try:
+            rows = conn.execute(sql).fetchall()
+        except Exception:
+            return {}
+        result: dict[str, dict] = {}
+        for row in rows:
+            s33 = str(row[0] or "")
+            if not s33:
+                continue
+            try:
+                result[s33] = json.loads(row[1])
+            except Exception:
+                continue
+        return result
+
+    def get_latest_short_ratio_row(self, s33_code: str) -> dict | None:
+        """Return the most recent markets_short_ratio row for a single S33 sector.
+
+        Args:
+            s33_code: TSE 33-sector code (e.g. ``"0050"``).
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return None
+        try:
+            row = conn.execute(
+                "SELECT data FROM markets_short_ratio WHERE s33 = ? ORDER BY date DESC LIMIT 1",
+                (s33_code,),
+            ).fetchone()
+        except Exception:
+            return None
+        if row is None:
+            return None
+        try:
+            return json.loads(row["data"])
+        except Exception:
+            return None
+
     def get_latest_close_map(self) -> dict[str, float]:
         """Return a mapping of 5-digit code to latest adjusted-close price.
 

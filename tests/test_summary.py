@@ -467,3 +467,23 @@ class TestGetStockBriefing:
         assert margin["long_vol"] is None
         assert margin["short_vol"] is None
         assert margin["date"] is None
+
+    async def test_sector_short_sale_ratio_present(self, mock_env):
+        """margin.sector_short_sale_ratio is populated when short_ratio cache has data."""
+        # mock_env uses S33 = "3050" for code 13010 (from _insert_master)
+        mock_env["cache"].put_rows(
+            "markets_short_ratio",
+            [{"S33": "3050", "Date": "2026-05-02", "ShortSaleRatio": 42.5}],
+            key_columns=["S33", "Date"],
+        )
+        data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"}))
+        margin = data["margin"]
+        assert margin["sector_short_sale_ratio"] == pytest.approx(42.5)
+        assert margin["sector_short_ratio_date"] == "2026-05-02"
+
+    async def test_sector_short_sale_ratio_null_when_not_cached(self, mock_env):
+        """margin.sector_short_sale_ratio is null when markets_short_ratio is empty."""
+        # No short_ratio rows seeded — should gracefully return null
+        data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"}))
+        assert data["margin"]["sector_short_sale_ratio"] is None
+        assert data["margin"]["sector_short_ratio_date"] is None

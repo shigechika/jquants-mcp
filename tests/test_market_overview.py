@@ -1698,3 +1698,92 @@ class TestGetDividendYieldRanking:
         )
         data = _call(result)
         assert data.get("error") is True
+
+
+class TestGetMarketBriefingShortRatio:
+    """Tests for sector_short_ratios in get_market_briefing."""
+
+    @pytest.fixture()
+    def briefing_cache_with_short_ratio(self, tmp_path):
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+        _insert_bar(conn, "97660", "2026-05-01", 5000.0, vo=200_000)
+        _insert_bar(conn, "97660", "2026-05-02", 4500.0, vo=300_000)
+        _insert_master_with_sector(conn, "97660", "コナミ", "5250", "情報・通信業", "5", "情報通信")
+        conn.commit()
+        conn.close()
+        # Seed short_ratio via put_rows (auto-creates table)
+        cache.put_rows(
+            "markets_short_ratio",
+            [
+                {"S33": "7050", "Date": "2026-05-02", "ShortSaleRatio": 38.5},
+                {"S33": "5250", "Date": "2026-05-02", "ShortSaleRatio": 55.2},
+            ],
+            key_columns=["S33", "Date"],
+        )
+        return cache
+
+    @pytest.mark.asyncio
+    async def test_sector_short_ratios_present(self, briefing_cache_with_short_ratio):
+        """sector_short_ratios list is populated when markets_short_ratio is cached."""
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", briefing_cache_with_short_ratio),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        sr_list = data["sector_short_ratios"]
+        assert isinstance(sr_list, list)
+        assert len(sr_list) == 2
+        # Sorted by ratio descending: 5250 (55.2) before 7050 (38.5)
+        assert sr_list[0]["sector_code"] == "5250"
+        assert sr_list[0]["short_sale_ratio"] == pytest.approx(55.2)
+        assert sr_list[1]["sector_code"] == "7050"
+        assert sr_list[1]["short_sale_ratio"] == pytest.approx(38.5)
+
+    @pytest.mark.asyncio
+    async def test_sectors_top_bottom_include_short_sale_ratio(
+        self, briefing_cache_with_short_ratio
+    ):
+        """Each entry in sectors.top/bottom includes short_sale_ratio."""
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", briefing_cache_with_short_ratio),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        for entry in data["sectors"]["top"] + data["sectors"]["bottom"]:
+            assert "short_sale_ratio" in entry
+
+    @pytest.mark.asyncio
+    async def test_sector_short_ratios_empty_when_not_cached(self, tmp_path):
+        """sector_short_ratios is an empty list when markets_short_ratio is absent."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "7050", "銀行業", "7", "金融")
+        conn.commit()
+        conn.close()
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        assert data["sector_short_ratios"] == []
+        # short_sale_ratio in sector entries should be null
+        for entry in data["sectors"]["top"] + data["sectors"]["bottom"]:
+            assert entry["short_sale_ratio"] is None

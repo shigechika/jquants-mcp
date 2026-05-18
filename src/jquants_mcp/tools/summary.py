@@ -44,7 +44,8 @@ def register(
 
         Returns the latest price (close, change_pct, volume), most recent FY financial
         metrics (revenue, operating profit, net income), valuation ratios (PER, PBR,
-        dividend yield), and margin trading data (margin ratio = long_vol / short_vol).
+        dividend yield), margin trading data (margin ratio = long_vol / short_vol), and
+        the sector-level short-sale ratio (空売り比率) for the stock's TSE 33 sector.
         All figures use split-adjusted values (AdjC, AdjEPS, AdjBPS) so PER/PBR remain
         accurate even after stock splits.
 
@@ -52,6 +53,7 @@ def register(
         most recent annual dividend (DivAnn) disclosed within the past 18 months; null
         when no recent disclosure exists (company stopped paying dividends).
         Margin ratio is null when short_vol == 0 or no margin data is cached.
+        sector_short_sale_ratio is null when markets_short_ratio cache is absent (Standard+).
 
         See also: ``get_sector_briefing`` for sector-level aggregation,
         ``get_market_briefing`` for market-wide overview.
@@ -176,6 +178,16 @@ def register(
             if short_v is not None and short_v > 0 and long_v is not None:
                 margin_ratio = round(long_v / short_v, 2)
 
+        # --- 6. Sector short-sale ratio (空売り比率) ----------------------------
+        sector_short_sale_ratio: float | None = None
+        sector_short_ratio_date: str | None = None
+        s33_code = sector_info.get("s33", "")
+        if s33_code:
+            sr_row = cache.get_latest_short_ratio_row(s33_code)
+            if sr_row:
+                sector_short_sale_ratio = float_or_none(sr_row.get("ShortSaleRatio"))
+                sector_short_ratio_date = str(sr_row.get("Date") or "")
+
         result: dict[str, Any] = {
             "code": out_code,
             "name": name,
@@ -214,6 +226,8 @@ def register(
                 "ratio": margin_ratio,
                 "long_vol": margin_long_vol,
                 "short_vol": margin_short_vol,
+                "sector_short_sale_ratio": sector_short_sale_ratio,
+                "sector_short_ratio_date": sector_short_ratio_date,
             },
         }
 
