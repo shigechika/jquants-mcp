@@ -185,7 +185,16 @@ def register(
         if s33_code:
             sr_row = cache.get_latest_short_ratio_row(s33_code)
             if sr_row:
-                sector_short_sale_ratio = float_or_none(sr_row.get("ShortSaleRatio"))
+                sell_ex = float_or_none(sr_row.get("SellExShortVa"))
+                shrt_with = float_or_none(sr_row.get("ShrtWithResVa"))
+                shrt_no = float_or_none(sr_row.get("ShrtNoResVa"))
+                if None not in (sell_ex, shrt_with, shrt_no):
+                    total = sell_ex + shrt_with + shrt_no  # type: ignore[operator]
+                    if total > 0:
+                        sector_short_sale_ratio = round(
+                            (shrt_with + shrt_no) / total * 100,
+                            2,  # type: ignore[operator]
+                        )
                 sector_short_ratio_date = str(sr_row.get("Date") or "")
 
         result: dict[str, Any] = {

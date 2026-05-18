@@ -130,6 +130,23 @@ def _as_float(v: Any) -> float | None:
         return None
 
 
+def _calc_short_ratio(row: dict) -> float | None:
+    """Compute short-sale ratio (%) from raw /markets/short-ratio API fields.
+
+    Returns (ShrtWithResVa + ShrtNoResVa) / total_sell * 100, or None when
+    any field is missing or the total is zero.
+    """
+    sell_ex = _as_float(row.get("SellExShortVa"))
+    shrt_with = _as_float(row.get("ShrtWithResVa"))
+    shrt_no = _as_float(row.get("ShrtNoResVa"))
+    if None in (sell_ex, shrt_with, shrt_no):
+        return None
+    total = sell_ex + shrt_with + shrt_no  # type: ignore[operator]
+    if total == 0:
+        return None
+    return (shrt_with + shrt_no) / total * 100  # type: ignore[operator]
+
+
 def _compute_advance_decline(
     today_rows: list[dict[str, Any]],
     prev_close_map: dict[str, float],
@@ -1198,16 +1215,13 @@ def register(
         # sector_short_ratios below is always S33-based regardless of sector_type.
         for entry in sectors_top + sectors_bottom:
             sr_row = short_ratio_map.get(entry["code"])
-            entry["short_sale_ratio"] = (
-                round(_as_float(sr_row.get("ShortSaleRatio")), 2)
-                if sr_row and _as_float(sr_row.get("ShortSaleRatio")) is not None
-                else None
-            )
+            ratio = _calc_short_ratio(sr_row) if sr_row else None
+            entry["short_sale_ratio"] = round(ratio, 2) if ratio is not None else None
 
         # Full sector short-sale ratio list sorted by ratio descending.
         sector_short_ratios: list[dict[str, Any]] = []
         for s33_code, sr_row in short_ratio_map.items():
-            ratio = _as_float(sr_row.get("ShortSaleRatio"))
+            ratio = _calc_short_ratio(sr_row)
             if ratio is not None:
                 sector_short_ratios.append(
                     {
