@@ -42,6 +42,16 @@ from ..validators import (
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_float(v: Any) -> float | None:
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
 # Supported indicator names → warmup period (trading sessions)
 _INDICATORS: dict[str, int] = {
     "sma5": 5,
@@ -213,8 +223,18 @@ def register(
 
         # Sort by date and extract adjusted close prices
         rows.sort(key=lambda r: r.get("Date") or "")
-        dates = [str(r.get("Date") or "") for r in rows]
-        closes = [float(r["AdjC"]) if r.get("AdjC") is not None else float(r["C"]) for r in rows]
+        # Filter rows where close price is unavailable (e.g., non-trading days with empty strings)
+        valid = [
+            (str(r.get("Date") or ""), _safe_float(r.get("AdjC")) or _safe_float(r.get("C")), r)
+            for r in rows
+        ]
+        valid = [(d, c, r) for d, c, r in valid if c is not None]
+        if not valid:
+            return {"count": 0, "data": []}
+        dates, closes_raw, rows = zip(*valid)  # type: ignore[assignment]
+        dates = list(dates)
+        closes = list(closes_raw)
+        rows = list(rows)
 
         # Compute requested indicators over the full extended series
         computed: dict[str, list[float | None]] = {}

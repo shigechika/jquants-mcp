@@ -322,3 +322,30 @@ class TestGetTechnicalIndicators:
         # Only the requested date should be in output
         assert result["count"] == 1
         assert result["data"][0]["Date"] == "2025-02-04"
+
+    async def test_empty_string_close_does_not_crash(self, mock_env):
+        """Rows with empty-string AdjC/C (low-volume stocks) are skipped without error."""
+        from datetime import date, timedelta
+
+        base = date(2025, 1, 6)
+        rows = []
+        for i in range(30):
+            d = (base + timedelta(days=i)).strftime("%Y-%m-%d")
+            r = _bar("49760", d, c=float(100 + i))
+            if i % 5 == 0:
+                # Simulate non-trading day with empty string prices
+                r["AdjC"] = ""
+                r["C"] = ""
+            rows.append(r)
+        _seed(mock_env["cache"], rows)
+        result = await _call(
+            "get_technical_indicators",
+            code="49760",
+            date_from="2025-01-06",
+            date_to="2025-02-04",
+            indicators=["sma5"],
+        )
+        assert "error" not in result or result.get("error") is not True
+        # Rows with empty prices are excluded from output
+        for row in result.get("data", []):
+            assert row["AdjC"] not in (None, "") or row["C"] not in (None, "")
