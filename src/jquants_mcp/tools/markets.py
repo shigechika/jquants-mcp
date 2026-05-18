@@ -58,7 +58,7 @@ def register(
         For margin trading restrictions (追証・増担保規制), use get_markets_margin_alert instead.
 
         When called with no parameters, returns a compact summary by default
-        (``detail=False``): ``{count, latest_date, source}``. Pass ``detail=True``
+        (``detail=False``): ``{count, latest_date, source, note}``. Pass ``detail=True``
         to retrieve full row data for the latest available date. Specifying any
         filter parameter (``code``, ``date``, etc.) always returns full data.
 
@@ -174,7 +174,7 @@ def register(
         positions (大量空売り残高), use get_markets_short_sale_report instead.
 
         When called with no parameters, returns a compact summary by default
-        (``detail=False``): ``{count, latest_date, source}``. Pass ``detail=True``
+        (``detail=False``): ``{count, latest_date, source, note}``. Pass ``detail=True``
         to retrieve full row data for the latest available date. Specifying any
         filter parameter (``s33``, ``date``, etc.) always returns full data.
 
@@ -463,11 +463,12 @@ async def _get_with_tier1_cache(
 def _summarise(result: dict[str, Any]) -> dict[str, Any]:
     """Return a compact summary of a no-params result (omits data rows)."""
     data = result.get("data", [])
+    latest = max((r.get("Date", "") for r in data), default=None) if data else None
     return {
         "count": result.get("count", len(data)),
-        "latest_date": data[0].get("Date") if data else None,
+        "latest_date": latest,
         "source": result.get("source"),
-        "note": "Use detail=True or specify code/date for full data.",
+        "note": "Use detail=True or specify a filter parameter for full data.",
     }
 
 
