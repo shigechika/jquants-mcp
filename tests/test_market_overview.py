@@ -1719,8 +1719,22 @@ class TestGetMarketBriefingShortRatio:
         cache.put_rows(
             "markets_short_ratio",
             [
-                {"S33": "7050", "Date": "2026-05-02", "ShortSaleRatio": 38.5},
-                {"S33": "5250", "Date": "2026-05-02", "ShortSaleRatio": 55.2},
+                # (300+85)/(615+300+85)*100 = 38.5%
+                {
+                    "S33": "7050",
+                    "Date": "2026-05-02",
+                    "SellExShortVa": 615000000,
+                    "ShrtWithResVa": 300000000,
+                    "ShrtNoResVa": 85000000,
+                },
+                # (450+102)/(448+450+102)*100 = 55.2%
+                {
+                    "S33": "5250",
+                    "Date": "2026-05-02",
+                    "SellExShortVa": 448000000,
+                    "ShrtWithResVa": 450000000,
+                    "ShrtNoResVa": 102000000,
+                },
             ],
             key_columns=["S33", "Date"],
         )

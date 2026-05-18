@@ -471,9 +471,18 @@ class TestGetStockBriefing:
     async def test_sector_short_sale_ratio_present(self, mock_env):
         """margin.sector_short_sale_ratio is populated when short_ratio cache has data."""
         # mock_env uses S33 = "3050" for code 13010 (from _insert_master)
+        # (350+75)/(575+350+75)*100 = 42.5%
         mock_env["cache"].put_rows(
             "markets_short_ratio",
-            [{"S33": "3050", "Date": "2026-05-02", "ShortSaleRatio": 42.5}],
+            [
+                {
+                    "S33": "3050",
+                    "Date": "2026-05-02",
+                    "SellExShortVa": 575000000,
+                    "ShrtWithResVa": 350000000,
+                    "ShrtNoResVa": 75000000,
+                }
+            ],
             key_columns=["S33", "Date"],
         )
         data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"}))

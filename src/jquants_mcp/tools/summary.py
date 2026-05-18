@@ -19,6 +19,7 @@ from ..validators import (
     validate_code,
 )
 from .financials import _annotate_fiscal_period, _apply_split_adjustment
+from .market_overview import _calc_short_ratio
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,14 @@ def register(
         if s33_code:
             sr_row = cache.get_latest_short_ratio_row(s33_code)
             if sr_row:
-                sector_short_sale_ratio = float_or_none(sr_row.get("ShortSaleRatio"))
+                ratio = _calc_short_ratio(sr_row)
+                if ratio is None:
+                    logger.warning(
+                        "short_ratio fields missing or zero for s33=%s — API field names may have changed",
+                        s33_code,
+                    )
+                else:
+                    sector_short_sale_ratio = round(ratio, 2)
                 sector_short_ratio_date = str(sr_row.get("Date") or "")
 
         result: dict[str, Any] = {
