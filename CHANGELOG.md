@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.35.2](https://github.com/shigechika/jquants-mcp/compare/v0.35.1...v0.35.2) (2026-05-18)
+
+
+### Bug Fixes
+
+* **briefing:** compute short-sale ratio from raw API fields ([#356](https://github.com/shigechika/jquants-mcp/issues/356)) ([79fc92a](https://github.com/shigechika/jquants-mcp/commit/79fc92abebe5e54d1646029a15a4b8e13e520eb0))
+
 ## [0.35.1](https://github.com/shigechika/jquants-mcp/compare/v0.35.0...v0.35.1) (2026-05-18)
 
 
