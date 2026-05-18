@@ -247,6 +247,7 @@ class TestGetMarketsMarginAlert:
         assert result.get("error") is not True
         assert result["count"] == 2
         assert result["source"] == "cache"
+        assert "data" in result
 
     async def test_no_params_api_failure_no_tier1_returns_error(self, mock_env):
         """No-params path: API fails and Tier 1 is empty → returns error dict."""
@@ -480,6 +481,7 @@ class TestGetMarketsBreakdown:
         assert result.get("error") is not True
         assert result["count"] == 2
         assert result["source"] == "cache"
+        assert "data" in result
 
     async def test_no_params_api_failure_no_tier1_returns_error(self, mock_env):
         """No-params path: API fails and Tier 1 is empty → returns error dict."""
