@@ -1842,6 +1842,10 @@ class TestGetMarketBriefingShortRatio:
                 "get_market_briefing", {"date": "2026-05-02"}
             )
         data = _call(result)
-        codes = [e["sector_code"] for e in data["sector_short_ratios"]]
+        sr_list = data["sector_short_ratios"]
+        codes = [e["sector_code"] for e in sr_list]
         assert codes.count("50") <= 1, "sector_code '50' must not appear more than once"
         assert "0050" not in codes, "legacy '0050' must be merged into '50'"
+        # The newer date ("50" row: 2026-05-02) must win over the older ("0050": 2026-05-01)
+        entry = next(e for e in sr_list if e["sector_code"] == "50")
+        assert entry["date"] == "2026-05-02", "newer Date must be preferred over older duplicate"

@@ -1175,12 +1175,15 @@ class CacheStore:
         result: dict[str, dict] = {}
         for row in rows:
             s33 = self._norm_s33(str(row[0] or ""))
-            if not s33 or s33 in result:
+            if not s33:
                 continue
             try:
-                result[s33] = json.loads(row[1])
+                data = json.loads(row[1])
             except Exception:
                 continue
+            existing = result.get(s33)
+            if existing is None or existing.get("Date", "") < data.get("Date", ""):
+                result[s33] = data
         return result
 
     def get_latest_short_ratio_row(self, s33_code: str) -> dict | None:

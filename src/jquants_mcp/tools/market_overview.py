@@ -1191,12 +1191,8 @@ def register(
         # Normalise keys through int so "0050" and "50" map to the same entry.
         s33_name_map: dict[str, str] = {}
         for info in sector_map.values():
-            sc_raw = info.get("s33", "")
+            sc = CacheStore._norm_s33(info.get("s33", ""))
             sn = info.get("s33_name", "")
-            try:
-                sc = str(int(sc_raw))
-            except (ValueError, TypeError):
-                sc = sc_raw
             if sc and sn and sc not in s33_name_map:
                 s33_name_map[sc] = sn
 
