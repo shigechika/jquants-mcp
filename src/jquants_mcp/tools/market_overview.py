@@ -1187,10 +1187,11 @@ def register(
 
         # Sector short-sale ratios (optional — empty dict when not cached; Standard+)
         short_ratio_map = cache.get_all_latest_short_ratio()
-        # Build s33_code → name from sector_map for label enrichment
+        # Build s33_code → name from sector_map for label enrichment.
+        # Normalise keys through int so "0050" and "50" map to the same entry.
         s33_name_map: dict[str, str] = {}
         for info in sector_map.values():
-            sc = info.get("s33", "")
+            sc = CacheStore._norm_s33(info.get("s33", ""))
             sn = info.get("s33_name", "")
             if sc and sn and sc not in s33_name_map:
                 s33_name_map[sc] = sn
