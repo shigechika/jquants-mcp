@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.36.2](https://github.com/shigechika/jquants-mcp/compare/v0.36.1...v0.36.2) (2026-05-19)
+
+
+### Bug Fixes
+
+* **dividend:** exclude codes with explicit zero DivAnn from yield ranking ([#364](https://github.com/shigechika/jquants-mcp/issues/364)) ([74023c7](https://github.com/shigechika/jquants-mcp/commit/74023c7cf41aee509fd9087f379dde1afda40bac))
+
 ## [0.36.1](https://github.com/shigechika/jquants-mcp/compare/v0.36.0...v0.36.1) (2026-05-19)
 
 
