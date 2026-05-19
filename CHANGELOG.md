@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.36.0](https://github.com/shigechika/jquants-mcp/compare/v0.35.3...v0.36.0) (2026-05-19)
+
+
+### Features
+
+* **briefing:** add notable_stocks to get_market_briefing highlights ([#360](https://github.com/shigechika/jquants-mcp/issues/360)) ([eb367dd](https://github.com/shigechika/jquants-mcp/commit/eb367dd25c944a22fe4ad314a996ac6dfd728e93))
+
 ## [0.35.3](https://github.com/shigechika/jquants-mcp/compare/v0.35.2...v0.35.3) (2026-05-18)
 
 
