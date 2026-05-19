@@ -143,6 +143,10 @@ def register(
             # DivAnn staleness filter — reject disclosures older than 18 months
             div_raw = float_or_none(row.get("AdjDivAnn") or row.get("DivAnn"))
             if div_raw and fins_disc_date:
+                # FY-end split correction: DivAnn in post-split disclosures may still be
+                # in pre-split per-share terms when the split occurred just before filing.
+                fye_factors = cache.get_split_factors_before_disc({cache_code: fins_disc_date[:10]})
+                div_raw = div_raw * fye_factors.get(cache_code, 1.0)
                 cutoff = (datetime.now() - timedelta(days=_DISC_DAYS_CUTOFF)).strftime("%Y-%m-%d")
                 if fins_disc_date >= cutoff:
                     div_per_share = div_raw

@@ -1540,6 +1540,89 @@ class TestGetDividendYieldRanking:
         assert item["div_ann"] == pytest.approx(86.0, rel=1e-3)
         assert item["yield_pct"] == pytest.approx(86.0 / 220.0 * 100, rel=1e-3)
 
+    @pytest.mark.asyncio
+    async def test_fye_split_before_disc_adjusted(self, tmp_path):
+        """DivAnn is adjusted for FY-end splits that occurred just before disc_date.
+
+        Mirrors the 京王電鉄 (9008) real-world case:
+          90080: 5:1 split on 2026-03-30 (adj_factor=0.2).
+                 Annual results disclosed 2026-05-13 with DivAnn=110 (pre-split terms).
+                 Current AdjC=775.1.
+        Unadjusted yield = 110/775.1*100 = 14.19% (the bug).
+        Adjusted yield   = (110*0.2)/775.1*100 = 2.84%.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "90080", "2026-05-13", 775.1)
+        # FY-end split on 2026-03-30 (45 days before disc_date)
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_bars_daily "
+            "(code, date, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?)",
+            ("90080", "2026-03-30", '{"Code":"90080","AdjC":799.0}', 0.0, 0.2),
+        )
+        _insert_fins_summary(conn, "90080", "2026-05-13", 110.0)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-13", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        # 110 * 0.2 = 22 → yield = 22/775.1*100 ≈ 2.84%
+        assert item["div_ann"] == pytest.approx(22.0, rel=1e-3)
+        assert item["yield_pct"] == pytest.approx(22.0 / 775.1 * 100, rel=1e-2)
+
+    @pytest.mark.asyncio
+    async def test_fye_split_outside_lookback_not_applied(self, tmp_path):
+        """Splits older than 90 days before disc_date must NOT be applied.
+
+        A split from the previous fiscal year (> 90 days before disc_date)
+        should not affect the current year's DivAnn.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "80010", "2026-05-13", 500.0)
+        # Old split 200 days before disc_date — outside lookback window
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_bars_daily "
+            "(code, date, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?)",
+            ("80010", "2025-10-25", '{"Code":"80010","AdjC":250.0}', 0.0, 0.5),
+        )
+        _insert_fins_summary(conn, "80010", "2026-05-13", 40.0)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-13", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        # Old split not applied: DivAnn stays at 40
+        assert item["div_ann"] == pytest.approx(40.0, rel=1e-3)
+
     # ------------------------------------------------------------------
     # disc_months / max_yield / market / sector filters
     # ------------------------------------------------------------------

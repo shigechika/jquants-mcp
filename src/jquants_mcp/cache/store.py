@@ -7,7 +7,7 @@ import logging
 import sqlite3
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -754,6 +754,68 @@ class CacheStore:
         for code, bar_date, factor in all_rows:
             disc_date = code_disc_dates.get(code)
             if disc_date is None or bar_date <= disc_date:
+                continue
+            result[code] = result.get(code, 1.0) * factor
+        return result
+
+    def get_split_factors_before_disc(
+        self,
+        code_disc_dates: dict[str, str],
+        lookback_days: int = 90,
+    ) -> dict[str, float]:
+        """Return cumulative split factors for splits that occurred just before disc_date.
+
+        Handles the case where a fiscal-year-end split occurred ~45 days before the
+        annual results were disclosed, but the financial statement still reports DivAnn
+        in pre-split per-share terms (e.g., 5:1 split on 2026-03-30 with DivAnn
+        disclosed on 2026-05-13 still in original per-share units).
+
+        lookback_days=90 covers the typical FY-end split scenario (split at March 30,
+        disclosure in mid-May, ~45 days gap) with a safety margin.
+
+        EPS and BPS are NOT affected — post-split disclosures report those in
+        post-split terms per Japanese GAAP. Only DivAnn requires this correction.
+
+        Args:
+            code_disc_dates: Mapping of 5-digit code to disclosure date (YYYY-MM-DD).
+            lookback_days: Window before disc_date to search for splits (default 90).
+
+        Returns:
+            Mapping of code to cumulative factor (e.g., 0.2 for a 5:1 split).
+            Codes with no splits in the lookback window are omitted (callers default to 1.0).
+        """
+        conn = self._ensure_connection()
+        if conn is None or not code_disc_dates:
+            return {}
+        codes = list(code_disc_dates.keys())
+        all_rows: list[tuple[str, str, float]] = []
+        for i in range(0, len(codes), 900):
+            batch = codes[i : i + 900]
+            placeholders = ",".join("?" * len(batch))
+            try:
+                rows = conn.execute(
+                    f"SELECT code, date, adj_factor FROM ("
+                    f"  SELECT code, date, "
+                    f"  COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
+                    f"  FROM equities_bars_daily WHERE code IN ({placeholders})"
+                    f") WHERE adj_factor IS NOT NULL AND adj_factor != 1.0 AND adj_factor != 0.0",
+                    batch,
+                ).fetchall()
+            except Exception:
+                continue
+            all_rows.extend((str(r[0]), str(r[1]), float(r[2])) for r in rows)
+
+        result: dict[str, float] = {}
+        for code, bar_date, factor in all_rows:
+            disc_date = code_disc_dates.get(code)
+            if disc_date is None:
+                continue
+            disc_dt = datetime.strptime(disc_date[:10], "%Y-%m-%d")
+            lookback_start = (disc_dt - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+            # Strict upper bound: split on the exact disc_date is handled by
+            # get_split_factors_after's lower bound (bar_date > disc_date).
+            # Applying it here too would double-count it.
+            if bar_date < lookback_start or bar_date >= disc_date[:10]:
                 continue
             result[code] = result.get(code, 1.0) * factor
         return result

@@ -1101,6 +1101,9 @@ def register(
 
         code_disc_dates = {code: disc for code, (_, disc) in div_ann_map.items()}
         split_factors = cache.get_split_factors_after(code_disc_dates)
+        # FY-end splits: disclosed DivAnn is still in pre-split terms when the split
+        # occurred ~45 days before the annual results filing.
+        split_factors_fye = cache.get_split_factors_before_disc(code_disc_dates)
 
         items: list[dict[str, Any]] = []
         for row in bars:
@@ -1124,7 +1127,7 @@ def register(
             if sector is not None and info.get("s33") != str(sector):
                 continue
 
-            adj_div_ann = div_ann * split_factors.get(code, 1.0)
+            adj_div_ann = div_ann * split_factors.get(code, 1.0) * split_factors_fye.get(code, 1.0)
             yield_pct = round(adj_div_ann / adj_c * 100, 4)
             if yield_pct < min_yield:
                 continue

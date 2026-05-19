@@ -496,3 +496,51 @@ class TestGetStockBriefing:
         data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"}))
         assert data["margin"]["sector_short_sale_ratio"] is None
         assert data["margin"]["sector_short_ratio_date"] is None
+
+    async def test_fye_split_before_disc_adjusts_div_yield(self, tmp_path):
+        """DivAnn and dividend_yield are corrected for FY-end splits before disc_date.
+
+        Mirrors the 京王電鉄 (9008) real-world case:
+          90080: 5:1 split on 2026-03-30 (adj_factor=0.2).
+                 FY disclosed 2026-05-13 with DivAnn=110 (pre-split).
+                 EPS=150, BPS=1500 are already in post-split terms per Japanese GAAP.
+                 Current AdjC=775.
+        Expected div_per_share = 22 (= 110 * 0.2).
+        Expected dividend_yield_pct = 22/775*100 ≈ 2.84%.
+        PER and PBR must use EPS/BPS unchanged (post-split already).
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "90080", "2026-03-30", 799.0, adj_factor=0.2)
+        _insert_bar(conn, "90080", "2026-05-13", 775.0)
+        _insert_master(conn, "90080", "京王電鉄")
+        _insert_fins(
+            conn,
+            "90080",
+            "2026-05-13",
+            eps=150.0,
+            bps=1500.0,
+            div_ann=110.0,
+            fy_end="2026-03-31",
+        )
+        conn.commit()
+        conn.close()
+
+        settings = Settings()
+        settings.jquants_plan = "premium"
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_cache", cache),
+        ):
+            data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "90080"}))
+
+        cache.close()
+        val = data["valuation"]
+        # div_per_share must be split-adjusted: 110 * 0.2 = 22
+        assert val["div_per_share"] == pytest.approx(22.0, rel=1e-3)
+        assert val["dividend_yield_pct"] == pytest.approx(22.0 / 775.0 * 100, rel=1e-2)
+        # EPS/BPS unchanged (already post-split in the disclosure)
+        assert val["eps"] == pytest.approx(150.0, rel=1e-3)
+        assert val["bps"] == pytest.approx(1500.0, rel=1e-3)
+        # PER = AdjC / EPS = 775 / 150
+        assert val["per"] == pytest.approx(775.0 / 150.0, rel=1e-2)
