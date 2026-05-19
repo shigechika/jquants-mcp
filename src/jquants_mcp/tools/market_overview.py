@@ -1148,8 +1148,11 @@ def register(
         # FY-end splits: DivAnn (trailing) may be in pre-split terms when the split
         # occurred ~45 days before the annual results filing.
         # Apply ONLY to trailing DivAnn codes — FDivAnn/NxFDivAnn are already post-split.
-        trailing_disc_dates = {code: disc for code, (_, disc) in trailing_div_map.items()}
-        split_factors_fye = cache.get_split_factors_before_disc(trailing_disc_dates)
+        if trailing_div_map:
+            trailing_disc_dates = {code: disc for code, (_, disc) in trailing_div_map.items()}
+            split_factors_fye = cache.get_split_factors_before_disc(trailing_disc_dates)
+        else:
+            split_factors_fye: dict[str, float] = {}
 
         items: list[dict[str, Any]] = []
         for row in bars:

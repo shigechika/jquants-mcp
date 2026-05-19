@@ -1319,6 +1319,8 @@ class TestGetDividendYieldRanking:
         # Sorted by yield desc: 13030 (8%) first, then 13010 (5%)
         assert data["items"][0]["code"] == "1303"
         assert data["items"][1]["code"] == "1301"
+        # Forward dividends (FDivAnn) → div_source must be "forward"
+        assert all(item["div_source"] == "forward" for item in data["items"])
 
     @pytest.mark.asyncio
     async def test_yield_values(self, mock_yield_server):
@@ -1879,6 +1881,7 @@ class TestGetDividendYieldRanking:
         assert data["filters"]["min_yield"] == 2.0
         assert data["filters"]["max_yield"] == 9.0
         assert data["filters"]["disc_months"] == 12
+        assert data["filters"]["include_trailing"] is False
         assert data["filters"]["market"] is None
         assert data["filters"]["sector"] is None
 
