@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.37.0](https://github.com/shigechika/jquants-mcp/compare/v0.36.2...v0.37.0) (2026-05-19)
+
+
+### Features
+
+* **dividend:** use forward dividend (FDivAnn/NxFDivAnn) for yield ranking and briefing ([#366](https://github.com/shigechika/jquants-mcp/issues/366)) ([c777368](https://github.com/shigechika/jquants-mcp/commit/c7773682044228404b95a8b64a4bf79391b8b343))
+
 ## [0.36.2](https://github.com/shigechika/jquants-mcp/compare/v0.36.1...v0.36.2) (2026-05-19)
 
 
