@@ -2309,6 +2309,48 @@ class TestGetDividendYieldRanking:
         expected_yield = round(38.0 / 1019.0 * 100, 2)
         assert item["yield_pct"] == pytest.approx(expected_yield, rel=1e-2)
 
+    @pytest.mark.asyncio
+    async def test_fdivann_zero_with_nxfdivann_uses_nxfdivann(self, tmp_path):
+        """FDivAnn=0 (current-FY cut) + NxFDivAnn>0 (next-FY forecast) → NxFDivAnn wins.
+
+        A company that cut its current-FY dividend to zero but disclosed a positive
+        next-FY forecast should appear in the ranking using NxFDivAnn, not FDivAnn=0.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "55550", "2026-05-20", 1000.0)
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "55550",
+                "2026-05-12",
+                json.dumps({"Code": "55550", "FDivAnn": 0.0, "NxFDivAnn": 30.0}),
+                0.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-20", "min_yield": 0.0},
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["div_ann"] == pytest.approx(30.0, rel=1e-3)
+        assert item["yield_pct"] == pytest.approx(3.0, rel=1e-2)
+
 
 class TestGetMarketBriefingShortRatio:
     """Tests for sector_short_ratios in get_market_briefing."""

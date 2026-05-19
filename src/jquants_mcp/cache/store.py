@@ -740,25 +740,19 @@ class CacheStore:
         if conn is None:
             return {}
         try:
-            # GROUP BY handles the rare case where multiple document types share the
-            # same (code, disc_date) key.  Within that group:
-            # Priority 1: NxFDivAnn from a row where FDivAnn is absent (pure next-FY row)
-            # Priority 2: per-row COALESCE(NxFDivAnn, FDivAnn) — NxFDivAnn wins within a row
-            # This ensures that when FYFinancialStatements (NxFDivAnn=X) and
-            # DividendForecastRevision (FDivAnn=Y, confirming just-ended FY) coexist,
-            # we pick X (the genuine forward value) over Y (the trailing confirmation).
+            # NxFDivAnn takes priority over FDivAnn within each row.
+            # NxFDivAnn is only present in annual (FY) filings; at that point FDivAnn
+            # equals the just-confirmed trailing actual, so NxFDivAnn is the only
+            # genuinely forward value.  At mid-year filings NxFDivAnn is absent and
+            # FDivAnn (the current-FY forecast) is the correct forward estimate.
+            # GROUP BY + HAVING (rather than a bare WHERE on the alias) is used so
+            # the query remains valid standard SQL regardless of SQLite alias scoping.
             rows = conn.execute(
                 "SELECT f.code, "
-                "  COALESCE("
-                "    MAX(CASE WHEN NULLIF(json_extract(f.data, '$.FDivAnn'), '') IS NULL"
-                "              AND NULLIF(json_extract(f.data, '$.NxFDivAnn'), '') IS NOT NULL"
-                "         THEN CAST(NULLIF(json_extract(f.data, '$.NxFDivAnn'), '') AS REAL)"
-                "         END), "
-                "    MAX(CAST(COALESCE("
-                "        NULLIF(json_extract(f.data, '$.NxFDivAnn'), ''), "
-                "        NULLIF(json_extract(f.data, '$.FDivAnn'), '')"
-                "    ) AS REAL))"
-                "  ) AS div_fwd, m.md "
+                "  MAX(CAST(COALESCE("
+                "    NULLIF(json_extract(f.data, '$.NxFDivAnn'), ''), "
+                "    NULLIF(json_extract(f.data, '$.FDivAnn'), '')"
+                "  ) AS REAL)) AS div_fwd, m.md "
                 "FROM fins_summary f "
                 "JOIN ("
                 "  SELECT code, MAX(disc_date) AS md "
