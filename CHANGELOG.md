@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.36.1](https://github.com/shigechika/jquants-mcp/compare/v0.36.0...v0.36.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* **dividend:** correct DivAnn for FY-end splits just before disclosure date ([#362](https://github.com/shigechika/jquants-mcp/issues/362)) ([f2f0aef](https://github.com/shigechika/jquants-mcp/commit/f2f0aef280669ff31d569efdea2230d55995053d))
+
 ## [0.36.0](https://github.com/shigechika/jquants-mcp/compare/v0.35.3...v0.36.0) (2026-05-19)
 
 
