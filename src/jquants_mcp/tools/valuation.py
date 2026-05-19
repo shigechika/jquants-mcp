@@ -26,49 +26,18 @@ def register(
     async def get_sector_briefing(
         sector_type: str = "s33",
     ) -> dict[str, Any]:
-        """Return sector-level median PER, PBR, ROE, and margin ratio aggregated across all listed stocks (業種別ブリーフィング).
+        """Return sector-level median PER, PBR, ROE, and margin ratio (業種別ブリーフィング). All plans.
 
-        Use for セクターバリュエーション, 業種別PER, 業種別PBR, 割安セクター, セクター比較,
-        業種別ブリーフィング, 業種別信用倍率.
-        Aggregates PER (price/earnings), PBR (price/book), ROE (return on equity), and
-        margin ratio (LongVol/ShrtVol) at the TSE sector level using the most recent
-        full-year (FY) financial disclosures and margin interest data.
-        All metrics use split-adjusted values so a 1:2 stock split does not distort ratios.
+        Use for セクターバリュエーション・業種別PER/PBR・割安セクター・業種別信用倍率 queries.
+        PER/ROE exclude net-loss stocks (EPS≤0); PBR excludes negative-book stocks.
+        See also get_market_briefing (market-wide), get_stock_briefing (single stock),
+        get_sector_performance (騰落率).
 
-        PER and ROE exclude stocks in a net-loss period (EPS ≤ 0); PBR excludes
-        negative-book stocks; margin ratio excludes stocks with ShrtVol == 0.
-        ``per_count`` / ``pbr_count`` / ``roe_count`` / ``margin_ratio_count`` report
-        how many stocks contributed to each median, letting you judge sector coverage.
-        Margin data requires markets_margin_interest cache (populated by daily_fetch.py
-        for Standard/Premium plans); margin fields are null when not cached.
-
-        See also: ``get_market_briefing`` for market-wide overview,
-        ``get_stock_briefing`` for single-stock detail,
-        ``get_sector_performance`` for sector-level daily price change (騰落率).
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily + fins_summary + equities_master + markets_margin_interest
-        Tier 1 cache (no API call)
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+        Note: margin_ratio fields are null unless Standard/Premium margin cache is populated.
 
         Args:
-            sector_type: ``"s33"`` (default, 33 TSE sub-sectors) or ``"s17"`` (17 top-level sectors).
-
-        Returns:
-            dict with keys:
-            - price_date: latest close-price date used for PER/PBR
-            - sector_type: ``"s33"`` or ``"s17"``
-            - sectors: list sorted by ``per_median`` ascending (cheapest first), each with:
-                - code: sector code
-                - name: sector name
-                - count: total stocks with both price and FY financials
-                - per_median: median PER (null when no stocks have positive EPS)
-                - per_count: stocks contributing to per_median
-                - pbr_median: median PBR (null when no stocks have positive BPS)
-                - pbr_count: stocks contributing to pbr_median
-                - roe_median: median ROE in percent (null when no stocks have positive BPS)
-                - roe_count: stocks contributing to roe_median
-                - margin_ratio_median: median margin ratio LongVol/ShrtVol (null when not cached)
-                - margin_ratio_count: stocks contributing to margin_ratio_median
+            sector_type: "s33" (default, 33 TSE sub-sectors) or "s17" (17 top-level sectors).
         """
         if sector_type not in ("s33", "s17"):
             return make_validation_error_response(["sector_type must be 's33' or 's17'"])

@@ -193,32 +193,18 @@ def register(
         code: str | None = None,
         detail: bool = False,
     ) -> dict[str, Any]:
-        """Find stocks that hit the daily price limit (ストップ高/安) on a given trading day.
+        """Find stocks that hit the daily price limit (ストップ高/安) on a trading day. All plans.
 
-        Use this when the user asks about ストップ高、ストップ安、値幅制限 (daily price
-        bands), or stocks that couldn't trade freely because of limit moves. Call with
-        ``code=None`` to get a cross-sectional list of all limit-hit stocks on a date.
+        Use for ストップ高・ストップ安・値幅制限 queries. UL=1 → upper limit touched; LL=1 → lower.
+        For volume spikes use detect_volume_surge; for VWAP pressure use compare_close_vs_vwap.
+        Data available ~17:15 JST on trading days.
 
-        ``UL == 1`` means the upper limit was touched intraday at least once;
-        ``LL == 1`` means the lower limit was touched. When ``C == H`` and
-        ``UL == 1``, the close is at the upper limit (ストップ高引け); analogous for
-        lower.
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily Tier 1 cache (no API call)
-        **Data availability:** Today's data is not available until the daily
-        cache update completes (~17:15 JST on trading days). Requests for
-        today before that time return empty results.
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
-            code: Optional 4- or 5-digit code. If omitted, scans all
-                stocks with a row on ``date``.
-            detail: If True, include the full per-stock ``data`` array.
-                Default False returns summary counts only: ``count``,
-                ``limit_high`` / ``limit_low`` (totals), plus close/touched
-                breakdowns (``limit_high_close``, ``limit_high_touched``,
-                ``limit_low_close``, ``limit_low_touched``).
+            code: Optional stock code. Omit to scan all stocks.
+            detail: Include full per-stock data array (default False).
         """
         errors = collect_errors(validate_date(date), validate_code(code))
         if errors:
@@ -290,32 +276,19 @@ def register(
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        """Compare a single stock's close against its daily VWAP to gauge buy/sell pressure (買い圧力・売り圧力).
+        """Compare a stock's close to its daily VWAP (買い圧力・売り圧力) for one code. All plans.
 
-        Use this when the user asks how a specific stock's close compares to its VWAP,
-        or whether 買い圧力 or 売り圧力 dominated a session. A close above VWAP suggests
-        buying was strong into the close; below suggests selling. Requires ``code`` —
-        this tool is per-stock only, not a cross-sectional screener.
+        Use for VWAP・買い圧力・売り圧力 queries on a specific stock; not a cross-sectional screener.
+        Close above VWAP = buying pressure; below = selling pressure. VWAP = Va/Vo (None when Vo=0).
+        Data available ~17:15 JST on trading days.
 
-        Returns ``close_above_vwap`` (bool) and raw ``vwap`` / ``C`` values per session;
-        does not compute a deviation percentage.
-
-        Daily VWAP is ``Va / Vo`` (turnover value divided by volume).
-        When volume is zero (suspended / non-trading day) the VWAP is
-        reported as ``None``.
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily Tier 1 cache
-        **Data availability:** Today's data is not available until the daily
-        cache update completes (~17:15 JST on trading days). Requests for
-        today before that time return empty results.
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            code: 4- or 5-digit code (required).
-            date: Single trading date. If given, ``date_from``/``date_to``
-                are ignored.
-            date_from: Range start (inclusive) when ``date`` is omitted.
-            date_to: Range end (inclusive) when ``date`` is omitted.
+            code: Stock code (required).
+            date: Single trading date (YYYYMMDD or YYYY-MM-DD). Overrides date_from/date_to.
+            date_from: Range start inclusive (YYYYMMDD or YYYY-MM-DD).
+            date_to: Range end inclusive (YYYYMMDD or YYYY-MM-DD).
         """
         errors = collect_errors(
             validate_code(code),
@@ -421,73 +394,24 @@ def register(
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
         detail: bool = False,
     ) -> dict[str, Any]:
-        """Identify stocks making a new 52-week rolling high or low (52週高値/安値 ブレイク).
+        """Screen for 52-week rolling high/low breakouts (52週高値/安値 ブレイク). All plans.
 
-        Use this when the user asks about 52週高値、52週安値、年間高値、年間安値, stocks
-        breaking to new one-year highs or lows, or momentum screeners based on 52-week
-        price extremes. For multi-date queries call ``detect_52w_high_low_range`` instead.
+        Use for 52週高値, 52週安値, 年間高値, 年間安値, 52-week high/low breakout.
+        For multi-date scans use detect_52w_high_low_range (not repeated calls here).
+        For YTD high/low use detect_ytd_high_low instead.
 
-        Convention used by Yahoo Finance, Bloomberg, TradingView, JPX
-        official 52週高値/安値. Today's bar is compared against the
-        prior ``window_sessions - 1`` sessions (today excluded).
+        Default params hit the nightly pre-computed cache (sub-second).
+        Custom params or code filter compute on-demand (~10–30s cross-sectional on Cloud Run).
+        date must be within the past 52 weeks. Data available ~17:15 JST on trading days.
 
-        Returns four signals per row, all using split-adjusted prices
-        (``AdjH`` / ``AdjL`` / ``AdjC``):
-
-        - ``new_high``       — today's ``AdjH`` >= prior window max
-        - ``new_high_close`` — today's ``AdjC`` >= prior window max
-        - ``new_low``        — today's ``AdjL`` <= prior window min
-        - ``new_low_close``  — today's ``AdjC`` <= prior window min
-
-        ``>=`` (not strict ``>``) so days that tie the prior extreme
-        also flag, matching standard market-data convention.
-
-        Each row also includes conviction context fields:
-
-        - ``AdjO``                — split-adjusted open (``AdjO < AdjC`` = bullish candle)
-        - ``close_vs_vwap``       — ``"above"`` / ``"below"`` (raw close vs ``Va/Vo``)
-        - ``volume_ratio``        — today ``Vo`` / 20-session prior average (≥1.5 = surge)
-        - ``volume_ratio_sessions`` — actual sessions used in the baseline (< 20 near year-start)
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily Tier 1 cache (cross-sectional
-        results for default parameters are pre-computed nightly and
-        served from ``screener_results``).
-        **Data availability:** Today's data is not available until the daily
-        cache update completes (~17:15 JST on trading days). Requests for
-        today before that time return empty results.
-
-        **Lookback limit:** ``date`` must fall within the past 52 weeks.
-        Older dates are rejected with ``error_type=OutOfCacheRange``;
-        their on-demand cross-sectional compute can take minutes on the
-        Cloud Run 1-vCPU runtime and exceed client tool-call timeouts.
-
-        Performance (within the 52-week window):
-        - Cross-sectional default-params calls (``code=None``,
-          ``window_sessions=252``, ``min_prior_sessions=60``) hit the
-          pre-computed cache and return in sub-second.
-        - Custom params or ``code`` filter compute on-demand. Single-code
-          queries are fast (~10 ms); custom-param cross-sectional scans
-          take 10–30 seconds.
-
-        **For multi-date scans use ``detect_52w_high_low_range``** —
-        firing this single-date tool N times in parallel multiplies
-        server load and risks client-side tool-call timeouts.
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            date: Trading date (YYYYMMDD or YYYY-MM-DD). Must be within
-                the past 52 weeks.
-            code: Optional 4- or 5-digit code. If omitted, scans every
-                code with a row on ``date`` (cross-sectional).
-            window_sessions: Trailing trading-day window including today.
-                Default 252 (52 weeks).
-            min_prior_sessions: Cross-sectional only — drop codes whose
-                prior history inside the window has fewer than this many
-                sessions (suppresses noise from recent IPOs). Default 60.
-                Set to 1 to disable.
-            detail: If True, include the full per-stock ``data`` array.
-                Default False returns summary counts only (``count``,
-                ``mode``, ``new_high``, ``new_low``).
+            date: Trading date (YYYYMMDD or YYYY-MM-DD). Within past 52 weeks.
+            code: Optional stock code. Omit to scan all codes (cross-sectional).
+            window_sessions: Trailing session window (default 252 = 52 weeks).
+            min_prior_sessions: Drop codes with fewer prior sessions in window (default 60; set 1 to disable).
+            detail: Include full per-stock data array (default False = summary counts only).
         """
         errors = collect_errors(validate_date(date), validate_code(code))
         if errors:
@@ -545,73 +469,24 @@ def register(
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
         detail: bool = False,
     ) -> dict[str, Any]:
-        """Identify stocks making a new year-to-date high or low (年初来高値/安値 更新).
+        """Screen for year-to-date high/low records (年初来高値/安値 更新). All plans.
 
-        Use this when the user asks about 年初来高値、年初来安値, YTD price extremes, or
-        stocks setting new records since the start of the current calendar year.
-        For multi-date queries call ``detect_ytd_high_low_range`` instead.
+        Use for 年初来高値, 年初来安値, YTD high/low, 年初来高値更新.
+        For multi-date scans use detect_ytd_high_low_range (not repeated calls here).
+        For 52-week rolling window use detect_52w_high_low instead.
 
-        Convention used by Kabutan (株探), Yahoo!ファイナンス JP, JPX
-        official 年初来高値/安値, and most JP retail-broker UIs. Today's
-        bar is compared against every prior session **since the first
-        trading day of the same calendar year**.
+        Compares today against every session since the first trading day of the same
+        calendar year — matches Kabutan / Yahoo!ファイナンス convention.
+        Default params hit the nightly pre-computed cache (sub-second).
+        date must be within the past 52 weeks. Data available ~17:15 JST on trading days.
 
-        Returns four signals per row, all using split-adjusted prices
-        (``AdjH`` / ``AdjL`` / ``AdjC``):
-
-        - ``new_high``       — today's ``AdjH`` >= YTD prior max
-        - ``new_high_close`` — today's ``AdjC`` >= YTD prior max
-        - ``new_low``        — today's ``AdjL`` <= YTD prior min
-        - ``new_low_close``  — today's ``AdjC`` <= YTD prior min
-
-        Edge case: the very first trading day of the year has no prior
-        YTD sessions and is skipped (the row would be empty by
-        definition; "新年最初" is not a meaningful screening signal).
-
-        Each row also includes conviction context fields:
-
-        - ``AdjO``                — split-adjusted open (``AdjO < AdjC`` = bullish candle)
-        - ``close_vs_vwap``       — ``"above"`` / ``"below"`` (raw close vs ``Va/Vo``)
-        - ``volume_ratio``        — today ``Vo`` / 20-session prior average (≥1.5 = surge)
-        - ``volume_ratio_sessions`` — actual sessions used in the baseline (< 20 in January)
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily Tier 1 cache (cross-sectional
-        results for default parameters are pre-computed nightly and
-        served from ``screener_results``).
-        **Data availability:** Today's data is not available until the daily
-        cache update completes (~17:15 JST on trading days). Requests for
-        today before that time return empty results.
-
-        **Lookback limit:** ``date`` must fall within the past 52 weeks.
-        Older dates are rejected with ``error_type=OutOfCacheRange`` to
-        avoid the slow cross-sectional on-demand path that can exceed
-        client tool-call timeouts.
-
-        Performance (within the 52-week window):
-        - Cross-sectional default-params calls (``code=None``,
-          ``min_prior_sessions=60``) hit the pre-computed cache and
-          return in sub-second.
-        - Custom params or ``code`` filter compute on-demand. Single-code
-          queries are fast; custom-param cross-sectional scans approach
-          ~1M rows late in the year.
-
-        **For multi-date scans use ``detect_ytd_high_low_range``** —
-        firing this single-date tool N times in parallel multiplies
-        server load and risks client-side tool-call timeouts.
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            date: Trading date (YYYYMMDD or YYYY-MM-DD). Must be within
-                the past 52 weeks.
-            code: Optional 4- or 5-digit code. If omitted, scans every
-                code with a row on ``date`` (cross-sectional).
-            min_prior_sessions: Cross-sectional only — drop codes whose
-                YTD history has fewer than this many prior sessions
-                (suppresses noise from recent IPOs / January itself).
-                Default 60. Set to 1 to disable.
-            detail: If True, include the full per-stock ``data`` array.
-                Default False returns summary counts only (``count``,
-                ``mode``, ``new_high``, ``new_low``).
+            date: Trading date (YYYYMMDD or YYYY-MM-DD). Within past 52 weeks.
+            code: Optional stock code. Omit to scan all codes (cross-sectional).
+            min_prior_sessions: Drop codes with fewer YTD prior sessions (default 60; set 1 to disable).
+            detail: Include full per-stock data array (default False = summary counts only).
         """
         errors = collect_errors(validate_date(date), validate_code(code))
         if errors:
@@ -665,41 +540,20 @@ def register(
         code: str | None = None,
         detail: bool = False,
     ) -> dict[str, Any]:
-        """Identify stocks with abnormally high trading volume (出来高急増) on a given day.
+        """Identify stocks with abnormally high trading volume (出来高急増) on a given day. All plans.
 
-        Use this when the user asks about 出来高急増、出来高異常、売買活況、出来高ランキング、
-        活発に売買された銘柄、取引量が増えた銘柄、unusual trading activity, volume spikes,
-        or volume-driven momentum screeners. Stocks are flagged when today's volume
-        exceeds the trailing ``baseline_days``-day average by at least ``multiplier`` times.
+        Use for 出来高急増・出来高異常・売買活況・volume spike queries. surge_ratio = Vo / mean(prior baseline_days).
+        For price extremes use detect_52w/ytd_high_low; for price limits use detect_price_limit.
+        Data available ~17:15 JST on trading days.
 
-        For 52-week price extremes use ``detect_52w_high_low``; for YTD highs/lows use
-        ``detect_ytd_high_low``; for price-limit events (ストップ高/安) use
-        ``detect_price_limit``; for VWAP buy/sell pressure use ``compare_close_vs_vwap``.
-
-        For each stock with a row on ``date``:
-
-          surge_ratio = Vo[date] / mean(Vo over prior `baseline_days`)
-
-        Stocks with ``surge_ratio >= multiplier`` are returned. Codes
-        whose baseline volume is zero (always suspended, new listing
-        inside the window) are skipped.
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily Tier 1 cache
-        **Data availability:** Today's data is not available until the daily
-        cache update completes (~17:15 JST on trading days). Requests for
-        today before that time return empty results.
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
-            multiplier: Ratio threshold. Default 2.0.
-            baseline_days: Trailing trading days used for the average.
-                Default 20.
-            code: Optional 4- or 5-digit code. If omitted, scans all
-                stocks with a row on ``date``.
-            detail: If True, include the full per-stock ``data`` array.
-                Default False returns summary counts only (``count``,
-                ``multiplier``, ``baseline_days``).
+            multiplier: surge_ratio threshold (default 2.0).
+            baseline_days: Trailing sessions for baseline average (default 20).
+            code: Optional stock code. Omit to scan all stocks.
+            detail: Include full per-stock data array (default False).
         """
         errors = collect_errors(validate_date(date), validate_code(code))
         if errors:
@@ -811,48 +665,21 @@ def register(
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
         detail: bool = False,
     ) -> dict[str, Any]:
-        """Scan 52-week high/low signals (52週高値/安値 ブレイク) across a date range.
+        """Scan 52-week high/low breakouts (52週高値/安値) across a date range. All plans.
 
-        Use this — not repeated ``detect_52w_high_low`` calls — when the user asks for
-        52-week high/low signals over multiple days, a week, or a month.
+        Use this instead of repeated detect_52w_high_low calls for multi-day queries.
+        Issue one range call — splitting into parallel range calls defeats the purpose.
+        date_from must be within the past 52 weeks. Data available ~17:15 JST on trading days.
 
-        Returns the union of single-date results across the inclusive
-        ``[date_from, date_to]`` range. The single-date tool is CPU-heavy and
-        parallel dispatch causes client-side timeouts.
-
-        **Lookback limit:** ``date_from`` must fall within the past 52
-        weeks. Older ranges are rejected with
-        ``error_type=OutOfCacheRange``.
-
-        **Data availability:** Today's data is not available until the daily
-        cache update completes (~17:15 JST on trading days). Including today
-        in the range before that time returns empty results for today's date.
-
-        For default parameters every trading day in range is a
-        pre-computed cache hit and the full window completes in
-        sub-second. Custom params or ``code`` filter compute on-demand
-        per date.
-
-        **Issue one range call per query.** Splitting the range into
-        several non-overlapping ``detect_52w_high_low_range`` calls
-        fired in parallel re-introduces the dispatch problem this tool
-        exists to prevent — pass the full window in a single invocation
-        instead.
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            date_from: Range start (inclusive, YYYYMMDD or YYYY-MM-DD).
-                Must be within the past 52 weeks.
-            date_to: Range end (inclusive, YYYYMMDD or YYYY-MM-DD).
-            code: Optional 4- or 5-digit code. When set, the
-                pre-computed cache is bypassed (it omits codes the
-                cross-sectional IPO filter dropped) and every date is
-                computed on-demand.
-            window_sessions: See ``detect_52w_high_low``.
-            min_prior_sessions: See ``detect_52w_high_low``.
-            detail: If True, include the full per-stock ``data`` array.
-                Default False returns summary counts only (``count``,
-                ``mode``, ``date_from``, ``date_to``, ``new_high``,
-                ``new_low``).
+            date_from: Range start inclusive (YYYYMMDD or YYYY-MM-DD). Within past 52 weeks.
+            date_to: Range end inclusive (YYYYMMDD or YYYY-MM-DD).
+            code: Optional stock code (bypasses pre-computed cache when set).
+            window_sessions: See detect_52w_high_low (default 252).
+            min_prior_sessions: See detect_52w_high_low (default 60).
+            detail: Include full per-stock data array (default False).
         """
         errors = collect_errors(
             validate_date(date_from),
@@ -917,47 +744,20 @@ def register(
         min_prior_sessions: int = _DEFAULT_MIN_PRIOR_SESSIONS,
         detail: bool = False,
     ) -> dict[str, Any]:
-        """Scan year-to-date high/low signals (年初来高値/安値 更新) across a date range.
+        """Scan year-to-date high/low records (年初来高値/安値) across a date range. All plans.
 
-        Use this — not repeated ``detect_ytd_high_low`` calls — when the user asks for
-        YTD high/low signals over multiple days, a week, or a month.
+        Use this instead of repeated detect_ytd_high_low calls for multi-day queries.
+        Issue one range call — splitting into parallel range calls defeats the purpose.
+        date_from must be within the past 52 weeks. Data available ~17:15 JST on trading days.
 
-        Returns the union of single-date results across the inclusive
-        ``[date_from, date_to]`` range. The single-date tool is CPU-heavy and
-        parallel dispatch causes client-side timeouts.
-
-        **Lookback limit:** ``date_from`` must fall within the past 52
-        weeks. Older ranges are rejected with
-        ``error_type=OutOfCacheRange``.
-
-        **Data availability:** Today's data is not available until the daily
-        cache update completes (~17:15 JST on trading days). Including today
-        in the range before that time returns empty results for today's date.
-
-        For default parameters every trading day in range is a
-        pre-computed cache hit and the full window completes in
-        sub-second. Custom params or ``code`` filter compute on-demand
-        per date.
-
-        **Issue one range call per query.** Splitting the range into
-        several non-overlapping ``detect_ytd_high_low_range`` calls
-        fired in parallel re-introduces the dispatch problem this tool
-        exists to prevent — pass the full window in a single invocation
-        instead.
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            date_from: Range start (inclusive, YYYYMMDD or YYYY-MM-DD).
-                Must be within the past 52 weeks.
-            date_to: Range end (inclusive, YYYYMMDD or YYYY-MM-DD).
-            code: Optional 4- or 5-digit code. When set, the
-                pre-computed cache is bypassed (it omits codes the
-                cross-sectional IPO filter dropped) and every date is
-                computed on-demand.
-            min_prior_sessions: See ``detect_ytd_high_low``.
-            detail: If True, include the full per-stock ``data`` array.
-                Default False returns summary counts only (``count``,
-                ``mode``, ``date_from``, ``date_to``, ``new_high``,
-                ``new_low``).
+            date_from: Range start inclusive (YYYYMMDD or YYYY-MM-DD). Within past 52 weeks.
+            date_to: Range end inclusive (YYYYMMDD or YYYY-MM-DD).
+            code: Optional stock code (bypasses pre-computed cache when set).
+            min_prior_sessions: See detect_ytd_high_low (default 60).
+            detail: Include full per-stock data array (default False).
         """
         errors = collect_errors(
             validate_date(date_from),
@@ -1018,39 +818,19 @@ def register(
         window_sessions: int = _DIST_DAY_SESSION_WINDOW,
         min_dist_days: int = _DIST_DAY_MIN_COUNT,
     ) -> dict[str, Any]:
-        """Count TOPIX distribution days (institutional selling pressure) in a rolling window.
+        """Count TOPIX distribution days (機関投資家の売り) in a rolling window. All plans.
 
-        Use when the user asks whether the market is "under distribution", showing
-        institutional selling, or whether the current uptrend is at risk.  Also use
-        before confirming a follow-through day — a market already under heavy
-        distribution is less likely to sustain a rally.
+        Use for 分散日・institutional selling・market under distribution queries (IBD method).
+        Check this before confirming a follow-through day. ≥4 days in 25 sessions = failing uptrend.
+        See also detect_follow_through_day.
 
-        A **distribution day** is a session where TOPIX falls ≥ ``sigma_multiplier`` σ
-        below the 20-session rolling mean of daily returns (z-score ≤ −``sigma_multiplier``).
-        At the default 2.0 σ threshold this fires ~9 times per year, capturing only
-        genuine institutional-selling episodes (SVB crisis, yen carry-trade unwind,
-        Trump tariff shock) rather than routine volatility.  Four or more within
-        ``window_sessions`` (25) sessions signals that the uptrend may be failing.
-
-        Each distribution day entry includes ``volume_confirmed`` — whether total
-        market turnover (``SUM(Va)``) exceeded the prior session, which strengthens
-        the institutional-selling interpretation.
-
-        See also: ``detect_follow_through_day`` — confirms a new uptrend after a bottom.
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] indices_bars_daily_topix + equities_bars_daily (no API call)
-        **Data availability:** ~17:15 JST on trading days.
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            date: Target date (YYYYMMDD or YYYY-MM-DD). Defaults to the latest
-                cached trading date.
+            date: Target date (YYYYMMDD or YYYY-MM-DD). Defaults to latest cached date.
             sigma_multiplier: z-score threshold for a distribution day (default 2.0).
-                Uses 20-session rolling σ of TOPIX daily returns.
-            window_sessions: Rolling session window for counting distribution days
-                (default 25, IBD convention).
-            min_dist_days: Count at which ``warning`` is set to ``true``
-                (default 4, IBD convention).
+            window_sessions: Rolling session window (default 25, IBD convention).
+            min_dist_days: Count threshold for warning=true (default 4, IBD convention).
         """
         cache: CacheStore = get_cache()
 
@@ -1149,35 +929,18 @@ def register(
         date: str | None = None,
         sigma_multiplier: float = _DIST_DAY_DEFAULT_SIGMA_MULT,
     ) -> dict[str, Any]:
-        """Check whether a follow-through day (フォロースルーデイ) confirms a new uptrend.
+        """Check whether a follow-through day (フォロースルーデイ) confirms a new uptrend. All plans.
 
-        Use when the user asks whether a recent market bottom or bounce has been
-        confirmed, or whether the current rally attempt "is for real".
+        Use when asking if a rally attempt is confirmed (IBD method): TOPIX z-score ≥ +sigma on
+        session 4+ from rally_start, with higher market turnover. See also detect_distribution_days.
+        Data available ~17:15 JST on trading days.
 
-        A **follow-through day** (IBD method) requires all three conditions:
-        1. TOPIX rises ≥ ``sigma_multiplier`` σ above the 20-session rolling mean
-           (z-score ≥ +``sigma_multiplier``).
-        2. Occurs on session **4 or later** from ``rally_start`` (the reversal/low day).
-           Sessions 1–3 are too close to the bottom to be reliable.
-        3. Total market turnover (``SUM(Va)``) is higher than the prior session.
-
-        To use: identify the low or reversal day as ``rally_start``, then call with
-        each subsequent date until a confirmed follow-through (or distribution) occurs.
-
-        See also: ``detect_distribution_days`` — run before confirming a rally to
-        check whether the market is already under distribution pressure.
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] indices_bars_daily_topix + equities_bars_daily (no API call)
-        **Data availability:** ~17:15 JST on trading days.
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            rally_start: First day of the rally attempt — the low or reversal day
-                (YYYYMMDD or YYYY-MM-DD).  This counts as session 1.
-            date: Date to check for the follow-through signal
-                (YYYYMMDD or YYYY-MM-DD). Defaults to the latest cached date.
-            sigma_multiplier: z-score threshold for the price condition
-                (default 2.0, symmetric with ``detect_distribution_days``).
+            rally_start: Rally attempt start — the low/reversal day (YYYYMMDD or YYYY-MM-DD).
+            date: Date to check (YYYYMMDD or YYYY-MM-DD). Defaults to latest cached date.
+            sigma_multiplier: z-score threshold (default 2.0).
         """
         cache: CacheStore = get_cache()
 

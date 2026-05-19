@@ -397,56 +397,25 @@ def register(
         aspect_ratio: str = "square",
         annotations: list[str] | None = None,
     ) -> Image:
-        """Render a stock candlestick chart as a PNG (ローソク足チャート). All plans.
+        """Render a candlestick chart as PNG (ローソク足チャート). All plans.
 
-        Use for チャート, ローソク足, 株価チャート, 日足チャート, chart, candlestick,
-        テクニカルチャート, price chart.
-        Reads daily bars from the local cache (no API call). The image is returned
-        inline; Claude Desktop and Claude mobile display it directly in chat.
+        Use for チャート・ローソク足・株価チャート・日足チャート・テクニカルチャート queries.
+        Render charts sequentially (not in parallel) — parallel renders can OOM on Cloud Run.
+        SMA/Bollinger warmup fetches extra days before from_date for accurate indicator values.
 
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily Tier 1 cache (no API call)
-        [Optional dependency] ``mplfinance`` + ``matplotlib`` (install
-        with ``pip install 'jquants-mcp[charts]'``)
-
-        **Call sequentially when rendering multiple charts** (one at a
-        time, not in parallel). Each render allocates ~50–500 MB of
-        matplotlib workspace depending on the date range and overlays;
-        firing N renders in parallel can exhaust the Cloud Run memory
-        budget and trigger OOM kills. For 2+ charts in a row, issue
-        the calls one after another.
-
-        **SMA / Bollinger warmup**: the tool fetches up to ``max_window × 2``
-        extra calendar days before ``from_date`` so that moving-average
-        indicators start with fully-warmed values from the first displayed
-        bar.  Bars in the warmup zone are used only for indicator
-        computation and never appear in the rendered chart.
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+        [Optional dependency] pip install 'jquants-mcp[charts]' (mplfinance + matplotlib)
 
         Args:
-            code: 4- or 5-digit stock code (e.g. "72030" or "7203").
-            from_date: Range start (YYYYMMDD or YYYY-MM-DD), inclusive.
-                When omitted, defaults to a 91-day inclusive window ending at
-                ``to_date`` (i.e. ``to_date`` minus 90 calendar days).
-            to_date: Range end (YYYYMMDD or YYYY-MM-DD), inclusive.
-                Defaults to today when omitted.
-            indicators: List of overlays. Defaults to
-                ``["volume", "sma5", "sma25"]`` (Japanese 短期/中期
-                convention). Accepted values: ``volume``, ``sma5``,
-                ``sma20``, ``sma25``, ``sma60``, ``sma75``, ``sma200``,
-                ``bb20`` (20-session Bollinger band ボリンジャーバンド).
-            style: ``default`` (Yahoo-like), ``dark``, or ``colorblind``.
-            adjusted: When ``True`` (default) use split-adjusted prices
-                (``AdjO`` / ``AdjH`` / ``AdjL`` / ``AdjC``) so corporate
-                actions inside the window do not produce a price gap.
-                Set ``False`` to render unadjusted prices.
-            aspect_ratio: Chart shape. ``square`` (default, 8×8 in) fits
-                chat and mobile. ``landscape`` (12×6 in) for wide desktop
-                views. ``portrait`` (6×9 in) for tall mobile viewports.
-            annotations: Optional list of overlay annotations. Currently
-                accepted value: ``"earnings"`` — draws a vertical dashed line
-                on each earnings announcement date within the chart window
-                (sourced from equities_earnings_calendar; ~3 months history).
-                Default: null (no annotations). Example: ``["earnings"]``.
+            code: Stock code (e.g. "7203" or "72030").
+            from_date: Range start (YYYYMMDD or YYYY-MM-DD). Default: 91 days before to_date.
+            to_date: Range end (YYYYMMDD or YYYY-MM-DD). Default: today.
+            indicators: Overlays list. Default ["volume","sma5","sma25"]. Options:
+                volume, sma5/20/25/60/75/200, bb20.
+            style: "default" (Yahoo-like), "dark", or "colorblind".
+            adjusted: Use split-adjusted prices (default True).
+            aspect_ratio: "square" (default), "landscape", or "portrait".
+            annotations: Optional overlays e.g. ["earnings"] for earnings date lines.
         """
         if indicators is None:
             indicators = ["volume", "sma5", "sma25"]
@@ -701,38 +670,22 @@ def register(
         labels: list[str] | None = None,
         aspect_ratio: str = "square",
     ) -> Image:
-        """Render a multi-stock performance comparison line chart as PNG (複数銘柄比較チャート).
+        """Render a multi-stock performance comparison chart as PNG (複数銘柄比較チャート). All plans.
 
-        Plots up to 10 stocks on the same axis so relative performance is visible at a
-        glance. Reads adjusted-close prices from the local Tier 1 cache (no API call).
-        The image is returned inline; Claude Desktop and Claude mobile display it directly
-        in chat.
+        Use for 比較チャート・パフォーマンス比較・リターン比較・relative performance queries (up to 10 codes).
+        Render charts sequentially (not in parallel).
 
-        Use for 比較チャート, パフォーマンス比較, 複数銘柄比較, comparison chart,
-        relative performance, return chart, リターン比較.
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily Tier 1 cache (no API call)
-        [Optional dependency] ``mplfinance`` + ``matplotlib``
-
-        **Call sequentially when rendering multiple charts** (not in parallel).
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+        [Optional dependency] pip install 'jquants-mcp[charts]' (mplfinance + matplotlib)
 
         Args:
-            codes: List of 1–10 stock codes (4- or 5-digit, e.g. ["72030", "86970"]).
+            codes: 1–10 stock codes (e.g. ["7203", "8697"]).
             from_date: Range start (YYYYMMDD or YYYY-MM-DD), inclusive.
             to_date: Range end (YYYYMMDD or YYYY-MM-DD), inclusive.
-            mode: ``return_pct`` (default) — normalise each stock to 0 % at its first
-                available bar so performance is directly comparable. ``price`` — plot raw
-                adjusted-close prices without normalisation.
-            style: ``default``, ``dark``, or ``colorblind`` (Okabe-Ito palette).
-            labels: Optional list of custom legend labels, one per code in the same
-                order as ``codes``.  An empty string at any position falls back to the
-                auto-generated ``CODE CompanyName`` label.  When omitted (default),
-                labels are built from the stock code and the company name fetched from
-                the ``equities_master`` cache.
-            aspect_ratio: Chart shape. ``square`` (default, 8×8 in) fits chat and
-                mobile viewports. ``landscape`` (12×6 in) suits wide displays.
-                ``portrait`` (6×9 in) is taller for narrow sidebars.
+            mode: "return_pct" (default, normalised to 0% at first bar) or "price" (raw close).
+            style: "default", "dark", or "colorblind".
+            labels: Custom legend labels per code. Omit for auto-generated names.
+            aspect_ratio: "square" (default), "landscape", or "portrait".
         """
         if not codes or len(codes) > 10:
             return _error_image("codes must be a list of 1–10 stock codes.")

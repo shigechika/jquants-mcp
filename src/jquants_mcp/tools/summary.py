@@ -41,29 +41,16 @@ def register(
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def get_stock_briefing(code: str) -> dict[str, Any]:
-        """One-page briefing for a single stock: price, financials, valuation, and margin (株式ブリーフィング).
+        """One-page briefing for a single stock: price, financials, valuation, and margin (株式ブリーフィング). All plans.
 
-        Returns the latest price (close, change_pct, volume), most recent FY financial
-        metrics (revenue, operating profit, net income), valuation ratios (PER, PBR,
-        dividend yield), margin trading data (margin ratio = long_vol / short_vol), and
-        the sector-level short-sale ratio (空売り比率) for the stock's TSE 33 sector.
-        All figures use split-adjusted values (AdjC, AdjEPS, AdjBPS) so PER/PBR remain
-        accurate even after stock splits.
-
-        PER and ROE are null when EPS <= 0 (net-loss period).  Dividend yield uses the
-        most recent annual dividend (DivAnn) disclosed within the past 18 months; null
-        when no recent disclosure exists (company stopped paying dividends).
-        Margin ratio is null when short_vol == 0 or no margin data is cached.
-        sector_short_sale_ratio is null when markets_short_ratio cache is absent (Standard+).
-
-        See also: ``get_sector_briefing`` for sector-level aggregation,
-        ``get_market_briefing`` for market-wide overview.
+        Returns latest price, FY financials, PER/PBR/dividend yield, margin ratio, and
+        sector short-sale ratio. PER/ROE null when EPS≤0. Margin fields null without
+        Standard/Premium cache. See also get_sector_briefing, get_market_briefing.
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no live API call)
-        Margin data requires markets_margin_interest cache (populated by daily_fetch.py for Standard/Premium plans).
 
         Args:
-            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only).
         """
         errors = collect_errors(validate_code(code))
         if errors:
