@@ -214,7 +214,7 @@ def _compute_notable_stocks(
     def _change_pct(code_5: str) -> float | None:
         c = today_close_map.get(code_5)
         p = prev_close_map.get(code_5)
-        if c is not None and p and p != 0:
+        if c is not None and p is not None and p != 0:
             return round((c - p) / p * 100, 2)
         return None
 
@@ -235,7 +235,7 @@ def _compute_notable_stocks(
                 entry = oversold_u.setdefault(code_5, {"signals": [], "volume_ratio": vr})
                 entry["signals"].append("52w_low")
 
-    for item in plimit_full.get("data", []):
+    for item in plimit_full.get("data", [])[:_MAX_NOTABLE_UNIVERSE]:
         code_5 = normalize_code(str(item.get("Code") or ""))
         if not code_5:
             continue
@@ -1310,15 +1310,15 @@ def register(
         # adr_rows so no additional DB queries are needed.
         code_closes: dict[str, list[float]] = {}
         code_volumes: dict[str, list[float]] = {}
-        for _d in sorted(by_date.keys()):
-            for _row in by_date[_d]:
-                _c5 = str(_row.get("Code") or "")
-                _cl = _as_float(_row.get("AdjC") or _row.get("C"))
-                _vo = _as_float(_row.get("Vo"))
-                if _c5 and _cl is not None:
-                    code_closes.setdefault(_c5, []).append(_cl)
-                if _c5 and _vo is not None:
-                    code_volumes.setdefault(_c5, []).append(_vo)
+        for d in sorted(by_date.keys()):
+            for row in by_date[d]:
+                c5 = str(row.get("Code") or "")
+                cl = _as_float(row.get("AdjC") or row.get("C"))
+                vo = _as_float(row.get("Vo"))
+                if c5 and cl is not None:
+                    code_closes.setdefault(c5, []).append(cl)
+                if c5 and vo is not None:
+                    code_volumes.setdefault(c5, []).append(vo)
 
         today_close_map: dict[str, float | None] = {
             str(r.get("Code") or ""): _as_float(r.get("AdjC") or r.get("C"))

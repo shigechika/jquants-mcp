@@ -2059,9 +2059,9 @@ class TestGetMarketBriefingNotableStocks:
             result = await server_module.mcp.call_tool("get_market_briefing", {"date": self.TODAY})
         data = _call(result)
         ns = data["highlights"]["notable_stocks"]
-        assert "4444" in [e["code"] for e in ns["overbought"]]
-        for e in ns["overbought"]:
-            assert not any(s in ("52w_high", "52w_low") for s in e["signals"])
+        entry = next((e for e in ns["overbought"] if e["code"] == "4444"), None)
+        assert entry is not None, "CODE_D (4444) must appear in overbought"
+        assert entry["signals"] == ["limit_high"], "cold cache: signal must be limit_high only"
 
     @pytest.mark.asyncio
     async def test_notable_stocks_empty_without_universe(self, tmp_path):
