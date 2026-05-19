@@ -717,10 +717,15 @@ class CacheStore:
         return result
 
     def get_forward_div_ann_map(self) -> dict[str, tuple[float, str]]:
-        """Return forward annual dividend per share: FDivAnn > NxFDivAnn.
+        """Return forward annual dividend per share: NxFDivAnn > FDivAnn.
 
         Picks the most recent disclosure per code where FDivAnn or NxFDivAnn
-        is non-empty, returning the first available in priority order.
+        is non-empty, with NxFDivAnn taking priority over FDivAnn.
+        NxFDivAnn is only present in annual (FY) earnings filings and always
+        represents the NEXT fiscal year forecast; at annual results, FDivAnn
+        equals the just-confirmed trailing actual, so NxFDivAnn is the only
+        truly forward-looking value.  At mid-year filings NxFDivAnn is absent,
+        so FDivAnn (the current-FY forecast) is used as the fallback.
         These values are reported in post-split per-share terms and do NOT
         require get_split_factors_before_disc (FY-end split) correction.
         get_split_factors_after still applies for splits after the filing.
@@ -735,23 +740,37 @@ class CacheStore:
         if conn is None:
             return {}
         try:
+            # GROUP BY handles the rare case where multiple document types share the
+            # same (code, disc_date) key.  Within that group:
+            # Priority 1: NxFDivAnn from a row where FDivAnn is absent (pure next-FY row)
+            # Priority 2: per-row COALESCE(NxFDivAnn, FDivAnn) — NxFDivAnn wins within a row
+            # This ensures that when FYFinancialStatements (NxFDivAnn=X) and
+            # DividendForecastRevision (FDivAnn=Y, confirming just-ended FY) coexist,
+            # we pick X (the genuine forward value) over Y (the trailing confirmation).
             rows = conn.execute(
                 "SELECT f.code, "
                 "  COALESCE("
-                "    NULLIF(json_extract(f.data, '$.FDivAnn'), ''), "
-                "    NULLIF(json_extract(f.data, '$.NxFDivAnn'), '')"
+                "    MAX(CASE WHEN NULLIF(json_extract(f.data, '$.FDivAnn'), '') IS NULL"
+                "              AND NULLIF(json_extract(f.data, '$.NxFDivAnn'), '') IS NOT NULL"
+                "         THEN CAST(NULLIF(json_extract(f.data, '$.NxFDivAnn'), '') AS REAL)"
+                "         END), "
+                "    MAX(CAST(COALESCE("
+                "        NULLIF(json_extract(f.data, '$.NxFDivAnn'), ''), "
+                "        NULLIF(json_extract(f.data, '$.FDivAnn'), '')"
+                "    ) AS REAL))"
                 "  ) AS div_fwd, m.md "
                 "FROM fins_summary f "
                 "JOIN ("
                 "  SELECT code, MAX(disc_date) AS md "
                 "  FROM fins_summary "
                 "  WHERE COALESCE("
-                "    NULLIF(json_extract(data, '$.FDivAnn'), ''), "
-                "    NULLIF(json_extract(data, '$.NxFDivAnn'), '')"
+                "    NULLIF(json_extract(data, '$.NxFDivAnn'), ''), "
+                "    NULLIF(json_extract(data, '$.FDivAnn'), '')"
                 "  ) IS NOT NULL "
                 "  GROUP BY code"
                 ") m ON f.code = m.code AND f.disc_date = m.md "
-                "WHERE div_fwd IS NOT NULL"
+                "GROUP BY f.code, m.md "
+                "HAVING div_fwd IS NOT NULL"
             ).fetchall()
         except Exception:
             return {}
