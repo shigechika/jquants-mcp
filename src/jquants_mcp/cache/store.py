@@ -7,7 +7,7 @@ import logging
 import sqlite3
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -787,8 +787,6 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None or not code_disc_dates:
             return {}
-        from datetime import datetime, timedelta
-
         codes = list(code_disc_dates.keys())
         all_rows: list[tuple[str, str, float]] = []
         for i in range(0, len(codes), 900):

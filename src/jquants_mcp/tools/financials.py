@@ -85,6 +85,13 @@ def _apply_split_adjustment(
       - BPS disclosed 2024-02-06 = 6000 -> AdjBPS = 6000 * 0.2 = 1200
       - BPS disclosed 2025-05-01 = 1200 -> AdjBPS = 1200 * 1.0 = 1200 (no split after)
 
+    Note: This "splits after disc_date" logic is correct for EPS and BPS, which are
+    already reported in post-split terms per Japanese GAAP retroactive adjustment.
+    DivAnn is an exception: when a FY-end split occurs ~45 days before the annual
+    results filing, J-Quants still stores DivAnn in pre-split per-share units.
+    That additional correction is applied in get_dividend_yield_ranking and
+    get_stock_briefing via CacheStore.get_split_factors_before_disc().
+
     Returns:
         Tuple of (adjusted rows, whether adjustment was applied).
     """
