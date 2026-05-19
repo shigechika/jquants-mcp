@@ -675,8 +675,12 @@ class CacheStore:
     def get_div_ann_map(self) -> dict[str, tuple[float, str]]:
         """Return a mapping of 5-digit code to (annual dividend per share, disclosure date).
 
-        Uses the most recent disclosure date with a positive DivAnn per code,
-        skipping interim/quarterly reports where DivAnn is empty or zero.
+        Selects the most recent disclosure with a non-null, non-empty DivAnn per code.
+        Codes whose most recent such disclosure has DivAnn == 0 are excluded — this
+        represents an explicit dividend cut (annual result filed with zero dividend),
+        distinct from interim reports that leave DivAnn null/empty (which are simply
+        skipped by the WHERE clause so the previous annual disclosure is used instead).
+
         The disclosure date is needed by callers to apply split adjustments.
         Returns an empty dict when the table is missing, empty, or the
         connection is unavailable.
@@ -693,7 +697,6 @@ class CacheStore:
                 "  FROM fins_summary "
                 "  WHERE json_extract(data, '$.DivAnn') IS NOT NULL "
                 "    AND json_extract(data, '$.DivAnn') != '' "
-                "    AND CAST(json_extract(data, '$.DivAnn') AS REAL) > 0 "
                 "  GROUP BY code"
                 ") m ON f.code = m.code AND f.disc_date = m.md"
             ).fetchall()
@@ -707,6 +710,8 @@ class CacheStore:
                 val = float(row[1])
             except (TypeError, ValueError):
                 continue
+            # Explicit zero: company cut dividends — exclude from ranking.
+            # Null/empty (interim reports) never reach here due to the SQL WHERE clause.
             if code and val > 0 and disc_date:
                 result[code] = (val, disc_date)
         return result
