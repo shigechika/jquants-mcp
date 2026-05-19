@@ -1410,6 +1410,79 @@ class TestGetDividendYieldRanking:
         assert data["items"][0]["yield_pct"] == pytest.approx(5.0)
 
     @pytest.mark.asyncio
+    async def test_explicit_zero_div_ann_excluded(self, tmp_path):
+        """A code whose most recent non-null DivAnn is 0 is excluded from the ranking.
+
+        Mirrors the アドバンスクリエイト (8798) real-world case:
+          13010: DivAnn=100 disclosed 2025-02-28 (older, positive)
+                 DivAnn=0.0 disclosed 2025-11-14 (newer, explicit dividend cut)
+        Expected: 13010 NOT in results (dividend was cut to zero).
+
+        Both disclosures are within the default disc_months=18 staleness window
+        (query_date=2026-05-02, cutoff≈2024-11-03), so staleness is not a factor.
+
+        This is distinct from an interim report with null DivAnn, which falls
+        back to the previous positive disclosure.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "13010", "2026-05-02", 2000.0)
+        _insert_fins_summary(conn, "13010", "2025-02-28", 100.0)  # older, positive
+        _insert_fins_summary(conn, "13010", "2025-11-14", 0.0)  # newer, explicit zero (cut)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+            )
+        data = _call(result)
+        # Dividend cut → excluded regardless of the older positive disclosure
+        assert data["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_null_interim_falls_back_to_positive(self, tmp_path):
+        """Interim report with null DivAnn is skipped; older positive DivAnn is used.
+
+        13020: DivAnn=80 disclosed 2025-11-14 (FY annual, positive)
+               DivAnn=null disclosed 2026-02-14 (1Q interim, no DivAnn)
+        Expected: 13020 included with yield from DivAnn=80 (not cut, just interim).
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "13020", "2026-05-02", 2000.0)
+        _insert_fins_summary(conn, "13020", "2025-11-14", 80.0)  # annual, positive
+        _insert_fins_summary(conn, "13020", "2026-02-14", None)  # interim, no DivAnn
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        assert data["items"][0]["yield_pct"] == pytest.approx(80.0 / 2000.0 * 100, rel=1e-3)
+
+    @pytest.mark.asyncio
     async def test_split_adjusted_yield(self, tmp_path):
         """DivAnn is adjusted for stock splits that occurred after disc_date.
 

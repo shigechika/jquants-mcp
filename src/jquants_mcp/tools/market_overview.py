@@ -969,9 +969,10 @@ def register(
         ``fins_summary`` with the split-adjusted closing price (AdjC) from
         ``equities_bars_daily`` to compute the yield.
 
-        Uses the most recent disclosure with a positive DivAnn per code, so
-        interim/quarterly reports where DivAnn is empty are skipped in favour
-        of the most recent full-year disclosure.
+        Uses the most recent non-null DivAnn disclosure per code.
+        Interim/quarterly reports that leave DivAnn null/empty are skipped so
+        the most recent annual result is used instead.  Codes whose latest
+        non-null DivAnn is explicitly 0 (dividend cut) are excluded entirely.
 
         DivAnn is stated on a pre-split per-share basis at the time of
         disclosure.  If stock splits occurred after that disclosure date, the
