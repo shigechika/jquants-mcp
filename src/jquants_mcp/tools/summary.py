@@ -140,16 +140,24 @@ def register(
             eps = float_or_none(row.get("AdjEPS") or row.get("EPS"))
             bps = float_or_none(row.get("AdjBPS") or row.get("BPS"))
 
-            # DivAnn staleness filter — reject disclosures older than 18 months
-            div_raw = float_or_none(row.get("AdjDivAnn") or row.get("DivAnn"))
-            if div_raw and fins_disc_date:
-                # FY-end split correction: DivAnn in post-split disclosures may still be
-                # in pre-split per-share terms when the split occurred just before filing.
-                fye_factors = cache.get_split_factors_before_disc({cache_code: fins_disc_date[:10]})
-                div_raw = div_raw * fye_factors.get(cache_code, 1.0)
-                cutoff = (datetime.now() - timedelta(days=_DISC_DAYS_CUTOFF)).strftime("%Y-%m-%d")
-                if fins_disc_date >= cutoff:
-                    div_per_share = div_raw
+            # Dividend: forward (FDivAnn/NxFDivAnn) takes priority over trailing (DivAnn).
+            # Forward values are already in post-split terms; no FYE correction needed.
+            # Trailing DivAnn may be pre-split at FYE; requires FYE correction.
+            cutoff = (datetime.now() - timedelta(days=_DISC_DAYS_CUTOFF)).strftime("%Y-%m-%d")
+            fwd_entry = cache.get_forward_div_ann_map().get(cache_code)
+            if fwd_entry is not None:
+                fwd_val, fwd_disc = fwd_entry
+                if fwd_disc >= cutoff:
+                    fwd_split = cache.get_split_factors_after({cache_code: fwd_disc[:10]})
+                    div_per_share = fwd_val * fwd_split.get(cache_code, 1.0)
+            if div_per_share is None and fins_disc_date:
+                # Trailing DivAnn fallback
+                div_raw = float_or_none(row.get("AdjDivAnn") or row.get("DivAnn"))
+                if div_raw and fins_disc_date >= cutoff:
+                    fye_factors = cache.get_split_factors_before_disc(
+                        {cache_code: fins_disc_date[:10]}
+                    )
+                    div_per_share = div_raw * fye_factors.get(cache_code, 1.0)
 
             # PER: null when EPS <= 0 (net-loss) — negative PER is meaningless
             if adj_close and eps and eps > 0:

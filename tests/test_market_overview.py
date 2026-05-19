@@ -1892,6 +1892,189 @@ class TestGetDividendYieldRanking:
         data = _call(result)
         assert data.get("error") is True
 
+    # ------------------------------------------------------------------
+    # Forward dividend (FDivAnn / NxFDivAnn) tests
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_fdivann_used_over_trailing_divann(self, tmp_path):
+        """FDivAnn (forward forecast) takes priority over trailing DivAnn.
+
+        Mirrors バリューコマース (24910) real-world case:
+          Annual disc 2026-01-30: DivAnn=49 (trailing actual)
+          Q1 disc     2026-04-28: FDivAnn=16 (current-FY forecast)
+        Kabutan shows 16/497*100 = 3.22%, not 49/497*100 = 9.86%.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "24910", "2026-05-02", 497.0)
+        # Annual: DivAnn=49 (older)
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            ("24910", "2026-01-30", json.dumps({"Code": "24910", "DivAnn": 49.0}), 0.0),
+        )
+        # Q1: FDivAnn=16, DivAnn="" (newer)
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "24910",
+                "2026-04-28",
+                json.dumps({"Code": "24910", "DivAnn": "", "FDivAnn": 16.0}),
+                0.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        # Forward FDivAnn=16 used, not trailing DivAnn=49
+        assert item["div_ann"] == pytest.approx(16.0, rel=1e-3)
+        assert item["yield_pct"] == pytest.approx(16.0 / 497.0 * 100, rel=1e-2)
+
+    @pytest.mark.asyncio
+    async def test_nxfdivann_used_when_no_fdivann(self, tmp_path):
+        """NxFDivAnn from an annual report is used when no FDivAnn is available.
+
+        Mirrors 日本創発グループ (78140) real-world case:
+          Annual disc 2026-02-13: DivAnn=60 (trailing), NxFDivAnn=15 (next-FY forecast)
+          Only one row; no quarterly with FDivAnn yet.
+        Kabutan shows 15/544*100 = 2.76%, not 60/544*100 = 11.03%.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "78140", "2026-05-02", 544.0)
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "78140",
+                "2026-02-13",
+                json.dumps({"Code": "78140", "DivAnn": 60.0, "NxFDivAnn": 15.0}),
+                0.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        # NxFDivAnn=15 used, not DivAnn=60
+        assert item["div_ann"] == pytest.approx(15.0, rel=1e-3)
+        assert item["yield_pct"] == pytest.approx(15.0 / 544.0 * 100, rel=1e-2)
+
+    @pytest.mark.asyncio
+    async def test_nxfdivann_no_fye_correction(self, tmp_path):
+        """NxFDivAnn must NOT receive FY-end split correction.
+
+        Mirrors 京王電鉄 (9008) real-world case:
+          5:1 split on 2026-03-30 (adj_factor=0.2).
+          Annual disc 2026-05-13: DivAnn=110 (pre-split), NxFDivAnn=22 (post-split).
+        Correct yield = 22/775.1*100 ≈ 2.84%.
+        Applying FYE factor 0.2 to NxFDivAnn would wrongly give 4.4/775.1*100.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "90080", "2026-05-13", 775.1)
+        # FY-end split on 2026-03-30 (45 days before disc_date)
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_bars_daily "
+            "(code, date, data, fetched_at, adj_factor) VALUES (?, ?, ?, ?, ?)",
+            ("90080", "2026-03-30", '{"Code":"90080","AdjC":799.0}', 0.0, 0.2),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "90080",
+                "2026-05-13",
+                json.dumps({"Code": "90080", "DivAnn": 110.0, "NxFDivAnn": 22.0}),
+                0.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-13", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        # NxFDivAnn=22 used as-is (no FYE correction); NOT 22*0.2=4.4
+        assert item["div_ann"] == pytest.approx(22.0, rel=1e-3)
+        assert item["yield_pct"] == pytest.approx(22.0 / 775.1 * 100, rel=1e-2)
+
+    @pytest.mark.asyncio
+    async def test_trailing_divann_fallback_when_no_forward(self, tmp_path):
+        """DivAnn is used when neither FDivAnn nor NxFDivAnn is available.
+
+        Ensures backward compatibility: stocks with only trailing DivAnn
+        (no forward guidance filed yet) still appear in the ranking.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "55550", "2026-05-02", 1000.0)
+        # Only DivAnn; no FDivAnn or NxFDivAnn
+        _insert_fins_summary(conn, "55550", "2025-11-14", 60.0)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["div_ann"] == pytest.approx(60.0, rel=1e-3)
+        assert item["yield_pct"] == pytest.approx(60.0 / 1000.0 * 100, rel=1e-2)
+
 
 class TestGetMarketBriefingShortRatio:
     """Tests for sector_short_ratios in get_market_briefing."""
