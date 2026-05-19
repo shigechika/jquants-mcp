@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 import jquants_mcp.server as server_module
+from jquants_mcp.cache import screener_compute
 from jquants_mcp.cache.store import CacheStore
 from jquants_mcp.config import Settings
 
@@ -87,6 +89,41 @@ def _insert_bar(
         "INSERT OR REPLACE INTO equities_bars_daily (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
         (code, date, json.dumps(data), 0.0),
     )
+
+
+def _insert_bar_ul(
+    conn: sqlite3.Connection,
+    code: str,
+    d: str,
+    adj_c: float,
+    vo: int = 100_000,
+    ul: int = 0,
+    ll: int = 0,
+) -> None:
+    data = {
+        "Code": code,
+        "Date": d,
+        "O": adj_c,
+        "H": adj_c * 1.1,
+        "L": adj_c * 0.9,
+        "C": adj_c,
+        "AdjC": adj_c,
+        "Vo": vo,
+        "Va": adj_c * vo,
+        "AdjFactor": 1.0,
+        "UL": ul,
+        "LL": ll,
+    }
+    conn.execute(
+        "INSERT OR REPLACE INTO equities_bars_daily (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+        (code, d, json.dumps(data), 0.0),
+    )
+
+
+def _make_dates(n: int = 26, end: str = "2026-05-02") -> list[str]:
+    """Return n consecutive calendar dates ending at end (oldest first)."""
+    end_dt = date.fromisoformat(end)
+    return [(end_dt - timedelta(days=n - 1 - i)).strftime("%Y-%m-%d") for i in range(n)]
 
 
 def _insert_margin(
@@ -1849,3 +1886,200 @@ class TestGetMarketBriefingShortRatio:
         # The newer date ("50" row: 2026-05-02) must win over the older ("0050": 2026-05-01)
         entry = next(e for e in sr_list if e["sector_code"] == "50")
         assert entry["date"] == "2026-05-02", "newer Date must be preferred over older duplicate"
+
+
+class TestGetMarketBriefingNotableStocks:
+    """Tests for highlights.notable_stocks in get_market_briefing."""
+
+    DATES = _make_dates(26, "2026-05-02")
+    TODAY = "2026-05-02"
+
+    CODE_A = "11110"  # steadily rising close → high RSI → overbought (52w_high)
+    CODE_B = "22220"  # alternating close → medium RSI → overbought (52w_high)
+    CODE_C = "33330"  # steadily falling close → low RSI → oversold (52w_low)
+    CODE_D = "44440"  # price-limit high only (no screener entry)
+
+    @pytest.fixture()
+    def notable_cache(self, tmp_path):
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        for code, name in [
+            (self.CODE_A, "アルファ"),
+            (self.CODE_B, "ベータ"),
+            (self.CODE_C, "ガンマ"),
+            (self.CODE_D, "デルタ"),
+        ]:
+            _insert_master(conn, code, name)
+        for i, d in enumerate(self.DATES):
+            _insert_bar(conn, self.CODE_A, d, 100.0 + i, vo=100_000)
+            _insert_bar(conn, self.CODE_B, d, 200.0 + (i % 2), vo=100_000)
+            _insert_bar(conn, self.CODE_C, d, 300.0 - i, vo=100_000)
+        _insert_bar_ul(conn, self.CODE_D, self.TODAY, 400.0, ul=1)
+        conn.commit()
+        conn.close()
+        # Seed pre-computed 52w screener result (CODE_A/B=new_high, CODE_C=new_low).
+        payload = {
+            "count": 3,
+            "mode": "52w",
+            "data": [
+                {
+                    "Code": self.CODE_A,
+                    "Date": self.TODAY,
+                    "prior_sessions": 61,
+                    "new_high": True,
+                    "new_low": False,
+                    "new_high_close": True,
+                    "new_low_close": False,
+                    "volume_ratio": 2.5,
+                    "volume_ratio_sessions": 20,
+                    "AdjC": 125.0,
+                },
+                {
+                    "Code": self.CODE_B,
+                    "Date": self.TODAY,
+                    "prior_sessions": 61,
+                    "new_high": True,
+                    "new_low": False,
+                    "new_high_close": True,
+                    "new_low_close": False,
+                    "volume_ratio": 1.2,
+                    "volume_ratio_sessions": 20,
+                    "AdjC": 201.0,
+                },
+                {
+                    "Code": self.CODE_C,
+                    "Date": self.TODAY,
+                    "prior_sessions": 61,
+                    "new_high": False,
+                    "new_low": True,
+                    "new_high_close": False,
+                    "new_low_close": True,
+                    "volume_ratio": 1.8,
+                    "volume_ratio_sessions": 20,
+                    "AdjC": 275.0,
+                },
+            ],
+        }
+        cache.screener_result_put(
+            screener_compute.TOOL_DETECT_52W,
+            screener_compute.default_params_hash_52w(),
+            self.TODAY,
+            payload,
+        )
+        return cache
+
+    @pytest.mark.asyncio
+    async def test_notable_stocks_key_present(self, notable_cache):
+        """highlights.notable_stocks always has overbought/oversold keys."""
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", notable_cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool("get_market_briefing", {"date": self.TODAY})
+        data = _call(result)
+        ns = data["highlights"]["notable_stocks"]
+        assert "overbought" in ns
+        assert "oversold" in ns
+
+    @pytest.mark.asyncio
+    async def test_notable_stocks_overbought_sorted_desc(self, notable_cache):
+        """overbought is sorted by rsi14 descending (higher RSI first)."""
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", notable_cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool("get_market_briefing", {"date": self.TODAY})
+        data = _call(result)
+        overbought = data["highlights"]["notable_stocks"]["overbought"]
+        rsi_values = [e["rsi14"] for e in overbought if e["rsi14"] is not None]
+        assert rsi_values == sorted(rsi_values, reverse=True)
+
+    @pytest.mark.asyncio
+    async def test_notable_stocks_oversold_sorted_asc(self, notable_cache):
+        """oversold is sorted by rsi14 ascending (lower RSI first)."""
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", notable_cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool("get_market_briefing", {"date": self.TODAY})
+        data = _call(result)
+        oversold = data["highlights"]["notable_stocks"]["oversold"]
+        rsi_values = [e["rsi14"] for e in oversold if e["rsi14"] is not None]
+        assert rsi_values == sorted(rsi_values)
+
+    @pytest.mark.asyncio
+    async def test_notable_stocks_signals_field(self, notable_cache):
+        """Each entry has a non-empty signals list with valid signal names."""
+        valid = {"52w_high", "52w_low", "limit_high", "limit_low"}
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", notable_cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool("get_market_briefing", {"date": self.TODAY})
+        data = _call(result)
+        ns = data["highlights"]["notable_stocks"]
+        for entry in ns["overbought"] + ns["oversold"]:
+            assert isinstance(entry["signals"], list) and entry["signals"]
+            assert all(s in valid for s in entry["signals"])
+
+    @pytest.mark.asyncio
+    async def test_notable_stocks_limit_high_in_overbought(self, notable_cache):
+        """Price-limit-high stock appears in overbought."""
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", notable_cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool("get_market_briefing", {"date": self.TODAY})
+        data = _call(result)
+        overbought = data["highlights"]["notable_stocks"]["overbought"]
+        codes = [e["code"] for e in overbought]
+        assert "4444" in codes  # display_code("44440")
+
+    @pytest.mark.asyncio
+    async def test_notable_stocks_cold_screener_cache(self, tmp_path):
+        """Without screener_results, notable_stocks uses only price-limit data."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_master(conn, self.CODE_D, "デルタ")
+        for d in self.DATES:
+            _insert_bar(conn, self.CODE_D, d, 400.0, vo=50_000)
+        _insert_bar_ul(conn, self.CODE_D, self.TODAY, 400.0, ul=1)
+        conn.commit()
+        conn.close()
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool("get_market_briefing", {"date": self.TODAY})
+        data = _call(result)
+        ns = data["highlights"]["notable_stocks"]
+        entry = next((e for e in ns["overbought"] if e["code"] == "4444"), None)
+        assert entry is not None, "CODE_D (4444) must appear in overbought"
+        assert entry["signals"] == ["limit_high"], "cold cache: signal must be limit_high only"
+
+    @pytest.mark.asyncio
+    async def test_notable_stocks_empty_without_universe(self, tmp_path):
+        """No screener cache and no price-limit stocks → empty lists."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_master(conn, "11110", "テスト")
+        for d in self.DATES:
+            _insert_bar(conn, "11110", d, 100.0)
+        conn.commit()
+        conn.close()
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool("get_market_briefing", {"date": self.TODAY})
+        data = _call(result)
+        ns = data["highlights"]["notable_stocks"]
+        assert ns["overbought"] == []
+        assert ns["oversold"] == []
