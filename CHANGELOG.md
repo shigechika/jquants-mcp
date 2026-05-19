@@ -5,6 +5,17 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.38.0](https://github.com/shigechika/jquants-mcp/compare/v0.37.0...v0.38.0) (2026-05-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* default behavior changes — stocks that previously appeared in the ranking with only trailing DivAnn (no forecast) are now excluded. Use include_trailing=True to restore the old behavior.
+
+### Features
+
+* exclude trailing DivAnn from dividend yield ranking by default ([#368](https://github.com/shigechika/jquants-mcp/issues/368)) ([669dcf7](https://github.com/shigechika/jquants-mcp/commit/669dcf71fef149be369acc0c2aee6ae642e59a69))
+
 ## [0.37.0](https://github.com/shigechika/jquants-mcp/compare/v0.36.2...v0.37.0) (2026-05-19)
 
 
