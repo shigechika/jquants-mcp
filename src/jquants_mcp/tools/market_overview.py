@@ -965,26 +965,24 @@ def register(
         """Return high dividend yield stock ranking (高配当利回りランキング).
 
         Use for 高配当, 配当利回り, dividend yield, 高利回り銘柄.
-        Joins the latest valid annual dividend per share (DivAnn) from
+        Joins the latest valid forward annual dividend per share from
         ``fins_summary`` with the split-adjusted closing price (AdjC) from
         ``equities_bars_daily`` to compute the yield.
 
-        Uses the most recent non-null DivAnn disclosure per code.
-        Interim/quarterly reports that leave DivAnn null/empty are skipped so
-        the most recent annual result is used instead.  Codes whose latest
-        non-null DivAnn is explicitly 0 (dividend cut) are excluded entirely.
+        Dividend source priority (matches Kabutan 株探 予想配当利回り display):
+        1. FDivAnn — current-FY forecast from the most recent quarterly report
+        2. NxFDivAnn — next-FY forecast from annual reports
+        3. DivAnn — trailing actual annual dividend (fallback when no forecast)
 
-        DivAnn is stated on a pre-split per-share basis at the time of
-        disclosure.  If stock splits occurred after that disclosure date, the
-        value is multiplied by the cumulative split factor so it is comparable
-        with the split-adjusted AdjC.  yield_pct = adj_DivAnn / AdjC × 100.
+        FDivAnn and NxFDivAnn are reported in post-split per-share terms and
+        do not require FY-end split correction.  DivAnn may be in pre-split
+        terms when a FY-end split occurred ~45 days before the filing, so it
+        receives get_split_factors_before_disc correction.  All three receive
+        get_split_factors_after correction for splits after the filing.
 
         Stale dividend data (disclosures older than ``disc_months``) is excluded
         to avoid inflated yields from companies that have since cut or abolished
         dividends.
-
-        Note: ``DivAnn`` is the ordinary dividend only; special dividends are
-        recorded in a separate ``FDivAnn`` field (not included here).
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] fins_summary + equities_bars_daily Tier 1 cache (no API call)
@@ -994,7 +992,7 @@ def register(
             min_yield: Minimum dividend yield percentage to include (>= 0). Default: 3.0.
             max_yield: Maximum dividend yield percentage to include. Use to exclude
                        suspiciously high yields (e.g. ``max_yield=15.0``). Default: null (no cap).
-            disc_months: Maximum age of the DivAnn disclosure in months. Disclosures older
+            disc_months: Maximum age of the dividend disclosure in months. Disclosures older
                          than this cutoff are excluded to filter out stale data from companies
                          that have since cut or abolished dividends. Default: 18.
             market: Filter by market segment. One of ``"prime"``, ``"standard"``,
@@ -1016,9 +1014,9 @@ def register(
                 - market: market segment name (e.g. "プライム")
                 - sector: S33 sector name (e.g. "水産・農林業")
                 - div_ann: split-adjusted annual dividend per share in yen
-                - disc_date: disclosure date of the DivAnn used
+                - disc_date: disclosure date of the dividend used
                 - close: split-adjusted closing price (AdjC)
-                - yield_pct: dividend yield in percent (adj_DivAnn / AdjC × 100)
+                - yield_pct: dividend yield in percent (adj_div_ann / AdjC × 100)
         """
         errors = collect_errors(
             _validate_n(n),
@@ -1085,11 +1083,28 @@ def register(
                 "message": f"No trading data found for {norm_date}. It may be a holiday or non-trading day.",
             }
 
-        div_ann_map = cache.get_div_ann_map()
+        # Forward dividend (FDivAnn > NxFDivAnn): already in post-split terms,
+        # must NOT receive FY-end split correction.
+        fwd_div_map = cache.get_forward_div_ann_map()
+        # Trailing actual dividend (DivAnn): fallback when no forward guidance.
+        # May be in pre-split terms; requires FY-end split correction.
+        trailing_div_map = cache.get_div_ann_map()
         name_map = cache.get_name_map()
         sector_map = cache.get_sector_map()
 
-        # disc_months cutoff: exclude stale DivAnn disclosures.
+        # Merge: forward takes priority over trailing.
+        # Track which codes use trailing DivAnn so FY-end correction is applied
+        # only to those (applying it to FDivAnn/NxFDivAnn would give wrong values).
+        merged_div_map: dict[str, tuple[float, str]] = {}
+        trailing_codes: set[str] = set()
+        for code, entry in fwd_div_map.items():
+            merged_div_map[code] = entry
+        for code, entry in trailing_div_map.items():
+            if code not in merged_div_map:
+                merged_div_map[code] = entry
+                trailing_codes.add(code)
+
+        # disc_months cutoff: exclude stale disclosures.
         # Use 31 days/month intentionally: slightly over-estimates so borderline
         # disclosures (e.g. filed on the exact cutoff day) are consistently excluded
         # rather than flickering in/out across month-length differences.
@@ -1100,17 +1115,19 @@ def register(
         # market filter: resolve to Mkt integer string
         mkt_code: str | None = str(_MARKET_CODE_MAP[market]) if market is not None else None
 
-        code_disc_dates = {code: disc for code, (_, disc) in div_ann_map.items()}
+        code_disc_dates = {code: disc for code, (_, disc) in merged_div_map.items()}
         split_factors = cache.get_split_factors_after(code_disc_dates)
-        # FY-end splits: disclosed DivAnn is still in pre-split terms when the split
+        # FY-end splits: DivAnn (trailing) may be in pre-split terms when the split
         # occurred ~45 days before the annual results filing.
-        split_factors_fye = cache.get_split_factors_before_disc(code_disc_dates)
+        # Apply ONLY to trailing DivAnn codes — FDivAnn/NxFDivAnn are already post-split.
+        trailing_disc_dates = {code: disc for code, (_, disc) in trailing_div_map.items()}
+        split_factors_fye = cache.get_split_factors_before_disc(trailing_disc_dates)
 
         items: list[dict[str, Any]] = []
         for row in bars:
             code = str(row.get("Code") or "")
             adj_c = _as_float(row.get("AdjC"))
-            entry = div_ann_map.get(code)
+            entry = merged_div_map.get(code)
             if adj_c is None or adj_c <= 0 or entry is None:
                 continue
             div_ann, disc_date = entry
@@ -1128,7 +1145,8 @@ def register(
             if sector is not None and info.get("s33") != str(sector):
                 continue
 
-            adj_div_ann = div_ann * split_factors.get(code, 1.0) * split_factors_fye.get(code, 1.0)
+            fye_factor = split_factors_fye.get(code, 1.0) if code in trailing_codes else 1.0
+            adj_div_ann = div_ann * split_factors.get(code, 1.0) * fye_factor
             yield_pct = round(adj_div_ann / adj_c * 100, 4)
             if yield_pct < min_yield:
                 continue

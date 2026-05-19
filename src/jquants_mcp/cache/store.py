@@ -716,6 +716,57 @@ class CacheStore:
                 result[code] = (val, disc_date)
         return result
 
+    def get_forward_div_ann_map(self) -> dict[str, tuple[float, str]]:
+        """Return forward annual dividend per share: FDivAnn > NxFDivAnn.
+
+        Picks the most recent disclosure per code where FDivAnn or NxFDivAnn
+        is non-empty, returning the first available in priority order.
+        These values are reported in post-split per-share terms and do NOT
+        require get_split_factors_before_disc (FY-end split) correction.
+        get_split_factors_after still applies for splits after the filing.
+
+        Returns {code: (val, disc_date)} for codes with forward guidance,
+        including codes where the forward dividend is explicitly 0 (dividend
+        cut forecast).  Callers must NOT fall back to trailing DivAnn for
+        codes present in this map — even when val==0.
+        Returns an empty dict when the table is missing or the connection is unavailable.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        try:
+            rows = conn.execute(
+                "SELECT f.code, "
+                "  COALESCE("
+                "    NULLIF(json_extract(f.data, '$.FDivAnn'), ''), "
+                "    NULLIF(json_extract(f.data, '$.NxFDivAnn'), '')"
+                "  ) AS div_fwd, m.md "
+                "FROM fins_summary f "
+                "JOIN ("
+                "  SELECT code, MAX(disc_date) AS md "
+                "  FROM fins_summary "
+                "  WHERE COALESCE("
+                "    NULLIF(json_extract(data, '$.FDivAnn'), ''), "
+                "    NULLIF(json_extract(data, '$.NxFDivAnn'), '')"
+                "  ) IS NOT NULL "
+                "  GROUP BY code"
+                ") m ON f.code = m.code AND f.disc_date = m.md "
+                "WHERE div_fwd IS NOT NULL"
+            ).fetchall()
+        except Exception:
+            return {}
+        result: dict[str, tuple[float, str]] = {}
+        for row in rows:
+            code = str(row[0] or "")
+            disc_date = str(row[2] or "")
+            try:
+                val = float(row[1])
+            except (TypeError, ValueError):
+                continue
+            if code and val >= 0 and disc_date:
+                result[code] = (val, disc_date)
+        return result
+
     def get_split_factors_after(self, code_disc_dates: dict[str, str]) -> dict[str, float]:
         """Return cumulative split adjustment factors for multiple codes.
 

@@ -123,6 +123,8 @@ def _insert_fins(
     eps: float = 100.0,
     bps: float = 1_000.0,
     div_ann: float = 20.0,
+    fdivann: float | None = None,
+    nxfdivann: float | None = None,
     cur_per_type: str = "FY",
     fy_end: str = "2026-03-31",
 ) -> None:
@@ -139,6 +141,10 @@ def _insert_fins(
         "BPS": bps,
         "DivAnn": div_ann,
     }
+    if fdivann is not None:
+        data["FDivAnn"] = fdivann
+    if nxfdivann is not None:
+        data["NxFDivAnn"] = nxfdivann
     conn.execute(
         "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
         (code, disc_date, json.dumps(data), time.time()),
@@ -544,3 +550,117 @@ class TestGetStockBriefing:
         assert val["bps"] == pytest.approx(1500.0, rel=1e-3)
         # PER = AdjC / EPS = 775 / 150
         assert val["per"] == pytest.approx(775.0 / 150.0, rel=1e-2)
+
+    async def test_fdivann_used_over_trailing_divann(self, tmp_path):
+        """FDivAnn (forward) takes priority over trailing DivAnn in get_stock_briefing."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "13010", "2026-05-02", 1000.0)
+        _insert_master(conn, "13010", "テスト銘柄")
+        # Annual with trailing DivAnn=80; forward FDivAnn=30 filed later
+        _insert_fins(conn, "13010", "2026-01-30", div_ann=80.0)
+        _insert_fins(
+            conn,
+            "13010",
+            "2026-04-28",
+            eps=100.0,
+            bps=1000.0,
+            div_ann=0.0,
+            fdivann=30.0,
+            cur_per_type="1Q",
+        )
+        conn.commit()
+        conn.close()
+
+        settings = Settings()
+        settings.jquants_plan = "premium"
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_cache", cache),
+        ):
+            data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"}))
+
+        cache.close()
+        val = data["valuation"]
+        # FDivAnn=30 used, not DivAnn=80
+        assert val["div_per_share"] == pytest.approx(30.0, rel=1e-3)
+        assert val["dividend_yield_pct"] == pytest.approx(30.0 / 1000.0 * 100, rel=1e-2)
+
+    async def test_nxfdivann_no_fye_correction_in_briefing(self, tmp_path):
+        """NxFDivAnn in get_stock_briefing must NOT receive FYE split correction.
+
+        9008 real-world case: 5:1 split 2026-03-30, annual 2026-05-13.
+        DivAnn=110 (pre-split), NxFDivAnn=22 (post-split).
+        div_per_share must be 22, not 22*0.2=4.4.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "90080", "2026-03-30", 799.0, adj_factor=0.2)
+        _insert_bar(conn, "90080", "2026-05-13", 775.0)
+        _insert_master(conn, "90080", "京王電鉄")
+        _insert_fins(
+            conn,
+            "90080",
+            "2026-05-13",
+            eps=150.0,
+            bps=1500.0,
+            div_ann=110.0,
+            nxfdivann=22.0,
+            fy_end="2026-03-31",
+        )
+        conn.commit()
+        conn.close()
+
+        settings = Settings()
+        settings.jquants_plan = "premium"
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_cache", cache),
+        ):
+            data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "90080"}))
+
+        cache.close()
+        val = data["valuation"]
+        # NxFDivAnn=22 used as-is (no FYE correction)
+        assert val["div_per_share"] == pytest.approx(22.0, rel=1e-3)
+        assert val["dividend_yield_pct"] == pytest.approx(22.0 / 775.0 * 100, rel=1e-2)
+
+    async def test_fdivann_zero_shows_zero_yield_no_trailing_fallback(self, tmp_path):
+        """FDivAnn=0 (dividend cut forecast) yields 0 and does not fall back to trailing DivAnn.
+
+        div_per_share must be 0.0 and dividend_yield_pct must be 0.0 (not None
+        and not the trailing DivAnn value).
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "20010", "2026-05-02", 1000.0)
+        _insert_master(conn, "20010", "テスト銘柄B")
+        # Annual with trailing DivAnn=80 (older)
+        _insert_fins(conn, "20010", "2026-01-30", div_ann=80.0)
+        # Q1: FDivAnn=0 (explicit cut forecast), trailing DivAnn empty
+        _insert_fins(
+            conn,
+            "20010",
+            "2026-04-28",
+            eps=50.0,
+            bps=800.0,
+            div_ann=0.0,
+            fdivann=0.0,
+            cur_per_type="1Q",
+        )
+        conn.commit()
+        conn.close()
+
+        settings = Settings()
+        settings.jquants_plan = "premium"
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_cache", cache),
+        ):
+            data = _call(await server_module.mcp.call_tool("get_stock_briefing", {"code": "20010"}))
+
+        cache.close()
+        val = data["valuation"]
+        # FDivAnn=0 used: div_per_share=0.0 and yield=0.0 (not trailing DivAnn=80)
+        assert val["div_per_share"] == pytest.approx(0.0, abs=1e-9)
+        assert val["dividend_yield_pct"] == pytest.approx(0.0, abs=1e-9)
