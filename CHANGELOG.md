@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.38.1](https://github.com/shigechika/jquants-mcp/compare/v0.38.0...v0.38.1) (2026-05-19)
+
+
+### Bug Fixes
+
+* **dividend:** prefer NxFDivAnn over FDivAnn in annual results (1798 wrong yield) ([#370](https://github.com/shigechika/jquants-mcp/issues/370)) ([6682c75](https://github.com/shigechika/jquants-mcp/commit/6682c751eb2232b08f80ac7a1ffb6ee7a680b684))
+
 ## [0.38.0](https://github.com/shigechika/jquants-mcp/compare/v0.37.0...v0.38.0) (2026-05-19)
 
 
