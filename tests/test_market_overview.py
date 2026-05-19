@@ -2075,6 +2075,124 @@ class TestGetDividendYieldRanking:
         assert item["div_ann"] == pytest.approx(60.0, rel=1e-3)
         assert item["yield_pct"] == pytest.approx(60.0 / 1000.0 * 100, rel=1e-2)
 
+    @pytest.mark.asyncio
+    async def test_stale_forward_disc_date_excluded(self, tmp_path):
+        """Forward dividend with disc_date older than disc_months cutoff is excluded.
+
+        With disc_months=18 (default) and query date 2026-05-02,
+        cutoff ≈ 2024-10-21.  A disc_date of 2024-10-01 is stale and must
+        not appear in the ranking.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "33330", "2026-05-02", 1000.0)
+        # FDivAnn present but stale
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            ("33330", "2024-10-01", json.dumps({"Code": "33330", "FDivAnn": 30.0}), 0.0),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 0, "stale forward disc_date must be excluded from ranking"
+
+    @pytest.mark.asyncio
+    async def test_fdivann_and_nxfdivann_both_present_fdivann_wins(self, tmp_path):
+        """When FDivAnn and NxFDivAnn both appear in the same row, FDivAnn takes priority."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "44440", "2026-05-02", 1000.0)
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "44440",
+                "2026-04-28",
+                json.dumps({"Code": "44440", "FDivAnn": 25.0, "NxFDivAnn": 15.0}),
+                0.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        # FDivAnn=25 wins over NxFDivAnn=15
+        assert item["div_ann"] == pytest.approx(25.0, rel=1e-3)
+        assert item["yield_pct"] == pytest.approx(25.0 / 1000.0 * 100, rel=1e-2)
+
+    @pytest.mark.asyncio
+    async def test_fdivann_zero_blocks_trailing_divann_fallback(self, tmp_path):
+        """Explicit FDivAnn=0 (dividend cut forecast) must not fall back to trailing DivAnn.
+
+        If a company forecasts zero dividend (FDivAnn=0), its trailing DivAnn
+        must be suppressed so the old non-zero yield does not appear in the ranking.
+        With min_yield=1.0 the zero-yield entry is filtered out; if trailing DivAnn
+        were used instead, the code would incorrectly appear with a high yield.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "66660", "2026-05-02", 1000.0)
+        # Annual with trailing DivAnn=50 (older)
+        _insert_fins_summary(conn, "66660", "2026-01-30", 50.0)
+        # Q1 forecast: FDivAnn=0 (dividend cut announced)
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "66660",
+                "2026-04-28",
+                json.dumps({"Code": "66660", "DivAnn": "", "FDivAnn": 0.0}),
+                0.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 1.0}
+            )
+        data = _call(result)
+        # FDivAnn=0 → yield=0 < min_yield=1.0 → filtered.
+        # If trailing DivAnn=50 had been used, yield=5% ≥ 1% would appear (wrong).
+        assert data["count"] == 0, "FDivAnn=0 must block trailing DivAnn fallback"
+
 
 class TestGetMarketBriefingShortRatio:
     """Tests for sector_short_ratios in get_market_briefing."""

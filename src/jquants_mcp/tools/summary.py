@@ -172,7 +172,7 @@ def register(
 
         # --- 4. Dividend yield -------------------------------------------------------
         div_yield: float | None = None
-        if div_per_share and adj_close and adj_close > 0:
+        if div_per_share is not None and adj_close and adj_close > 0:
             div_yield = round(div_per_share / adj_close * 100, 2)
 
         # --- 5. Margin interest ---------------------------------------------------

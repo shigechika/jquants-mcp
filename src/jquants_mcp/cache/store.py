@@ -726,7 +726,10 @@ class CacheStore:
         get_split_factors_after still applies for splits after the filing.
 
         Returns {code: (val, disc_date)} for codes with forward guidance,
-        or an empty dict when the table is missing or the connection is unavailable.
+        including codes where the forward dividend is explicitly 0 (dividend
+        cut forecast).  Callers must NOT fall back to trailing DivAnn for
+        codes present in this map — even when val==0.
+        Returns an empty dict when the table is missing or the connection is unavailable.
         """
         conn = self._ensure_connection()
         if conn is None:
@@ -760,7 +763,7 @@ class CacheStore:
                 val = float(row[1])
             except (TypeError, ValueError):
                 continue
-            if code and val > 0 and disc_date:
+            if code and val >= 0 and disc_date:
                 result[code] = (val, disc_date)
         return result
 
