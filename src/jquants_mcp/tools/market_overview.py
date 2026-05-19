@@ -26,7 +26,9 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from ..cache import screener_compute
 from ..cache.store import CacheStore, make_cache_key
+from ..cache.technical import compute_rsi
 from ..exceptions import (
     APIError,
     DecryptionError,
@@ -36,7 +38,13 @@ from ..exceptions import (
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_CACHE
-from ..validators import collect_errors, display_code, make_validation_error_response, validate_date
+from ..validators import (
+    collect_errors,
+    display_code,
+    make_validation_error_response,
+    normalize_code,
+    validate_date,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +153,128 @@ def _calc_short_ratio(row: dict) -> float | None:
     if total == 0:
         return None
     return (shrt_with + shrt_no) / total * 100  # type: ignore[operator]
+
+
+# Safety cap: in heavy sell-off days 52w-low candidates can reach several
+# hundred; capping the universe before RSI computation keeps latency bounded.
+_MAX_NOTABLE_UNIVERSE = 200
+
+
+def _get_52w_screener_data(cache: CacheStore, norm_date: str) -> dict[str, Any] | None:
+    """Return the pre-computed 52w high/low screener payload for norm_date.
+
+    Returns None when the screener_results cache is cold (daily_fetch has not
+    yet run). Callers must degrade gracefully rather than triggering the slow
+    on-demand scan that can exceed Cloud Run tool-call timeouts.
+    """
+    params_hash = screener_compute.default_params_hash_52w()
+    return cache.screener_result_get(screener_compute.TOOL_DETECT_52W, params_hash, norm_date)
+
+
+def _compute_notable_stocks(
+    w52_payload: dict[str, Any] | None,
+    plimit_full: dict[str, Any],
+    code_closes: dict[str, list[float]],
+    code_volumes: dict[str, list[float]],
+    name_map: dict[str, str],
+    prev_close_map: dict[str, float],
+    today_close_map: dict[str, float | None],
+    n: int,
+) -> dict[str, Any]:
+    """Score and rank notable stocks from the 52w high/low + price-limit universe.
+
+    Universe: stocks hitting a new 52-week high/low (from pre-computed screener)
+    or touching the daily price limit (ストップ高/安).  For each candidate the
+    RSI14 is computed from the already-fetched ADR window closes, then:
+
+    - overbought: sorted by RSI14 descending (higher = more stretched), top n
+    - oversold:   sorted by RSI14 ascending  (lower  = more beaten down), top n
+
+    Returns {"overbought": [...], "oversold": [...]} — each list may be empty.
+    """
+
+    def _vol_ratio(code_5: str) -> float | None:
+        vols = code_volumes.get(code_5, [])
+        if len(vols) < 2:
+            return None
+        baseline = vols[-21:-1]
+        if not baseline:
+            return None
+        avg = sum(baseline) / len(baseline)
+        if avg <= 0:
+            return None
+        return round(vols[-1] / avg, 2)
+
+    def _rsi14(code_5: str) -> float | None:
+        closes = code_closes.get(code_5, [])
+        series = compute_rsi(closes, 14)
+        val = next((v for v in reversed(series) if v is not None), None)
+        return round(val, 1) if val is not None else None
+
+    def _change_pct(code_5: str) -> float | None:
+        c = today_close_map.get(code_5)
+        p = prev_close_map.get(code_5)
+        if c is not None and p and p != 0:
+            return round((c - p) / p * 100, 2)
+        return None
+
+    # Build universe: code_5 → {"signals": [...], "volume_ratio": float|None}
+    overbought_u: dict[str, dict[str, Any]] = {}
+    oversold_u: dict[str, dict[str, Any]] = {}
+
+    if w52_payload:
+        for item in w52_payload.get("data", [])[:_MAX_NOTABLE_UNIVERSE]:
+            code_5 = str(item.get("Code") or "")
+            if not code_5:
+                continue
+            vr = item.get("volume_ratio")
+            if item.get("new_high"):
+                entry = overbought_u.setdefault(code_5, {"signals": [], "volume_ratio": vr})
+                entry["signals"].append("52w_high")
+            if item.get("new_low"):
+                entry = oversold_u.setdefault(code_5, {"signals": [], "volume_ratio": vr})
+                entry["signals"].append("52w_low")
+
+    for item in plimit_full.get("data", []):
+        code_5 = normalize_code(str(item.get("Code") or ""))
+        if not code_5:
+            continue
+        if item.get("limit_high_touched"):
+            entry = overbought_u.setdefault(code_5, {"signals": [], "volume_ratio": None})
+            if "limit_high" not in entry["signals"]:
+                entry["signals"].append("limit_high")
+        if item.get("limit_low_touched"):
+            entry = oversold_u.setdefault(code_5, {"signals": [], "volume_ratio": None})
+            if "limit_low" not in entry["signals"]:
+                entry["signals"].append("limit_low")
+
+    def _build_entries(universe: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+        entries = []
+        for code_5, info in universe.items():
+            vr = info["volume_ratio"] if info["volume_ratio"] is not None else _vol_ratio(code_5)
+            entries.append(
+                {
+                    "code": display_code(code_5),
+                    "name": name_map.get(code_5, ""),
+                    "close": today_close_map.get(code_5),
+                    "change_pct": _change_pct(code_5),
+                    "rsi14": _rsi14(code_5),
+                    "volume_ratio": vr,
+                    "signals": info["signals"],
+                }
+            )
+        return entries
+
+    overbought_entries = _build_entries(overbought_u)
+    oversold_entries = _build_entries(oversold_u)
+
+    overbought_entries.sort(key=lambda x: (x["rsi14"] is None, -(x["rsi14"] or 0.0)))
+    oversold_entries.sort(key=lambda x: (x["rsi14"] is None, x["rsi14"] or 0.0))
+
+    return {
+        "overbought": overbought_entries[:n],
+        "oversold": oversold_entries[:n],
+    }
 
 
 def _compute_advance_decline(
@@ -1072,7 +1202,13 @@ def register(
             - top_turnover_value: TopN by trading value (yen)
             - highlights: {ytd_new_highs, ytd_new_lows, volume_surges,
                 limit_high_close, limit_high_touched, limit_low_close,
-                limit_low_touched}
+                limit_low_touched, notable_stocks: {overbought: [...], oversold: [...]}}
+                notable_stocks: top-n stocks from the 52w high/low + price-limit
+                universe ranked by RSI14.  Each entry has code, name, close,
+                change_pct, rsi14, volume_ratio, signals (list of triggering
+                signals: "52w_high", "52w_low", "limit_high", "limit_low").
+                overbought sorted by RSI14 desc; oversold by RSI14 asc.
+                Empty lists when screener cache is cold and no limit stocks exist.
             - trend_signals: {distribution, follow_through} — distribution day
                 count/warning (null when TOPIX data insufficient) and
                 follow-through day status with auto-detected rally_start
@@ -1169,6 +1305,27 @@ def register(
                 "message": f"No trading data found for {today_date}. It may be a holiday or non-trading day.",
             }
 
+        # Per-code close/volume series for RSI14 and volume-ratio used by
+        # _compute_notable_stocks.  Built in one pass over the already-fetched
+        # adr_rows so no additional DB queries are needed.
+        code_closes: dict[str, list[float]] = {}
+        code_volumes: dict[str, list[float]] = {}
+        for _d in sorted(by_date.keys()):
+            for _row in by_date[_d]:
+                _c5 = str(_row.get("Code") or "")
+                _cl = _as_float(_row.get("AdjC") or _row.get("C"))
+                _vo = _as_float(_row.get("Vo"))
+                if _c5 and _cl is not None:
+                    code_closes.setdefault(_c5, []).append(_cl)
+                if _c5 and _vo is not None:
+                    code_volumes.setdefault(_c5, []).append(_vo)
+
+        today_close_map: dict[str, float | None] = {
+            str(r.get("Code") or ""): _as_float(r.get("AdjC") or r.get("C"))
+            for r in today_rows
+            if r.get("Code")
+        }
+
         prev_close_map = _rows_to_close_map(prev_rows)
         name_map = cache.get_name_map()
         sector_map = cache.get_sector_map()
@@ -1245,17 +1402,40 @@ def register(
         turnover_items = _compute_top_turnover_value(today_rows, name_map, n)
 
         # 5. Screener summaries via call_tool (registered by screener.register).
+        #    detect_price_limit uses detail=True so we reuse its per-stock data
+        #    for the notable_stocks highlights without a second call.
         ytd = await _call_json("detect_ytd_high_low", {"date": norm_date})
         vsurge = await _call_json("detect_volume_surge", {"date": norm_date})
-        plimit = await _call_json("detect_price_limit", {"date": norm_date})
+        plimit = await _call_json("detect_price_limit", {"date": norm_date, "detail": True})
 
-        # Screener summary payload shapes (when detail=False, the default):
+        # Screener summary payload shapes:
         #   detect_ytd_high_low: {count, mode, new_high, new_low}
         #   detect_volume_surge: {count, multiplier, baseline_days}
-        #   detect_price_limit:  {count, limit_high_close, limit_high_touched, ...}
+        #   detect_price_limit (detail=True): {count, data: [...]}
         ytd_new_highs = ytd.get("new_high", 0) if not ytd.get("error") else 0
         ytd_new_lows = ytd.get("new_low", 0) if not ytd.get("error") else 0
         volume_surges = vsurge.get("count", 0) if not vsurge.get("error") else 0
+
+        # Derive price-limit summary counts from the detailed data.
+        plimit_data = plimit.get("data", []) if not plimit.get("error") else []
+        lh_total = sum(1 for r in plimit_data if r.get("limit_high_touched"))
+        lh_close = sum(1 for r in plimit_data if r.get("limit_high_close"))
+        ll_total = sum(1 for r in plimit_data if r.get("limit_low_touched"))
+        ll_close = sum(1 for r in plimit_data if r.get("limit_low_close"))
+
+        # 5b. Notable stocks: 52w high/low + price limit universe → RSI14 scoring.
+        #     Direct screener-cache lookup avoids the slow on-demand scan path.
+        w52_payload = _get_52w_screener_data(cache, norm_date)
+        notable_stocks = _compute_notable_stocks(
+            w52_payload=w52_payload,
+            plimit_full=plimit,
+            code_closes=code_closes,
+            code_volumes=code_volumes,
+            name_map=name_map,
+            prev_close_map=prev_close_map,
+            today_close_map=today_close_map,
+            n=n,
+        )
 
         # 6. TOPIX change percentage — best effort, fail-soft to None.
         topix_change_pct = await _topix_change_pct_best_effort(_call_json, norm_date)
@@ -1288,10 +1468,11 @@ def register(
                 "ytd_new_highs": ytd_new_highs,
                 "ytd_new_lows": ytd_new_lows,
                 "volume_surges": volume_surges,
-                "limit_high_close": plimit.get("limit_high_close", 0),
-                "limit_high_touched": plimit.get("limit_high_touched", 0),
-                "limit_low_close": plimit.get("limit_low_close", 0),
-                "limit_low_touched": plimit.get("limit_low_touched", 0),
+                "limit_high_close": lh_close,
+                "limit_high_touched": lh_total - lh_close,
+                "limit_low_close": ll_close,
+                "limit_low_touched": ll_total - ll_close,
+                "notable_stocks": notable_stocks,
             },
             "trend_signals": trend_signals,
         }
