@@ -2168,8 +2168,13 @@ class TestGetDividendYieldRanking:
         assert data["count"] == 0, "stale forward disc_date must be excluded from ranking"
 
     @pytest.mark.asyncio
-    async def test_fdivann_and_nxfdivann_both_present_fdivann_wins(self, tmp_path):
-        """When FDivAnn and NxFDivAnn both appear in the same row, FDivAnn takes priority."""
+    async def test_nxfdivann_wins_over_fdivann_in_same_row(self, tmp_path):
+        """When FDivAnn and NxFDivAnn both appear in the same row, NxFDivAnn takes priority.
+
+        NxFDivAnn is only filed in annual (FY) earnings disclosures and always represents
+        the NEXT fiscal year forecast.  In such filings FDivAnn equals the just-confirmed
+        trailing actual, so NxFDivAnn is the only genuinely forward-looking value.
+        """
         cache = _make_cache(tmp_path)
         conn = sqlite3.connect(str(tmp_path / "cache.db"))
         conn.execute(
@@ -2201,9 +2206,9 @@ class TestGetDividendYieldRanking:
         data = _call(result)
         assert data["count"] == 1
         item = data["items"][0]
-        # FDivAnn=25 wins over NxFDivAnn=15
-        assert item["div_ann"] == pytest.approx(25.0, rel=1e-3)
-        assert item["yield_pct"] == pytest.approx(25.0 / 1000.0 * 100, rel=1e-2)
+        # NxFDivAnn=15 wins over FDivAnn=25 (NxFDivAnn is always the next-FY forecast)
+        assert item["div_ann"] == pytest.approx(15.0, rel=1e-3)
+        assert item["yield_pct"] == pytest.approx(15.0 / 1000.0 * 100, rel=1e-2)
 
     @pytest.mark.asyncio
     async def test_fdivann_zero_blocks_trailing_divann_fallback(self, tmp_path):
@@ -2250,6 +2255,101 @@ class TestGetDividendYieldRanking:
         # FDivAnn=0 → yield=0 < min_yield=1.0 → filtered.
         # If trailing DivAnn=50 had been used, yield=5% ≥ 1% would appear (wrong).
         assert data["count"] == 0, "FDivAnn=0 must block trailing DivAnn fallback"
+
+    @pytest.mark.asyncio
+    async def test_nxfdivann_wins_over_fdivann_when_annual_results_filed(self, tmp_path):
+        """Regression for 1798 (守谷商会): NxFDivAnn must win over FDivAnn in annual results.
+
+        When annual earnings are filed, the J-Quants API stores both fields in a
+        single row: FDivAnn=180 (the just-confirmed trailing FY actual, same as DivAnn)
+        and NxFDivAnn=38 (the forecast for the next FY — the genuinely forward value).
+        get_forward_div_ann_map() must return 38 (NxFDivAnn), not 180 (FDivAnn).
+        Without this fix the tool showed 17.66% (180/1019) while Kabutan shows 3.73%.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "17980", "2026-05-20", 1019.0)
+        _insert_master(conn, "17980", "守谷商会")
+        # Single row as stored by daily_fetch (one row per code+disc_date):
+        # FDivAnn=180 is the confirmed trailing FY actual; NxFDivAnn=38 is the
+        # next-FY forecast that Kabutan displays as 予想配当.
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "17980",
+                "2026-05-12",
+                json.dumps({"Code": "17980", "FDivAnn": 180.0, "NxFDivAnn": 38.0}),
+                0.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-20", "min_yield": 0.0},
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        # NxFDivAnn=38 wins; FDivAnn=180 (trailing actual confirmation) must NOT be used
+        assert item["div_ann"] == pytest.approx(38.0, rel=1e-3), (
+            f"Expected 38 (NxFDivAnn, next-FY forecast), got {item['div_ann']}"
+        )
+        expected_yield = round(38.0 / 1019.0 * 100, 2)
+        assert item["yield_pct"] == pytest.approx(expected_yield, rel=1e-2)
+
+    @pytest.mark.asyncio
+    async def test_fdivann_zero_with_nxfdivann_uses_nxfdivann(self, tmp_path):
+        """FDivAnn=0 (current-FY cut) + NxFDivAnn>0 (next-FY forecast) → NxFDivAnn wins.
+
+        A company that cut its current-FY dividend to zero but disclosed a positive
+        next-FY forecast should appear in the ranking using NxFDivAnn, not FDivAnn=0.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "55550", "2026-05-20", 1000.0)
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "55550",
+                "2026-05-12",
+                json.dumps({"Code": "55550", "FDivAnn": 0.0, "NxFDivAnn": 30.0}),
+                0.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-20", "min_yield": 0.0},
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["div_ann"] == pytest.approx(30.0, rel=1e-3)
+        assert item["yield_pct"] == pytest.approx(3.0, rel=1e-2)
 
 
 class TestGetMarketBriefingShortRatio:
