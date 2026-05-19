@@ -1418,6 +1418,9 @@ class TestGetDividendYieldRanking:
                  DivAnn=0.0 disclosed 2025-11-14 (newer, explicit dividend cut)
         Expected: 13010 NOT in results (dividend was cut to zero).
 
+        Both disclosures are within the default disc_months=18 staleness window
+        (query_date=2026-05-02, cutoff≈2024-11-03), so staleness is not a factor.
+
         This is distinct from an interim report with null DivAnn, which falls
         back to the previous positive disclosure.
         """
