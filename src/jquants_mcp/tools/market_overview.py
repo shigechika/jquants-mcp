@@ -958,6 +958,7 @@ def register(
         min_yield: float = 3.0,
         max_yield: float | None = None,
         disc_months: int = 18,
+        include_trailing: bool = False,
         market: str | None = None,
         sector: str | None = None,
         date: str | None = None,
@@ -969,10 +970,21 @@ def register(
         ``fins_summary`` with the split-adjusted closing price (AdjC) from
         ``equities_bars_daily`` to compute the yield.
 
-        Dividend source priority (matches Kabutan 株探 予想配当利回り display):
+        **Default behavior (include_trailing=False) matches Kabutan 予想配当利回りランキング**:
+        Only stocks with a current-FY forecast (FDivAnn or NxFDivAnn) appear in the
+        ranking.  Stocks with *only* trailing actual dividends (DivAnn) and no forecast
+        filed are excluded — these are typically companies with 今期予想非開示
+        (non-disclosed current-FY forecast) where including stale DivAnn would produce
+        misleading yields.
+
+        Set ``include_trailing=True`` to restore pre-v0.38 behavior where DivAnn is
+        used as a fallback when no forward forecast exists.  Useful for broader
+        screening or when comparing against historical rankings.
+
+        Dividend source priority:
         1. FDivAnn — current-FY forecast from the most recent quarterly report
         2. NxFDivAnn — next-FY forecast from annual reports
-        3. DivAnn — trailing actual annual dividend (fallback when no forecast)
+        3. DivAnn — trailing actual annual dividend (only when include_trailing=True)
 
         FDivAnn and NxFDivAnn are reported in post-split per-share terms and
         do not require FY-end split correction.  DivAnn may be in pre-split
@@ -980,9 +992,16 @@ def register(
         receives get_split_factors_before_disc correction.  All three receive
         get_split_factors_after correction for splits after the filing.
 
+        An FDivAnn=0 entry (explicit dividend-cut forecast) suppresses trailing
+        DivAnn even when ``include_trailing=True``: the zero forward value is used
+        as-is, ensuring the company does not appear with its old yield.
+
         Stale dividend data (disclosures older than ``disc_months``) is excluded
         to avoid inflated yields from companies that have since cut or abolished
         dividends.
+
+        Changed in v0.38: ``include_trailing`` added; default changed from True
+        (trailing fallback) to False (forward-only, Kabutan-equivalent).
 
         [Supported plans] Free / Light / Standard / Premium
         [Source] fins_summary + equities_bars_daily Tier 1 cache (no API call)
@@ -995,6 +1014,11 @@ def register(
             disc_months: Maximum age of the dividend disclosure in months. Disclosures older
                          than this cutoff are excluded to filter out stale data from companies
                          that have since cut or abolished dividends. Default: 18.
+            include_trailing: When False (default), only stocks with a current-FY dividend
+                              forecast (FDivAnn or NxFDivAnn) are included — matches
+                              Kabutan 予想配当利回りランキング.  When True, stocks with only
+                              trailing actual DivAnn (no forecast filed) are also included
+                              as a fallback — pre-v0.38 behavior. Default: False.
             market: Filter by market segment. One of ``"prime"``, ``"standard"``,
                     ``"growth"``, ``"tokyo_pro"``. Default: null (all markets).
             sector: Filter by S33 industry sector code (e.g. ``"50"`` for 水産・農林業).
@@ -1007,7 +1031,8 @@ def register(
             dict with keys:
             - date: the resolved trading date used for closing prices
             - count: number of stocks returned
-            - filters: applied filter values (min_yield, max_yield, disc_months, market, sector)
+            - filters: applied filter values (min_yield, max_yield, disc_months,
+                       include_trailing, market, sector)
             - items: list of up to *n* dicts sorted by yield_pct desc, each with:
                 - code: stock code (4- or 5-digit display form)
                 - name: company name (from equities_master) or null
@@ -1015,6 +1040,8 @@ def register(
                 - sector: S33 sector name (e.g. "水産・農林業")
                 - div_ann: split-adjusted annual dividend per share in yen
                 - disc_date: disclosure date of the dividend used
+                - div_source: dividend data source — ``"forward"`` (FDivAnn or NxFDivAnn)
+                              or ``"trailing"`` (DivAnn fallback; only when include_trailing=True)
                 - close: split-adjusted closing price (AdjC)
                 - yield_pct: dividend yield in percent (adj_div_ann / AdjC × 100)
         """
@@ -1055,6 +1082,7 @@ def register(
                 "min_yield": min_yield,
                 "max_yield": max_yield,
                 "disc_months": disc_months,
+                "include_trailing": include_trailing,
                 "market": market,
                 "sector": sector,
             },
@@ -1086,9 +1114,9 @@ def register(
         # Forward dividend (FDivAnn > NxFDivAnn): already in post-split terms,
         # must NOT receive FY-end split correction.
         fwd_div_map = cache.get_forward_div_ann_map()
-        # Trailing actual dividend (DivAnn): fallback when no forward guidance.
+        # Trailing actual dividend (DivAnn): fallback when include_trailing=True.
         # May be in pre-split terms; requires FY-end split correction.
-        trailing_div_map = cache.get_div_ann_map()
+        trailing_div_map = cache.get_div_ann_map() if include_trailing else {}
         name_map = cache.get_name_map()
         sector_map = cache.get_sector_map()
 
@@ -1120,8 +1148,11 @@ def register(
         # FY-end splits: DivAnn (trailing) may be in pre-split terms when the split
         # occurred ~45 days before the annual results filing.
         # Apply ONLY to trailing DivAnn codes — FDivAnn/NxFDivAnn are already post-split.
-        trailing_disc_dates = {code: disc for code, (_, disc) in trailing_div_map.items()}
-        split_factors_fye = cache.get_split_factors_before_disc(trailing_disc_dates)
+        if trailing_div_map:
+            trailing_disc_dates = {code: disc for code, (_, disc) in trailing_div_map.items()}
+            split_factors_fye = cache.get_split_factors_before_disc(trailing_disc_dates)
+        else:
+            split_factors_fye: dict[str, float] = {}
 
         items: list[dict[str, Any]] = []
         for row in bars:
@@ -1145,7 +1176,8 @@ def register(
             if sector is not None and info.get("s33") != str(sector):
                 continue
 
-            fye_factor = split_factors_fye.get(code, 1.0) if code in trailing_codes else 1.0
+            is_trailing = code in trailing_codes
+            fye_factor = split_factors_fye.get(code, 1.0) if is_trailing else 1.0
             adj_div_ann = div_ann * split_factors.get(code, 1.0) * fye_factor
             yield_pct = round(adj_div_ann / adj_c * 100, 4)
             if yield_pct < min_yield:
@@ -1160,6 +1192,7 @@ def register(
                     "sector": info.get("s33_name", ""),
                     "div_ann": round(adj_div_ann, 4),
                     "disc_date": disc_date,
+                    "div_source": "trailing" if is_trailing else "forward",
                     "close": adj_c,
                     "yield_pct": yield_pct,
                 }
@@ -1173,6 +1206,7 @@ def register(
                 "min_yield": min_yield,
                 "max_yield": max_yield,
                 "disc_months": disc_months,
+                "include_trailing": include_trailing,
                 "market": market,
                 "sector": sector,
             },

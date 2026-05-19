@@ -1238,11 +1238,17 @@ class TestGetMarketBriefing:
 
 
 def _insert_fins_summary(
-    conn: sqlite3.Connection, code: str, disc_date: str, div_ann: float | None
+    conn: sqlite3.Connection,
+    code: str,
+    disc_date: str,
+    div_ann: float | None = None,
+    fdivann: float | None = None,
 ) -> None:
     data: dict = {"Code": code, "DisclosedDate": disc_date}
     if div_ann is not None:
         data["DivAnn"] = div_ann
+    if fdivann is not None:
+        data["FDivAnn"] = fdivann
     conn.execute(
         "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
         (code, disc_date, json.dumps(data), 0.0),
@@ -1256,11 +1262,14 @@ class TestGetDividendYieldRanking:
     def yield_cache(self, tmp_path):
         """Cache with fins_summary + bars for 4 stocks on 2026-05-02.
 
+        Uses FDivAnn (forward forecast) so tests work with the default
+        include_trailing=False behavior.
+
         Yields:
-          13010: DivAnn=100, AdjC=2000 → yield=5.0% (qualifies at default 3%)
-          13020: DivAnn=60,  AdjC=3000 → yield=2.0% (below default 3%)
-          13030: DivAnn=200, AdjC=2500 → yield=8.0% (qualifies)
-          13040: no DivAnn entry        → excluded
+          13010: FDivAnn=100, AdjC=2000 → yield=5.0% (qualifies at default 3%)
+          13020: FDivAnn=60,  AdjC=3000 → yield=2.0% (below default 3%)
+          13030: FDivAnn=200, AdjC=2500 → yield=8.0% (qualifies)
+          13040: no dividend entry       → excluded
         """
         cache = _make_cache(tmp_path)
         conn = sqlite3.connect(str(tmp_path / "cache.db"))
@@ -1270,15 +1279,15 @@ class TestGetDividendYieldRanking:
             "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
         )
         _insert_bar(conn, "13010", "2026-05-02", 2000.0)
-        _insert_fins_summary(conn, "13010", "2026-03-31", 100.0)
+        _insert_fins_summary(conn, "13010", "2026-03-31", fdivann=100.0)
         _insert_master(conn, "13010", "高配当A")
 
         _insert_bar(conn, "13020", "2026-05-02", 3000.0)
-        _insert_fins_summary(conn, "13020", "2026-03-31", 60.0)
+        _insert_fins_summary(conn, "13020", "2026-03-31", fdivann=60.0)
         _insert_master(conn, "13020", "低配当B")
 
         _insert_bar(conn, "13030", "2026-05-02", 2500.0)
-        _insert_fins_summary(conn, "13030", "2026-03-31", 200.0)
+        _insert_fins_summary(conn, "13030", "2026-03-31", fdivann=200.0)
         _insert_master(conn, "13030", "高配当C")
 
         _insert_bar(conn, "13040", "2026-05-02", 1000.0)
@@ -1310,6 +1319,8 @@ class TestGetDividendYieldRanking:
         # Sorted by yield desc: 13030 (8%) first, then 13010 (5%)
         assert data["items"][0]["code"] == "1303"
         assert data["items"][1]["code"] == "1301"
+        # Forward dividends (FDivAnn) → div_source must be "forward"
+        assert all(item["div_source"] == "forward" for item in data["items"])
 
     @pytest.mark.asyncio
     async def test_yield_values(self, mock_yield_server):
@@ -1402,7 +1413,8 @@ class TestGetDividendYieldRanking:
             patch.object(server_module, "_client", None),
         ):
             result = await server_module.mcp.call_tool(
-                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-02", "min_yield": 0.0, "include_trailing": True},
             )
         data = _call(result)
         assert data["count"] == 1
@@ -1443,7 +1455,8 @@ class TestGetDividendYieldRanking:
             patch.object(server_module, "_client", None),
         ):
             result = await server_module.mcp.call_tool(
-                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-02", "min_yield": 0.0, "include_trailing": True},
             )
         data = _call(result)
         # Dividend cut → excluded regardless of the older positive disclosure
@@ -1476,7 +1489,8 @@ class TestGetDividendYieldRanking:
             patch.object(server_module, "_client", None),
         ):
             result = await server_module.mcp.call_tool(
-                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-02", "min_yield": 0.0, "include_trailing": True},
             )
         data = _call(result)
         assert data["count"] == 1
@@ -1516,7 +1530,8 @@ class TestGetDividendYieldRanking:
             patch.object(server_module, "_client", None),
         ):
             result = await server_module.mcp.call_tool(
-                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-02", "min_yield": 0.0, "include_trailing": True},
             )
         data = _call(result)
         assert data["count"] == 1
@@ -1560,7 +1575,8 @@ class TestGetDividendYieldRanking:
             patch.object(server_module, "_client", None),
         ):
             result = await server_module.mcp.call_tool(
-                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-02", "min_yield": 0.0, "include_trailing": True},
             )
         data = _call(result)
         assert data["count"] == 1
@@ -1604,7 +1620,8 @@ class TestGetDividendYieldRanking:
             patch.object(server_module, "_client", None),
         ):
             result = await server_module.mcp.call_tool(
-                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-02", "min_yield": 0.0, "include_trailing": True},
             )
         data = _call(result)
         assert data["count"] == 1
@@ -1648,7 +1665,8 @@ class TestGetDividendYieldRanking:
             patch.object(server_module, "_client", None),
         ):
             result = await server_module.mcp.call_tool(
-                "get_dividend_yield_ranking", {"date": "2026-05-13", "min_yield": 0.0}
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-13", "min_yield": 0.0, "include_trailing": True},
             )
         data = _call(result)
         assert data["count"] == 1
@@ -1688,7 +1706,8 @@ class TestGetDividendYieldRanking:
             patch.object(server_module, "_client", None),
         ):
             result = await server_module.mcp.call_tool(
-                "get_dividend_yield_ranking", {"date": "2026-05-13", "min_yield": 0.0}
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-13", "min_yield": 0.0, "include_trailing": True},
             )
         data = _call(result)
         assert data["count"] == 1
@@ -1716,11 +1735,11 @@ class TestGetDividendYieldRanking:
             "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
         )
         _insert_bar(conn, "13010", "2026-05-02", 1000.0)
-        _insert_fins_summary(conn, "13010", "2024-01-01", 100.0)  # stale
+        _insert_fins_summary(conn, "13010", "2024-01-01", fdivann=100.0)  # stale
         _insert_master(conn, "13010", "古い配当")
 
         _insert_bar(conn, "13020", "2026-05-02", 1000.0)
-        _insert_fins_summary(conn, "13020", "2025-01-01", 100.0)  # fresh
+        _insert_fins_summary(conn, "13020", "2025-01-01", fdivann=100.0)  # fresh
         _insert_master(conn, "13020", "新しい配当")
         conn.commit()
         conn.close()
@@ -1762,7 +1781,7 @@ class TestGetDividendYieldRanking:
             "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
         )
         _insert_bar(conn, "13010", "2026-05-02", 1000.0)
-        _insert_fins_summary(conn, "13010", "2025-06-01", 100.0)
+        _insert_fins_summary(conn, "13010", "2025-06-01", fdivann=100.0)
         conn.execute(
             "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
             (
@@ -1774,7 +1793,7 @@ class TestGetDividendYieldRanking:
         )
 
         _insert_bar(conn, "13020", "2026-05-02", 1000.0)
-        _insert_fins_summary(conn, "13020", "2025-06-01", 100.0)
+        _insert_fins_summary(conn, "13020", "2025-06-01", fdivann=100.0)
         conn.execute(
             "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
             (
@@ -1812,7 +1831,7 @@ class TestGetDividendYieldRanking:
             "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
         )
         _insert_bar(conn, "13010", "2026-05-02", 1000.0)
-        _insert_fins_summary(conn, "13010", "2025-06-01", 100.0)
+        _insert_fins_summary(conn, "13010", "2025-06-01", fdivann=100.0)
         conn.execute(
             "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
             (
@@ -1824,7 +1843,7 @@ class TestGetDividendYieldRanking:
         )
 
         _insert_bar(conn, "13020", "2026-05-02", 1000.0)
-        _insert_fins_summary(conn, "13020", "2025-06-01", 100.0)
+        _insert_fins_summary(conn, "13020", "2025-06-01", fdivann=100.0)
         conn.execute(
             "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
             (
@@ -1862,6 +1881,7 @@ class TestGetDividendYieldRanking:
         assert data["filters"]["min_yield"] == 2.0
         assert data["filters"]["max_yield"] == 9.0
         assert data["filters"]["disc_months"] == 12
+        assert data["filters"]["include_trailing"] is False
         assert data["filters"]["market"] is None
         assert data["filters"]["sector"] is None
 
@@ -2042,11 +2062,12 @@ class TestGetDividendYieldRanking:
         assert item["yield_pct"] == pytest.approx(22.0 / 775.1 * 100, rel=1e-2)
 
     @pytest.mark.asyncio
-    async def test_trailing_divann_fallback_when_no_forward(self, tmp_path):
-        """DivAnn is used when neither FDivAnn nor NxFDivAnn is available.
+    async def test_trailing_excluded_by_default(self, tmp_path):
+        """DivAnn-only stocks (no FDivAnn/NxFDivAnn) are excluded by default.
 
-        Ensures backward compatibility: stocks with only trailing DivAnn
-        (no forward guidance filed yet) still appear in the ranking.
+        Default include_trailing=False matches Kabutan 予想配当利回りランキング which only
+        uses current-FY forecast dividends.  Stocks with 今期予想非開示 (no current-FY
+        forecast filed) must not appear.
         """
         cache = _make_cache(tmp_path)
         conn = sqlite3.connect(str(tmp_path / "cache.db"))
@@ -2056,8 +2077,8 @@ class TestGetDividendYieldRanking:
             "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
         )
         _insert_bar(conn, "55550", "2026-05-02", 1000.0)
-        # Only DivAnn; no FDivAnn or NxFDivAnn
-        _insert_fins_summary(conn, "55550", "2025-11-14", 60.0)
+        # Only trailing DivAnn; no FDivAnn or NxFDivAnn
+        _insert_fins_summary(conn, "55550", "2025-11-14", div_ann=60.0)
         conn.commit()
         conn.close()
 
@@ -2070,10 +2091,46 @@ class TestGetDividendYieldRanking:
                 "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 0.0}
             )
         data = _call(result)
+        # Default include_trailing=False → trailing-only stock excluded
+        assert data["count"] == 0, (
+            "trailing-only stock must be excluded when include_trailing=False"
+        )
+
+    @pytest.mark.asyncio
+    async def test_include_trailing_restores_trailing_fallback(self, tmp_path):
+        """include_trailing=True restores pre-v0.38 behavior where DivAnn is used as fallback.
+
+        Stocks with only trailing DivAnn (no FDivAnn/NxFDivAnn) appear when
+        include_trailing=True, and their div_source is 'trailing'.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "55550", "2026-05-02", 1000.0)
+        # Only trailing DivAnn; no FDivAnn or NxFDivAnn
+        _insert_fins_summary(conn, "55550", "2025-11-14", div_ann=60.0)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-02", "min_yield": 0.0, "include_trailing": True},
+            )
+        data = _call(result)
         assert data["count"] == 1
         item = data["items"][0]
         assert item["div_ann"] == pytest.approx(60.0, rel=1e-3)
         assert item["yield_pct"] == pytest.approx(60.0 / 1000.0 * 100, rel=1e-2)
+        assert item["div_source"] == "trailing"
 
     @pytest.mark.asyncio
     async def test_stale_forward_disc_date_excluded(self, tmp_path):
@@ -2152,8 +2209,8 @@ class TestGetDividendYieldRanking:
     async def test_fdivann_zero_blocks_trailing_divann_fallback(self, tmp_path):
         """Explicit FDivAnn=0 (dividend cut forecast) must not fall back to trailing DivAnn.
 
-        If a company forecasts zero dividend (FDivAnn=0), its trailing DivAnn
-        must be suppressed so the old non-zero yield does not appear in the ranking.
+        Uses include_trailing=True so the trailing-fallback path is active; even then,
+        FDivAnn=0 must prevent the old trailing DivAnn from being used.
         With min_yield=1.0 the zero-yield entry is filtered out; if trailing DivAnn
         were used instead, the code would incorrectly appear with a high yield.
         """
@@ -2166,7 +2223,7 @@ class TestGetDividendYieldRanking:
         )
         _insert_bar(conn, "66660", "2026-05-02", 1000.0)
         # Annual with trailing DivAnn=50 (older)
-        _insert_fins_summary(conn, "66660", "2026-01-30", 50.0)
+        _insert_fins_summary(conn, "66660", "2026-01-30", div_ann=50.0)
         # Q1 forecast: FDivAnn=0 (dividend cut announced)
         conn.execute(
             "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
@@ -2186,7 +2243,8 @@ class TestGetDividendYieldRanking:
             patch.object(server_module, "_client", None),
         ):
             result = await server_module.mcp.call_tool(
-                "get_dividend_yield_ranking", {"date": "2026-05-02", "min_yield": 1.0}
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-02", "min_yield": 1.0, "include_trailing": True},
             )
         data = _call(result)
         # FDivAnn=0 → yield=0 < min_yield=1.0 → filtered.
