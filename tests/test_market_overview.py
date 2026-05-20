@@ -1243,12 +1243,18 @@ def _insert_fins_summary(
     disc_date: str,
     div_ann: float | None = None,
     fdivann: float | None = None,
+    nxfdivann: float | None = None,
+    doc_type: str | None = None,
 ) -> None:
     data: dict = {"Code": code, "DisclosedDate": disc_date}
     if div_ann is not None:
         data["DivAnn"] = div_ann
     if fdivann is not None:
         data["FDivAnn"] = fdivann
+    if nxfdivann is not None:
+        data["NxFDivAnn"] = nxfdivann
+    if doc_type is not None:
+        data["DocType"] = doc_type
     conn.execute(
         "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
         (code, disc_date, json.dumps(data), 0.0),
@@ -2413,6 +2419,97 @@ class TestGetDividendYieldRanking:
         item = data["items"][0]
         assert item["div_ann"] == pytest.approx(30.0, rel=1e-3)
         assert item["yield_pct"] == pytest.approx(3.0, rel=1e-2)
+
+    @pytest.mark.asyncio
+    async def test_stale_fdivann_excluded_when_newer_fy_exists(self, tmp_path):
+        """Stale Q-report FDivAnn is excluded when a newer FYFinancialStatements row exists.
+
+        Regression for 9444 (トーシンHD): FY2025 annual results (2025-10-31) have
+        FDivAnn='' and NxFDivAnn='', so get_forward_div_ann_map used to fall back
+        to Q3-2025 (2025-03-14) FDivAnn=20 — a completed-FY forecast.  The fy_latest
+        CTE detects that a newer FYFinancialStatements exists and excludes the result.
+        240+ codes are affected in real data.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "94440", "2026-05-20", 220.0)
+        _insert_master(conn, "94440", "トーシンHD")
+        # Newer FYFinancialStatements row — no div forecast yet
+        _insert_fins_summary(
+            conn,
+            "94440",
+            "2025-10-31",
+            div_ann=10.0,
+            doc_type="FYFinancialStatements_Consolidated_JP",
+        )
+        # Older Q3 FDivAnn — belongs to the completed FY, must NOT be used
+        _insert_fins_summary(conn, "94440", "2025-03-14", fdivann=20.0)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-20", "min_yield": 0.0},
+            )
+        data = _call(result)
+        assert data["count"] == 0, (
+            "Stale Q3 FDivAnn=20 must be excluded when FYFinancialStatements 2025-10-31 "
+            "is newer; count must be 0 (not 1 with bogus 9.09% yield)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_fy_with_nxfdivann_not_excluded_by_fy_cte(self, tmp_path):
+        """FYFinancialStatements row that sets NxFDivAnn must still appear in ranking.
+
+        When a FYFinancialStatements row is the source of NxFDivAnn (the normal case),
+        fy_latest.fy_md equals m.md and HAVING fl.fy_md <= m.md is satisfied → kept.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "94440", "2026-05-20", 220.0)
+        _insert_master(conn, "94440", "トーシンHD")
+        # FY annual result with NxFDivAnn — within disc_months=18 cutoff, must appear
+        _insert_fins_summary(
+            conn,
+            "94440",
+            "2025-10-31",
+            div_ann=22.0,
+            nxfdivann=20.0,
+            doc_type="FYFinancialStatements_Consolidated_JP",
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-20", "min_yield": 0.0},
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["div_ann"] == pytest.approx(20.0, rel=1e-3), (
+            f"NxFDivAnn=20 from FYFinancialStatements must be used; got {item['div_ann']}"
+        )
 
 
 class TestGetMarketBriefingShortRatio:
