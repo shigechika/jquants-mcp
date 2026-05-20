@@ -1245,6 +1245,7 @@ def _insert_fins_summary(
     fdivann: float | None = None,
     nxfdivann: float | None = None,
     doc_type: str | None = None,
+    type_of_document: str | None = None,
 ) -> None:
     data: dict = {"Code": code, "DisclosedDate": disc_date}
     if div_ann is not None:
@@ -1255,6 +1256,8 @@ def _insert_fins_summary(
         data["NxFDivAnn"] = nxfdivann
     if doc_type is not None:
         data["DocType"] = doc_type
+    if type_of_document is not None:
+        data["TypeOfDocument"] = type_of_document
     conn.execute(
         "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
         (code, disc_date, json.dumps(data), 0.0),
@@ -2509,6 +2512,108 @@ class TestGetDividendYieldRanking:
         item = data["items"][0]
         assert item["div_ann"] == pytest.approx(20.0, rel=1e-3), (
             f"NxFDivAnn=20 from FYFinancialStatements must be used; got {item['div_ann']}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_dividend_forecast_revision_after_fy_not_excluded(self, tmp_path):
+        """DividendForecastRevision filed after FYFinancialStatements must NOT be excluded.
+
+        A company may update its current-FY forecast via DividendForecastRevision after
+        the annual results.  In this case:
+          - fy_latest.fy_md = FYFinancialStatements disc_date (older)
+          - m.md            = DividendForecastRevision disc_date (newer)
+          - fl.fy_md <= m.md is satisfied → HAVING passes → must appear in ranking.
+        DividendForecastRevision is intentionally excluded from fy_latest (it shares
+        CurPerType='FY' but is not an annual-result filing), so this test verifies that
+        the exclusion of DivForecastRevision from fy_latest does NOT break valid results.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "94440", "2026-05-20", 220.0)
+        _insert_master(conn, "94440", "トーシンHD")
+        # FY annual result filed 2025-10-31 (no div forecast)
+        _insert_fins_summary(
+            conn,
+            "94440",
+            "2025-10-31",
+            div_ann=10.0,
+            doc_type="FYFinancialStatements_Consolidated_JP",
+        )
+        # DividendForecastRevision filed after the FY result — current-FY forecast update
+        _insert_fins_summary(
+            conn,
+            "94440",
+            "2025-11-20",
+            fdivann=15.0,
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-20", "min_yield": 0.0},
+            )
+        data = _call(result)
+        assert data["count"] == 1, (
+            "DividendForecastRevision filed after FYFinancialStatements must not be excluded"
+        )
+        item = data["items"][0]
+        assert item["div_ann"] == pytest.approx(15.0, rel=1e-3), (
+            f"FDivAnn=15 from DividendForecastRevision must be used; got {item['div_ann']}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stale_fdivann_excluded_via_type_of_document(self, tmp_path):
+        """fy_latest CTE works with TypeOfDocument (old API format) as well as DocType.
+
+        Older J-Quants data uses TypeOfDocument instead of DocType.  The CTE uses
+        OR to cover both fields.  This test verifies that TypeOfDocument='FYFinancial%'
+        correctly identifies an annual-result row and triggers stale-exclusion.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        _insert_bar(conn, "99990", "2026-05-20", 500.0)
+        _insert_master(conn, "99990", "テスト会社")
+        # Newer FY row identified via TypeOfDocument (old format) — no div forecast
+        _insert_fins_summary(
+            conn,
+            "99990",
+            "2025-10-31",
+            div_ann=5.0,
+            type_of_document="FYFinancialStatements_Consolidated_JP",
+        )
+        # Older Q3 FDivAnn — stale, must be excluded
+        _insert_fins_summary(conn, "99990", "2025-03-14", fdivann=30.0)
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-20", "min_yield": 0.0},
+            )
+        data = _call(result)
+        assert data["count"] == 0, (
+            "TypeOfDocument='FYFinancial%' must also trigger stale-FDivAnn exclusion"
         )
 
 
