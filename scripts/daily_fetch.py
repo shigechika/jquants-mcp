@@ -356,15 +356,20 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan:
             # INSERT OR REPLACE deletes then re-inserts, so whichever arrives second
             # wins and the other's field is lost.  Carry NxFDivAnn forward so the
             # next-FY forecast survives even when the revision row is processed last.
-            if not data_dict.get("NxFDivAnn"):
+            # Most non-annual filings also lack NxFDivAnn, so a SELECT fires for
+            # the majority of rows on any given day; this is acceptable for a
+            # background script.
+            nx = data_dict.get("NxFDivAnn")
+            if nx is None or nx == "":
                 existing = conn.execute(
                     "SELECT data FROM fins_summary WHERE code=? AND disc_date=? LIMIT 1",
                     (code, disc_date),
                 ).fetchone()
                 if existing:
                     existing_data = json.loads(existing[0])
-                    if existing_data.get("NxFDivAnn"):
-                        data_dict["NxFDivAnn"] = existing_data["NxFDivAnn"]
+                    existing_nx = existing_data.get("NxFDivAnn")
+                    if existing_nx is not None and existing_nx != "":
+                        data_dict["NxFDivAnn"] = existing_nx
             data_json = json.dumps(data_dict, ensure_ascii=False, default=str)
             conn.execute(
                 "INSERT OR REPLACE INTO fins_summary "

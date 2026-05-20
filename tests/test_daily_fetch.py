@@ -333,6 +333,39 @@ class TestFetchFinsSummary:
             f"FDivAnn from revision row must also be preserved, got {stored}"
         )
 
+    def test_nxfdivann_not_overwritten_when_fy_row_arrives_second(self, db_conn):
+        """Reverse-order case: Revision first, FYFinancialStatements second — NxFDivAnn still wins.
+
+        When DividendForecastRevision (FDivAnn=180, NxFDivAnn='') arrives before
+        FYFinancialStatements (NxFDivAnn=38, FDivAnn=''), the FY row is the second
+        INSERT OR REPLACE.  NxFDivAnn=38 is truthy so the preservation branch is
+        skipped and the FY row simply overwrites — result is NxFDivAnn=38. ✓
+        """
+        df_rev = FakeDataFrame(
+            [{"Code": "17980", "DiscDate": "2026-05-12", "FDivAnn": 180.0, "NxFDivAnn": ""}]
+        )
+        df_fy = FakeDataFrame(
+            [{"Code": "17980", "DiscDate": "2026-05-12", "NxFDivAnn": 38.0, "FDivAnn": ""}]
+        )
+        cli = MagicMock()
+        # First run: revision arrives first
+        cli.get_fin_summary.side_effect = [df_rev] + [FakeDataFrame()] * 6
+        fetch_fins_summary(cli, db_conn, "light")
+
+        # Second run: FY row arrives second
+        cli.get_fin_summary.side_effect = [df_fy] + [FakeDataFrame()] * 6
+        fetch_fins_summary(cli, db_conn, "light")
+
+        row = db_conn.execute(
+            "SELECT data FROM fins_summary WHERE code=? AND disc_date=?",
+            ("17980", "2026-05-12"),
+        ).fetchone()
+        assert row is not None
+        stored = json.loads(row[0])
+        assert stored.get("NxFDivAnn") == pytest.approx(38.0), (
+            f"FY row written second must set NxFDivAnn=38, got {stored}"
+        )
+
 
 # ============================================================
 # 決算発表予定
