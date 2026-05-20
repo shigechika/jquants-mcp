@@ -366,6 +366,52 @@ class TestFetchFinsSummary:
             f"FY row written second must set NxFDivAnn=38, got {stored}"
         )
 
+    def test_disc_date_timestamp_normalized(self, db_conn):
+        """DiscDate as pandas Timestamp string ('2026-05-12 00:00:00') is stored as 'YYYY-MM-DD'."""
+        df = FakeDataFrame(
+            [{"Code": "17980", "DiscDate": "2026-05-12 00:00:00", "NxFDivAnn": 38.0}]
+        )
+        cli = MagicMock()
+        cli.get_fin_summary.side_effect = [df] + [FakeDataFrame()] * 6
+
+        fetch_fins_summary(cli, db_conn, "light")
+
+        row = db_conn.execute(
+            "SELECT disc_date FROM fins_summary WHERE code=?", ("17980",)
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "2026-05-12", f"disc_date should be YYYY-MM-DD, got {row[0]}"
+
+    def test_disc_date_timestamp_upserts_existing_date_only_row(self, db_conn):
+        """Timestamp DiscDate must UPDATE the existing date-only row, not create a duplicate."""
+        # Pre-existing row with date-only disc_date (e.g. from bulk fetch)
+        db_conn.execute(
+            "INSERT INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?,?,?,?)",
+            ("17980", "2026-05-12", '{"NxFDivAnn":"","FDivAnn":180.0}', 1.0),
+        )
+        db_conn.commit()
+
+        # API returns same row but DiscDate as Timestamp string
+        df = FakeDataFrame(
+            [
+                {
+                    "Code": "17980",
+                    "DiscDate": "2026-05-12 00:00:00",
+                    "NxFDivAnn": "",
+                    "FDivAnn": 180.0,
+                }
+            ]
+        )
+        cli = MagicMock()
+        cli.get_fin_summary.side_effect = [df] + [FakeDataFrame()] * 6
+
+        fetch_fins_summary(cli, db_conn, "light")
+
+        count = db_conn.execute("SELECT COUNT(*) FROM fins_summary WHERE code='17980'").fetchone()[
+            0
+        ]
+        assert count == 1, f"Must not create a duplicate row; got {count} rows"
+
 
 # ============================================================
 # 決算発表予定
@@ -497,6 +543,21 @@ class TestFetchInvestorTypes:
         cli = _mock_cli(get_eq_investor_types=FakeDataFrame())
         n = fetch_investor_types(cli, db_conn, "light")
         assert n == 0
+
+    def test_pub_date_timestamp_normalized(self, db_conn):
+        """PubDate as pandas Timestamp string ('2026-02-20 00:00:00') is stored as 'YYYY-MM-DD'."""
+        df = FakeDataFrame(
+            [{"PubDate": "2026-02-20 00:00:00", "Section": "TSEPrime", "FrgnBuy": 100}]
+        )
+        cli = _mock_cli(get_eq_investor_types=df)
+
+        fetch_investor_types(cli, db_conn, "light")
+
+        row = db_conn.execute(
+            "SELECT pub_date FROM investor_types WHERE section=?", ("TSEPrime",)
+        ).fetchone()
+        assert row is not None
+        assert row[0] == "2026-02-20", f"pub_date should be YYYY-MM-DD, got {row[0]}"
 
 
 # ============================================================

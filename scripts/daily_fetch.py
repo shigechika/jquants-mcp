@@ -349,7 +349,7 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan:
         for _, r in df.iterrows():
             data_dict = _sanitize_row(r.to_dict())
             code = str(r.get("Code", ""))
-            disc_date = str(r.get("DiscDate", date_iso))
+            disc_date = str(r.get("DiscDate", date_iso))[:10]
             # Annual results produce two API rows on the same disc_date:
             #   FYFinancialStatements  : NxFDivAnn=<next-FY forecast>, FDivAnn=''
             #   DividendForecastRevision: FDivAnn=<trailing actual>,    NxFDivAnn=''
@@ -467,7 +467,7 @@ def fetch_investor_types(
     count = 0
     for _, r in df.iterrows():
         data_json = json.dumps(_sanitize_row(r.to_dict()), ensure_ascii=False, default=str)
-        pub_date = str(r.get("PublishedDate", r.get("PubDate", "")))
+        pub_date = str(r.get("PublishedDate", r.get("PubDate", "")))[:10]
         section = str(r.get("Section", ""))
         conn.execute(
             "INSERT OR REPLACE INTO investor_types "
