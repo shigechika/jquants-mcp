@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.38.3](https://github.com/shigechika/jquants-mcp/compare/v0.38.2...v0.38.3) (2026-05-20)
+
+
+### Bug Fixes
+
+* **daily_fetch:** normalize disc_date / pub_date to YYYY-MM-DD ([#376](https://github.com/shigechika/jquants-mcp/issues/376)) ([032a2a3](https://github.com/shigechika/jquants-mcp/commit/032a2a34ab418e95d82ef273313eebe5b33759c2))
+
 ## [0.38.2](https://github.com/shigechika/jquants-mcp/compare/v0.38.1...v0.38.2) (2026-05-20)
 
 
