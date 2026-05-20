@@ -750,7 +750,23 @@ class CacheStore:
             # COALESCE falls back to MAX(FDivAnn) (current-FY forecast) as intended.
             # GROUP BY + HAVING (rather than a bare WHERE on the alias) is used so
             # the query remains valid standard SQL regardless of SQLite alias scoping.
+            #
+            # fy_latest CTE guards against stale mid-year FDivAnn: if a newer
+            # FYFinancialStatements row exists but has no div forecast (NxFDivAnn=''
+            # and FDivAnn=''), the subquery would fall back to an older Q-report's
+            # FDivAnn that belongs to a completed fiscal year.  The HAVING condition
+            # `fl.fy_md <= m.md` rejects those results (240+ codes affected in
+            # real data).  DividendForecastRevision rows are intentionally excluded
+            # from fy_latest because they share CurPerType='FY' but are NOT annual
+            # results filings.
             rows = conn.execute(
+                "WITH fy_latest AS ("
+                "  SELECT code, MAX(disc_date) AS fy_md "
+                "  FROM fins_summary "
+                "  WHERE json_extract(data, '$.DocType') LIKE 'FYFinancial%' "
+                "     OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%' "
+                "  GROUP BY code"
+                ") "
                 "SELECT f.code, "
                 "  COALESCE("
                 "    MAX(CAST(NULLIF(json_extract(f.data, '$.NxFDivAnn'), '') AS REAL)),"
@@ -766,8 +782,10 @@ class CacheStore:
                 "  ) IS NOT NULL "
                 "  GROUP BY code"
                 ") m ON f.code = m.code AND f.disc_date = m.md "
+                "LEFT JOIN fy_latest fl ON f.code = fl.code "
                 "GROUP BY f.code, m.md "
-                "HAVING div_fwd IS NOT NULL"
+                "HAVING div_fwd IS NOT NULL "
+                "  AND (fl.fy_md IS NULL OR fl.fy_md <= m.md)"
             ).fetchall()
         except Exception:
             return {}
