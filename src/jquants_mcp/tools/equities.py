@@ -95,7 +95,7 @@ def register(
         For multi-stock bulk downloads use get_bulk_list (date-only queries are very slow).
         code only → full history; code+range → period; date only → all stocks on that date.
 
-        [Supported plans] Free / Light / Standard / Premium
+        [Supported plans] Free / Light / Standard / Premium (API fallback on cache miss)
         Retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all.
 
         Args:

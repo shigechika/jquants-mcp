@@ -497,24 +497,16 @@ def register(
     async def detect_price_change(
         date: str,
     ) -> dict[str, Any]:
-        """Return the daily advance/decline summary for all listed equities.
+        """Return the daily advance/decline summary for all listed equities (騰落集計). All plans.
 
-        Counts how many stocks rose, fell, or were unchanged on *date*
-        compared to the previous trading day, using split-adjusted closing
-        prices (AdjC). Useful as a quick market breadth indicator.
+        Use for 値上がり銘柄数・値下がり銘柄数・騰落集計 queries.
+        For rolling ADR ratio use get_advance_decline_ratio; for sector breakdown use get_sector_performance.
+        Data available ~17:15 JST on trading days.
+
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            date: Trading date in YYYY-MM-DD or YYYYMMDD format.
-
-        Returns:
-            dict with keys:
-            - date: the requested trading date
-            - previous_date: the comparison base date
-            - advances: number of stocks that rose
-            - declines: number of stocks that fell
-            - unchanged: number of stocks with no price change
-            - total: total stocks with data on both dates
-            - advance_decline_ratio: advances / declines (null when declines == 0)
+            date: Trading date (YYYY-MM-DD or YYYYMMDD).
         """
         errors = collect_errors(validate_date(date, "date"))
         if errors:
@@ -568,26 +560,16 @@ def register(
         date: str,
         period: int = 25,
     ) -> dict[str, Any]:
-        """Return the advance/decline ratio (騰落レシオ) over the last *period* trading days.
+        """Return the advance/decline ratio (騰落レシオ) over the last period trading days. All plans.
 
-        Computed as:
-            ratio = sum(advances over period days) / sum(declines over period days) * 100
+        Use for 騰落レシオ・市場過熱感 queries. >120 = overbought; <70 = oversold (general convention).
+        For daily advance/decline counts use detect_price_change; for sector breakdown use get_sector_performance.
 
-        Values above 120 are commonly interpreted as overbought; below 70 as oversold.
-        Universe: all listed equities in the J-Quants cache (not limited to Nikkei 225).
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            date: End date in YYYY-MM-DD or YYYYMMDD format.
-            period: Number of trading days to accumulate. Default: 25.
-
-        Returns:
-            dict with keys:
-            - date: the end date
-            - period: number of trading days used (may be less than requested near cache start)
-            - ratio: advance/decline ratio × 100 (null when declines_sum == 0)
-            - advances_sum: total advancing instances over the period
-            - declines_sum: total declining instances over the period
-            - note: universe description
+            date: End date (YYYY-MM-DD or YYYYMMDD).
+            period: Trailing trading days to accumulate (default 25).
         """
         errors = collect_errors(validate_date(date, "date"), _validate_period(period))
         if errors:
