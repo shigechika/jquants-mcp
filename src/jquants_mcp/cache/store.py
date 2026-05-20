@@ -740,19 +740,22 @@ class CacheStore:
         if conn is None:
             return {}
         try:
-            # NxFDivAnn takes priority over FDivAnn within each row.
-            # NxFDivAnn is only present in annual (FY) filings; at that point FDivAnn
-            # equals the just-confirmed trailing actual, so NxFDivAnn is the only
-            # genuinely forward value.  At mid-year filings NxFDivAnn is absent and
-            # FDivAnn (the current-FY forecast) is the correct forward estimate.
+            # Annual results generate TWO rows on the same disc_date:
+            #   FYFinancialStatements: NxFDivAnn=<next-FY forecast>, FDivAnn=''
+            #   DividendForecastRevision: FDivAnn=<trailing actual>, NxFDivAnn=''
+            # COALESCE(MAX(NxFDivAnn), MAX(FDivAnn)) aggregates them correctly:
+            #   MAX(NxFDivAnn) = next-FY forecast (non-null wins), so COALESCE returns it.
+            # MAX(COALESCE(NxFDivAnn, FDivAnn)) would be wrong: MAX(38, 180) = 180 (trailing).
+            # At mid-year filings only one row exists with FDivAnn; MAX(NxFDivAnn)=null so
+            # COALESCE falls back to MAX(FDivAnn) (current-FY forecast) as intended.
             # GROUP BY + HAVING (rather than a bare WHERE on the alias) is used so
             # the query remains valid standard SQL regardless of SQLite alias scoping.
             rows = conn.execute(
                 "SELECT f.code, "
-                "  MAX(CAST(COALESCE("
-                "    NULLIF(json_extract(f.data, '$.NxFDivAnn'), ''), "
-                "    NULLIF(json_extract(f.data, '$.FDivAnn'), '')"
-                "  ) AS REAL)) AS div_fwd, m.md "
+                "  COALESCE("
+                "    MAX(CAST(NULLIF(json_extract(f.data, '$.NxFDivAnn'), '') AS REAL)),"
+                "    MAX(CAST(NULLIF(json_extract(f.data, '$.FDivAnn'), '') AS REAL))"
+                "  ) AS div_fwd, m.md "
                 "FROM fins_summary f "
                 "JOIN ("
                 "  SELECT code, MAX(disc_date) AS md "

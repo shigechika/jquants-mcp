@@ -294,6 +294,45 @@ class TestFetchFinsSummary:
         n = fetch_fins_summary(cli, db_conn, "light")
         assert n == 0
 
+    def test_nxfdivann_preserved_when_revision_row_overwrites(self, db_conn):
+        """INSERT OR REPLACE must not lose NxFDivAnn when DividendForecastRevision arrives second.
+
+        Annual results produce two API rows on the same (Code, DiscDate):
+          1. FYFinancialStatements  : NxFDivAnn=38 (next-FY forecast), FDivAnn=''
+          2. DividendForecastRevision: FDivAnn=180 (trailing actual),   NxFDivAnn=''
+        Without the preservation fix, row 2 wins and NxFDivAnn=38 is lost.
+        The fix inherits NxFDivAnn from the existing row before the INSERT OR REPLACE.
+        """
+        # Day 1 call: FYFinancialStatements (NxFDivAnn=38, FDivAnn='')
+        df_fy = FakeDataFrame(
+            [{"Code": "17980", "DiscDate": "2026-05-12", "NxFDivAnn": 38.0, "FDivAnn": ""}]
+        )
+        # Day 2 call: DividendForecastRevision (FDivAnn=180, NxFDivAnn='') — same disc_date
+        df_rev = FakeDataFrame(
+            [{"Code": "17980", "DiscDate": "2026-05-12", "FDivAnn": 180.0, "NxFDivAnn": ""}]
+        )
+        cli = MagicMock()
+        # First daily_fetch run: only FY row arrives
+        cli.get_fin_summary.side_effect = [df_fy] + [FakeDataFrame()] * 6
+        fetch_fins_summary(cli, db_conn, "light")
+
+        # Second daily_fetch run: revision row arrives for same disc_date
+        cli.get_fin_summary.side_effect = [df_rev] + [FakeDataFrame()] * 6
+        fetch_fins_summary(cli, db_conn, "light")
+
+        row = db_conn.execute(
+            "SELECT data FROM fins_summary WHERE code=? AND disc_date=?",
+            ("17980", "2026-05-12"),
+        ).fetchone()
+        assert row is not None
+        stored = json.loads(row[0])
+        assert stored.get("NxFDivAnn") == pytest.approx(38.0), (
+            f"NxFDivAnn must survive the DividendForecastRevision INSERT OR REPLACE, got {stored}"
+        )
+        assert stored.get("FDivAnn") == pytest.approx(180.0), (
+            f"FDivAnn from revision row must also be preserved, got {stored}"
+        )
+
 
 # ============================================================
 # 決算発表予定

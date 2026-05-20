@@ -2310,6 +2310,69 @@ class TestGetDividendYieldRanking:
         assert item["yield_pct"] == pytest.approx(expected_yield, rel=1e-2)
 
     @pytest.mark.asyncio
+    async def test_nxfdivann_preserved_when_two_rows_same_disc_date(self, tmp_path):
+        """COALESCE(MAX(NxFDivAnn), MAX(FDivAnn)) picks NxFDivAnn when two rows share disc_date.
+
+        Annual results can produce two rows per (code, disc_date) in raw API data:
+          - FYFinancialStatements  : NxFDivAnn=38 (next-FY forecast), FDivAnn=''
+          - DividendForecastRevision: FDivAnn=180 (trailing actual),   NxFDivAnn=''
+        If both survive in the DB (no PRIMARY KEY dedup), MAX(COALESCE(...)) = 180 (wrong),
+        while COALESCE(MAX(NxFDivAnn), MAX(FDivAnn)) = 38 (correct).
+        This test verifies the store.py SQL aggregation using a table without PK.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        # Intentionally no PRIMARY KEY to allow two rows with the same (code, disc_date)
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL)"
+        )
+        _insert_bar(conn, "17980", "2026-05-20", 1019.0)
+        _insert_master(conn, "17980", "守谷商会")
+        disc_date = "2026-05-12"
+        # FYFinancialStatements: NxFDivAnn=38 (next-FY forecast), FDivAnn absent
+        conn.execute(
+            "INSERT INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "17980",
+                disc_date,
+                json.dumps({"Code": "17980", "NxFDivAnn": 38.0, "FDivAnn": ""}),
+                0.0,
+            ),
+        )
+        # DividendForecastRevision: FDivAnn=180 (trailing actual), NxFDivAnn absent
+        conn.execute(
+            "INSERT INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "17980",
+                disc_date,
+                json.dumps({"Code": "17980", "FDivAnn": 180.0, "NxFDivAnn": ""}),
+                0.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_dividend_yield_ranking",
+                {"date": "2026-05-20", "min_yield": 0.0},
+            )
+        data = _call(result)
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["div_ann"] == pytest.approx(38.0, rel=1e-3), (
+            f"COALESCE(MAX(NxFDivAnn), MAX(FDivAnn)) must return 38, got {item['div_ann']}"
+        )
+        expected_yield = round(38.0 / 1019.0 * 100, 2)
+        assert item["yield_pct"] == pytest.approx(expected_yield, rel=1e-2)
+
+    @pytest.mark.asyncio
     async def test_fdivann_zero_with_nxfdivann_uses_nxfdivann(self, tmp_path):
         """FDivAnn=0 (current-FY cut) + NxFDivAnn>0 (next-FY forecast) → NxFDivAnn wins.
 

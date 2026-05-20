@@ -347,9 +347,25 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan:
             continue
 
         for _, r in df.iterrows():
-            data_json = json.dumps(_sanitize_row(r.to_dict()), ensure_ascii=False, default=str)
+            data_dict = _sanitize_row(r.to_dict())
             code = str(r.get("Code", ""))
             disc_date = str(r.get("DiscDate", date_iso))
+            # Annual results produce two API rows on the same disc_date:
+            #   FYFinancialStatements  : NxFDivAnn=<next-FY forecast>, FDivAnn=''
+            #   DividendForecastRevision: FDivAnn=<trailing actual>,    NxFDivAnn=''
+            # INSERT OR REPLACE deletes then re-inserts, so whichever arrives second
+            # wins and the other's field is lost.  Carry NxFDivAnn forward so the
+            # next-FY forecast survives even when the revision row is processed last.
+            if not data_dict.get("NxFDivAnn"):
+                existing = conn.execute(
+                    "SELECT data FROM fins_summary WHERE code=? AND disc_date=? LIMIT 1",
+                    (code, disc_date),
+                ).fetchone()
+                if existing:
+                    existing_data = json.loads(existing[0])
+                    if existing_data.get("NxFDivAnn"):
+                        data_dict["NxFDivAnn"] = existing_data["NxFDivAnn"]
+            data_json = json.dumps(data_dict, ensure_ascii=False, default=str)
             conn.execute(
                 "INSERT OR REPLACE INTO fins_summary "
                 "(code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
