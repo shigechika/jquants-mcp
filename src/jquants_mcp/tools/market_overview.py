@@ -798,30 +798,16 @@ def register(
         date: str,
         n: int = 10,
     ) -> dict[str, Any]:
-        """Return top stocks by turnover value (売買代金ランキング) on a given date.
+        """Return top stocks by turnover value (売買代金ランキング) on a given date. All plans.
 
-        Use for 売買代金ランキング, 売買代金, turnover, trading value.
-        Distinct from ``get_top_volume`` which ranks by share count: turnover
-        value (= price × volume) surfaces the names that moved the most money,
-        so higher-priced names dominate the ranking instead of being crowded
-        out by thinly priced low-priced shares.
+        Use for 売買代金ランキング・売買代金・turnover・trading value queries.
+        Ranks by price×volume (get_top_volume ranks by share count instead).
 
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily Tier 1 cache (no API call)
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            date: Trading date in YYYY-MM-DD or YYYYMMDD format.
-            n: Number of stocks to return (1–100). Default: 10.
-
-        Returns:
-            dict with keys:
-            - date: the requested trading date
-            - items: list of up to *n* dicts, each with:
-                - code: stock code (4- or 5-digit display form)
-                - name: company name (from equities_master) or null
-                - turnover_value: trading value in yen
-                - volume: number of shares traded
-                - close: closing price
+            date: Trading date (YYYY-MM-DD or YYYYMMDD).
+            n: Number of stocks to return (1–100). Default 10.
         """
         errors = collect_errors(validate_date(date, "date"), _validate_n(n))
         if errors:
@@ -866,39 +852,17 @@ def register(
         date: str,
         sector_type: str = "s33",
     ) -> dict[str, Any]:
-        """Return sector-level average percentage change (業種別騰落率) on a date.
+        """Sector-level average price change ranking (業種別騰落率). All plans.
 
-        Use for 業種別騰落率, セクター別パフォーマンス, sector performance,
-        業種別ランキング.
-        Groups all listed equities by TSE sector classification and reports the
-        average daily change percentage per sector along with advance/decline
-        counts. The default ``s33`` partitions the market into the 33 TSE
-        sub-sectors; ``s17`` collapses to the 17-sector top-level grouping.
+        Use for 業種別騰落率, セクター別パフォーマンス, 業種別ランキング, sector performance.
+        For sector valuation (PER/PBR) use get_sector_briefing instead.
+        For full market briefing use get_market_briefing instead.
 
-        Only stocks with a sector code populated in ``equities_master`` are
-        aggregated; orphan rows (no master entry) and rows with an empty sector
-        field are silently dropped from the bucket.
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily + equities_master Tier 1 cache (no API call)
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            date: Trading date in YYYY-MM-DD or YYYYMMDD format.
-            sector_type: ``"s33"`` (default, 33 sectors) or ``"s17"`` (17 sectors).
-
-        Returns:
-            dict with keys:
-            - date: the requested trading date
-            - previous_date: comparison base trading date
-            - sector_type: ``"s33"`` or ``"s17"``
-            - sectors: list of dicts (sorted by avg_change_pct desc), each with:
-                - code: sector code
-                - name: sector name
-                - count: stocks with both today and prev close
-                - advances: stocks that rose
-                - declines: stocks that fell
-                - unchanged: stocks with no price change
-                - avg_change_pct: mean daily change in percent
+            date: Trading date (YYYY-MM-DD or YYYYMMDD).
+            sector_type: "s33" (default, 33 sub-sectors) or "s17" (17 top-level).
         """
         if sector_type not in ("s33", "s17"):
             return make_validation_error_response(["sector_type must be 's33' or 's17'"])
@@ -963,87 +927,28 @@ def register(
         sector: str | None = None,
         date: str | None = None,
     ) -> dict[str, Any]:
-        """Return high dividend yield stock ranking (高配当利回りランキング).
+        """High dividend yield stock ranking (高配当利回りランキング). All plans.
 
-        Use for 高配当, 配当利回り, dividend yield, 高利回り銘柄.
-        Joins the latest valid forward annual dividend per share from
-        ``fins_summary`` with the split-adjusted closing price (AdjC) from
-        ``equities_bars_daily`` to compute the yield.
+        Use for 高配当, 配当利回り, dividend yield ranking, 高利回り銘柄.
+        For single-stock yield see get_stock_briefing instead.
 
-        **Default behavior (include_trailing=False) matches Kabutan 予想配当利回りランキング**:
-        Only stocks with a current-FY forecast (FDivAnn or NxFDivAnn) appear in the
-        ranking.  Stocks with *only* trailing actual dividends (DivAnn) and no forecast
-        filed are excluded — these are typically companies with 今期予想非開示
-        (non-disclosed current-FY forecast) where including stale DivAnn would produce
-        misleading yields.
+        Default (include_trailing=False) matches Kabutan 予想配当利回りランキング:
+        only stocks with a forward forecast (FDivAnn / NxFDivAnn) appear.
+        Set include_trailing=True to also include trailing-DivAnn-only stocks.
+        Dividend priority: NxFDivAnn (next-FY forecast, annual filings only) >
+        FDivAnn (current-FY forecast) > DivAnn (trailing; only when include_trailing=True).
 
-        Set ``include_trailing=True`` to restore pre-v0.38 behavior where DivAnn is
-        used as a fallback when no forward forecast exists.  Useful for broader
-        screening or when comparing against historical rankings.
-
-        Dividend source priority:
-        1. FDivAnn — current-FY forecast from the most recent quarterly report
-        2. NxFDivAnn — next-FY forecast from annual reports
-        3. DivAnn — trailing actual annual dividend (only when include_trailing=True)
-
-        FDivAnn and NxFDivAnn are reported in post-split per-share terms and
-        do not require FY-end split correction.  DivAnn may be in pre-split
-        terms when a FY-end split occurred ~45 days before the filing, so it
-        receives get_split_factors_before_disc correction.  All three receive
-        get_split_factors_after correction for splits after the filing.
-
-        An FDivAnn=0 entry (explicit dividend-cut forecast) suppresses trailing
-        DivAnn even when ``include_trailing=True``: the zero forward value is used
-        as-is, ensuring the company does not appear with its old yield.
-
-        Stale dividend data (disclosures older than ``disc_months``) is excluded
-        to avoid inflated yields from companies that have since cut or abolished
-        dividends.
-
-        Changed in v0.38: ``include_trailing`` added; default changed from True
-        (trailing fallback) to False (forward-only, Kabutan-equivalent).
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] fins_summary + equities_bars_daily Tier 1 cache (no API call)
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
-            n: Number of stocks to return (1–100). Default: 20.
-            min_yield: Minimum dividend yield percentage to include (>= 0). Default: 3.0.
-            max_yield: Maximum dividend yield percentage to include. Use to exclude
-                       suspiciously high yields (e.g. ``max_yield=15.0``). Default: null (no cap).
-            disc_months: Maximum age of the dividend disclosure in months. Disclosures older
-                         than this cutoff are excluded to filter out stale data from companies
-                         that have since cut or abolished dividends. Default: 18.
-            include_trailing: When False (default), only stocks with a current-FY dividend
-                              forecast (FDivAnn or NxFDivAnn) are included — matches
-                              Kabutan 予想配当利回りランキング.  When True, stocks with only
-                              trailing actual DivAnn (no forecast filed) are also included
-                              as a fallback — pre-v0.38 behavior. Default: False.
-            market: Filter by market segment. One of ``"prime"``, ``"standard"``,
-                    ``"growth"``, ``"tokyo_pro"``. Default: null (all markets).
-            sector: Filter by S33 industry sector code (e.g. ``"50"`` for 水産・農林業).
-                    Default: null (all sectors).
-            date: Trading date in YYYY-MM-DD or YYYYMMDD format (default: latest
-                  cached trading day). Automatically rounds back to the nearest
-                  past trading day so weekend/holiday inputs work.
-
-        Returns:
-            dict with keys:
-            - date: the resolved trading date used for closing prices
-            - count: number of stocks returned
-            - filters: applied filter values (min_yield, max_yield, disc_months,
-                       include_trailing, market, sector)
-            - items: list of up to *n* dicts sorted by yield_pct desc, each with:
-                - code: stock code (4- or 5-digit display form)
-                - name: company name (from equities_master) or null
-                - market: market segment name (e.g. "プライム")
-                - sector: S33 sector name (e.g. "水産・農林業")
-                - div_ann: split-adjusted annual dividend per share in yen
-                - disc_date: disclosure date of the dividend used
-                - div_source: dividend data source — ``"forward"`` (FDivAnn or NxFDivAnn)
-                              or ``"trailing"`` (DivAnn fallback; only when include_trailing=True)
-                - close: split-adjusted closing price (AdjC)
-                - yield_pct: dividend yield in percent (adj_div_ann / AdjC × 100)
+            n: Stocks to return (1–100, default 20).
+            min_yield: Minimum yield % (default 3.0).
+            max_yield: Maximum yield % cap (default null).
+            disc_months: Max disclosure age in months (default 18).
+            include_trailing: Include DivAnn-only stocks (default False = Kabutan-equivalent).
+            market: "prime" / "standard" / "growth" / "tokyo_pro" (default all).
+            sector: S33 sector code filter (default all).
+            date: Trading date (YYYY-MM-DD or YYYYMMDD, default latest cached).
         """
         errors = collect_errors(
             _validate_n(n),
@@ -1221,55 +1126,24 @@ def register(
         sector_type: str = "s33",
         n: int = 5,
     ) -> dict[str, Any]:
-        """Daily market briefing — composite of advance/decline, sector ranking, top movers, top turnover, and screener highlights (相場ブリーフィング).
+        """Daily market briefing: ADR, sector ranking, top movers, turnover, screener highlights (相場ブリーフィング).
 
-        Use for 相場ブリーフィング, 市場概況, マーケットブリーフィング, daily briefing,
-        market briefing, market summary, 今日の相場.
-        Single call to get a structured snapshot of "what happened in the
-        Japanese market today". Fetches equities_bars_daily once for the full
-        ADR window (26 sessions), then computes all sub-sections in memory —
-        no redundant cache reads.
+        Use for 相場ブリーフィング, 市場概況, 今日の相場, daily briefing, market summary.
+        For sector valuation (PER/PBR) use get_sector_briefing instead.
+        For single-stock detail use get_stock_briefing instead.
 
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily + equities_master + indices_bars_daily_topix
-                 + markets_margin_interest (margin fields null when not cached)
-                 + markets_short_ratio (sector_short_ratios empty when not cached; Standard+)
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+
+        Returns: summary (ADR 25d, TOPIX change, margin ratio), sector top/bottom n,
+        sector_short_ratios (S33 空売り比率, Standard+), top movers, top turnover,
+        screener highlights (52w/YTD highs/lows, volume surges, price limits,
+        notable stocks by RSI14), trend signals (distribution days, follow-through).
+        Margin/short-ratio fields are null when those caches are absent.
 
         Args:
-            date: Trading date in YYYY-MM-DD or YYYYMMDD format.
-            sector_type: ``"s33"`` (default, 33 TSE sub-sectors — matches most
-                Japanese stock apps) or ``"s17"`` (17 top-level sectors).
-            n: TopN size for movers / turnover sections (1–100, default: 5).
-
-        Returns:
-            dict with keys:
-            - date / previous_date: the trading date and comparison base
-            - summary: {advances, declines, unchanged, advance_decline_ratio_25d,
-                topix_change_pct (null on TOPIX fetch failure),
-                market_margin_ratio_median (null when not cached),
-                market_margin_ratio_count}
-            - sectors: {top: [...], bottom: [...]} — top n and bottom n sectors
-                by avg_change_pct; each entry includes short_sale_ratio (null when
-                markets_short_ratio not cached or sector_type="s17" since S17 codes
-                do not map to S33 short-ratio keys)
-            - sector_short_ratios: full list of all S33 sectors sorted by
-                short_sale_ratio descending (always S33-based; empty when not cached)
-            - top_movers_up / top_movers_down: TopN by daily change_pct
-            - top_turnover_value: TopN by trading value (yen)
-            - highlights: {ytd_new_highs, ytd_new_lows, volume_surges,
-                limit_high_close, limit_high_touched, limit_low_close,
-                limit_low_touched, notable_stocks: {overbought: [...], oversold: [...]}}
-                notable_stocks: top-n stocks from the 52w high/low + price-limit
-                universe ranked by RSI14.  Each entry has code, name, close,
-                change_pct, rsi14, volume_ratio, signals (list of triggering
-                signals: "52w_high", "52w_low", "limit_high", "limit_low").
-                overbought sorted by RSI14 desc; oversold by RSI14 asc.
-                Empty lists when screener cache is cold and no limit stocks exist.
-            - trend_signals: {distribution, follow_through} — distribution day
-                count/warning (null when TOPIX data insufficient) and
-                follow-through day status with auto-detected rally_start
-                (null when TOPIX unavailable; {"status": "no_rally_attempt"}
-                when TOPIX has not recovered ≥ 1% from the detected bottom)
+            date: Trading date (YYYY-MM-DD or YYYYMMDD).
+            sector_type: "s33" (default, 33 TSE sub-sectors) or "s17" (17 top-level).
+            n: TopN size for movers/turnover sections (1–100, default 5).
         """
         if sector_type not in ("s33", "s17"):
             return make_validation_error_response(["sector_type must be 's33' or 's17'"])

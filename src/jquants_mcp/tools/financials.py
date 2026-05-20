@@ -147,24 +147,17 @@ def register(
         code: str | None = None,
         date: str | None = None,
     ) -> dict[str, Any]:
-        """Use this first for any financial metric query (EPS, BPS, 売上, 利益, 配当, 業績予想).
+        """Use this first for any financial metric query (EPS, BPS, 売上, 利益, 配当, 業績予想). All plans.
 
-        Returns per-stock quarterly financials: revenue (売上), operating profit (営業利益),
-        net income (純利益), EPS (一株利益), BPS (一株純資産), cash flow (CF: OperatingCF /
-        InvestingCF / FinancingCF), dividends (配当), and earnings forecasts (業績予想).
-        Adjusted EPS/BPS (AdjEPS/AdjBPS) are included when split data is available.
-        Each row carries a derived ``FiscalPeriod`` label
-        (``"1Q"`` / ``"2Q"`` / ``"3Q"`` / ``"FY"`` / ``"Other"`` / ``null``) so callers
-        can identify the period without parsing date fields. ``"Other"`` covers
-        irregular reporting periods (e.g., fiscal-year-end change). ``null`` is
-        returned for forecast revisions and unrecognised document types.
-        Either 'code' or 'date' must be specified.
+        Returns quarterly financials: revenue, operating profit, net income, EPS/BPS/CF,
+        dividends, and earnings forecasts. FiscalPeriod label: "1Q"/"2Q"/"3Q"/"FY"/"Other"/null.
+        Either code or date must be specified.
 
         [Supported plans] Free / Light / Standard / Premium
         Note: Free plan data is delayed by 12 weeks.
 
         Args:
-            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only).
             date: Date (YYYYMMDD or YYYY-MM-DD). Returns financials disclosed on that date.
         """
         errors = collect_errors(validate_code(code), validate_date(date))

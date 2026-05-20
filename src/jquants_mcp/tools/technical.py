@@ -97,32 +97,20 @@ def register(
         date_to: str | None = None,
         indicators: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Compute technical indicators (SMA, Bollinger Bands, RSI) for a single stock (テクニカル指標).
+        """Compute technical indicators (SMA, Bollinger Bands, RSI) for a single stock (テクニカル指標). All plans.
 
-        Use this when the user asks about SMA（移動平均）, ボリンジャーバンド, RSI,
-        テクニカル指標, or questions like 「SMA25 を上抜けた？」 「RSI は過熱していないか？」.
-        For charting use ``render_candlestick`` instead; for VWAP buy/sell pressure use
-        ``compare_close_vs_vwap``.
+        Use for SMA・移動平均・ボリンジャーバンド・RSI queries on a specific stock.
+        For charting use render_candlestick; for VWAP pressure use compare_close_vs_vwap.
+        Supported: sma5, sma25, sma75, bb20 (→ bb20_mid/upper/lower ±2σ), rsi14. Null when not warmed up.
 
-        All values use split-adjusted close (AdjC). Indicators not yet warmed up
-        (fewer prior sessions than the period) are returned as ``null``.
-
-        Supported indicators: ``sma5``, ``sma25``, ``sma75``, ``bb20``, ``rsi14``.
-        Default: ``["sma5", "sma25", "bb20", "rsi14"]``.
-
-        Bollinger Bands (``bb20``) return three sub-keys: ``bb20_mid``, ``bb20_upper``,
-        ``bb20_lower`` (±2σ, sample std to match charts.py visual output).
-
-        [Supported plans] Free / Light / Standard / Premium
-        [Source] equities_bars_daily Tier 1 cache (API fallback on cache miss)
+        [Supported plans] Free / Light / Standard / Premium (API fallback on cache miss)
 
         Args:
-            code: 4- or 5-digit stock code (required).
-            date: Single trading date. Overrides date_from / date_to when given.
-            date_from: Range start (inclusive).
-            date_to: Range end (inclusive).
-            indicators: List of indicator names to compute. Defaults to
-                ``["sma5", "sma25", "bb20", "rsi14"]``.
+            code: Stock code (required).
+            date: Single trading date (YYYYMMDD or YYYY-MM-DD). Overrides date_from/date_to.
+            date_from: Range start inclusive (YYYYMMDD or YYYY-MM-DD).
+            date_to: Range end inclusive (YYYYMMDD or YYYY-MM-DD).
+            indicators: Indicator names list. Default ["sma5","sma25","bb20","rsi14"].
         """
         # --- Input validation ---
         errors = collect_errors(
