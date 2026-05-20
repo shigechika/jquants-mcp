@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.38.2](https://github.com/shigechika/jquants-mcp/compare/v0.38.1...v0.38.2) (2026-05-20)
+
+
+### Bug Fixes
+
+* **dividend:** preserve NxFDivAnn across INSERT OR REPLACE in fetch_fins_summary ([#374](https://github.com/shigechika/jquants-mcp/issues/374)) ([41555ee](https://github.com/shigechika/jquants-mcp/commit/41555ee452425cb44d5feeee561ee5de48d4172b))
+
 ## [0.38.1](https://github.com/shigechika/jquants-mcp/compare/v0.38.0...v0.38.1) (2026-05-19)
 
 
