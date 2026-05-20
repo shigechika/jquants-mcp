@@ -935,8 +935,8 @@ def register(
         Default (include_trailing=False) matches Kabutan 予想配当利回りランキング:
         only stocks with a forward forecast (FDivAnn / NxFDivAnn) appear.
         Set include_trailing=True to also include trailing-DivAnn-only stocks.
-        Dividend priority: NxFDivAnn (annual results) > FDivAnn (quarterly) >
-        DivAnn (trailing; only when include_trailing=True).
+        Dividend priority: NxFDivAnn (next-FY forecast, annual filings only) >
+        FDivAnn (current-FY forecast) > DivAnn (trailing; only when include_trailing=True).
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
@@ -1132,13 +1132,13 @@ def register(
         For sector valuation (PER/PBR) use get_sector_briefing instead.
         For single-stock detail use get_stock_briefing instead.
 
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+
         Returns: summary (ADR 25d, TOPIX change, margin ratio), sector top/bottom n,
         sector_short_ratios (S33 空売り比率, Standard+), top movers, top turnover,
         screener highlights (52w/YTD highs/lows, volume surges, price limits,
         notable stocks by RSI14), trend signals (distribution days, follow-through).
         Margin/short-ratio fields are null when those caches are absent.
-
-        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
         Args:
             date: Trading date (YYYY-MM-DD or YYYYMMDD).

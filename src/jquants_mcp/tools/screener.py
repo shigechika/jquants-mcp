@@ -820,7 +820,7 @@ def register(
     ) -> dict[str, Any]:
         """Count TOPIX distribution days (機関投資家の売り) in a rolling window. All plans.
 
-        Use for 分散日・institutional selling・market under distribution queries (IBD method).
+        Use for distribution day・institutional selling・market under distribution queries (IBD method).
         Check this before confirming a follow-through day. ≥4 days in 25 sessions = failing uptrend.
         See also detect_follow_through_day.
 

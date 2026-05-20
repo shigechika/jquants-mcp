@@ -89,28 +89,20 @@ def register(
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        """Per-stock or per-day OHLC bars (日足株価). Free / all plans.
+        """Per-stock or per-day OHLC bars (日足株価). All plans.
 
-        Use for 株価, 日足, OHLC, 終値, 出来高, 調整株価 (AdjC / AdjO etc.).
-        For multi-stock date-range downloads, use get_bulk_list instead (date_from/date_to
-        without code returns thousands of rows per day and is very slow).
-
-        Includes adjusted prices (AdjO/AdjH/AdjL/AdjC/AdjV) and morning/afternoon breakdown.
-        At least one of 'code' or 'date'/'date_from'/'date_to' must be specified.
-        Query patterns:
-        - code only: full history (Light ~5y, Standard ~10y; >1000 rows)
-        - date only: all issues on that date (thousands of rows)
-        - code + date: single row
-        - code + date_from/date_to: range for one issue
+        Use for 株価・日足・OHLC・終値・出来高・調整株価 (AdjC/AdjO etc.) queries.
+        For multi-stock bulk downloads use get_bulk_list (date-only queries are very slow).
+        code only → full history; code+range → period; date only → all stocks on that date.
 
         [Supported plans] Free / Light / Standard / Premium
         Retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all.
 
         Args:
-            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only)
-            date: Single date (YYYYMMDD or YYYY-MM-DD)
-            date_from: Start date for range query (inclusive)
-            date_to: End date for range query (inclusive)
+            code: Stock code (5 digits, e.g. 27800; 4-digit codes match ordinary shares only).
+            date: Single date (YYYYMMDD or YYYY-MM-DD).
+            date_from: Range start inclusive (YYYYMMDD or YYYY-MM-DD).
+            date_to: Range end inclusive (YYYYMMDD or YYYY-MM-DD).
         """
         if code is None and date is None and date_from is None and date_to is None:
             return make_validation_error_response(
