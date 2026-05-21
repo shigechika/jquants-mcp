@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.38.8](https://github.com/shigechika/jquants-mcp/compare/v0.38.7...v0.38.8) (2026-05-21)
+
+
+### Bug Fixes
+
+* **markets:** correct HolDiv value descriptions in get_markets_calendar docstring ([#386](https://github.com/shigechika/jquants-mcp/issues/386)) ([781744d](https://github.com/shigechika/jquants-mcp/commit/781744d2f2e6811bce7fd4455f53fb837449ecb7))
+
 ## [0.38.7](https://github.com/shigechika/jquants-mcp/compare/v0.38.6...v0.38.7) (2026-05-21)
 
 
