@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.38.6](https://github.com/shigechika/jquants-mcp/compare/v0.38.5...v0.38.6) (2026-05-21)
+
+
+### Bug Fixes
+
+* **summary:** map v2 fins_summary field names in get_stock_briefing ([#382](https://github.com/shigechika/jquants-mcp/issues/382)) ([2e664f9](https://github.com/shigechika/jquants-mcp/commit/2e664f9463cb5553fdc4b61c49b68427f993619c))
+
 ## [0.38.5](https://github.com/shigechika/jquants-mcp/compare/v0.38.4...v0.38.5) (2026-05-21)
 
 
