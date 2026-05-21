@@ -728,12 +728,12 @@ class CacheStore:
                 "SELECT f.code, json_extract(f.data, '$.DivAnn') AS div_ann, m.md "
                 "FROM fins_summary f "
                 "JOIN ("
-                "  SELECT code, MAX(disc_date) AS md "
+                "  SELECT code, MAX(substr(disc_date, 1, 10)) AS md "
                 "  FROM fins_summary "
                 "  WHERE json_extract(data, '$.DivAnn') IS NOT NULL "
                 "    AND json_extract(data, '$.DivAnn') != '' "
                 "  GROUP BY code"
-                ") m ON f.code = m.code AND f.disc_date = m.md"
+                ") m ON f.code = m.code AND substr(f.disc_date, 1, 10) = m.md"
             ).fetchall()
         except Exception:
             return {}
@@ -796,7 +796,7 @@ class CacheStore:
             # results filings.
             rows = conn.execute(
                 "WITH fy_latest AS ("
-                "  SELECT code, MAX(disc_date) AS fy_md "
+                "  SELECT code, MAX(substr(disc_date, 1, 10)) AS fy_md "
                 "  FROM fins_summary "
                 "  WHERE json_extract(data, '$.DocType') LIKE 'FYFinancial%' "
                 "     OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%' "
@@ -809,14 +809,14 @@ class CacheStore:
                 "  ) AS div_fwd, m.md "
                 "FROM fins_summary f "
                 "JOIN ("
-                "  SELECT code, MAX(disc_date) AS md "
+                "  SELECT code, MAX(substr(disc_date, 1, 10)) AS md "
                 "  FROM fins_summary "
                 "  WHERE COALESCE("
                 "    NULLIF(json_extract(data, '$.NxFDivAnn'), ''), "
                 "    NULLIF(json_extract(data, '$.FDivAnn'), '')"
                 "  ) IS NOT NULL "
                 "  GROUP BY code"
-                ") m ON f.code = m.code AND f.disc_date = m.md "
+                ") m ON f.code = m.code AND substr(f.disc_date, 1, 10) = m.md "
                 "LEFT JOIN fy_latest fl ON f.code = fl.code "
                 "GROUP BY f.code, m.md "
                 "HAVING div_fwd IS NOT NULL "
@@ -1267,9 +1267,9 @@ class CacheStore:
         sql = (
             "SELECT fs.code, fs.data FROM fins_summary fs "
             "INNER JOIN ("
-            "  SELECT code, MAX(disc_date) AS max_date FROM fins_summary "
+            "  SELECT code, MAX(substr(disc_date, 1, 10)) AS max_date FROM fins_summary "
             f" WHERE ({_fy_cond}) GROUP BY code"
-            ") AS latest ON fs.code = latest.code AND fs.disc_date = latest.max_date "
+            ") AS latest ON fs.code = latest.code AND substr(fs.disc_date, 1, 10) = latest.max_date "
             f"WHERE ({_fy_cond})"
         )
         try:

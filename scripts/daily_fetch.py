@@ -402,12 +402,14 @@ def fetch_earnings_calendar(
 
     records = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
 
-    # 発表予定日（Date フィールド）を取得してキーに含める
-    # r.to_dict() は datetime64[ns] を pd.Timestamp に変換するため str() で文字列化してから処理する
-    # （pd.Timestamp.replace() は keyword arg で年月日を上書きするメソッドであり str.replace() とは別物）
+    # Normalize Date to YYYY-MM-DD (pd.Timestamp serializes as "YYYY-MM-DD HH:MM:SS")
+    for rec in records:
+        if rec.get("Date") is not None:
+            rec["Date"] = str(rec["Date"])[:10]
+
     date_val = records[0].get("Date") if records else None
     if date_val is not None:
-        date_key = str(date_val)[:10].replace("-", "")  # "2026-04-30 00:00:00" → "20260430"
+        date_key = str(date_val)[:10].replace("-", "")
     else:
         date_key = datetime.today().strftime("%Y%m%d")
 

@@ -70,7 +70,7 @@ def register(
         # Batch split-factor lookup: disc_date per code
         code_disc_dates: dict[str, str] = {}
         for code, row in fins_map.items():
-            disc_date = str(row.get("DiscDate") or row.get("disc_date") or "")
+            disc_date = str(row.get("DiscDate") or row.get("disc_date") or "")[:10]
             if disc_date:
                 code_disc_dates[code] = disc_date
         split_factors = cache.get_split_factors_after(code_disc_dates)

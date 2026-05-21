@@ -1039,3 +1039,165 @@ class TestGetLatestFinsRow:
         assert row is not None
         assert row.get("Sales") == 50.0
         store.close()
+
+
+class TestGetDivAnnMapTimestamp:
+    """get_div_ann_map: timestamp-format disc_date が混在しても最新クリーン日付行が選ばれる。"""
+
+    def _insert(
+        self,
+        conn: sqlite3.Connection,
+        code: str,
+        disc_date: str,
+        div_ann: float,
+    ) -> None:
+        import json
+
+        data = {"Code": code, "DivAnn": str(div_ann)}
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at)"
+            " VALUES (?, ?, ?, ?)",
+            (code, disc_date, json.dumps(data), time.time()),
+        )
+
+    def test_timestamp_row_does_not_shadow_same_day_clean_date(self, tmp_path: Path):
+        """同一開示日で timestamp 行と clean-date 行が共存するとき clean 形式の disc_date が返る。
+
+        旧バグ: MAX("2026-05-16 00:00:00", "2026-05-16") = "2026-05-16 00:00:00"
+        → JOIN が timestamp 行だけにマッチし disc_date が 19 文字で返っていた。
+        修正後: MAX(substr(disc_date,1,10)) = "2026-05-16"
+        → 返却される disc_date は必ず 10 文字の YYYY-MM-DD 形式になる。
+        """
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        # timestamp row inserted first (stale data)
+        self._insert(conn, "12340", "2026-05-16 00:00:00", div_ann=10.0)
+        # clean-date row inserted second (correct data, same logical date)
+        self._insert(conn, "12340", "2026-05-16", div_ann=20.0)
+        conn.commit()
+
+        result = store.get_div_ann_map()
+        assert "12340" in result
+        _, disc = result["12340"]
+        assert disc == "2026-05-16", "disc_date must be YYYY-MM-DD (not timestamp format)"
+        store.close()
+
+    def test_disc_date_returned_is_clean(self, tmp_path: Path):
+        """返却される disc_date が YYYY-MM-DD 形式であること。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "12340", "2026-05-15 00:00:00", div_ann=10.0)
+        conn.commit()
+
+        result = store.get_div_ann_map()
+        assert "12340" in result
+        _, disc = result["12340"]
+        assert len(disc) == 10 and disc[4] == "-" and disc[7] == "-"
+        store.close()
+
+
+class TestGetForwardDivAnnMapTimestamp:
+    """get_forward_div_ann_map: timestamp-format disc_date が混在しても正しく選ばれる。"""
+
+    def _insert(
+        self,
+        conn: sqlite3.Connection,
+        code: str,
+        disc_date: str,
+        fwd_val: float,
+        field: str = "FDivAnn",
+    ) -> None:
+        import json
+
+        data = {"Code": code, field: str(fwd_val)}
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at)"
+            " VALUES (?, ?, ?, ?)",
+            (code, disc_date, json.dumps(data), time.time()),
+        )
+
+    def test_timestamp_row_does_not_shadow_same_day_clean_date(self, tmp_path: Path):
+        """同一開示日で timestamp 行と clean-date 行が共存するとき clean 形式の disc_date が返る。
+
+        旧バグ: MAX("2026-05-16 00:00:00", "2026-05-16") = "2026-05-16 00:00:00"
+        → JOIN が timestamp 行だけにマッチし disc_date が 19 文字で返っていた。
+        """
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "12340", "2026-05-16 00:00:00", fwd_val=10.0)
+        self._insert(conn, "12340", "2026-05-16", fwd_val=20.0)
+        conn.commit()
+
+        result = store.get_forward_div_ann_map()
+        assert "12340" in result
+        _, disc = result["12340"]
+        assert disc == "2026-05-16", "disc_date must be YYYY-MM-DD (not timestamp format)"
+        store.close()
+
+    def test_disc_date_returned_is_clean(self, tmp_path: Path):
+        """返却される disc_date が YYYY-MM-DD 形式であること。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "12340", "2026-05-15 00:00:00", fwd_val=10.0)
+        conn.commit()
+
+        result = store.get_forward_div_ann_map()
+        assert "12340" in result
+        _, disc = result["12340"]
+        assert len(disc) == 10 and disc[4] == "-" and disc[7] == "-"
+        store.close()
+
+
+class TestGetAllLatestFyFinsTimestamp:
+    """get_all_latest_fy_fins: timestamp-format disc_date が混在しても最新行が選ばれる。"""
+
+    def _insert(
+        self,
+        conn: sqlite3.Connection,
+        code: str,
+        disc_date: str,
+        sales: float,
+    ) -> None:
+        import json
+
+        data = {
+            "Code": code,
+            "DiscDate": disc_date[:10],
+            "CurPerType": "FY",
+            "Sales": sales,
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at)"
+            " VALUES (?, ?, ?, ?)",
+            (code, disc_date, json.dumps(data), time.time()),
+        )
+
+    def test_timestamp_row_does_not_shadow_same_day_clean_date(self, tmp_path: Path):
+        """同一開示日で timestamp 行と clean-date 行が共存するとき clean 形式の disc_date が返る。
+
+        旧バグ: MAX("2026-05-16 00:00:00", "2026-05-16") = "2026-05-16 00:00:00"
+        → JOIN が timestamp 行だけにマッチし disc_date が 19 文字で返っていた。
+        """
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "12340", "2026-05-16 00:00:00", sales=100.0)
+        self._insert(conn, "12340", "2026-05-16", sales=200.0)
+        conn.commit()
+
+        result = store.get_all_latest_fy_fins()
+        assert "12340" in result
+        # verify the entry is present and the key (code) is returned
+        assert result["12340"].get("CurPerType") == "FY"
+        store.close()
+
+    def test_timestamp_only_row_returned(self, tmp_path: Path):
+        """timestamp行しかない場合でも正常に返る。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "12340", "2026-05-15 00:00:00", sales=50.0)
+        conn.commit()
+
+        result = store.get_all_latest_fy_fins()
+        assert "12340" in result
+        assert result["12340"].get("Sales") == 50.0
+        store.close()
