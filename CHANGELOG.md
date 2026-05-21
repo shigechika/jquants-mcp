@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.38.4](https://github.com/shigechika/jquants-mcp/compare/v0.38.3...v0.38.4) (2026-05-20)
+
+
+### Bug Fixes
+
+* **dividend:** exclude stale Q-report FDivAnn when newer FYFinancialStatements exists ([#378](https://github.com/shigechika/jquants-mcp/issues/378)) ([f33aa8b](https://github.com/shigechika/jquants-mcp/commit/f33aa8be89240ac931a548fb7925ed4cbe3cf489))
+
 ## [0.38.3](https://github.com/shigechika/jquants-mcp/compare/v0.38.2...v0.38.3) (2026-05-20)
 
 
