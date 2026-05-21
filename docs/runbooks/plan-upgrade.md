@@ -28,17 +28,14 @@ health_check()
 # → {"status": "ok", "plan": "standard", ...}
 ```
 
-#### 2. Update daily_fetch plan setting
+#### 2. Update daily_fetch plan setting (Cloud Run only)
 
-**m1.local** — edit `~/.config/jquants-mcp/config.ini`:
+**m1.local** — No action needed. `daily_fetch.py` auto-detects the plan
+from the API on each run.
 
-```ini
-[jquants]
-plan = standard
-```
-
-**Cloud Run** — edit `.github/workflows/cd.yml`, set
-`JQUANTS_PLAN=standard` in the `--set-env-vars` block, then push to trigger CD.
+**Cloud Run** — Edit `.github/workflows/cd.yml`, set
+`JQUANTS_PLAN=standard` in the `--set-env-vars` block, then push to
+trigger CD. This controls cache date-range restrictions on the MCP server.
 
 #### 3. Populate historical Tier 1 cache (Standard endpoints)
 
@@ -59,8 +56,8 @@ For historical depth beyond daily_fetch lookback, use bulk_fetch_all.py:
 
 ```bash
 # Pull margin-interest from 2024-01-01 onward
-uv run python scripts/bulk_fetch_all.py --endpoint margin_interest --from 20240101
-uv run python scripts/bulk_fetch_all.py --endpoint short_ratio --from 20240101
+uv run python scripts/bulk_fetch_all.py --endpoints margin_interest --from 20240101
+uv run python scripts/bulk_fetch_all.py --endpoints short_ratio --from 20240101
 ```
 
 > **Note:** `markets_short_sale_report` currently has no incremental
@@ -73,14 +70,13 @@ Run these MCP tool calls the day of upgrade (substitute today's date):
 
 | Tool | Sample call | Expected |
 |---|---|---|
-| `get_indices_bars_daily` | `code="0000", date_from="2026-05-01"` | ≥ 15 rows, OHLC fields non-null |
+| `get_indices_bars_daily` | `code="0000", date_from="2026-05-01"` | ≥ 15 rows, OHLC fields non-null (Tier 2 — API call; not populated by daily_fetch) |
 | `get_markets_margin_interest` | `date="<today>", detail=True` | count > 3000 |
 | `get_markets_margin_alert` | `date="<today>"` | count ≥ 0 (may be 0 on non-alert days) |
 | `get_markets_short_sale_report` | `date="<today>"` | count > 0 |
 | `get_markets_short_ratio` | `date="<today>"` | count > 3000 |
 | `get_derivatives_bars_daily_futures` | `date="<today>"` | count > 0 |
 | `get_sector_briefing` | `sector_type="s33"` | `margin_ratio_median` non-null on ≥ 1 sector |
-| `get_dividend_yield_ranking` | *(default)* | `margin_ratio` field populated |
 
 > **Timing note:** `margin_alert` and `margin_interest` are published at
 > ~16:30 JST. Querying for today's date before that time returns no data
@@ -90,16 +86,17 @@ Run these MCP tool calls the day of upgrade (substitute today's date):
 
 These tools are cache-only; they use margin_interest data once it's cached:
 
-- `get_sector_briefing()` — `margin_ratio_median` should be non-null
 - `get_market_briefing()` — check `margin_ratio_*` fields
-- `get_dividend_yield_ranking()` — `margin_ratio` column populated
+- `get_stock_briefing(code="<code>")` — `margin_interest.ratio` field should be non-null
+- `get_sector_briefing()` — `margin_ratio_median` should be non-null
 
 ---
 
 ## Upgrade: Standard → Premium
 
-After completing the J-Quants plan upgrade, repeat steps 1–2 above with
-`plan = premium`.
+After completing the J-Quants plan upgrade, repeat step 1 above to
+re-register the API key. `daily_fetch.py` on m1.local will auto-detect
+the new plan. For Cloud Run, update `JQUANTS_PLAN=premium` in `cd.yml`.
 
 ### Additional Premium-only tools to verify
 
@@ -125,7 +122,9 @@ After completing the J-Quants plan upgrade, repeat steps 1–2 above with
 
 ## Downgrade: Standard/Premium → Light
 
-1. Update `config.ini` (or CD env var) back to `plan = light`.
+1. **m1.local** — No config.ini change needed; `daily_fetch.py` auto-detects
+   the new plan. **Cloud Run** — update `JQUANTS_PLAN=light` in `cd.yml` and
+   push to trigger CD.
 2. Restart the MCP server (or trigger CD).
 3. Confirm `health_check()` returns `"plan": "light"`.
 4. Standard/Premium tables remain in cache.db but are no longer refreshed;
