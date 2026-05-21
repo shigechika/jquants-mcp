@@ -9,10 +9,13 @@ does NOT import from the ``jquants_mcp`` package beyond the schema
 module (imported via sys.path) so it can also run inside a consumer
 project's own virtualenv.
 
-Plan is read from ``~/.config/jquants-mcp/config.ini`` section
-``[jquants]`` key ``plan``. The plan decides which endpoints are
-fetched (Free / Light / Standard / Premium). Individual flags override
-the plan default.
+Plan detection order:
+1. ``JQUANTS_PLAN`` environment variable (highest priority)
+2. ``~/.config/jquants-mcp/config.ini`` section ``[jquants]`` key ``plan``
+3. Auto-detected by probing plan-specific API endpoints (default)
+
+The plan decides which endpoints are fetched (Free / Light / Standard /
+Premium). Individual flags override the plan default.
 
 Usage:
     python3 scripts/daily_fetch.py                    # fetch everything allowed by the plan
@@ -35,6 +38,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from jquants_mcp.cache.schema import (  # noqa: E402
@@ -78,14 +82,16 @@ TTL_7D = 7 * 24 * 3600
 TTL_90D = 90 * 24 * 3600
 
 
-def _load_plan() -> str:
-    """config.ini と環境変数からプランを読み取る。"""
-    # 環境変数が最優先
+def _load_plan() -> str | None:
+    """Load plan from environment variable or config file.
+
+    Returns None when not explicitly configured so the caller can
+    trigger API-based auto-detection via :func:`_detect_plan_from_api`.
+    """
     plan = os.environ.get("JQUANTS_PLAN")
     if plan:
         return plan.lower()
 
-    # config.ini を探索
     config = configparser.ConfigParser()
     search_paths = [
         str(Path.home() / ".config" / "jquants-mcp" / "config.ini"),
@@ -96,7 +102,43 @@ def _load_plan() -> str:
     try:
         return config.get("jquants", "plan").lower()
     except (configparser.NoSectionError, configparser.NoOptionError):
-        return "free"
+        return None
+
+
+def _detect_plan_from_api(cli: "jquantsapi.ClientV2") -> str:
+    """Probe the J-Quants API to detect the active subscription plan.
+
+    Tries plan-specific endpoints from Premium down to Light.  Returns the
+    highest plan whose endpoint responds with HTTP 200; returns "free" when
+    all higher-plan probes are rejected (HTTP 403).  Raises on HTTP 401
+    (bad API key).  Falls back to "free" on unexpected errors.
+    """
+    import requests
+
+    probes: list[tuple[str, Any]] = [
+        ("premium", lambda: cli.get_fin_details(date_yyyymmdd="20240101")),
+        ("standard", lambda: cli.get_mkt_short_ratio(date_yyyymmdd="20240101")),
+        ("light", lambda: cli.get_eq_investor_types()),
+    ]
+
+    for plan_name, probe in probes:
+        try:
+            probe()
+            return plan_name
+        except requests.exceptions.HTTPError as exc:
+            code = exc.response.status_code if exc.response is not None else None
+            if code == 403:
+                continue
+            if code == 401:
+                raise RuntimeError(
+                    "J-Quants API authentication failed (401). Check your API key."
+                ) from exc
+            raise
+        except Exception as exc:
+            print(f"⚠️  プラン検出中に予期しないエラー: {exc}、フォールバックとして 'free' を使用")
+            return "free"
+
+    return "free"
 
 
 def _available_endpoints(plan: str) -> list[str]:
@@ -935,12 +977,17 @@ _TIER1_TABLES = [
 
 
 def main() -> None:
-    plan = _load_plan()
-    available = _available_endpoints(plan)
+    configured_plan = _load_plan()
+    auto_detect = configured_plan is None
 
     parser = argparse.ArgumentParser(
         description="J-Quants 追加データを取得してキャッシュに投入",
-        epilog=f"現在のプラン: {plan}（取得可能: {', '.join(available)}）",
+        epilog="プランは API から自動検出されます"
+        if auto_detect
+        else (
+            f"現在のプラン: {configured_plan}"
+            f"（取得可能: {', '.join(_available_endpoints(configured_plan))}）"
+        ),
     )
     parser.add_argument("--topix", action="store_true", help="TOPIX 日足を取得 (Light+)")
     parser.add_argument("--fins-summary", action="store_true", help="決算サマリーを取得 (Free+)")
@@ -996,6 +1043,23 @@ def main() -> None:
     }
     has_explicit = any(explicit.values())
 
+    print(f"キャッシュ DB: {args.db}")
+    args.db.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(args.db))
+    conn.execute("PRAGMA journal_mode=WAL")
+    _ensure_tables(conn)
+
+    cli = jquantsapi.ClientV2()
+
+    if auto_detect:
+        print("プランを API から自動検出中...")
+        plan = _detect_plan_from_api(cli)
+        print(f"検出されたプラン: {plan}")
+    else:
+        plan = configured_plan  # type: ignore[assignment]
+
+    available = _available_endpoints(plan)
+
     if has_explicit:
         targets = [ep for ep, selected in explicit.items() if selected]
         # 明示指定でもプラン外なら警告
@@ -1008,13 +1072,6 @@ def main() -> None:
         targets = available
 
     print(f"プラン: {plan} | 取得対象: {', '.join(targets)}")
-    print(f"キャッシュ DB: {args.db}")
-    args.db.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(args.db))
-    conn.execute("PRAGMA journal_mode=WAL")
-    _ensure_tables(conn)
-
-    cli = jquantsapi.ClientV2()
 
     # バックフィルモード
     if args.backfill:

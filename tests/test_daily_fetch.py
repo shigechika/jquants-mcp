@@ -28,8 +28,10 @@ from daily_fetch import (  # noqa: E402
     TTL_24H,
     TTL_90D,
     _available_endpoints,
+    _detect_plan_from_api,
     _ensure_tables,
     _fetch_markets_tier1,
+    _load_plan,
     _sanitize_row,
     _store_response_cache,
     _store_tier1,
@@ -146,6 +148,81 @@ class TestAvailableEndpoints:
     def test_registry_covers_all_endpoints(self):
         """FETCH_REGISTRY が ENDPOINT_MIN_PLAN の全エンドポイントをカバーしていること。"""
         assert set(FETCH_REGISTRY.keys()) == set(ENDPOINT_MIN_PLAN.keys())
+
+
+# ============================================================
+# プラン自動検出
+# ============================================================
+
+
+class TestLoadPlan:
+    """_load_plan のテスト。"""
+
+    def test_returns_none_when_not_configured(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JQUANTS_PLAN", raising=False)
+        # config.ini が存在しないディレクトリを HOME にする
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert _load_plan() is None
+
+    def test_env_var_takes_priority(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("JQUANTS_PLAN", "Premium")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert _load_plan() == "premium"
+
+    def test_config_ini_is_used_when_no_env(self, monkeypatch, tmp_path):
+        monkeypatch.delenv("JQUANTS_PLAN", raising=False)
+        cfg_dir = tmp_path / ".config" / "jquants-mcp"
+        cfg_dir.mkdir(parents=True)
+        (cfg_dir / "config.ini").write_text("[jquants]\nplan = Standard\n")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert _load_plan() == "standard"
+
+
+class TestDetectPlanFromApi:
+    """_detect_plan_from_api のテスト。"""
+
+    def _make_cli(self, premium_ok: bool, standard_ok: bool, light_ok: bool) -> MagicMock:
+        import requests
+
+        def _raise_403(*args, **kwargs):
+            exc = requests.exceptions.HTTPError(response=MagicMock(status_code=403))
+            raise exc
+
+        cli = MagicMock()
+        cli.get_fin_details.side_effect = None if premium_ok else _raise_403
+        cli.get_mkt_short_ratio.side_effect = None if standard_ok else _raise_403
+        cli.get_eq_investor_types.side_effect = None if light_ok else _raise_403
+        return cli
+
+    def test_detects_premium(self):
+        cli = self._make_cli(premium_ok=True, standard_ok=True, light_ok=True)
+        assert _detect_plan_from_api(cli) == "premium"
+
+    def test_detects_standard(self):
+        cli = self._make_cli(premium_ok=False, standard_ok=True, light_ok=True)
+        assert _detect_plan_from_api(cli) == "standard"
+
+    def test_detects_light(self):
+        cli = self._make_cli(premium_ok=False, standard_ok=False, light_ok=True)
+        assert _detect_plan_from_api(cli) == "light"
+
+    def test_detects_free_when_all_403(self):
+        cli = self._make_cli(premium_ok=False, standard_ok=False, light_ok=False)
+        assert _detect_plan_from_api(cli) == "free"
+
+    def test_raises_on_401(self):
+        import requests
+
+        cli = MagicMock()
+        exc = requests.exceptions.HTTPError(response=MagicMock(status_code=401))
+        cli.get_fin_details.side_effect = exc
+        with pytest.raises(RuntimeError, match="401"):
+            _detect_plan_from_api(cli)
+
+    def test_falls_back_to_free_on_unexpected_error(self):
+        cli = MagicMock()
+        cli.get_fin_details.side_effect = ConnectionError("network down")
+        assert _detect_plan_from_api(cli) == "free"
 
 
 # ============================================================
