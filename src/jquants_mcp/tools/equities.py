@@ -33,10 +33,10 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_earnings_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Normalize Date field to YYYY-MM-DD in earnings calendar records."""
+    """Normalize Date field to YYYY-MM-DD in earnings calendar records (in-place)."""
     for rec in records:
         raw = rec.get("Date")
-        if raw:
+        if raw is not None:
             rec["Date"] = str(raw)[:10]
     return records
 
