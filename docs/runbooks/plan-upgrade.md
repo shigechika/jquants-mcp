@@ -28,16 +28,7 @@ health_check()
 # → {"status": "ok", "plan": "standard", ...}
 ```
 
-#### 2. Update daily_fetch plan setting (Cloud Run only)
-
-**Self-hosted** — No action needed. `daily_fetch.py` auto-detects the plan
-from the API on each run.
-
-**Cloud Run** — Edit `.github/workflows/cd.yml`, set
-`JQUANTS_PLAN=standard` in the `--set-env-vars` block, then push to
-trigger CD. This controls cache date-range restrictions on the MCP server.
-
-#### 3. Populate historical Tier 1 cache (Standard endpoints)
+#### 2. Populate historical Tier 1 cache (Standard endpoints)
 
 Run daily_fetch once to seed the new tables:
 
@@ -63,7 +54,7 @@ uv run python scripts/bulk_fetch_all.py --endpoints short_ratio --from 20240101
 > Tier 1 cache (PR D pending). daily_fetch seeds today's data only.
 > Historical short-sale-report data is not backfilled by default.
 
-#### 4. Verify each newly unlocked tool
+#### 3. Verify each newly unlocked tool
 
 Run these MCP tool calls the day of upgrade (substitute today's date):
 
@@ -81,7 +72,7 @@ Run these MCP tool calls the day of upgrade (substitute today's date):
 > ~16:30 JST. Querying for today's date before that time returns no data
 > (not a bug).
 
-#### 5. Cache-only tools: confirm enriched output
+#### 4. Cache-only tools: confirm enriched output
 
 These tools are cache-only; they use margin_interest data once it's cached:
 
@@ -94,9 +85,8 @@ These tools are cache-only; they use margin_interest data once it's cached:
 ## Upgrade: Standard → Premium
 
 After completing the J-Quants plan upgrade, repeat step 1 above to
-re-register the API key. `daily_fetch.py` on self-hosted deployments will
-auto-detect the new plan. For Cloud Run, update `JQUANTS_PLAN=premium` in
-`cd.yml`.
+re-register the API key. Plan is auto-detected everywhere; no config
+changes needed.
 
 ### Additional Premium-only tools to verify
 
@@ -122,9 +112,8 @@ auto-detect the new plan. For Cloud Run, update `JQUANTS_PLAN=premium` in
 
 ## Downgrade: Standard/Premium → Light
 
-1. **Self-hosted** — No config.ini change needed; `daily_fetch.py` auto-detects
-   the new plan. **Cloud Run** — update `JQUANTS_PLAN=light` in `cd.yml` and
-   push to trigger CD.
+1. Re-register the (downgraded) API key via `register_api_key()` or `/settings`.
+   Plan is auto-detected everywhere; no config changes needed.
 2. Restart the MCP server (or trigger CD).
 3. Confirm `health_check()` returns `"plan": "light"`.
 4. Standard/Premium tables remain in cache.db but are no longer refreshed;
