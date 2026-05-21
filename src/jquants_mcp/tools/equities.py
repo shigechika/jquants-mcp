@@ -32,6 +32,15 @@ from ..validators import (
 logger = logging.getLogger(__name__)
 
 
+def _normalize_earnings_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Normalize Date field to YYYY-MM-DD in earnings calendar records."""
+    for rec in records:
+        raw = rec.get("Date")
+        if raw:
+            rec["Date"] = str(raw)[:10]
+    return records
+
+
 def register(
     mcp: FastMCP,
     get_client: callable,
@@ -325,21 +334,22 @@ def register(
             cache_key = make_cache_key("/equities/earnings-calendar", {"date": date_key})
             cached = cache.get_response(cache_key)
             if cached is not None:
-                if isinstance(cached, list):
-                    cached = {"count": len(cached), "data": cached}
-                return cached
+                recs = cached if isinstance(cached, list) else cached.get("data", [])
+                recs = _normalize_earnings_records(recs)
+                return {"count": len(recs), "data": recs}
             return {"count": 0, "data": [], "message": f"No data for date {date}."}
 
         # No filter: use Tier 2 response cache (latest accumulated data)
         cache_key = make_cache_key("/equities/earnings-calendar")
         cached = cache.get_response(cache_key)
         if cached is not None:
-            if isinstance(cached, list):
-                cached = {"count": len(cached), "data": cached}
-            return cached
+            recs = cached if isinstance(cached, list) else cached.get("data", [])
+            recs = _normalize_earnings_records(recs)
+            return {"count": len(recs), "data": recs}
 
         try:
             data = await client.get_all_pages("/equities/earnings-calendar")
+            data = _normalize_earnings_records(data)
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_90D)
             return result
@@ -431,7 +441,7 @@ def register(
             ).fetchall()
             if rows:
                 matches = sorted(
-                    [json.loads(r["data"]) for r in rows],
+                    _normalize_earnings_records([json.loads(r["data"]) for r in rows]),
                     key=lambda r: r.get("Date", ""),
                     reverse=True,
                 )
@@ -457,9 +467,10 @@ def register(
             for rec in records:
                 rec_code = str(rec.get("Code", ""))
                 if rec_code == code:
-                    ann_date = str(rec.get("Date", ""))
+                    ann_date = str(rec.get("Date", ""))[:10]
                     if ann_date not in seen_dates:
                         seen_dates.add(ann_date)
+                        rec["Date"] = ann_date
                         matches.append(rec)
 
         matches.sort(key=lambda r: r.get("Date", ""), reverse=True)
@@ -475,7 +486,7 @@ def register(
                 "SELECT data FROM equities_earnings_calendar WHERE date = ? ORDER BY code",
                 (norm_date,),
             ).fetchall()
-            return [json.loads(r["data"]) for r in rows]
+            return _normalize_earnings_records([json.loads(r["data"]) for r in rows])
         except sqlite3.OperationalError:
             return []
 
