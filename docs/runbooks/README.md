@@ -12,6 +12,7 @@ One runbook per alert scenario. Each is ≤ 1 screen: **symptom → quick check
 | [oauth-loop.md](oauth-loop.md) | Manual (user reports login failure) |
 | [firestore-restore.md](firestore-restore.md) | Manual (data loss) |
 | [secrets-rotation.md](secrets-rotation.md) | Manual (planned / leak response) |
+| [plan-upgrade.md](plan-upgrade.md) | Manual (J-Quants plan upgrade / downgrade) |
 
 Alert policies live in [`ops/alerts/`](../../ops/alerts/). Each policy's
 `documentation.content` links back to the matching runbook here.
