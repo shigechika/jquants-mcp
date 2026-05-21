@@ -115,9 +115,7 @@ def register(
             row = adjusted[0]
 
             fiscal_period = row.get("FiscalPeriod")
-            fiscal_year_end = str(
-                row["CurFYEn"] if "CurFYEn" in row else row.get("FiscalYearEndDate") or ""
-            )[:10]
+            fiscal_year_end = str(row.get("CurFYEn") or row.get("FiscalYearEndDate") or "")[:10]
             fins_disc_date = str(row.get("DiscDate") or row.get("disc_date") or "")[:10]
 
             revenue = float_or_none(row["Sales"] if "Sales" in row else row.get("NetSales"))
