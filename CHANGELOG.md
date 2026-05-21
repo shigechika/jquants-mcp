@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.38.7](https://github.com/shigechika/jquants-mcp/compare/v0.38.6...v0.38.7) (2026-05-21)
+
+
+### Bug Fixes
+
+* **cache:** use substr(disc_date,1,10) in MAX() to avoid timestamp shadowing ([#384](https://github.com/shigechika/jquants-mcp/issues/384)) ([5872b39](https://github.com/shigechika/jquants-mcp/commit/5872b39b815f58ae4a68fb4c61fc4b2503192c93))
+
 ## [0.38.6](https://github.com/shigechika/jquants-mcp/compare/v0.38.5...v0.38.6) (2026-05-21)
 
 
