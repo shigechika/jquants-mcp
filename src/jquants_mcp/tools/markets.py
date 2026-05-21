@@ -343,7 +343,7 @@ def register(
         [Supported plans] Free / Light / Standard / Premium
 
         Args:
-            hol_div: Holiday type filter (e.g. 0 = trading day, 1 = holiday, 2 = special holiday)
+            hol_div: Filter by holiday division code (1 = trading day / 営業日, 0 = non-trading weekend / 週末, 3 = national holiday on weekday / 祝日; other values may exist)
             date_from: Start date for range query (YYYYMMDD or YYYY-MM-DD)
             date_to: End date for range query (YYYYMMDD or YYYY-MM-DD)
         """
