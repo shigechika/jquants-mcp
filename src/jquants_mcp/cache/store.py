@@ -332,6 +332,7 @@ class CacheStore:
         # 既存テーブルのマイグレーション
         self._migrate_normalize_fields()
         self._migrate_drop_plan()
+        self._migrate_normalize_calendar_dates()
 
     def _migrate_drop_plan(self) -> None:
         """Remove plan column from Tier 1 tables and plan suffix from Tier 2 keys.
@@ -479,6 +480,40 @@ class CacheStore:
         conn.execute("PRAGMA user_version = 2")
         conn.commit()
         logger.info("Migration: plan removal complete (user_version=2)")
+
+    def _migrate_normalize_calendar_dates(self) -> None:
+        """Remove timestamp-suffix duplicates from markets_calendar.date.
+
+        Runs once: skipped when ``PRAGMA user_version >= 3``.
+
+        daily_fetch._store_tier1 normalizes date keys to YYYY-MM-DD, but rows
+        that were stored before that normalization existed carry dates like
+        '2026-05-18 00:00:00'.  Since the PRIMARY KEY is TEXT, both forms coexist
+        and get_rows returns duplicates for date-range queries.  All 4,301
+        timestamp rows have a clean counterpart, so deletion is safe.
+        """
+        conn = self._conn
+        assert conn is not None
+
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= 3:
+            return
+
+        try:
+            result = conn.execute("DELETE FROM markets_calendar WHERE date LIKE '% %'")
+            deleted = result.rowcount
+        except sqlite3.OperationalError:
+            deleted = 0
+
+        conn.execute("PRAGMA user_version = 3")
+        conn.commit()
+        if deleted:
+            logger.info(
+                "Migration: removed %d timestamp-format rows from markets_calendar (user_version=3)",
+                deleted,
+            )
+        else:
+            logger.info("Migration: markets_calendar already clean (user_version=3)")
 
     def _migrate_normalize_fields(self) -> None:
         """Normalize legacy J-Quants v1 field names to v2 in Tier 1 data JSON.

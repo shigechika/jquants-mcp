@@ -274,7 +274,7 @@ class TestPlanIsolation:
         row = conn2.execute("SELECT data FROM equities_bars_daily WHERE code = '72030'").fetchone()
         assert json.loads(row[0])["O"] == 999
 
-        assert conn2.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert conn2.execute("PRAGMA user_version").fetchone()[0] >= 2
         store.close()
 
 
@@ -879,3 +879,99 @@ class TestRequestReload:
         conn = cache_store._ensure_connection()
         assert conn is not None
         assert cache_store._ready is True
+
+
+class TestMigrateNormalizeCalendarDates:
+    """Tests for _migrate_normalize_calendar_dates() (user_version=3)."""
+
+    @staticmethod
+    def _open_store(tmp_path: Path) -> tuple["CacheStore", sqlite3.Connection]:
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        store.put_rows(
+            "equities_bars_daily",
+            [{"Code": "00000", "Date": "1970-01-01", "O": 0, "AdjFactor": 1.0}],
+            ["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        conn = store._conn
+        assert conn is not None
+        conn.execute("DELETE FROM equities_bars_daily WHERE code = '00000'")
+        conn.commit()
+        return store, conn
+
+    def _seed_calendar(self, conn: sqlite3.Connection, dates: list[str]) -> None:
+        """Insert both clean and timestamp versions of each date."""
+        for d in dates:
+            for dv in (d, d + " 00:00:00"):
+                conn.execute(
+                    "INSERT OR REPLACE INTO markets_calendar "
+                    "(date, data, fetched_at) VALUES (?, ?, ?)",
+                    (dv, f'{{"Date":"{dv}","HolDivision":"1"}}', 0.0),
+                )
+        conn.commit()
+
+    def test_migration_removes_timestamp_rows(self, tmp_path: Path):
+        """Timestamp-suffix rows are removed; clean rows remain."""
+        store, conn = self._open_store(tmp_path)
+        conn.execute("PRAGMA user_version = 2")
+        self._seed_calendar(conn, ["2026-05-18", "2026-05-19", "2026-05-20"])
+        assert conn.execute("SELECT COUNT(*) FROM markets_calendar").fetchone()[0] == 6
+
+        store._migrate_normalize_calendar_dates()
+
+        assert conn.execute("SELECT COUNT(*) FROM markets_calendar").fetchone()[0] == 3
+        assert (
+            conn.execute("SELECT COUNT(*) FROM markets_calendar WHERE date LIKE '% %'").fetchone()[
+                0
+            ]
+            == 0
+        )
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+
+    def test_migration_skips_when_already_done(self, tmp_path: Path):
+        """Migration is a no-op when user_version >= 3."""
+        store, conn = self._open_store(tmp_path)
+        conn.execute("PRAGMA user_version = 3")
+        conn.execute(
+            "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?, ?, ?)",
+            ("2026-05-18 00:00:00", '{"Date":"2026-05-18 00:00:00"}', 0.0),
+        )
+        conn.commit()
+
+        store._migrate_normalize_calendar_dates()
+
+        assert (
+            conn.execute("SELECT COUNT(*) FROM markets_calendar WHERE date LIKE '% %'").fetchone()[
+                0
+            ]
+            == 1
+        ), "Migration must not run when user_version >= 3"
+
+    def test_migration_absent_table_does_not_raise(self, tmp_path: Path):
+        """Migration handles missing markets_calendar table gracefully."""
+        store, conn = self._open_store(tmp_path)
+        conn.execute("PRAGMA user_version = 2")
+        conn.execute("DROP TABLE markets_calendar")
+        conn.commit()
+
+        store._migrate_normalize_calendar_dates()
+
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+
+    def test_get_rows_no_duplicates_after_migration(self, tmp_path: Path):
+        """get_rows returns exactly one row per date after migration."""
+        store, conn = self._open_store(tmp_path)
+        conn.execute("PRAGMA user_version = 2")
+        self._seed_calendar(conn, ["2026-05-19", "2026-05-20", "2026-05-21"])
+
+        store._migrate_normalize_calendar_dates()
+
+        rows = store.get_rows(
+            "markets_calendar",
+            key_filter={},
+            date_from="2026-05-19",
+            date_to="2026-05-21",
+        )
+        dates = [r["Date"] for r in rows]
+        assert len(dates) == 3
+        assert len(set(dates)) == 3, f"Duplicate dates returned: {dates}"
