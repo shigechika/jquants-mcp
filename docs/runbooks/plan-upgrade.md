@@ -30,7 +30,7 @@ health_check()
 
 #### 2. Update daily_fetch plan setting (Cloud Run only)
 
-**m1.local** — No action needed. `daily_fetch.py` auto-detects the plan
+**Self-hosted** — No action needed. `daily_fetch.py` auto-detects the plan
 from the API on each run.
 
 **Cloud Run** — Edit `.github/workflows/cd.yml`, set
@@ -39,10 +39,9 @@ trigger CD. This controls cache date-range restrictions on the MCP server.
 
 #### 3. Populate historical Tier 1 cache (Standard endpoints)
 
-Run daily_fetch once in full-backfill mode to seed the new tables:
+Run daily_fetch once to seed the new tables:
 
 ```bash
-# m1.local
 uv run python scripts/daily_fetch.py
 
 # Verify new tables received rows
@@ -95,8 +94,9 @@ These tools are cache-only; they use margin_interest data once it's cached:
 ## Upgrade: Standard → Premium
 
 After completing the J-Quants plan upgrade, repeat step 1 above to
-re-register the API key. `daily_fetch.py` on m1.local will auto-detect
-the new plan. For Cloud Run, update `JQUANTS_PLAN=premium` in `cd.yml`.
+re-register the API key. `daily_fetch.py` on self-hosted deployments will
+auto-detect the new plan. For Cloud Run, update `JQUANTS_PLAN=premium` in
+`cd.yml`.
 
 ### Additional Premium-only tools to verify
 
@@ -122,7 +122,7 @@ the new plan. For Cloud Run, update `JQUANTS_PLAN=premium` in `cd.yml`.
 
 ## Downgrade: Standard/Premium → Light
 
-1. **m1.local** — No config.ini change needed; `daily_fetch.py` auto-detects
+1. **Self-hosted** — No config.ini change needed; `daily_fetch.py` auto-detects
    the new plan. **Cloud Run** — update `JQUANTS_PLAN=light` in `cd.yml` and
    push to trigger CD.
 2. Restart the MCP server (or trigger CD).
