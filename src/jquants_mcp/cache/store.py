@@ -1209,7 +1209,7 @@ class CacheStore:
                 "  OR json_extract(data, '$.TypeOfCurrentPeriod') = 'FY' "
                 "  OR json_extract(data, '$.DocType') LIKE 'FYFinancial%' "
                 "  OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%'"
-                ") ORDER BY disc_date DESC LIMIT 1",
+                ") ORDER BY substr(disc_date, 1, 10) DESC, length(disc_date) ASC LIMIT 1",
                 (code,),
             ).fetchone()
         except Exception:

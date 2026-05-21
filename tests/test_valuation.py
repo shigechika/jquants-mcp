@@ -119,7 +119,7 @@ def _insert_fins(
         "Code": code,
         "DiscDate": disc_date,
         "CurPerType": cur_per_type,
-        "FiscalYearEndDate": fy_end,
+        "CurFYEn": fy_end,
         "EPS": eps,
         "BPS": bps,
     }
