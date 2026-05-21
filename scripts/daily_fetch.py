@@ -38,6 +38,7 @@ import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -115,7 +116,7 @@ def _detect_plan_from_api(cli: "jquantsapi.ClientV2") -> str:
     """
     import requests
 
-    probes: list[tuple[str, Any]] = [
+    probes: list[tuple[str, Callable[[], Any]]] = [
         ("premium", lambda: cli.get_fin_details(date_yyyymmdd="20240101")),
         ("standard", lambda: cli.get_mkt_short_ratio(date_yyyymmdd="20240101")),
         ("light", lambda: cli.get_eq_investor_types()),
@@ -135,8 +136,10 @@ def _detect_plan_from_api(cli: "jquantsapi.ClientV2") -> str:
                 ) from exc
             raise
         except Exception as exc:
-            print(f"⚠️  プラン検出中に予期しないエラー: {exc}、フォールバックとして 'free' を使用")
-            return "free"
+            raise RuntimeError(
+                f"Plan auto-detection failed: {exc}. "
+                "Set JQUANTS_PLAN env var or config.ini [jquants] plan to bypass."
+            ) from exc
 
     return "free"
 
@@ -1056,7 +1059,8 @@ def main() -> None:
         plan = _detect_plan_from_api(cli)
         print(f"検出されたプラン: {plan}")
     else:
-        plan = configured_plan  # type: ignore[assignment]
+        assert configured_plan is not None
+        plan = configured_plan
 
     available = _available_endpoints(plan)
 

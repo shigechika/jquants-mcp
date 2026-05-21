@@ -219,10 +219,11 @@ class TestDetectPlanFromApi:
         with pytest.raises(RuntimeError, match="401"):
             _detect_plan_from_api(cli)
 
-    def test_falls_back_to_free_on_unexpected_error(self):
+    def test_raises_on_unexpected_error(self):
         cli = MagicMock()
         cli.get_fin_details.side_effect = ConnectionError("network down")
-        assert _detect_plan_from_api(cli) == "free"
+        with pytest.raises(RuntimeError, match="Plan auto-detection failed"):
+            _detect_plan_from_api(cli)
 
 
 # ============================================================
