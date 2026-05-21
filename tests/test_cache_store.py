@@ -974,6 +974,7 @@ class TestMigrateNormalizeCalendarDates:
         )
         dates = [r["Date"] for r in rows]
         assert len(dates) == 3
+        assert len(set(dates)) == 3, f"Duplicate dates returned: {dates}"
 
 
 class TestGetLatestFinsRow:
