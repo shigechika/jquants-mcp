@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.38.5](https://github.com/shigechika/jquants-mcp/compare/v0.38.4...v0.38.5) (2026-05-21)
+
+
+### Bug Fixes
+
+* **cache:** remove timestamp-format duplicates from markets_calendar (user_version=3) ([#380](https://github.com/shigechika/jquants-mcp/issues/380)) ([4ba4681](https://github.com/shigechika/jquants-mcp/commit/4ba4681b3a99198aa8296f66e5675b9af6997d5b))
+
 ## [0.38.4](https://github.com/shigechika/jquants-mcp/compare/v0.38.3...v0.38.4) (2026-05-20)
 
 
