@@ -975,3 +975,67 @@ class TestMigrateNormalizeCalendarDates:
         dates = [r["Date"] for r in rows]
         assert len(dates) == 3
         assert len(set(dates)) == 3, f"Duplicate dates returned: {dates}"
+
+
+class TestGetLatestFinsRow:
+    """get_latest_fins_row: timestamp-format disc_date の優先度テスト。"""
+
+    def _insert_fins(
+        self,
+        conn: sqlite3.Connection,
+        code: str,
+        disc_date: str,
+        sales: float,
+    ) -> None:
+        import json
+
+        data = {
+            "Code": code,
+            "DiscDate": disc_date[:10],
+            "CurPerType": "FY",
+            "Sales": sales,
+        }
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at)"
+            " VALUES (?, ?, ?, ?)",
+            (code, disc_date, json.dumps(data), time.time()),
+        )
+
+    def test_clean_date_preferred_over_timestamp_same_date(self, tmp_path: Path):
+        """同じ開示日でタイムスタンプ行とクリーン行が共存するとき、クリーン行が返る。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert_fins(conn, "72030", "2026-05-08 00:00:00", sales=100.0)
+        self._insert_fins(conn, "72030", "2026-05-08", sales=200.0)
+        conn.commit()
+
+        row = store.get_latest_fins_row("72030")
+        assert row is not None
+        # clean-date 行（Sales=200）が選ばれること
+        assert row.get("Sales") == 200.0
+        store.close()
+
+    def test_most_recent_date_returned_when_no_timestamp_conflict(self, tmp_path: Path):
+        """タイムスタンプ重複なしの場合、最新 disc_date の行が返る。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert_fins(conn, "72030", "2026-03-31", sales=100.0)
+        self._insert_fins(conn, "72030", "2026-05-08", sales=999.0)
+        conn.commit()
+
+        row = store.get_latest_fins_row("72030")
+        assert row is not None
+        assert row.get("Sales") == 999.0
+        store.close()
+
+    def test_timestamp_row_alone_still_returned(self, tmp_path: Path):
+        """タイムスタンプ行しかない場合でも正常に返る。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert_fins(conn, "72030", "2026-05-08 00:00:00", sales=50.0)
+        conn.commit()
+
+        row = store.get_latest_fins_row("72030")
+        assert row is not None
+        assert row.get("Sales") == 50.0
+        store.close()

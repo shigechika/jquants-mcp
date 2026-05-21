@@ -115,13 +115,13 @@ def register(
             row = adjusted[0]
 
             fiscal_period = row.get("FiscalPeriod")
-            fiscal_year_end = str(row.get("FiscalYearEndDate") or "")
-            fins_disc_date = str(row.get("DiscDate") or row.get("disc_date") or "")
+            fiscal_year_end = str(row.get("CurFYEn") or row.get("FiscalYearEndDate") or "")[:10]
+            fins_disc_date = str(row.get("DiscDate") or row.get("disc_date") or "")[:10]
 
-            revenue = float_or_none(row.get("NetSales"))
-            op_profit = float_or_none(row.get("OperatingProfit"))
-            ord_profit = float_or_none(row.get("OrdinaryProfit"))
-            net_income = float_or_none(row.get("Profit"))
+            revenue = float_or_none(row["Sales"] if "Sales" in row else row.get("NetSales"))
+            op_profit = float_or_none(row["OP"] if "OP" in row else row.get("OperatingProfit"))
+            ord_profit = float_or_none(row["OdP"] if "OdP" in row else row.get("OrdinaryProfit"))
+            net_income = float_or_none(row["NP"] if "NP" in row else row.get("Profit"))
 
             # Prefer Adj variants: _apply_split_adjustment fills AdjEPS/AdjBPS/AdjDivAnn
             eps = float_or_none(row.get("AdjEPS") or row.get("EPS"))
