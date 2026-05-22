@@ -84,11 +84,18 @@ def download_files(file_list: list[str] | None = None) -> None:
         file_list: List of filenames to download. Defaults to _DOWNLOAD_FILES.
 
     Missing objects are silently skipped (first-run case).
+    Returns immediately without initializing the GCS client when the
+    resolved file list is empty, avoiding unnecessary credential lookups
+    that can hang indefinitely on non-GCP hosts.
     """
+    files = file_list if file_list is not None else _DOWNLOAD_FILES
+    if not files:
+        logger.debug("No files configured for download, skipping")
+        return
+
     from google.cloud import storage  # type: ignore[import-untyped]
     from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
 
-    files = file_list if file_list is not None else _DOWNLOAD_FILES
     bucket, prefix, cache_dir = _get_config()
     client = storage.Client()
     gcs_bucket = client.bucket(bucket)
