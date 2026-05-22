@@ -79,9 +79,9 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     "get_stock_briefing": READ_ONLY_CACHE,
     # tools/valuation.py — cache only, no API
     "get_sector_briefing": READ_ONLY_CACHE,
-    # tools/charts.py — cache only, returns Image (when [charts] extra installed)
+    # tools/charts.py — cache only
     "render_candlestick": READ_ONLY_CACHE,
-    "render_comparison_chart": READ_ONLY_CACHE,
+    "get_comparison_chart_data": READ_ONLY_CACHE,
     # server.py utilities — pure server-local read
     "health_check": READ_ONLY_LOCAL,
     "cache_status": READ_ONLY_LOCAL,

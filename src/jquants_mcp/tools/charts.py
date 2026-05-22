@@ -1,16 +1,21 @@
-"""Chart-rendering tools for jquants-mcp.
+"""Chart tools for jquants-mcp.
 
-Reads daily bars from the ``equities_bars_daily`` Tier 1 cache, builds a
-pandas DataFrame, and renders a candlestick PNG via ``mplfinance``. The
-PNG is returned through FastMCP's ``Image`` helper so Claude Desktop /
-mobile clients display it inline.
+Two tools are exposed:
 
-The module is **opt-in**: ``mplfinance`` and ``matplotlib`` are not core
-dependencies (~60 MB). ``register()`` returns silently if either import
-fails, so the lean stdio install simply omits the tool. Install with::
+* ``get_comparison_chart_data`` — returns JSON time-series data (wide
+  Recharts format) for multi-stock performance comparison. No optional
+  dependencies; always registered.
 
-    pip install "jquants-mcp[charts]"
-    uv sync --extra charts
+* ``render_candlestick`` — reads daily bars and renders a candlestick PNG
+  via ``mplfinance``. Requires the ``[charts]`` extra (~60 MB). Install
+  with::
+
+      pip install "jquants-mcp[charts]"
+      uv sync --extra charts
+
+  ``register()`` silently skips ``render_candlestick`` registration when
+  the extra is not installed; ``get_comparison_chart_data`` is still
+  available.
 """
 
 from __future__ import annotations
@@ -116,7 +121,7 @@ _DPI = 100
 # Default display range for render_candlestick when from_date / to_date are omitted.
 _DEFAULT_RANGE_DAYS = 91
 
-# Accepted aspect ratios for render_candlestick and render_comparison_chart.
+# Accepted aspect ratios for render_candlestick.
 # "square" is the default — fits naturally in both chat and mobile viewports.
 _ASPECT_RATIOS: dict[str, tuple[float, float]] = {
     "square": (8.0, 8.0),
@@ -363,10 +368,182 @@ def register(
 ) -> None:
     """Register chart-rendering tools.
 
-    Returns silently when the optional ``mplfinance`` / ``matplotlib``
-    extras are not installed, so production servers running the lean
-    stdio profile skip the tool registration without raising.
+    ``get_comparison_chart_data`` is always registered (no optional
+    dependencies). ``render_candlestick`` requires the ``[charts]``
+    extra (mplfinance + matplotlib) and is silently skipped when those
+    are not installed.
     """
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def get_comparison_chart_data(
+        codes: list[str],
+        from_date: str,
+        to_date: str,
+        mode: str = "return_pct",
+        labels: list[str] | None = None,
+    ) -> dict:
+        """Return time-series data for a multi-stock comparison (複数銘柄比較データ). All plans.
+
+        Use for 比較チャート・パフォーマンス比較・リターン比較・relative performance queries (up to 10 codes).
+        Returns JSON records suitable for React artifact rendering with Recharts LineChart.
+        For ローソク足・candlestick charts use sibling render_candlestick (returns PNG).
+
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+
+        Args:
+            codes: 1–10 stock codes (e.g. ["7203", "8697"]).
+            from_date: Range start (YYYYMMDD or YYYY-MM-DD), inclusive.
+            to_date: Range end (YYYYMMDD or YYYY-MM-DD), inclusive.
+            mode: "return_pct" (default, normalised to 0% at first bar) or "price" (raw adjusted close).
+            labels: Custom legend labels per code. Omit for auto-generated names.
+
+        Returns:
+            dict with keys:
+              mode        — echoes the requested mode
+              from_date   — normalised YYYY-MM-DD
+              to_date     — normalised YYYY-MM-DD
+              records     — list of {"date": str, <label>: float, ...} rows (Recharts dataKey format)
+              series_keys — ordered list of label strings matching records keys
+            On error: {"error": "<message>"}
+        """
+        if not codes or len(codes) > 10:
+            return {"error": "codes must be a list of 1–10 stock codes."}
+
+        code_errors: list[str] = []
+        for c in codes:
+            err = validate_code(c, param=f"codes[{c!r}]")
+            if err:
+                code_errors.append(err)
+        date_errors = collect_errors(
+            validate_date(from_date, param="from_date"),
+            validate_date(to_date, param="to_date"),
+        )
+        all_errors = code_errors + date_errors
+        if all_errors:
+            return {"error": "; ".join(all_errors)}
+
+        if mode not in ("return_pct", "price"):
+            return {"error": f"Unknown mode: {mode!r}. Accepted: 'return_pct', 'price'"}
+        if labels is not None and len(labels) != len(codes):
+            return {
+                "error": f"labels length ({len(labels)}) must match codes length ({len(codes)})."
+            }
+
+        norm_from = _normalize_date(from_date)
+        norm_to = _normalize_date(to_date)
+        if norm_from > norm_to:
+            return {"error": "`from_date` must be <= `to_date`."}
+
+        cache: CacheStore = get_cache()
+
+        series_map: dict[str, dict[str, float]] = {}
+        for idx, code in enumerate(codes):
+            norm_code = normalize_code(code)
+            try:
+                rows = cache.get_rows(
+                    "equities_bars_daily",
+                    key_filter={"code": norm_code},
+                    date_from=norm_from,
+                    date_to=norm_to,
+                )
+            except (
+                APIError,
+                InvalidAPIKeyError,
+                UserNotConfiguredError,
+                DecryptionError,
+                UserNotAllowedError,
+            ) as e:
+                err = format_api_error(e)
+                return {"error": err.get("message") or "API error"}
+
+            raw: dict[str, float] = {}
+            for r in rows:
+                try:
+                    d = _normalize_date(r["Date"])
+                    adj_c = r.get("AdjC")
+                    raw_c = r.get("C")
+                    val = float(adj_c if adj_c not in (None, "") else raw_c)
+                    raw[d] = val
+                except (KeyError, TypeError, ValueError):
+                    continue
+
+            if not raw:
+                logger.debug("get_comparison_chart_data: no bars for %s", norm_code)
+                continue
+
+            display = display_code(norm_code)
+            if labels is not None and labels[idx].strip():
+                label = labels[idx]
+            else:
+                company = _get_company_name(cache, norm_code)
+                if company:
+                    brief = _brief_company_name(company)
+                    label = f"{display} {brief}" if brief else display
+                else:
+                    label = display
+            series_map[label] = raw
+
+        if not series_map:
+            return {"error": f"No cached bars found for any code in {norm_from}..{norm_to}."}
+
+        # Collect all unique dates and ordered labels
+        all_dates = sorted({d for series in series_map.values() for d in series})
+        all_labels = list(series_map.keys())
+
+        # Build matrix: date -> label -> value (None if not yet seen)
+        matrix: dict[str, dict[str, float | None]] = {d: {} for d in all_dates}
+        for lbl, series in series_map.items():
+            for d in all_dates:
+                matrix[d][lbl] = series.get(d)
+
+        # Forward-fill isolated missing days (e.g., one stock absent from
+        # a specific API response) so a single gap doesn't break the line.
+        last_known: dict[str, float | None] = {lbl: None for lbl in all_labels}
+        for d in all_dates:
+            for lbl in all_labels:
+                if matrix[d][lbl] is not None:
+                    last_known[lbl] = matrix[d][lbl]
+                elif last_known[lbl] is not None:
+                    matrix[d][lbl] = last_known[lbl]
+
+        if mode == "return_pct":
+            # bfill so a stock that starts mid-window (late IPO) uses its
+            # own first real bar as baseline rather than giving a None row.
+            baseline: dict[str, float | None] = {}
+            for lbl in all_labels:
+                baseline[lbl] = None
+                for d in all_dates:
+                    if matrix[d][lbl] is not None:
+                        baseline[lbl] = matrix[d][lbl]
+                        break
+
+            for d in all_dates:
+                for lbl in all_labels:
+                    v = matrix[d][lbl]
+                    b = baseline[lbl]
+                    if v is not None and b is not None and b != 0:
+                        matrix[d][lbl] = round((v / b - 1) * 100, 6)
+                    else:
+                        matrix[d][lbl] = None
+
+        # Assemble Recharts-compatible wide-format records
+        records = []
+        for d in all_dates:
+            row: dict = {"date": d}
+            for lbl in all_labels:
+                v = matrix[d][lbl]
+                if v is not None:
+                    row[lbl] = v
+            records.append(row)
+
+        return {
+            "mode": mode,
+            "from_date": norm_from,
+            "to_date": norm_to,
+            "records": records,
+            "series_keys": all_labels,
+        }
+
     try:
         import mplfinance as mpf
         import pandas as pd
@@ -645,195 +822,6 @@ def register(
             return _error_image(f"Chart rendering failed: {exc}")
 
         return Image(data=buf.getvalue(), format="png")
-
-    # Okabe-Ito colorblind-safe palette, 10 slots (1 per stock).
-    _OI_COLORS = [
-        "#0072B2",
-        "#E69F00",
-        "#56B4E9",
-        "#009E73",
-        "#F0E442",
-        "#D55E00",
-        "#CC79A7",
-        "#999999",
-        "#000000",
-        "#7F7F7F",
-    ]
-
-    @mcp.tool(annotations=READ_ONLY_CACHE)
-    async def render_comparison_chart(
-        codes: list[str],
-        from_date: str,
-        to_date: str,
-        mode: str = "return_pct",
-        style: str = "default",
-        labels: list[str] | None = None,
-        aspect_ratio: str = "square",
-    ) -> Image:
-        """Render a multi-stock performance comparison chart as PNG (複数銘柄比較チャート). All plans.
-
-        Use for 比較チャート・パフォーマンス比較・リターン比較・relative performance queries (up to 10 codes).
-        Render charts sequentially (not in parallel).
-
-        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
-        [Optional dependency] pip install 'jquants-mcp[charts]' (mplfinance + matplotlib)
-
-        Args:
-            codes: 1–10 stock codes (e.g. ["7203", "8697"]).
-            from_date: Range start (YYYYMMDD or YYYY-MM-DD), inclusive.
-            to_date: Range end (YYYYMMDD or YYYY-MM-DD), inclusive.
-            mode: "return_pct" (default, normalised to 0% at first bar) or "price" (raw close).
-            style: "default", "dark", or "colorblind".
-            labels: Custom legend labels per code. Omit for auto-generated names.
-            aspect_ratio: "square" (default), "landscape", or "portrait".
-        """
-        if not codes or len(codes) > 10:
-            return _error_image("codes must be a list of 1–10 stock codes.")
-
-        code_errors: list[str] = []
-        for c in codes:
-            err = validate_code(c, param=f"codes[{c!r}]")
-            if err:
-                code_errors.append(err)
-        date_errors = collect_errors(
-            validate_date(from_date, param="from_date"),
-            validate_date(to_date, param="to_date"),
-        )
-        all_errors = code_errors + date_errors
-        if all_errors:
-            return _error_image("; ".join(all_errors))
-
-        if mode not in ("return_pct", "price"):
-            return _error_image(f"Unknown mode: {mode!r}. Accepted: 'return_pct', 'price'")
-        if style not in _STYLE_ALIASES:
-            return _error_image(f"Unknown style: {style!r}. Accepted: {sorted(_STYLE_ALIASES)}")
-        if labels is not None and len(labels) != len(codes):
-            return _error_image(
-                f"labels length ({len(labels)}) must match codes length ({len(codes)})."
-            )
-        if aspect_ratio not in _ASPECT_RATIOS:
-            return _error_image(
-                f"Unknown aspect_ratio: {aspect_ratio!r}. Accepted: {sorted(_ASPECT_RATIOS)}"
-            )
-
-        norm_from = _normalize_date(from_date)
-        norm_to = _normalize_date(to_date)
-        if norm_from > norm_to:
-            return _error_image("`from_date` must be <= `to_date`.")
-
-        cache: CacheStore = get_cache()
-
-        series_map: dict[str, pd.Series] = {}
-        for idx, code in enumerate(codes):
-            norm_code = normalize_code(code)
-            try:
-                rows = cache.get_rows(
-                    "equities_bars_daily",
-                    key_filter={"code": norm_code},
-                    date_from=norm_from,
-                    date_to=norm_to,
-                )
-            except (
-                APIError,
-                InvalidAPIKeyError,
-                UserNotConfiguredError,
-                DecryptionError,
-                UserNotAllowedError,
-            ) as e:
-                err = format_api_error(e)
-                return _error_image(err.get("message") or "API error")
-
-            records: dict = {}
-            for r in rows:
-                try:
-                    d = pd.to_datetime(r["Date"])
-                    adj_c = r.get("AdjC")
-                    raw_c = r.get("C")
-                    val = float(adj_c if adj_c not in (None, "") else raw_c)
-                    records[d] = val
-                except (KeyError, TypeError, ValueError):
-                    continue
-
-            if not records:
-                logger.debug("render_comparison_chart: no bars for %s", norm_code)
-                continue
-
-            display = display_code(norm_code)
-            if labels is not None and labels[idx].strip():
-                label = labels[idx]
-            else:
-                company = _get_company_name(cache, norm_code)
-                if company:
-                    brief = _brief_company_name(company)
-                    label = f"{display} {brief}" if brief else display
-                else:
-                    label = display
-            series_map[label] = pd.Series(records).sort_index()
-
-        if not series_map:
-            return _error_image(f"No cached bars found for any code in {norm_from}..{norm_to}.")
-
-        df = pd.DataFrame(series_map).sort_index()
-        # Forward-fill isolated missing days (e.g., one stock absent from
-        # a specific API response) so a single NaN doesn't break the line.
-        df = df.ffill()
-
-        if mode == "return_pct":
-            # bfill so a stock that starts mid-window (late IPO) uses its
-            # own first real bar as baseline rather than giving a NaN row.
-            baseline = df.bfill().iloc[0]
-            df = df.div(baseline).sub(1).mul(100)
-
-        comp_buf = io.BytesIO()
-        fig_w, fig_h = _ASPECT_RATIOS[aspect_ratio]
-        try:
-            mpl_style = "dark_background" if style == "dark" else "default"
-            with plt.style.context(mpl_style), plt.rc_context(_CJK_RC):
-                fig, ax = plt.subplots(figsize=(fig_w, fig_h), dpi=_DPI)
-                try:
-                    if style == "colorblind":
-                        ax.set_prop_cycle(color=_OI_COLORS)
-                    # Plot on integer index so non-trading days (weekends /
-                    # holidays / long holidays like GW) produce no gap in
-                    # the line — matplotlib treats DatetimeIndex as a
-                    # continuous time axis and leaves blank spans for missing
-                    # dates, which causes visible line breaks.
-                    date_index = df.index
-                    df_int = df.copy()
-                    df_int.index = range(len(df_int))
-                    df_int.plot(ax=ax, linewidth=1.5)
-                    # Scale tick density to figure width so portrait/narrow
-                    # views don't crowd date labels.
-                    n = len(date_index)
-                    tick_every = max(1, n // max(4, int(fig_w * 0.7)))
-                    tick_pos = list(range(0, n, tick_every))
-                    if tick_pos[-1] != n - 1:
-                        tick_pos.append(n - 1)
-                    ax.set_xticks(tick_pos)
-                    ax.set_xticklabels(
-                        [date_index[i].strftime("%Y-%m-%d") for i in tick_pos],
-                        rotation=30,
-                        ha="right",
-                    )
-                    ax.set_title(
-                        f"Comparison {_short_date(norm_from)} → {_short_date(norm_to)}", pad=10
-                    )
-                    if mode == "return_pct":
-                        ax.set_ylabel("Return (%)")
-                        ax.axhline(0, color="gray", linewidth=0.8, linestyle="--", alpha=0.7)
-                    else:
-                        ax.set_ylabel("Price (adjusted close)")
-                    ax.legend(loc="best", fontsize=8)
-                    ax.grid(True, alpha=0.3)
-                    fig.tight_layout()
-                    fig.savefig(comp_buf, dpi=_DPI, format="png")
-                finally:
-                    plt.close(fig)
-        except Exception as exc:
-            logger.warning("render_comparison_chart: rendering failed: %s", exc)
-            return _error_image(f"Chart rendering failed: {exc}")
-
-        return Image(data=comp_buf.getvalue(), format="png")
 
 
 def _error_image(message: str) -> Image:
