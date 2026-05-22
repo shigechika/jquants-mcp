@@ -108,7 +108,7 @@ async def test_tool_has_expected_annotations(name: str, expected: dict[str, bool
     if name not in tools:
         # charts tools are conditionally registered — skip if the
         # [charts] extra is not installed in the test env.
-        if name in ("render_candlestick", "render_comparison_chart"):
+        if name == "render_candlestick":
             pytest.skip("[charts] extra not installed; tool not registered")
         pytest.fail(f"tool {name!r} not registered")
     tool = tools[name]

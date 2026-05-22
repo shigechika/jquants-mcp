@@ -16,8 +16,12 @@ from jquants_mcp.cache.store import CacheStore
 from jquants_mcp.client import JQuantsClient
 from jquants_mcp.config import Settings
 
-# Skip the entire module when the optional [charts] extras are missing.
-mplfinance = pytest.importorskip("mplfinance")
+try:
+    import mplfinance as _  # noqa: F401
+
+    _HAS_MPLFINANCE = True
+except ImportError:
+    _HAS_MPLFINANCE = False
 
 
 @pytest.fixture()
@@ -163,6 +167,11 @@ def _make_fake_png(width: int = 1200, height: int = 800) -> bytes:
 
 
 class TestRenderCandlestick:
+    pytestmark = pytest.mark.skipif(
+        not _HAS_MPLFINANCE,
+        reason="[charts] extra not installed; install with pip install 'jquants-mcp[charts]'",
+    )
+
     async def test_returns_png_image(self, mock_env):
         rows = []
         for i in range(40):
@@ -1794,6 +1803,9 @@ def test_register_no_op_when_extras_missing():
         charts_module.register(mcp_stub, lambda: None, lambda: None)
     # get_comparison_chart_data is always registered (called once).
     mcp_stub.tool.assert_called_once()
+    # Verify the registered function is get_comparison_chart_data, not render_candlestick.
+    registered_fn = mcp_stub.tool.return_value.call_args[0][0]
+    assert registered_fn.__name__ == "get_comparison_chart_data"
 
 
 # ---------------------------------------------------------------------------
