@@ -138,7 +138,14 @@ def upload_files() -> None:
     """Upload local cache files to GCS.
 
     Files that do not exist locally are silently skipped.
+    Returns immediately without initializing the GCS client when
+    _UPLOAD_FILES is empty, avoiding unnecessary credential lookups that
+    can hang indefinitely on non-GCP hosts.
     """
+    if not _UPLOAD_FILES:
+        logger.debug("No files configured for upload, skipping")
+        return
+
     from google.cloud import storage  # type: ignore[import-untyped]
 
     bucket, prefix, cache_dir = _get_config()
