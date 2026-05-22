@@ -5,6 +5,17 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.39.0](https://github.com/shigechika/jquants-mcp/compare/v0.38.9...v0.39.0) (2026-05-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* replace render_comparison_chart with get_comparison_chart_data (JSON return) ([#392](https://github.com/shigechika/jquants-mcp/issues/392))
+
+### Features
+
+* replace render_comparison_chart with get_comparison_chart_data (JSON return) ([#392](https://github.com/shigechika/jquants-mcp/issues/392)) ([e5f2f76](https://github.com/shigechika/jquants-mcp/commit/e5f2f763381c2ee1d81bacf135ca121c8bb7b7e9))
+
 ## [0.38.9](https://github.com/shigechika/jquants-mcp/compare/v0.38.8...v0.38.9) (2026-05-22)
 
 
