@@ -16,8 +16,12 @@ from jquants_mcp.cache.store import CacheStore
 from jquants_mcp.client import JQuantsClient
 from jquants_mcp.config import Settings
 
-# Skip the entire module when the optional [charts] extras are missing.
-mplfinance = pytest.importorskip("mplfinance")
+try:
+    import mplfinance as _  # noqa: F401
+
+    _HAS_MPLFINANCE = True
+except ImportError:
+    _HAS_MPLFINANCE = False
 
 
 @pytest.fixture()
@@ -93,6 +97,12 @@ async def _call_image(tool: str, **kwargs) -> bytes:
     return raw
 
 
+async def _call(tool: str, **kwargs) -> dict:
+    """Invoke a JSON-returning tool and return the parsed dict."""
+    result = await server_module.mcp.call_tool(tool, kwargs)
+    return json.loads(result.content[0].text)
+
+
 def _is_png(data: bytes) -> bool:
     return data[:8] == b"\x89PNG\r\n\x1a\n"
 
@@ -157,6 +167,11 @@ def _make_fake_png(width: int = 1200, height: int = 800) -> bytes:
 
 
 class TestRenderCandlestick:
+    pytestmark = pytest.mark.skipif(
+        not _HAS_MPLFINANCE,
+        reason="[charts] extra not installed; install with pip install 'jquants-mcp[charts]'",
+    )
+
     async def test_returns_png_image(self, mock_env):
         rows = []
         for i in range(40):
@@ -1415,107 +1430,175 @@ class TestRenderCandlestickLockDayOverlay:
         assert captured.get("returnfig") is None or captured.get("returnfig") is False
 
 
-class TestRenderComparisonChart:
-    async def test_returns_png_two_stocks(self, mock_env):
+class TestGetComparisonChartData:
+    async def test_returns_json_two_stocks(self, mock_env):
         for code, base in [("27800", 100), ("72030", 200)]:
             rows = []
-            for i in range(20):
+            for i in range(5):
                 d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
                 rows.append(_bar(code, d, c=float(base + i)))
             _seed(mock_env["cache"], rows)
 
-        png = await _call_image(
-            "render_comparison_chart",
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["27800", "72030"],
             from_date="2026-01-05",
-            to_date="2026-01-24",
+            to_date="2026-01-09",
         )
-        assert _is_real_png(png)
+        assert "error" not in result
+        assert result["mode"] == "return_pct"
+        assert result["from_date"] == "2026-01-05"
+        assert result["to_date"] == "2026-01-09"
+        assert len(result["series_keys"]) == 2
+        assert len(result["records"]) == 5
+        assert result["records"][0]["date"] == "2026-01-05"
 
-    async def test_price_mode_renders(self, mock_env):
+    async def test_return_pct_normalises_to_zero(self, mock_env):
         rows = []
-        for i in range(15):
+        for i in range(5):
+            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
+            rows.append(_bar("27800", d, c=100.0 + i * 10))
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "get_comparison_chart_data",
+            codes=["27800"],
+            from_date="2026-01-05",
+            to_date="2026-01-09",
+            mode="return_pct",
+        )
+        assert "error" not in result
+        label = result["series_keys"][0]
+        # First record must be 0.0 (baseline)
+        assert result["records"][0][label] == pytest.approx(0.0)
+        # Last record must reflect the cumulative return
+        assert result["records"][-1][label] == pytest.approx(40.0)
+
+    async def test_price_mode_returns_raw_prices(self, mock_env):
+        rows = []
+        for i in range(5):
             d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
             rows.append(_bar("27800", d, c=100.0 + i))
         _seed(mock_env["cache"], rows)
 
-        png = await _call_image(
-            "render_comparison_chart",
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["27800"],
             from_date="2026-01-05",
-            to_date="2026-01-19",
+            to_date="2026-01-09",
             mode="price",
         )
-        assert _is_real_png(png)
+        assert "error" not in result
+        assert result["mode"] == "price"
+        label = result["series_keys"][0]
+        assert result["records"][0][label] == pytest.approx(100.0)
+        assert result["records"][-1][label] == pytest.approx(104.0)
 
-    async def test_colorblind_style_renders(self, mock_env):
+    async def test_missing_stock_skipped_others_returned(self, mock_env):
+        # 99999 has no data — result contains the available series only.
         rows = []
-        for i in range(15):
+        for i in range(5):
             d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
             rows.append(_bar("27800", d, c=100.0 + i))
         _seed(mock_env["cache"], rows)
 
-        png = await _call_image(
-            "render_comparison_chart",
-            codes=["27800"],
-            from_date="2026-01-05",
-            to_date="2026-01-19",
-            style="colorblind",
-        )
-        assert _is_real_png(png)
-
-    async def test_missing_stock_skipped_others_render(self, mock_env):
-        # 99999 has no data — chart renders with the available series only.
-        rows = []
-        for i in range(15):
-            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
-            rows.append(_bar("27800", d, c=100.0 + i))
-        _seed(mock_env["cache"], rows)
-
-        png = await _call_image(
-            "render_comparison_chart",
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["27800", "99999"],
             from_date="2026-01-05",
-            to_date="2026-01-19",
+            to_date="2026-01-09",
         )
-        assert _is_real_png(png)
+        assert "error" not in result
+        assert len(result["series_keys"]) == 1
 
     async def test_return_pct_baseline_handles_late_ipo(self, mock_env):
-        # Stock A: full window. Stock B: starts mid-window (IPO).
-        # return_pct must use bfill so B normalises to 0 % at its own
-        # first available bar rather than producing a NaN at df.iloc[0].
-        rows_a = []
-        for i in range(20):
-            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
-            rows_a.append(_bar("27800", d, c=100.0 + i))
+        # Stock A: full window. Stock B: starts mid-window (late IPO).
+        # return_pct must bfill so B normalises to 0% at its own first bar.
+        rows_a = [
+            _bar(
+                "27800",
+                (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d"),
+                c=100.0 + i,
+            )
+            for i in range(5)
+        ]
         _seed(mock_env["cache"], rows_a)
 
-        rows_b = []
-        for i in range(10, 20):  # starts halfway through the window
-            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
-            rows_b.append(_bar("72030", d, c=200.0 + i))
+        rows_b = [
+            _bar(
+                "72030",
+                (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d"),
+                c=200.0 + i,
+            )
+            for i in range(3, 5)  # starts at 2026-01-08
+        ]
         _seed(mock_env["cache"], rows_b)
 
-        png = await _call_image(
-            "render_comparison_chart",
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["27800", "72030"],
             from_date="2026-01-05",
-            to_date="2026-01-24",
+            to_date="2026-01-09",
         )
-        assert _is_real_png(png)
+        assert "error" not in result
+        assert len(result["series_keys"]) == 2
 
-    async def test_empty_codes_returns_error_image(self, mock_env):
-        png = await _call_image(
-            "render_comparison_chart",
+    async def test_ffill_missing_day(self, mock_env):
+        # Stock B missing 2026-01-07 — ffill carries 2026-01-06 value forward.
+        rows_a = [
+            _bar("27800", "2026-01-05", c=100.0),
+            _bar("27800", "2026-01-06", c=101.0),
+            _bar("27800", "2026-01-07", c=102.0),
+        ]
+        _seed(mock_env["cache"], rows_a)
+
+        rows_b = [
+            _bar("72030", "2026-01-05", c=200.0),
+            _bar("72030", "2026-01-06", c=202.0),
+            # 2026-01-07 absent
+        ]
+        _seed(mock_env["cache"], rows_b)
+
+        result = await _call(
+            "get_comparison_chart_data",
+            codes=["27800", "72030"],
+            from_date="2026-01-05",
+            to_date="2026-01-07",
+            mode="price",
+        )
+        assert "error" not in result
+        label_b = [k for k in result["series_keys"] if "7203" in k][0]
+        # 2026-01-07 row must carry the 2026-01-06 value forward
+        row_07 = next(r for r in result["records"] if r["date"] == "2026-01-07")
+        assert row_07[label_b] == pytest.approx(202.0)
+
+    async def test_records_date_format(self, mock_env):
+        rows = [_bar("27800", "2026-01-05", c=100.0)]
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "get_comparison_chart_data",
+            codes=["27800"],
+            from_date="20260105",  # compact format
+            to_date="20260105",
+        )
+        assert "error" not in result
+        assert result["records"][0]["date"] == "2026-01-05"
+        assert result["from_date"] == "2026-01-05"
+        assert result["to_date"] == "2026-01-05"
+
+    async def test_empty_codes_returns_error(self, mock_env):
+        result = await _call(
+            "get_comparison_chart_data",
             codes=[],
             from_date="2026-01-05",
             to_date="2026-01-10",
         )
-        assert _is_error_image_png(png)
+        assert "error" in result
 
-    async def test_too_many_codes_returns_error_image(self, mock_env):
-        png = await _call_image(
-            "render_comparison_chart",
+    async def test_too_many_codes_returns_error(self, mock_env):
+        result = await _call(
+            "get_comparison_chart_data",
             codes=[
                 "1111",
                 "2222",
@@ -1532,205 +1615,122 @@ class TestRenderComparisonChart:
             from_date="2026-01-05",
             to_date="2026-01-10",
         )
-        assert _is_error_image_png(png)
+        assert "error" in result
 
-    async def test_invalid_code_returns_error_image(self, mock_env):
-        png = await _call_image(
-            "render_comparison_chart",
+    async def test_invalid_code_returns_error(self, mock_env):
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["bad"],
             from_date="2026-01-05",
             to_date="2026-01-10",
         )
-        assert _is_error_image_png(png)
+        assert "error" in result
 
-    async def test_no_cached_data_returns_error_image(self, mock_env):
-        png = await _call_image(
-            "render_comparison_chart",
+    async def test_no_cached_data_returns_error(self, mock_env):
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["99999"],
             from_date="2026-01-05",
             to_date="2026-01-10",
         )
-        assert _is_error_image_png(png)
+        assert "error" in result
 
-    async def test_inverted_dates_returns_error_image(self, mock_env):
-        png = await _call_image(
-            "render_comparison_chart",
+    async def test_inverted_dates_returns_error(self, mock_env):
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["27800"],
             from_date="2026-02-01",
             to_date="2026-01-01",
         )
-        assert _is_error_image_png(png)
+        assert "error" in result
 
-    async def test_unknown_mode_returns_error_image(self, mock_env):
-        png = await _call_image(
-            "render_comparison_chart",
+    async def test_unknown_mode_returns_error(self, mock_env):
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["27800"],
             from_date="2026-01-05",
             to_date="2026-01-10",
             mode="absolute",
         )
-        assert _is_error_image_png(png)
+        assert "error" in result
 
-    async def test_unknown_style_returns_error_image(self, mock_env):
-        png = await _call_image(
-            "render_comparison_chart",
-            codes=["27800"],
-            from_date="2026-01-05",
-            to_date="2026-01-10",
-            style="neon",
-        )
-        assert _is_error_image_png(png)
-
-    async def test_misaligned_dates_renders_without_error(self, mock_env):
-        # Regression: one stock missing a single trading day that others have
-        # (e.g. 9984/7974 missing 2026-03-11 on m1.local cache) produces NaN
-        # in the outer-joined DataFrame. Without ffill, matplotlib breaks the
-        # line at the NaN. Verify the chart renders successfully.
-        rows_a = []
-        for i in range(5):
-            d = (datetime(2026, 3, 9) + timedelta(days=i)).strftime("%Y-%m-%d")
-            rows_a.append(_bar("27800", d, c=100.0 + i))
-        _seed(mock_env["cache"], rows_a)
-
-        # Stock B intentionally missing 2026-03-11 (index position 2).
-        rows_b = [
-            _bar("72030", "2026-03-09", c=200.0),
-            _bar("72030", "2026-03-10", c=201.0),
-            # 2026-03-11 absent
-            _bar("72030", "2026-03-12", c=203.0),
-            _bar("72030", "2026-03-13", c=204.0),
+    async def test_custom_labels(self, mock_env):
+        rows = [
+            _bar(
+                "27800",
+                (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d"),
+                c=100.0 + i,
+            )
+            for i in range(5)
         ]
-        _seed(mock_env["cache"], rows_b)
-
-        png = await _call_image(
-            "render_comparison_chart",
-            codes=["27800", "72030"],
-            from_date="2026-03-09",
-            to_date="2026-03-13",
-        )
-        assert _is_real_png(png)
-
-    async def test_custom_labels_render(self, mock_env):
-        rows = []
-        for i in range(15):
-            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
-            rows.append(_bar("27800", d, c=100.0 + i))
         _seed(mock_env["cache"], rows)
 
-        png = await _call_image(
-            "render_comparison_chart",
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["27800"],
             from_date="2026-01-05",
-            to_date="2026-01-19",
-            labels=["My Label"],
+            to_date="2026-01-09",
+            labels=["My Stock"],
         )
-        assert _is_real_png(png)
+        assert "error" not in result
+        assert result["series_keys"] == ["My Stock"]
+        assert "My Stock" in result["records"][0]
 
     async def test_labels_length_mismatch_returns_error(self, mock_env):
-        rows = []
-        for i in range(10):
-            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
-            rows.append(_bar("27800", d, c=100.0 + i))
+        rows = [_bar("27800", "2026-01-05", c=100.0)]
         _seed(mock_env["cache"], rows)
 
-        png = await _call_image(
-            "render_comparison_chart",
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["27800"],
             from_date="2026-01-05",
-            to_date="2026-01-14",
+            to_date="2026-01-05",
             labels=["Label A", "Label B"],  # length mismatch
         )
-        assert _is_error_image_png(png)
+        assert "error" in result
 
     async def test_empty_label_falls_back_to_auto(self, mock_env):
-        rows = []
-        for i in range(15):
-            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
-            rows.append(_bar("27800", d, c=100.0 + i))
+        rows = [
+            _bar(
+                "27800",
+                (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d"),
+                c=100.0 + i,
+            )
+            for i in range(5)
+        ]
         _seed(mock_env["cache"], rows)
 
-        png = await _call_image(
-            "render_comparison_chart",
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["27800"],
             from_date="2026-01-05",
-            to_date="2026-01-19",
+            to_date="2026-01-09",
             labels=[""],  # empty → auto-label
         )
-        assert _is_real_png(png)
+        assert "error" not in result
+        # Auto-label contains the code display form
+        assert any("2780" in k for k in result["series_keys"])
 
     async def test_whitespace_only_label_falls_back_to_auto(self, mock_env):
-        rows = []
-        for i in range(15):
-            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
-            rows.append(_bar("27800", d, c=100.0 + i))
+        rows = [
+            _bar(
+                "27800",
+                (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d"),
+                c=100.0 + i,
+            )
+            for i in range(5)
+        ]
         _seed(mock_env["cache"], rows)
 
-        png = await _call_image(
-            "render_comparison_chart",
+        result = await _call(
+            "get_comparison_chart_data",
             codes=["27800"],
             from_date="2026-01-05",
-            to_date="2026-01-19",
+            to_date="2026-01-09",
             labels=["   "],  # whitespace-only → auto-label
         )
-        assert _is_real_png(png)
-
-    async def test_square_aspect_ratio_renders(self, mock_env):
-        rows = []
-        for i in range(15):
-            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
-            rows.append(_bar("27800", d, c=100.0 + i))
-        _seed(mock_env["cache"], rows)
-
-        png = await _call_image(
-            "render_comparison_chart",
-            codes=["27800"],
-            from_date="2026-01-05",
-            to_date="2026-01-19",
-            aspect_ratio="square",
-        )
-        assert _is_real_png(png)
-
-    async def test_landscape_aspect_ratio_renders(self, mock_env):
-        rows = []
-        for i in range(15):
-            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
-            rows.append(_bar("27800", d, c=100.0 + i))
-        _seed(mock_env["cache"], rows)
-
-        png = await _call_image(
-            "render_comparison_chart",
-            codes=["27800"],
-            from_date="2026-01-05",
-            to_date="2026-01-19",
-            aspect_ratio="landscape",
-        )
-        assert _is_real_png(png)
-
-    async def test_portrait_aspect_ratio_renders(self, mock_env):
-        rows = []
-        for i in range(15):
-            d = (datetime(2026, 1, 5) + timedelta(days=i)).strftime("%Y-%m-%d")
-            rows.append(_bar("27800", d, c=100.0 + i))
-        _seed(mock_env["cache"], rows)
-
-        png = await _call_image(
-            "render_comparison_chart",
-            codes=["27800"],
-            from_date="2026-01-05",
-            to_date="2026-01-19",
-            aspect_ratio="portrait",
-        )
-        assert _is_real_png(png)
-
-    async def test_unknown_aspect_ratio_returns_error(self, mock_env):
-        png = await _call_image(
-            "render_comparison_chart",
-            codes=["27800"],
-            from_date="2026-01-05",
-            to_date="2026-01-10",
-            aspect_ratio="widescreen",
-        )
-        assert _is_error_image_png(png)
+        assert "error" not in result
+        assert any("2780" in k for k in result["series_keys"])
 
 
 def test_brief_company_name():
@@ -1783,10 +1783,10 @@ def test_brief_company_name():
 
 
 def test_register_no_op_when_extras_missing():
-    """register() should silently skip when mplfinance isn't importable.
+    """register() registers only get_comparison_chart_data when mplfinance isn't importable.
 
     Simulated by patching the import to raise. Confirms the lean stdio
-    profile (no [charts] extras) starts cleanly.
+    profile (no [charts] extras) starts cleanly without render_candlestick.
     """
     real_import = builtins.__import__
 
@@ -1801,8 +1801,11 @@ def test_register_no_op_when_extras_missing():
     with patch.object(builtins, "__import__", side_effect=fake_import):
         # Should not raise.
         charts_module.register(mcp_stub, lambda: None, lambda: None)
-    # And the tool decorator was never invoked.
-    mcp_stub.tool.assert_not_called()
+    # get_comparison_chart_data is always registered (called once).
+    mcp_stub.tool.assert_called_once()
+    # Verify the registered function is get_comparison_chart_data, not render_candlestick.
+    registered_fn = mcp_stub.tool.return_value.call_args[0][0]
+    assert registered_fn.__name__ == "get_comparison_chart_data"
 
 
 # ---------------------------------------------------------------------------
