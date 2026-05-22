@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.38.9](https://github.com/shigechika/jquants-mcp/compare/v0.38.8...v0.38.9) (2026-05-22)
+
+
+### Bug Fixes
+
+* **gcs-sync:** skip GCS client init when _UPLOAD_FILES is empty ([#390](https://github.com/shigechika/jquants-mcp/issues/390)) ([67554b4](https://github.com/shigechika/jquants-mcp/commit/67554b43f13212040ba3d2542c0eeeada03b9b1c))
+
 ## [0.38.8](https://github.com/shigechika/jquants-mcp/compare/v0.38.7...v0.38.8) (2026-05-21)
 
 
