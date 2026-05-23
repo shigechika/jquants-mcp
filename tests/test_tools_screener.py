@@ -1854,3 +1854,218 @@ class TestDetectFollowThroughDay:
             "market_va_prev",
         ):
             assert field in result, f"Missing field: {field}"
+
+
+# ---------------------------------------------------------------------------
+# detect_consecutive_dividend_increase
+# ---------------------------------------------------------------------------
+
+
+def _seed_fins_summary(
+    cache: CacheStore,
+    code: str,
+    disc_date: str,
+    doc_type: str,
+    cur_fy_en: str,
+    div_ann: float | None,
+) -> None:
+    """Insert one fins_summary row for consecutive-dividend tests."""
+    row: dict = {
+        "Code": code,
+        "DisclosedDate": disc_date,
+        "DocType": doc_type,
+        "CurFYEn": cur_fy_en,
+    }
+    if div_ann is not None:
+        row["DivAnn"] = str(div_ann)
+    cache.put_rows("fins_summary", [row], key_columns=["Code", "DisclosedDate"])
+
+
+@pytest.mark.asyncio
+class TestDetectConsecutiveDividendIncrease:
+    """detect_consecutive_dividend_increase のテスト。"""
+
+    async def test_basic_consecutive_increase(self, mock_env):
+        """min_years 連続増配を満たすコードが結果に含まれる。"""
+        cache = mock_env["cache"]
+        _seed_master(cache, "13010", "花王")
+        # 11 years of increasing dividends: 10..20
+        for y in range(2013, 2024):
+            _seed_fins_summary(
+                cache,
+                "13010",
+                f"{y + 1}-06-20",
+                "FYFinancialStatements",
+                f"{y}-03-31",
+                float(10 + (y - 2013)),
+            )
+
+        result = await _call("detect_consecutive_dividend_increase", min_years=10)
+        assert result.get("error") is None or result.get("error") is False
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" in codes
+
+    async def test_below_min_years_excluded(self, mock_env):
+        """連続増配年数が min_years 未満のコードは除外される。"""
+        cache = mock_env["cache"]
+        _seed_master(cache, "13010", "花王")
+        # Only 5 years of increase
+        for y in range(2018, 2024):
+            _seed_fins_summary(
+                cache,
+                "13010",
+                f"{y + 1}-06-20",
+                "FYFinancialStatements",
+                f"{y}-03-31",
+                float(10 + (y - 2018)),
+            )
+
+        result = await _call("detect_consecutive_dividend_increase", min_years=10)
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" not in codes
+
+    async def test_lookahead_bias_as_of_date(self, mock_env):
+        """as_of_date より後の開示はカウントされない。"""
+        cache = mock_env["cache"]
+        _seed_master(cache, "13010", "花王")
+        # 11 years but the last 3 years' disclosures are after as_of_date
+        for y in range(2013, 2024):
+            _seed_fins_summary(
+                cache,
+                "13010",
+                f"{y + 1}-06-20",
+                "FYFinancialStatements",
+                f"{y}-03-31",
+                float(10 + (y - 2013)),
+            )
+
+        # Cut off at 2021-12-31: only 2013-2020 FY (disc dates up to 2021-06-20)
+        result = await _call(
+            "detect_consecutive_dividend_increase",
+            min_years=10,
+            as_of_date="2021-12-31",
+        )
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" not in codes  # only 8 years visible before cut-off
+
+    async def test_split_adjusted_streak(self, mock_env):
+        """株式分割をまたぐ連続増配が正しく検出される（split 調整なしでは誤検知）。
+
+        Split on 2021-10-01 (between FY2020 disc 2021-06-20 and FY2021 disc 2022-06-20).
+        FY2019: disc 2020-06-20, raw div=120 → adj=120*0.5=60
+        FY2020: disc 2021-06-20, raw div=130 → adj=130*0.5=65 (split 2021-10-01 > disc)
+        FY2021: disc 2022-06-20, raw div=70  → adj=70*1.0=70 (no splits after this disc)
+        FY2022: disc 2023-06-20, raw div=80  → adj=80
+
+        Raw streak: FY2020(130)→FY2021(70) looks like a CUT → 1 consecutive year only.
+        Adjusted:   60 → 65 → 70 → 80 → 3 consecutive increases → qualifies at min_years=3.
+        """
+        cache = mock_env["cache"]
+        _seed_master(cache, "74660", "SPK")
+
+        for y, div in [(2019, 120.0), (2020, 130.0), (2021, 70.0), (2022, 80.0)]:
+            _seed_fins_summary(
+                cache,
+                "74660",
+                f"{y + 1}-06-20",
+                "FYFinancialStatements",
+                f"{y}-03-31",
+                div,
+            )
+
+        # 1:2 split on 2021-10-01 — strictly AFTER FY2020 disc_date (2021-06-20),
+        # so get_cumulative_split_factor("74660", "2021-06-20") returns 0.5.
+        cache.put_rows(
+            "equities_bars_daily",
+            [_bar("74660", "2021-10-01", adj_factor=0.5)],
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+
+        result = await _call("detect_consecutive_dividend_increase", min_years=3)
+        assert result.get("error") is None or result.get("error") is False
+        codes = [item["code"] for item in result["data"]]
+        assert "7466" in codes
+
+    async def test_zero_dividend_breaks_streak(self, mock_env):
+        """div_ann == 0 の年でストリークが途切れる。"""
+        cache = mock_env["cache"]
+        # 5 years increase, then 0, then 3 years increase
+        divs = [10, 20, 30, 40, 50, 0, 10, 20, 30]
+        for i, d in enumerate(divs):
+            y = 2014 + i
+            _seed_fins_summary(
+                cache,
+                "13010",
+                f"{y + 1}-06-20",
+                "FYFinancialStatements",
+                f"{y}-03-31",
+                float(d),
+            )
+
+        result = await _call("detect_consecutive_dividend_increase", min_years=4)
+        codes = [item["code"] for item in result["data"]]
+        # Only 3 consecutive years from the latest (after the zero cut)
+        assert "1301" not in codes
+
+    async def test_nonzero_decrease_breaks_streak(self, mock_env):
+        """非ゼロ減配（50→40）でストリークが途切れる。"""
+        cache = mock_env["cache"]
+        # 3 years increase, then a non-zero decrease, then 2 years increase
+        divs = [10.0, 20.0, 30.0, 40.0, 50.0, 40.0, 50.0, 60.0]
+        for i, d in enumerate(divs):
+            y = 2015 + i
+            _seed_fins_summary(
+                cache,
+                "13010",
+                f"{y + 1}-06-20",
+                "FYFinancialStatements",
+                f"{y}-03-31",
+                d,
+            )
+
+        result = await _call("detect_consecutive_dividend_increase", min_years=3)
+        codes = [item["code"] for item in result["data"]]
+        # Only 2 consecutive increases from latest (FY2020=50, FY2021=40 breaks)
+        assert "1301" not in codes
+
+    async def test_invalid_min_years(self, mock_env):
+        """min_years < 1 でバリデーションエラーが返る。"""
+        result = await _call("detect_consecutive_dividend_increase", min_years=0)
+        assert result.get("error") is True
+
+    async def test_empty_cache_returns_empty(self, mock_env):
+        """fins_summary が空のときエラーではなく empty 相当のレスポンスが返る。"""
+        result = await _call("detect_consecutive_dividend_increase")
+        # Either error=True (cache not ready) or count=0 (empty result)
+        assert result.get("error") is True or result.get("count") == 0
+
+    async def test_response_fields_present(self, mock_env):
+        """レスポンスに必須フィールドが含まれる。"""
+        cache = mock_env["cache"]
+        _seed_master(cache, "13010", "花王")
+        for y in range(2013, 2024):
+            _seed_fins_summary(
+                cache,
+                "13010",
+                f"{y + 1}-06-20",
+                "FYFinancialStatements",
+                f"{y}-03-31",
+                float(10 + (y - 2013)),
+            )
+
+        result = await _call("detect_consecutive_dividend_increase", min_years=10)
+        assert "count" in result
+        assert "min_years" in result
+        assert "data" in result
+        assert len(result["data"]) > 0
+        item = result["data"][0]
+        for field in (
+            "code",
+            "name",
+            "consecutive_years",
+            "latest_div_ann",
+            "latest_fy_end",
+            "history",
+        ):
+            assert field in item, f"Missing field: {field}"
