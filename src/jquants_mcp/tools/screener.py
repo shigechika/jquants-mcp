@@ -37,8 +37,6 @@ Exposed tools:
   occurred from a specified ``rally_start`` date.
 - ``detect_consecutive_dividend_increase`` — screen for stocks with at least
   N consecutive years of annual dividend increase (連続増配), split-adjusted.
-  Educational tool — use ``detect_stable_payout_growth`` for investment
-  decisions.
 
 The 52w/YTD detectors are also backed by the ``screener_results``
 pre-compute cache (default-params cross-sectional outputs are
@@ -1065,9 +1063,9 @@ def register(
         """Screen for stocks with consecutive annual dividend increases (連続増配). All plans.
 
         Use for 連続増配・dividend growth・増配継続 queries.
-        NOTE: consecutive dividend growth alone does NOT beat TOPIX on a risk-adjusted
-        basis.  For investment decisions combine with yield and payout discipline via
-        detect_stable_payout_growth.
+        NOTE: consecutive dividend growth alone does NOT guarantee outperformance on a
+        risk-adjusted basis.  Consider combining results with yield and payout ratio
+        filters for investment decisions.
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
@@ -1111,39 +1109,7 @@ def register(
             # Need at least min_years + 1 data points to have min_years consecutive pairs.
             if len(entries) <= min_years:
                 continue
-
-            # Apply cumulative split adjustment so all div_ann values are
-            # in current per-share terms for fair year-to-year comparison.
-            # TODO: replace per-entry get_cumulative_split_factor calls with a single
-            # batch query (fetch all split events for qualifying codes at once, compute
-            # per-year factors in Python) to reduce SQLite round-trips at scale.
-            #
-            # Known limitation: splits that occurred within ~45 days BEFORE a disc_date
-            # (fiscal-year-end split) are not included here because get_cumulative_split_factor
-            # only considers splits AFTER disc_date.  Use get_split_factors_before_disc() to
-            # handle those cases if they become a material issue.
-            adj_entries: list[dict[str, Any]] = []
-            for entry in entries:
-                factor = cache.get_cumulative_split_factor(code, entry["disc_date"])
-                adj_entries.append(
-                    {
-                        "fy_end": entry["fy_end"],
-                        "disc_date": entry["disc_date"],
-                        "div_ann": round(entry["div_ann"] * factor, 4),
-                    }
-                )
-
-            # Count consecutive years of increase from the latest year backwards.
-            consecutive = 0
-            for i in range(len(adj_entries) - 1, 0, -1):
-                curr = adj_entries[i]["div_ann"]
-                prev = adj_entries[i - 1]["div_ann"]
-                # div_ann == 0 breaks the streak (explicit dividend cut).
-                if curr > 0 and curr > prev:
-                    consecutive += 1
-                else:
-                    break
-
+            consecutive, adj_entries = _compute_consecutive_div_years(code, entries, cache)
             if consecutive < min_years:
                 continue
 
@@ -1176,6 +1142,62 @@ def register(
 # ----------------------------------------------------------------
 # helpers
 # ----------------------------------------------------------------
+
+
+def _compute_consecutive_div_years(
+    code: str,
+    entries: list[dict[str, Any]],
+    cache: CacheStore,
+    split_events: list[tuple[str, float]] | None = None,
+) -> tuple[int, list[dict[str, Any]]]:
+    """Compute split-adjusted consecutive dividend increase years for one code.
+
+    Applies cumulative split adjustment to each entry so all div_ann values are
+    in current per-share terms, then counts consecutive years of increase from
+    the latest year backwards.
+
+    Args:
+        split_events: Pre-loaded list of (date, factor) tuples sorted ascending,
+            obtained via ``CacheStore.get_split_events_by_code``.  When supplied,
+            cumulative factors are computed in Python without extra SQLite queries.
+            When omitted, falls back to per-entry ``get_cumulative_split_factor``
+            calls (O(N) round-trips — acceptable for single-code use but slow
+            for full-universe scans).
+
+    Returns:
+        (consecutive_count, adj_entries) where adj_entries is the split-adjusted
+        list sorted ascending by fy_end.
+
+    Known limitation: splits that occurred within ~45 days BEFORE disc_date
+    (FY-end split) are not reflected here because only post-disc splits are used.
+    """
+    adj_entries: list[dict[str, Any]] = []
+    for entry in entries:
+        disc_date = entry["disc_date"]
+        if split_events is not None:
+            factor = 1.0
+            for ev_date, ev_factor in split_events:
+                if ev_date > disc_date:
+                    factor *= ev_factor
+        else:
+            factor = cache.get_cumulative_split_factor(code, disc_date)
+        adj_entries.append(
+            {
+                "fy_end": entry["fy_end"],
+                "disc_date": disc_date,
+                "div_ann": round(entry["div_ann"] * factor, 4),
+            }
+        )
+    consecutive = 0
+    for i in range(len(adj_entries) - 1, 0, -1):
+        curr = adj_entries[i]["div_ann"]
+        prev = adj_entries[i - 1]["div_ann"]
+        # div_ann == 0 breaks the streak (explicit dividend cut).
+        if curr > 0 and curr > prev:
+            consecutive += 1
+        else:
+            break
+    return consecutive, adj_entries
 
 
 def _load_topix_series(

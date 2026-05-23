@@ -751,7 +751,10 @@ class CacheStore:
                 result[code] = (val, disc_date)
         return result
 
-    def get_forward_div_ann_map(self) -> dict[str, tuple[float, str]]:
+    def get_forward_div_ann_map(
+        self,
+        as_of_date: str | None = None,
+    ) -> dict[str, tuple[float, str]]:
         """Return forward annual dividend per share: NxFDivAnn > FDivAnn.
 
         Picks the most recent disclosure per code where FDivAnn or NxFDivAnn
@@ -765,6 +768,11 @@ class CacheStore:
         require get_split_factors_before_disc (FY-end split) correction.
         get_split_factors_after still applies for splits after the filing.
 
+        Args:
+            as_of_date: Upper bound for disc_date (YYYY-MM-DD).  When supplied,
+                only disclosures on or before this date are considered, which
+                prevents lookahead bias in back-tests.  Defaults to all data.
+
         Returns {code: (val, disc_date)} for codes with forward guidance,
         including codes where the forward dividend is explicitly 0 (dividend
         cut forecast).  Callers must NOT fall back to trailing DivAnn for
@@ -774,6 +782,10 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return {}
+        # as_of_date filter applied to BOTH fy_latest and inner subquery m so
+        # the guard `fl.fy_md <= m.md` remains consistent (both see the same horizon).
+        aod_filter = "  AND substr(disc_date, 1, 10) <= ? " if as_of_date else ""
+        params = (as_of_date, as_of_date) if as_of_date else ()
         try:
             # Annual results generate TWO rows on the same disc_date:
             #   FYFinancialStatements: NxFDivAnn=<next-FY forecast>, FDivAnn=''
@@ -798,8 +810,9 @@ class CacheStore:
                 "WITH fy_latest AS ("
                 "  SELECT code, MAX(substr(disc_date, 1, 10)) AS fy_md "
                 "  FROM fins_summary "
-                "  WHERE json_extract(data, '$.DocType') LIKE 'FYFinancial%' "
-                "     OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%' "
+                "  WHERE (json_extract(data, '$.DocType') LIKE 'FYFinancial%' "
+                "     OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%')"
+                f"{aod_filter}"
                 "  GROUP BY code"
                 ") "
                 "SELECT f.code, "
@@ -815,12 +828,14 @@ class CacheStore:
                 "    NULLIF(json_extract(data, '$.NxFDivAnn'), ''), "
                 "    NULLIF(json_extract(data, '$.FDivAnn'), '')"
                 "  ) IS NOT NULL "
+                f"{aod_filter}"
                 "  GROUP BY code"
                 ") m ON f.code = m.code AND substr(f.disc_date, 1, 10) = m.md "
                 "LEFT JOIN fy_latest fl ON f.code = fl.code "
                 "GROUP BY f.code, m.md "
                 "HAVING div_fwd IS NOT NULL "
-                "  AND (fl.fy_md IS NULL OR fl.fy_md <= m.md)"
+                "  AND (fl.fy_md IS NULL OR fl.fy_md <= m.md)",
+                params,
             ).fetchall()
         except Exception:
             return {}
@@ -881,6 +896,51 @@ class CacheStore:
             if disc_date is None or bar_date <= disc_date:
                 continue
             result[code] = result.get(code, 1.0) * factor
+        return result
+
+    def get_split_events_by_code(
+        self,
+        codes: list[str],
+    ) -> dict[str, list[tuple[str, float]]]:
+        """Return all split events for multiple codes, sorted ascending by date.
+
+        Fetches every (date, adj_factor) row in equities_bars_daily for the
+        given codes where adj_factor differs from 1.0 and 0.0.  Callers can
+        then compute cumulative factors for arbitrary (code, disc_date) pairs
+        in Python, avoiding per-entry SQLite round-trips.
+
+        Args:
+            codes: List of 5-digit codes.
+
+        Returns:
+            {code: [(date, factor), ...]} sorted ascending by date.
+            Codes with no split events are omitted.
+        """
+        conn = self._ensure_connection()
+        if conn is None or not codes:
+            return {}
+        all_rows: list[tuple[str, str, float]] = []
+        for i in range(0, len(codes), 900):
+            batch = codes[i : i + 900]
+            placeholders = ",".join("?" * len(batch))
+            try:
+                rows = conn.execute(
+                    f"SELECT code, date, adj_factor FROM ("
+                    f"  SELECT code, date, "
+                    f"  COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
+                    f"  FROM equities_bars_daily WHERE code IN ({placeholders})"
+                    f") WHERE adj_factor IS NOT NULL AND adj_factor != 1.0 AND adj_factor != 0.0"
+                    f" ORDER BY code, date",
+                    batch,
+                ).fetchall()
+            except Exception:
+                continue
+            all_rows.extend((str(r[0]), str(r[1]), float(r[2])) for r in rows)
+        result: dict[str, list[tuple[str, float]]] = {}
+        for code, bar_date, factor in all_rows:
+            if code not in result:
+                result[code] = []
+            result[code].append((bar_date, factor))
         return result
 
     def get_split_factors_before_disc(
@@ -1244,12 +1304,20 @@ class CacheStore:
         except Exception:
             return None
 
-    def get_all_latest_fy_fins(self) -> dict[str, dict]:
+    def get_all_latest_fy_fins(
+        self,
+        as_of_date: str | None = None,
+    ) -> dict[str, dict]:
         """Return the most recent FY financial-summary row for every code in fins_summary.
 
         Uses a JOIN against a per-code MAX(disc_date) subquery to avoid a full
         table scan with a correlated subquery.  The FY filter is applied inside
         the subquery so only full-year rows are considered.
+
+        Args:
+            as_of_date: Upper bound for disc_date (YYYY-MM-DD).  When supplied,
+                only disclosures on or before this date are considered, which
+                prevents lookahead bias in back-tests.  Defaults to all data.
 
         Returns:
             Mapping of 5-digit code to raw JSON dict (as stored in the cache).
@@ -1264,16 +1332,20 @@ class CacheStore:
             "  OR json_extract(data, '$.DocType') LIKE 'FYFinancial%'"
             "  OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%'"
         )
+        aod_filter = "  AND substr(disc_date, 1, 10) <= ? " if as_of_date else ""
+        params: tuple | tuple[str] = (as_of_date,) if as_of_date else ()
         sql = (
             "SELECT fs.code, fs.data FROM fins_summary fs "
             "INNER JOIN ("
             "  SELECT code, MAX(substr(disc_date, 1, 10)) AS max_date FROM fins_summary "
-            f" WHERE ({_fy_cond}) GROUP BY code"
+            f" WHERE ({_fy_cond})"
+            f"{aod_filter}"
+            " GROUP BY code"
             ") AS latest ON fs.code = latest.code AND substr(fs.disc_date, 1, 10) = latest.max_date "
             f"WHERE ({_fy_cond})"
         )
         try:
-            rows = conn.execute(sql).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         except Exception:
             return {}
         result: dict[str, dict] = {}
@@ -1402,16 +1474,27 @@ class CacheStore:
         except Exception:
             return None
 
-    def get_latest_close_map(self) -> dict[str, float]:
+    def get_latest_close_map(
+        self,
+        as_of_date: str | None = None,
+    ) -> dict[str, float]:
         """Return a mapping of 5-digit code to latest adjusted-close price.
 
         Queries ``equities_bars_daily`` for the single most recent date across
         all codes and returns AdjC (falling back to C) for every row on that date.
+
+        Args:
+            as_of_date: Upper bound for date (YYYY-MM-DD).  When supplied,
+                returns the latest date on or before this date, which prevents
+                lookahead bias in back-tests.  Defaults to all data.
+
         Returns an empty dict when the table is empty or unavailable.
         """
         conn = self._ensure_connection()
         if conn is None:
             return {}
+        aod_filter = "WHERE date <= ? " if as_of_date else ""
+        params: tuple | tuple[str] = (as_of_date,) if as_of_date else ()
         try:
             rows = conn.execute(
                 "SELECT code, "
@@ -1420,7 +1503,8 @@ class CacheStore:
                 "    NULLIF(json_extract(data, '$.C'), '')"
                 "  ) AS close "
                 "FROM equities_bars_daily "
-                "WHERE date = (SELECT MAX(date) FROM equities_bars_daily)"
+                f"WHERE date = (SELECT MAX(date) FROM equities_bars_daily {aod_filter})",
+                params,
             ).fetchall()
         except Exception:
             return {}
