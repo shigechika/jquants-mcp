@@ -2069,3 +2069,178 @@ class TestDetectConsecutiveDividendIncrease:
             "history",
         ):
             assert field in item, f"Missing field: {field}"
+
+
+# ---------------------------------------------------------------------------
+# detect_stable_payout_growth
+# ---------------------------------------------------------------------------
+
+
+def _seed_fins_row(
+    cache: CacheStore,
+    code: str,
+    disc_date: str,
+    **fields,
+) -> None:
+    """Insert one fins_summary row with arbitrary JSON fields."""
+    row = {"Code": code, "DisclosedDate": disc_date, **fields}
+    cache.put_rows("fins_summary", [row], key_columns=["Code", "DisclosedDate"])
+
+
+def _seed_close(cache: CacheStore, code: str, date: str, close: float) -> None:
+    """Insert one equities_bars_daily row with given close price."""
+    _seed(cache, [_bar(code, date, c=close, adj_c=close)])
+
+
+@pytest.mark.asyncio
+class TestDetectStablePayoutGrowth:
+    """detect_stable_payout_growth のテスト。"""
+
+    def _setup_qualifying_code(
+        self,
+        cache: CacheStore,
+        code: str,
+        name: str,
+        *,
+        n_years: int = 5,
+        fwd_div: float = 60.0,
+        close: float = 1000.0,
+        div_ann: float = 50.0,
+        eps: float = 100.0,
+    ) -> None:
+        """Seed a code that passes all three filters with default params."""
+        _seed_master(cache, code, name)
+        # FY history: n_years consecutive increases
+        for i in range(n_years):
+            y = 2018 + i
+            _seed_fins_summary(
+                cache,
+                code,
+                f"{y + 1}-06-20",
+                "FYFinancialStatements",
+                f"{y}-03-31",
+                float(40 + i),
+            )
+        # Combined row: FDivAnn + DivAnn + EPS in one filing, disc_date after all
+        # history rows so fy_latest CTE passes the HAVING check in get_forward_div_ann_map.
+        _seed_fins_row(
+            cache,
+            code,
+            "2024-06-20",
+            DocType="FYFinancialStatements",
+            CurFYEn="2023-03-31",
+            CurPerType="FY",
+            FDivAnn=str(fwd_div),
+            DivAnn=str(div_ann),
+            EPS=str(eps),
+        )
+        # Latest close for yield: yield = fwd_div / close * 100
+        _seed_close(cache, code, "2024-06-20", close)
+
+    async def test_basic_composite_all_pass(self, mock_env):
+        """3フィルター全通過のコードが結果に含まれる。"""
+        cache = mock_env["cache"]
+        # yield=6%, payout=50% → passes defaults (min_yield=3, payout 30-50)
+        self._setup_qualifying_code(cache, "13010", "花王")
+
+        result = await _call(
+            "detect_stable_payout_growth",
+            min_consecutive_years=3,
+            min_dividend_yield=3.0,
+            payout_ratio_min=30.0,
+            payout_ratio_max=50.0,
+        )
+        assert not result.get("error")
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" in codes
+
+    async def test_yield_too_low_excluded(self, mock_env):
+        """利回りが min_dividend_yield 未満のコードは除外される。"""
+        cache = mock_env["cache"]
+        # close=2000 → yield=60/2000*100=3.0% → still 3.0 but test with min=4.0
+        self._setup_qualifying_code(cache, "13010", "花王", fwd_div=60.0, close=2000.0)
+
+        result = await _call(
+            "detect_stable_payout_growth",
+            min_consecutive_years=3,
+            min_dividend_yield=4.0,
+        )
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" not in codes
+
+    async def test_payout_too_high_excluded(self, mock_env):
+        """ペイアウト比率が上限超えで除外される。"""
+        cache = mock_env["cache"]
+        # EPS=10 → payout=50/10*100=500% > 50
+        self._setup_qualifying_code(cache, "13010", "花王", div_ann=50.0, eps=10.0)
+
+        result = await _call(
+            "detect_stable_payout_growth",
+            min_consecutive_years=3,
+            payout_ratio_max=50.0,
+        )
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" not in codes
+
+    async def test_payout_too_low_excluded(self, mock_env):
+        """ペイアウト比率が下限未満で除外される。"""
+        cache = mock_env["cache"]
+        # EPS=1000 → payout=50/1000*100=5% < 30
+        self._setup_qualifying_code(cache, "13010", "花王", div_ann=50.0, eps=1000.0)
+
+        result = await _call(
+            "detect_stable_payout_growth",
+            min_consecutive_years=3,
+            payout_ratio_min=30.0,
+        )
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" not in codes
+
+    async def test_consecutive_filter_excludes(self, mock_env):
+        """連続増配年数不足で除外される。"""
+        cache = mock_env["cache"]
+        # n_years=2 FY rows + 1 combined row = 3 total entries; early-exit fires
+        # (len(entries)=3 <= min_consecutive_years=3) → excluded before count check
+        self._setup_qualifying_code(cache, "13010", "花王", n_years=2)
+
+        result = await _call(
+            "detect_stable_payout_growth",
+            min_consecutive_years=3,
+            min_dividend_yield=3.0,
+        )
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" not in codes
+
+    async def test_invalid_payout_bounds(self, mock_env):
+        """payout_ratio_min > payout_ratio_max でバリデーションエラー。"""
+        result = await _call(
+            "detect_stable_payout_growth",
+            payout_ratio_min=60.0,
+            payout_ratio_max=30.0,
+        )
+        assert result.get("error") is True
+
+    async def test_response_fields_present(self, mock_env):
+        """レスポンスに必須フィールドが含まれる。"""
+        cache = mock_env["cache"]
+        self._setup_qualifying_code(cache, "13010", "花王")
+
+        result = await _call(
+            "detect_stable_payout_growth",
+            min_consecutive_years=3,
+        )
+        assert "count" in result
+        assert "filters" in result
+        assert "data" in result
+        if result["data"]:
+            item = result["data"][0]
+            for field in (
+                "code",
+                "name",
+                "consecutive_years",
+                "forward_div_ann",
+                "yield_pct",
+                "payout_ratio",
+                "close",
+            ):
+                assert field in item, f"Missing field: {field}"

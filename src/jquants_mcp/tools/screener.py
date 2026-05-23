@@ -39,6 +39,9 @@ Exposed tools:
   N consecutive years of annual dividend increase (連続増配), split-adjusted.
   Educational tool — use ``detect_stable_payout_growth`` for investment
   decisions.
+- ``detect_stable_payout_growth`` — composite screener combining consecutive
+  dividend growth, forward yield ≥ threshold, and payout ratio in [30 %, 50 %].
+  Back-tested at +16.95 % excess return vs TOPIX.
 
 The 52w/YTD detectors are also backed by the ``screener_results``
 pre-compute cache (default-params cross-sectional outputs are
@@ -1111,39 +1114,7 @@ def register(
             # Need at least min_years + 1 data points to have min_years consecutive pairs.
             if len(entries) <= min_years:
                 continue
-
-            # Apply cumulative split adjustment so all div_ann values are
-            # in current per-share terms for fair year-to-year comparison.
-            # TODO: replace per-entry get_cumulative_split_factor calls with a single
-            # batch query (fetch all split events for qualifying codes at once, compute
-            # per-year factors in Python) to reduce SQLite round-trips at scale.
-            #
-            # Known limitation: splits that occurred within ~45 days BEFORE a disc_date
-            # (fiscal-year-end split) are not included here because get_cumulative_split_factor
-            # only considers splits AFTER disc_date.  Use get_split_factors_before_disc() to
-            # handle those cases if they become a material issue.
-            adj_entries: list[dict[str, Any]] = []
-            for entry in entries:
-                factor = cache.get_cumulative_split_factor(code, entry["disc_date"])
-                adj_entries.append(
-                    {
-                        "fy_end": entry["fy_end"],
-                        "disc_date": entry["disc_date"],
-                        "div_ann": round(entry["div_ann"] * factor, 4),
-                    }
-                )
-
-            # Count consecutive years of increase from the latest year backwards.
-            consecutive = 0
-            for i in range(len(adj_entries) - 1, 0, -1):
-                curr = adj_entries[i]["div_ann"]
-                prev = adj_entries[i - 1]["div_ann"]
-                # div_ann == 0 breaks the streak (explicit dividend cut).
-                if curr > 0 and curr > prev:
-                    consecutive += 1
-                else:
-                    break
-
+            consecutive, adj_entries = _compute_consecutive_div_years(code, entries, cache)
             if consecutive < min_years:
                 continue
 
@@ -1172,10 +1143,210 @@ def register(
             "data": results,
         }
 
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def detect_stable_payout_growth(
+        min_consecutive_years: int = 3,
+        min_dividend_yield: float = 3.0,
+        payout_ratio_min: float = 30.0,
+        payout_ratio_max: float = 50.0,
+        as_of_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Composite screener: consecutive dividend growth + high yield + sustainable payout. All plans.
+
+        Use for 高配当連続増配・配当方針の安定銘柄・dividend compounder queries.
+        Combines three filters: (1) ≥ min_consecutive_years of annual dividend increase
+        (split-adjusted), (2) forward dividend yield ≥ min_dividend_yield %, and
+        (3) trailing payout ratio in [payout_ratio_min, payout_ratio_max] %.
+        Back-test on TOPIX universe showed +16.95 % excess return vs TOPIX.
+        For the educational consecutive-only version see detect_consecutive_dividend_increase.
+
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+
+        Args:
+            min_consecutive_years: Minimum consecutive years of dividend increase (default 3).
+            min_dividend_yield: Minimum forward dividend yield % (default 3.0).
+            payout_ratio_min: Minimum trailing payout ratio % (default 30.0).
+            payout_ratio_max: Maximum trailing payout ratio % (default 50.0).
+            as_of_date: Cut-off date for disclosures (YYYY-MM-DD or YYYYMMDD).
+                Prevents lookahead bias when back-testing.  Defaults to all data.
+        """
+        cache: CacheStore = get_cache()
+
+        if min_consecutive_years < 1:
+            return make_validation_error_response(["`min_consecutive_years` must be >= 1."])
+        if min_dividend_yield < 0:
+            return make_validation_error_response(["`min_dividend_yield` must be >= 0."])
+        if payout_ratio_min < 0 or payout_ratio_max < 0:
+            return make_validation_error_response(["payout ratio bounds must be >= 0."])
+        if payout_ratio_min > payout_ratio_max:
+            return make_validation_error_response(
+                ["`payout_ratio_min` must be <= `payout_ratio_max`."]
+            )
+
+        norm_as_of: str | None = None
+        if as_of_date:
+            norm_as_of = _normalize_date(as_of_date)
+            errors = collect_errors(validate_date(norm_as_of))
+            if errors:
+                return make_validation_error_response(errors)
+
+        # --- Step 1: Consecutive dividend growth filter ---
+        fy_history = cache.get_fy_dividend_history(as_of_date=norm_as_of)
+        if not fy_history:
+            return {
+                "error": True,
+                "error_type": "CacheNotReady",
+                "message": "fins_summary cache is empty. Run daily_fetch to populate.",
+                "count": 0,
+                "data": [],
+            }
+
+        consecutive_map: dict[str, int] = {}
+        for code, entries in fy_history.items():
+            if len(entries) <= min_consecutive_years:
+                continue
+            consecutive, _ = _compute_consecutive_div_years(code, entries, cache)
+            if consecutive >= min_consecutive_years:
+                consecutive_map[code] = consecutive
+
+        if not consecutive_map:
+            return {
+                "count": 0,
+                "filters": _stable_payout_filters(
+                    min_consecutive_years,
+                    min_dividend_yield,
+                    payout_ratio_min,
+                    payout_ratio_max,
+                    norm_as_of,
+                ),
+                "data": [],
+            }
+
+        # --- Step 2: Yield filter ---
+        # Forward dividend (NxFDivAnn > FDivAnn) is already in post-split terms
+        # at disclosure time; apply get_split_factors_after for splits since then.
+        fwd_div_map = cache.get_forward_div_ann_map()
+        close_map = cache.get_latest_close_map()
+        name_map = cache.get_name_map()
+
+        fwd_disc_dates = {code: disc for code, (_, disc) in fwd_div_map.items()}
+        split_factors = cache.get_split_factors_after(fwd_disc_dates)
+
+        # --- Step 3: Payout ratio filter ---
+        # payout = DivAnn / EPS from the same FY filing.
+        # Split factors cancel in the ratio, so no adjustment needed for post-disc splits.
+        # Known limitation: FY-end splits (within ~45 days before disc_date) inflate
+        # the ratio because DivAnn stays pre-split while EPS is post-split per GAAP.
+        fy_fins = cache.get_all_latest_fy_fins()
+
+        results: list[dict[str, Any]] = []
+        for code, consecutive in consecutive_map.items():
+            fwd_entry = fwd_div_map.get(code)
+            close = close_map.get(code)
+            if fwd_entry is None or close is None or close <= 0:
+                continue
+
+            fwd_div, _ = fwd_entry
+            adj_fwd_div = fwd_div * split_factors.get(code, 1.0)
+            yield_pct = adj_fwd_div / close * 100
+            if yield_pct < min_dividend_yield:
+                continue
+
+            fins = fy_fins.get(code, {})
+            try:
+                div_ann = float(fins.get("DivAnn") or 0)
+                eps = float(fins.get("EPS") or 0)
+            except (TypeError, ValueError):
+                continue
+            if eps <= 0 or div_ann <= 0:
+                continue
+            payout = div_ann / eps * 100
+            if not (payout_ratio_min <= payout <= payout_ratio_max):
+                continue
+
+            results.append(
+                {
+                    "code": display_code(code),
+                    "name": name_map.get(code, ""),
+                    "consecutive_years": consecutive,
+                    "forward_div_ann": round(adj_fwd_div, 2),
+                    "yield_pct": round(yield_pct, 2),
+                    "payout_ratio": round(payout, 1),
+                    "close": round(close, 2),
+                }
+            )
+
+        results.sort(key=lambda x: -x["yield_pct"])
+        return {
+            "count": len(results),
+            "filters": _stable_payout_filters(
+                min_consecutive_years,
+                min_dividend_yield,
+                payout_ratio_min,
+                payout_ratio_max,
+                norm_as_of,
+            ),
+            "data": results,
+        }
+
 
 # ----------------------------------------------------------------
 # helpers
 # ----------------------------------------------------------------
+
+
+def _compute_consecutive_div_years(
+    code: str,
+    entries: list[dict[str, Any]],
+    cache: CacheStore,
+) -> tuple[int, list[dict[str, Any]]]:
+    """Compute split-adjusted consecutive dividend increase years for one code.
+
+    Applies cumulative split adjustment to each entry so all div_ann values are
+    in current per-share terms, then counts consecutive years of increase from
+    the latest year backwards.
+
+    Returns:
+        (consecutive_count, adj_entries) where adj_entries is the split-adjusted
+        list sorted ascending by fy_end.
+    """
+    adj_entries: list[dict[str, Any]] = []
+    for entry in entries:
+        factor = cache.get_cumulative_split_factor(code, entry["disc_date"])
+        adj_entries.append(
+            {
+                "fy_end": entry["fy_end"],
+                "disc_date": entry["disc_date"],
+                "div_ann": round(entry["div_ann"] * factor, 4),
+            }
+        )
+    consecutive = 0
+    for i in range(len(adj_entries) - 1, 0, -1):
+        curr = adj_entries[i]["div_ann"]
+        prev = adj_entries[i - 1]["div_ann"]
+        # div_ann == 0 breaks the streak (explicit dividend cut).
+        if curr > 0 and curr > prev:
+            consecutive += 1
+        else:
+            break
+    return consecutive, adj_entries
+
+
+def _stable_payout_filters(
+    min_consecutive_years: int,
+    min_dividend_yield: float,
+    payout_ratio_min: float,
+    payout_ratio_max: float,
+    as_of_date: str | None,
+) -> dict[str, Any]:
+    """Build the filters dict for detect_stable_payout_growth responses."""
+    return {
+        "min_consecutive_years": min_consecutive_years,
+        "min_dividend_yield": min_dividend_yield,
+        "payout_ratio_min": payout_ratio_min,
+        "payout_ratio_max": payout_ratio_max,
+        "as_of_date": as_of_date,
+    }
 
 
 def _load_topix_series(
