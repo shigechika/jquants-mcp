@@ -5,6 +5,18 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.40.0](https://github.com/shigechika/jquants-mcp/compare/v0.39.0...v0.40.0) (2026-05-23)
+
+
+### Features
+
+* **daily-fetch:** auto-detect J-Quants plan from API ([#389](https://github.com/shigechika/jquants-mcp/issues/389)) ([2dc19ed](https://github.com/shigechika/jquants-mcp/commit/2dc19ed7a3f21659ecb293b5aec484e83de85df6))
+
+
+### Documentation
+
+* **runbooks:** add plan-upgrade checklist for Standard/Premium switch ([#388](https://github.com/shigechika/jquants-mcp/issues/388)) ([196b52f](https://github.com/shigechika/jquants-mcp/commit/196b52fc548014714acbcf8cad35b26daeaeefa1))
+
 ## [0.39.0](https://github.com/shigechika/jquants-mcp/compare/v0.38.9...v0.39.0) (2026-05-22)
 
 
