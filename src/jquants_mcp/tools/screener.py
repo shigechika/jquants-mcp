@@ -1157,7 +1157,8 @@ def register(
         Combines three filters: (1) ≥ min_consecutive_years of annual dividend increase
         (split-adjusted), (2) forward dividend yield ≥ min_dividend_yield %, and
         (3) trailing payout ratio in [payout_ratio_min, payout_ratio_max] %.
-        Back-test on TOPIX universe showed +16.95 % excess return vs TOPIX.
+        Internal back-test (TOPIX universe, annual rebalance, default params) showed
+        +16.95 % excess return vs TOPIX; methodology is unpublished.
         For the educational consecutive-only version see detect_consecutive_dividend_increase.
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
@@ -1225,8 +1226,9 @@ def register(
         # --- Step 2: Yield filter ---
         # Forward dividend (NxFDivAnn > FDivAnn) is already in post-split terms
         # at disclosure time; apply get_split_factors_after for splits since then.
-        fwd_div_map = cache.get_forward_div_ann_map()
-        close_map = cache.get_latest_close_map()
+        # as_of_date is passed so back-test callers see no future disclosures.
+        fwd_div_map = cache.get_forward_div_ann_map(as_of_date=norm_as_of)
+        close_map = cache.get_latest_close_map(as_of_date=norm_as_of)
         name_map = cache.get_name_map()
 
         fwd_disc_dates = {code: disc for code, (_, disc) in fwd_div_map.items()}
@@ -1237,7 +1239,7 @@ def register(
         # Split factors cancel in the ratio, so no adjustment needed for post-disc splits.
         # Known limitation: FY-end splits (within ~45 days before disc_date) inflate
         # the ratio because DivAnn stays pre-split while EPS is post-split per GAAP.
-        fy_fins = cache.get_all_latest_fy_fins()
+        fy_fins = cache.get_all_latest_fy_fins(as_of_date=norm_as_of)
 
         results: list[dict[str, Any]] = []
         for code, consecutive in consecutive_map.items():
@@ -1309,6 +1311,14 @@ def _compute_consecutive_div_years(
     Returns:
         (consecutive_count, adj_entries) where adj_entries is the split-adjusted
         list sorted ascending by fy_end.
+
+    Performance note: calls get_cumulative_split_factor once per entry (O(N)
+    SQLite round-trips per code).  For large universes, consider batching split
+    events with get_split_factors_after before calling this helper.
+
+    Known limitation: splits that occurred within ~45 days BEFORE disc_date
+    (FY-end split) are not reflected here because get_cumulative_split_factor
+    only considers splits AFTER disc_date.
     """
     adj_entries: list[dict[str, Any]] = []
     for entry in entries:

@@ -2197,11 +2197,46 @@ class TestDetectStablePayoutGrowth:
         assert "1301" not in codes
 
     async def test_consecutive_filter_excludes(self, mock_env):
-        """連続増配年数不足で除外される。"""
+        """連続増配年数不足（early exit）で除外される。"""
         cache = mock_env["cache"]
         # n_years=2 FY rows + 1 combined row = 3 total entries; early-exit fires
         # (len(entries)=3 <= min_consecutive_years=3) → excluded before count check
         self._setup_qualifying_code(cache, "13010", "花王", n_years=2)
+
+        result = await _call(
+            "detect_stable_payout_growth",
+            min_consecutive_years=3,
+            min_dividend_yield=3.0,
+        )
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" not in codes
+
+    async def test_div_cut_breaks_streak(self, mock_env):
+        """配当カット年があると streak がリセットされて除外される。"""
+        cache = mock_env["cache"]
+        _seed_master(cache, "13010", "花王")
+        # FY history: 40 → 41 → 30 (cut) → 50 → 55 → combined(60)
+        # Consecutive from latest: 60>55>50 = 2 years < min_consecutive_years=3
+        for disc_date, fy_end, div in [
+            ("2019-06-20", "2018-03-31", 40.0),
+            ("2020-06-20", "2019-03-31", 41.0),
+            ("2021-06-20", "2020-03-31", 30.0),  # cut
+            ("2022-06-20", "2021-03-31", 50.0),
+            ("2023-06-20", "2022-03-31", 55.0),
+        ]:
+            _seed_fins_summary(cache, "13010", disc_date, "FYFinancialStatements", fy_end, div)
+        _seed_fins_row(
+            cache,
+            "13010",
+            "2024-06-20",
+            DocType="FYFinancialStatements",
+            CurFYEn="2023-03-31",
+            CurPerType="FY",
+            FDivAnn="60.0",
+            DivAnn="60.0",
+            EPS="100.0",
+        )
+        _seed_close(cache, "13010", "2024-06-20", 1000.0)
 
         result = await _call(
             "detect_stable_payout_growth",
