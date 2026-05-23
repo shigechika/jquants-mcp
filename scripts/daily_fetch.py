@@ -148,7 +148,7 @@ def _detect_plan_from_api(cli: "jquantsapi.ClientV2") -> str:
 
 
 def _available_endpoints(plan: str) -> list[str]:
-    """プランで取得可能なエンドポイント一覧を返す。"""
+    """Return the list of endpoints available under *plan*."""
     plan_level = PLAN_LEVELS.get(plan, 0)
     return [
         ep
@@ -990,10 +990,7 @@ def main() -> None:
         description="J-Quants 追加データを取得してキャッシュに投入",
         epilog="Plan is auto-detected from the J-Quants API"
         if auto_detect
-        else (
-            f"現在のプラン: {configured_plan}"
-            f"（取得可能: {', '.join(_available_endpoints(configured_plan))}）"
-        ),
+        else f"Active plan: {configured_plan} (available: {', '.join(_available_endpoints(configured_plan))})",
     )
     parser.add_argument("--topix", action="store_true", help="TOPIX 日足を取得 (Light+)")
     parser.add_argument("--fins-summary", action="store_true", help="決算サマリーを取得 (Free+)")
