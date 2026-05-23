@@ -41,7 +41,7 @@ Exposed tools:
   decisions.
 - ``detect_stable_payout_growth`` — composite screener combining consecutive
   dividend growth, forward yield ≥ threshold, and payout ratio in [30 %, 50 %].
-  Back-tested at +16.95 % excess return vs TOPIX.
+  Internal back-test showed +16.95 % excess return vs TOPIX; methodology unpublished.
 
 The 52w/YTD detectors are also backed by the ``screener_results``
 pre-compute cache (default-params cross-sectional outputs are
@@ -1232,6 +1232,9 @@ def register(
         name_map = cache.get_name_map()
 
         fwd_disc_dates = {code: disc for code, (_, disc) in fwd_div_map.items()}
+        # get_split_factors_after has no upper date bound, so splits after as_of_date
+        # are included when back-testing.  The practical impact is small (splits are rare)
+        # but a future improvement would be to add as_of_date support to that method.
         split_factors = cache.get_split_factors_after(fwd_disc_dates)
 
         # --- Step 3: Payout ratio filter ---
