@@ -76,7 +76,7 @@ api_key = YOUR_API_KEY_HERE
        This teaches Claude how to render React artifact charts from the tool
        output without extra prompting.
     4. The project settings (including the MCP connection) sync automatically
-       to the Claude mobile app after a short wait.
+       to the Claude mobile app within a few minutes.
 
 === "Claude Code (CLI)"
 
