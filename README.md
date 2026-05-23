@@ -834,6 +834,8 @@ uv run python scripts/verify_cache_completeness.py --check-gaps --auto-fix
 
 Exit codes: `0` = all tables healthy, `1` = stale or missing tables, `2` = fatal (DB unreadable).
 
+The plan is auto-detected from your API key (same probe as `daily_fetch.py`); pass `--plan <plan>` to override.
+
 Useful before a plan downgrade to confirm all currently-covered data has been fetched, and as a periodic check to catch silent fetch failures early.
 
 ## Cloud Run Deployment

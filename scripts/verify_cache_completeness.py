@@ -827,8 +827,10 @@ def main() -> None:
     # Resolve plan: use explicit --plan if given, otherwise auto-detect from API.
     plan = args.plan
     if plan is None:
+        print("Detecting plan from J-Quants API...", file=sys.stderr)
         api_key, base_url = _load_api_credentials()
         plan = _detect_plan_from_api(api_key, base_url)
+        print(f"Detected plan: {plan}", file=sys.stderr)
 
     conn = _connect(args.db)
     exit_code = 0
