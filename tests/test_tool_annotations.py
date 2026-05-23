@@ -73,6 +73,7 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     "detect_ytd_high_low_range": READ_ONLY_CACHE,
     "detect_distribution_days": READ_ONLY_CACHE,
     "detect_follow_through_day": READ_ONLY_CACHE,
+    "detect_consecutive_dividend_increase": READ_ONLY_CACHE,
     # tools/technical.py — API fallback on cache miss
     "get_technical_indicators": READ_ONLY_API,
     # tools/summary.py — cache only, no API

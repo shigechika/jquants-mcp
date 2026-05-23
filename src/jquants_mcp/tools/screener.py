@@ -35,6 +35,10 @@ Exposed tools:
 - ``detect_follow_through_day`` — check whether a TOPIX follow-through day
   (day 4+ of a rally attempt, z ≥ +σ threshold, volume increase) has
   occurred from a specified ``rally_start`` date.
+- ``detect_consecutive_dividend_increase`` — screen for stocks with at least
+  N consecutive years of annual dividend increase (連続増配), split-adjusted.
+  Educational tool — use ``detect_stable_payout_growth`` for investment
+  decisions.
 
 The 52w/YTD detectors are also backed by the ``screener_results``
 pre-compute cache (default-params cross-sectional outputs are
@@ -1051,6 +1055,112 @@ def register(
             "volume_confirmed": vol_confirmed,
             "market_va_today": int(va_today) if va_today is not None else None,
             "market_va_prev": int(va_prev) if va_prev is not None else None,
+        }
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def detect_consecutive_dividend_increase(
+        min_years: int = 10,
+        as_of_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Screen for stocks with consecutive annual dividend increases (連続増配). All plans.
+
+        Use for 連続増配・dividend growth・増配継続 queries.
+        NOTE: consecutive dividend growth alone does NOT beat TOPIX on a risk-adjusted
+        basis.  For investment decisions combine with yield and payout discipline via
+        detect_stable_payout_growth.
+
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+
+        Args:
+            min_years: Minimum number of consecutive years of dividend increase (default 10).
+            as_of_date: Cut-off date for disclosures (YYYY-MM-DD or YYYYMMDD).
+                Disclosures after this date are excluded, enabling lookahead-free
+                back-testing.  Defaults to all available data.
+
+        Returns:
+            Matching stocks sorted by consecutive_years descending.  Each item
+            contains code, name, consecutive_years, latest_div_ann (split-adjusted,
+            current per-share), latest_fy_end, and a history list of recent years.
+        """
+        cache: CacheStore = get_cache()
+
+        if min_years < 1:
+            return make_validation_error_response(["`min_years` must be >= 1."])
+
+        norm_as_of: str | None = None
+        if as_of_date:
+            norm_as_of = _normalize_date(as_of_date)
+            errors = collect_errors(validate_date(norm_as_of))
+            if errors:
+                return make_validation_error_response(errors)
+
+        fy_history = cache.get_fy_dividend_history(as_of_date=norm_as_of)
+        if not fy_history:
+            return {
+                "error": True,
+                "error_type": "CacheNotReady",
+                "message": "fins_summary cache is empty. Run daily_fetch to populate.",
+                "count": 0,
+                "data": [],
+            }
+
+        name_map = cache.get_name_map()
+        results: list[dict[str, Any]] = []
+
+        for code, entries in fy_history.items():
+            if len(entries) < min_years:
+                continue
+
+            # Apply cumulative split adjustment so all div_ann values are
+            # in current per-share terms for fair year-to-year comparison.
+            adj_entries: list[dict[str, Any]] = []
+            for entry in entries:
+                factor = cache.get_cumulative_split_factor(code, entry["disc_date"])
+                adj_entries.append(
+                    {
+                        "fy_end": entry["fy_end"],
+                        "disc_date": entry["disc_date"],
+                        "div_ann": round(entry["div_ann"] * factor, 4),
+                    }
+                )
+
+            # Count consecutive years of increase from the latest year backwards.
+            consecutive = 0
+            for i in range(len(adj_entries) - 1, 0, -1):
+                curr = adj_entries[i]["div_ann"]
+                prev = adj_entries[i - 1]["div_ann"]
+                # div_ann == 0 breaks the streak (explicit dividend cut).
+                if curr > 0 and curr > prev:
+                    consecutive += 1
+                else:
+                    break
+
+            if consecutive < min_years:
+                continue
+
+            latest = adj_entries[-1]
+            # Include the year that started the streak plus all increase years.
+            streak_entries = adj_entries[-(consecutive + 1) :]
+            results.append(
+                {
+                    "code": display_code(code),
+                    "name": name_map.get(code, ""),
+                    "consecutive_years": consecutive,
+                    "latest_div_ann": round(latest["div_ann"], 2),
+                    "latest_fy_end": latest["fy_end"],
+                    "history": [
+                        {"fy_end": e["fy_end"], "div_ann": round(e["div_ann"], 2)}
+                        for e in streak_entries
+                    ],
+                }
+            )
+
+        results.sort(key=lambda x: -x["consecutive_years"])
+        return {
+            "count": len(results),
+            "min_years": min_years,
+            "as_of_date": norm_as_of,
+            "data": results,
         }
 
 
