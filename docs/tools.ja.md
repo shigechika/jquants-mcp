@@ -66,11 +66,11 @@ jquants-mcp で Claude に何ができるか、ユースケース別ツアー。
 | 「7203（トヨタ）のここ 1 か月の株価」 | `get_equities_bars_daily` |
 | 「8053 住友商事の決算」 | `get_fins_summary` |
 | 「9984 SBG の配当履歴」 | `get_fins_dividend` |
-| 「285A（キオクシア）のチャートを 3 か月」 | `render_candlestick` |
+| 「285A（キオクシア）のチャートを 3 か月」 | `get_candlestick_data` |
 | 「7203 は SMA25 の上？RSI は？」 | `get_technical_indicators` |
 | 「住友商事のコードを教えて」 | `search_equities` |
 
-`render_candlestick` は省略時 91 日窓 + `volume + sma5 + sma25` がデフォルト。
+`get_candlestick_data` は省略時 91 日窓 + `volume + sma5 + sma25` がデフォルト。JSON 形式で返し、React artifact でのレンダリングに最適化されています。
 SMA は前倒しで計算されているので、表示開始バーから完全に温まった状態で描画されます。
 RSI のチャート描画は現時点で未対応です — RSI 数値は `get_technical_indicators` をご利用ください。
 

@@ -100,7 +100,7 @@ def register(
         """Compute technical indicators (SMA, Bollinger Bands, RSI) for a single stock (テクニカル指標). All plans.
 
         Use for SMA・移動平均・ボリンジャーバンド・RSI queries on a specific stock.
-        For charting use render_candlestick; for VWAP pressure use compare_close_vs_vwap.
+        For charting use get_candlestick_data; for VWAP pressure use compare_close_vs_vwap.
         Supported: sma5, sma25, sma75, bb20 (→ bb20_mid/upper/lower ±2σ), rsi14. Null when not warmed up.
 
         [Supported plans] Free / Light / Standard / Premium (API fallback on cache miss)

@@ -80,7 +80,6 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     # tools/valuation.py — cache only, no API
     "get_sector_briefing": READ_ONLY_CACHE,
     # tools/charts.py — cache only
-    "render_candlestick": READ_ONLY_CACHE,
     "get_comparison_chart_data": READ_ONLY_CACHE,
     "get_candlestick_data": READ_ONLY_CACHE,
     # server.py utilities — pure server-local read
@@ -107,10 +106,6 @@ async def _registered_tools() -> dict:
 async def test_tool_has_expected_annotations(name: str, expected: dict[str, bool]):
     tools = await _registered_tools()
     if name not in tools:
-        # charts tools are conditionally registered — skip if the
-        # [charts] extra is not installed in the test env.
-        if name == "render_candlestick":
-            pytest.skip("[charts] extra not installed; tool not registered")
         pytest.fail(f"tool {name!r} not registered")
     tool = tools[name]
     annotations = tool.annotations

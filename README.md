@@ -22,7 +22,7 @@ Deployment shapes (stdio / Docker Compose / self-hosted HTTP / Cloud Run) and ho
 
 - Sector performance ranking (業種別騰落率) — `get_sector_performance`
 - Top turnover by trading value (売買代金ランキング) — `get_top_turnover_value`
-- Candlestick chart with SMA — `render_candlestick`
+- Candlestick chart with SMA — `get_candlestick_data`
 - Quarterly financial summary (決算ダイジェスト) — `get_fins_summary`
 - 5-stock return comparison — `render_comparison_chart`
 
@@ -30,7 +30,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ## Features
 
-- **51 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 9 offline screener, 1 technical indicators, 1 single-stock summary, 1 cache-only equity search, 3 chart tools (2 always-on JSON + 1 PNG opt-in), and 5 server utilities
+- **50 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 9 offline screener, 1 technical indicators, 1 single-stock summary, 1 cache-only equity search, 2 chart tools (JSON, no optional dependencies), and 5 server utilities
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -695,39 +695,21 @@ Pure-Python SMA / Bollinger Bands / RSI computation over the cached daily bars. 
 |---|---|
 | `get_technical_indicators` | Compute SMA (5/25/75), Bollinger Bands (bb20, ±2σ sample std), and RSI (rsi14, Wilder smoothing) for a single code over a date or date range. Returns numeric values — useful for "is close above SMA25?" or "is RSI overbought?" without rendering a chart. All values use split-adjusted close (AdjC). Indicators not yet warmed up are returned as `null`. |
 
-> **RSI in charts**: `render_candlestick` does not yet render an RSI sub-panel. Use `get_technical_indicators` for numeric RSI values.
+> **RSI in charts**: RSI sub-panel is not yet available. Use `get_technical_indicators` for numeric RSI values.
 
-### Charts (3 tools)
+### Charts (2 tools)
 
-Two JSON tools are always registered (no optional dependency). One PNG tool requires the `[charts]` extra.
-
-**Always-on JSON tools** — return structured data for React artifact / Plotly rendering:
+Both tools return JSON for React artifact / Plotly rendering (no optional dependencies).
 
 | Tool | Description |
 |---|---|
 | `get_candlestick_data` | OHLCV + indicator data as JSON parallel arrays for a single code. Returns `dates`, `ohlcv`, `indicators` (SMA / Bollinger), `lock_days`, `earnings_dates`. Default: 91-day range, `sma5` + `sma25` overlays. |
 | `get_comparison_chart_data` | Multi-stock time-series data as JSON wide-format records (up to 10 codes). Default `mode="return_pct"` normalises each series to 0% at its first bar; `mode="price"` plots adjusted close. |
 
-**PNG tool (opt-in)** — requires [`mplfinance`](https://github.com/matplotlib/mplfinance) + matplotlib. Claude Desktop and Claude mobile display the image directly in chat.
+Indicator options for `get_candlestick_data`:
 
-Install with:
-
-```bash
-pip install "jquants-mcp[charts]"
-# or with uv:
-uv sync --extra charts
-```
-
-| Tool | Description |
-|---|---|
-| `render_candlestick` | OHLC candlestick PNG for a single code. Same date-range and indicator options as `get_candlestick_data`, plus `style` and `aspect_ratio`. |
-
-Shared indicator options (`get_candlestick_data` and `render_candlestick`):
-
-- **Indicators**: `volume`, `sma5`, `sma20`, `sma25`, `sma60`, `sma75`, `sma200`, `bb20` (20-day Bollinger band; expands to `bb20_upper` / `bb20_mid` / `bb20_lower` in JSON mode)
+- **Indicators**: `volume`, `sma5`, `sma20`, `sma25`, `sma60`, `sma75`, `sma200`, `bb20` (20-day Bollinger band; expands to `bb20_upper` / `bb20_mid` / `bb20_lower`)
 - **Adjusted prices**: split-adjusted by default (`adjusted=True`); set `False` for raw OHLC
-- **Style** (`render_candlestick` only): `default` (Yahoo-like) / `dark` / `colorblind` (Okabe-Ito palette)
-- **Aspect ratio** (`render_candlestick` only): `square` (default, 8×8 in) / `landscape` (12×6 in) / `portrait` (6×9 in)
 
 ### Utility (5 tools)
 
