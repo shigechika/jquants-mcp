@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.41.3](https://github.com/shigechika/jquants-mcp/compare/v0.41.2...v0.41.3) (2026-05-23)
+
+
+### Documentation
+
+* clarify mobile sync timing to 'within a few minutes' ([#403](https://github.com/shigechika/jquants-mcp/issues/403)) ([d0595da](https://github.com/shigechika/jquants-mcp/commit/d0595daf6e941e56051ca13a822ca1d95c5903aa))
+
 ## [0.41.2](https://github.com/shigechika/jquants-mcp/compare/v0.41.1...v0.41.2) (2026-05-23)
 
 
