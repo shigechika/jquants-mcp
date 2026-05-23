@@ -91,7 +91,7 @@ def _detect_plan_from_api(api_key: str, base_url: str) -> str:
     without API access.
     """
     try:
-        import httpx  # type: ignore[import]
+        import httpx
     except ImportError:
         return "free"
 
@@ -590,7 +590,7 @@ def _fetch_bars_for_date(
         List of row dicts from the 'data' key across all pages.
     """
     try:
-        import httpx  # type: ignore[import]
+        import httpx
     except ImportError as exc:
         raise RuntimeError("httpx is required for --auto-fix. Run: pip install httpx") from exc
 
