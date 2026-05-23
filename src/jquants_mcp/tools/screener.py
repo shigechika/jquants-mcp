@@ -1108,11 +1108,20 @@ def register(
         results: list[dict[str, Any]] = []
 
         for code, entries in fy_history.items():
-            if len(entries) < min_years:
+            # Need at least min_years + 1 data points to have min_years consecutive pairs.
+            if len(entries) <= min_years:
                 continue
 
             # Apply cumulative split adjustment so all div_ann values are
             # in current per-share terms for fair year-to-year comparison.
+            # TODO: replace per-entry get_cumulative_split_factor calls with a single
+            # batch query (fetch all split events for qualifying codes at once, compute
+            # per-year factors in Python) to reduce SQLite round-trips at scale.
+            #
+            # Known limitation: splits that occurred within ~45 days BEFORE a disc_date
+            # (fiscal-year-end split) are not included here because get_cumulative_split_factor
+            # only considers splits AFTER disc_date.  Use get_split_factors_before_disc() to
+            # handle those cases if they become a material issue.
             adj_entries: list[dict[str, Any]] = []
             for entry in entries:
                 factor = cache.get_cumulative_split_factor(code, entry["disc_date"])

@@ -2008,6 +2008,27 @@ class TestDetectConsecutiveDividendIncrease:
         # Only 3 consecutive years from the latest (after the zero cut)
         assert "1301" not in codes
 
+    async def test_nonzero_decrease_breaks_streak(self, mock_env):
+        """非ゼロ減配（50→40）でストリークが途切れる。"""
+        cache = mock_env["cache"]
+        # 3 years increase, then a non-zero decrease, then 2 years increase
+        divs = [10.0, 20.0, 30.0, 40.0, 50.0, 40.0, 50.0, 60.0]
+        for i, d in enumerate(divs):
+            y = 2015 + i
+            _seed_fins_summary(
+                cache,
+                "13010",
+                f"{y + 1}-06-20",
+                "FYFinancialStatements",
+                f"{y}-03-31",
+                d,
+            )
+
+        result = await _call("detect_consecutive_dividend_increase", min_years=3)
+        codes = [item["code"] for item in result["data"]]
+        # Only 2 consecutive increases from latest (FY2020=50, FY2021=40 breaks)
+        assert "1301" not in codes
+
     async def test_invalid_min_years(self, mock_env):
         """min_years < 1 でバリデーションエラーが返る。"""
         result = await _call("detect_consecutive_dividend_increase", min_years=0)
