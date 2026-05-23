@@ -811,6 +811,31 @@ python3 scripts/daily_fetch.py --db /path/to/cache.db
 
 Permission errors (403) are handled gracefully — the script logs the error and continues to the next endpoint without crashing.
 
+### Cache Health Check
+
+`scripts/verify_cache_completeness.py` audits the local cache and reports which tables are up-to-date, stale, or missing for the current plan.
+
+```bash
+# Quick freshness check (text output)
+uv run python scripts/verify_cache_completeness.py
+
+# Machine-readable JSON (for CI / monitoring)
+uv run python scripts/verify_cache_completeness.py --output json
+
+# Detect date-level gaps (days where only a fraction of stocks were fetched)
+uv run python scripts/verify_cache_completeness.py --check-gaps
+
+# Show what --auto-fix would repair, without making API calls
+uv run python scripts/verify_cache_completeness.py --check-gaps --auto-fix --dry-run
+
+# Re-fetch gap days automatically
+uv run python scripts/verify_cache_completeness.py --check-gaps --auto-fix
+```
+
+Exit codes: `0` = all tables healthy, `1` = stale or missing tables, `2` = fatal (DB unreadable).
+
+Useful before a plan downgrade to confirm all currently-covered data has been fetched, and as a periodic check to catch silent fetch failures early.
+
 ## Cloud Run Deployment
 
 This server can be deployed to [Google Cloud Run](https://cloud.google.com/run). The deployment splits state across two managed stores:
