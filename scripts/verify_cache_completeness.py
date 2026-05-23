@@ -762,7 +762,8 @@ def main() -> None:
     parser.add_argument(
         "--plan",
         default=configured_plan,
-        help="Subscription plan override. When omitted, auto-detected from the J-Quants API "
+        help="Subscription plan override (also honoured via JQUANTS_PLAN env var). "
+        "When neither is provided, auto-detected from the J-Quants API "
         "(falls back to 'free' if API key is unavailable).",
     )
     parser.add_argument(

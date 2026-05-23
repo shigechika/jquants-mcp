@@ -811,6 +811,33 @@ python3 scripts/daily_fetch.py --db /path/to/cache.db
 
 権限エラー（403）は graceful にスキップし、次のエンドポイントに進みます。
 
+### キャッシュ健全性チェック
+
+`scripts/verify_cache_completeness.py` はローカルキャッシュを監査し、現在のプランに対してどのテーブルが最新・古い・欠落しているかをレポートします。
+
+```bash
+# 簡易チェック（テキスト出力）
+uv run python scripts/verify_cache_completeness.py
+
+# CI / 監視向けの JSON 出力
+uv run python scripts/verify_cache_completeness.py --output json
+
+# 日付単位の取得漏れを検出（取得株数が異常に少ない日を検知）
+uv run python scripts/verify_cache_completeness.py --check-gaps
+
+# --auto-fix が修復する内容を API 呼び出しなしで確認
+uv run python scripts/verify_cache_completeness.py --check-gaps --auto-fix --dry-run
+
+# 取得漏れ日を自動再フェッチ
+uv run python scripts/verify_cache_completeness.py --check-gaps --auto-fix
+```
+
+終了コード: `0` = 全テーブル正常、`1` = 古いテーブルまたは欠落あり、`2` = 致命的エラー（DB 読み取り不可）。
+
+プランは API キーから自動検出されます（`daily_fetch.py` と同じプローブ）。`--plan <plan>` で上書き可能。`JQUANTS_PLAN` 環境変数でも指定できます（自動検出をスキップ）。
+
+プランダウングレード前に現在カバーされているデータがフェッチ済みか確認する用途や、サイレントなフェッチ失敗を早期に発見する定期チェックとして活用できます。
+
 ## Cloud Run デプロイ
 
 このサーバーは [Google Cloud Run](https://cloud.google.com/run) にデプロイできます。状態管理は 2 つのマネージドサービスに分離されています:

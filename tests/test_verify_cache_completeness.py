@@ -717,6 +717,11 @@ def test_auto_fix_gaps_records_api_error(conn, monkeypatch):
 def test_detect_plan_from_api_no_httpx(monkeypatch):
     """Returns 'free' when httpx is not installed."""
     import builtins
+    import sys
+
+    # Remove from sys.modules so the lazy import inside the function goes through
+    # __import__ rather than returning the cached module.
+    monkeypatch.delitem(sys.modules, "httpx", raising=False)
 
     real_import = builtins.__import__
 
