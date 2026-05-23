@@ -5,6 +5,18 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.41.1](https://github.com/shigechika/jquants-mcp/compare/v0.41.0...v0.41.1) (2026-05-23)
+
+
+### Bug Fixes
+
+* **tests:** patch Path.home() directly to fix Windows CI failure ([#398](https://github.com/shigechika/jquants-mcp/issues/398)) ([afbd09c](https://github.com/shigechika/jquants-mcp/commit/afbd09c287df17274ccf4b49bfe11c5f2306ecd4))
+
+
+### Documentation
+
+* update chart tools section for get_candlestick_data (v0.41.0) ([#397](https://github.com/shigechika/jquants-mcp/issues/397)) ([3874d79](https://github.com/shigechika/jquants-mcp/commit/3874d79c4770e78d03c6686f05d1ef5dd5a4b1f3))
+
 ## [0.41.0](https://github.com/shigechika/jquants-mcp/compare/v0.40.0...v0.41.0) (2026-05-23)
 
 
