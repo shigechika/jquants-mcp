@@ -1201,3 +1201,146 @@ class TestGetAllLatestFyFinsTimestamp:
         assert "12340" in result
         assert result["12340"].get("Sales") == 50.0
         store.close()
+
+
+class TestGetFyDividendHistory:
+    """get_fy_dividend_history のテスト。"""
+
+    def _insert(
+        self,
+        conn: sqlite3.Connection,
+        code: str,
+        disc_date: str,
+        doc_type: str,
+        cur_fy_en: str,
+        div_ann: float | None,
+    ) -> None:
+        import json
+
+        data: dict = {"Code": code, "DocType": doc_type, "CurFYEn": cur_fy_en}
+        if div_ann is not None:
+            data["DivAnn"] = str(div_ann)
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at)"
+            " VALUES (?, ?, ?, ?)",
+            (code, disc_date, json.dumps(data), time.time()),
+        )
+
+    def test_basic_fy_history(self, tmp_path: Path):
+        """FY 行を正しく返す基本テスト。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "13010", "2023-06-20", "FYFinancialStatements", "2023-03-31", 50.0)
+        self._insert(conn, "13010", "2022-06-21", "FYFinancialStatements", "2022-03-31", 45.0)
+        conn.commit()
+
+        result = store.get_fy_dividend_history()
+        assert "13010" in result
+        history = result["13010"]
+        assert len(history) == 2
+        assert history[0]["fy_end"] == "2022-03-31"
+        assert history[0]["div_ann"] == 45.0
+        assert history[1]["fy_end"] == "2023-03-31"
+        assert history[1]["div_ann"] == 50.0
+        store.close()
+
+    def test_deduplication_by_fy_end(self, tmp_path: Path):
+        """同一 CurFYEn の複数開示で最新 disc_date の行のみ残る。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        # 修正前申告 → 小さい値
+        self._insert(conn, "13010", "2023-05-15", "FYFinancialStatements", "2023-03-31", 40.0)
+        # 修正後申告 → 大きい値（こちらを採用すべき）
+        self._insert(conn, "13010", "2023-06-20", "FYFinancialStatements", "2023-03-31", 50.0)
+        conn.commit()
+
+        result = store.get_fy_dividend_history()
+        assert len(result["13010"]) == 1
+        assert result["13010"][0]["div_ann"] == 50.0
+        store.close()
+
+    def test_as_of_date_lookahead_prevention(self, tmp_path: Path):
+        """as_of_date より後の開示が除外される（lookahead 防止）。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "13010", "2022-06-21", "FYFinancialStatements", "2022-03-31", 45.0)
+        self._insert(conn, "13010", "2023-06-20", "FYFinancialStatements", "2023-03-31", 50.0)
+        conn.commit()
+
+        result = store.get_fy_dividend_history(as_of_date="2022-12-31")
+        assert "13010" in result
+        history = result["13010"]
+        assert len(history) == 1
+        assert history[0]["fy_end"] == "2022-03-31"
+        store.close()
+
+    def test_reit_excluded(self, tmp_path: Path):
+        """DocType に REIT を含む行は除外される。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "34570", "2023-06-20", "FYFinancialStatementsREIT", "2023-03-31", 200.0)
+        self._insert(conn, "13010", "2023-06-20", "FYFinancialStatements", "2023-03-31", 50.0)
+        conn.commit()
+
+        result = store.get_fy_dividend_history()
+        assert "34570" not in result
+        assert "13010" in result
+        store.close()
+
+    def test_null_div_ann_excluded(self, tmp_path: Path):
+        """DivAnn が null または空文字の行は除外される。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "13010", "2023-06-20", "FYFinancialStatements", "2023-03-31", None)
+        conn.commit()
+
+        result = store.get_fy_dividend_history()
+        assert "13010" not in result
+        store.close()
+
+    def test_disc_date_is_clean_date(self, tmp_path: Path):
+        """返却される disc_date が YYYY-MM-DD 形式（10文字）であること。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(
+            conn, "13010", "2023-06-20 00:00:00", "FYFinancialStatements", "2023-03-31", 50.0
+        )
+        conn.commit()
+
+        result = store.get_fy_dividend_history()
+        assert "13010" in result
+        disc = result["13010"][0]["disc_date"]
+        assert len(disc) == 10 and disc[4] == "-" and disc[7] == "-"
+        store.close()
+
+    def test_us_structure_excluded(self, tmp_path: Path):
+        """DocType に US を含む行は除外される。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "23450", "2023-06-20", "FYFinancialStatementsUS", "2023-03-31", 100.0)
+        self._insert(conn, "13010", "2023-06-20", "FYFinancialStatements", "2023-03-31", 50.0)
+        conn.commit()
+
+        result = store.get_fy_dividend_history()
+        assert "23450" not in result
+        assert "13010" in result
+        store.close()
+
+    def test_zero_div_ann_included(self, tmp_path: Path):
+        """DivAnn == 0 の行は含まれる（配当カット年を履歴に残す）。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "13010", "2023-06-20", "FYFinancialStatements", "2023-03-31", 0.0)
+        conn.commit()
+
+        result = store.get_fy_dividend_history()
+        assert "13010" in result
+        assert result["13010"][0]["div_ann"] == 0.0
+        store.close()
+
+    def test_empty_store_returns_empty_dict(self, tmp_path: Path):
+        """空のキャッシュでは空の dict を返す。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        result = store.get_fy_dividend_history()
+        assert result == {}
+        store.close()

@@ -1437,6 +1437,84 @@ class CacheStore:
                 continue
         return result
 
+    def get_fy_dividend_history(
+        self,
+        as_of_date: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Return FY annual dividend history for all codes, deduplicated by fiscal year end.
+
+        Queries ``fins_summary`` for full-year (DocType LIKE 'FY%') filings only,
+        excluding REIT and US-structure issues.  When multiple disclosures exist for
+        the same (code, CurFYEn) — e.g. initial filing vs. amended — only the most
+        recent disc_date is kept.
+
+        Args:
+            as_of_date: Upper bound on disc_date (``YYYY-MM-DD``).  When provided,
+                only filings disclosed on or before this date are included, which
+                prevents lookahead bias in back-testing.
+
+        Returns:
+            Mapping of 5-digit code to a list of dicts, each with keys
+            ``fy_end`` (str), ``disc_date`` (str), ``div_ann`` (float).
+            The list is sorted by ``fy_end`` ascending.
+            Zero values (``div_ann == 0.0``) are included — they represent a year
+            where no dividend was paid and will break any consecutive-growth streak
+            in callers.
+            Returns an empty dict when the table is unavailable or the connection
+            is unavailable.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        date_filter = ""
+        params: tuple | tuple[str] = ()
+        if as_of_date:
+            date_filter = "  AND substr(disc_date, 1, 10) <= ?"
+            params = (as_of_date,)
+        sql = (
+            "WITH ranked AS ("
+            "  SELECT code,"
+            "    json_extract(data, '$.CurFYEn') AS fy_end,"
+            "    substr(disc_date, 1, 10) AS disc_date_norm,"
+            "    json_extract(data, '$.DivAnn') AS div_ann,"
+            "    ROW_NUMBER() OVER ("
+            "      PARTITION BY code, json_extract(data, '$.CurFYEn')"
+            "      ORDER BY substr(disc_date, 1, 10) DESC"
+            "    ) AS rn"
+            "  FROM fins_summary"
+            "  WHERE json_extract(data, '$.DocType') LIKE 'FY%'"
+            "    AND json_extract(data, '$.DocType') NOT LIKE '%REIT%'"
+            "    AND json_extract(data, '$.DocType') NOT LIKE '%US%'"
+            f"{date_filter}"
+            ")"
+            " SELECT code, fy_end, disc_date_norm, div_ann"
+            " FROM ranked"
+            " WHERE rn = 1"
+            "   AND fy_end IS NOT NULL AND fy_end != ''"
+            "   AND div_ann IS NOT NULL AND div_ann != ''"
+            " ORDER BY code, fy_end"
+        )
+        try:
+            rows = conn.execute(sql, params).fetchall()
+        except Exception:
+            return {}
+        result: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            code = str(row[0] or "")
+            if not code:
+                continue
+            try:
+                div_ann = float(row[3])
+            except (TypeError, ValueError):
+                continue
+            entry = {
+                "fy_end": str(row[1] or ""),
+                "disc_date": str(row[2] or ""),
+                "div_ann": div_ann,
+            }
+            result.setdefault(code, []).append(entry)
+        return result
+
     # ----------------------------------------------------------------
     # Tier 2: レスポンスレベルキャッシュ
     # ----------------------------------------------------------------
