@@ -45,6 +45,22 @@ from daily_fetch import (  # noqa: E402
 
 
 # ============================================================
+# Lightweight HTTP error stub — avoids importing ``requests``
+# ============================================================
+
+
+class _FakeHTTPError(Exception):
+    """Minimal stand-in for requests.exceptions.HTTPError.
+
+    ``_detect_plan_from_api`` uses duck-typing on ``exc.response.status_code``
+    so any exception with that attribute works.
+    """
+
+    def __init__(self, status_code: int) -> None:
+        self.response = MagicMock(status_code=status_code)
+
+
+# ============================================================
 # DataFrame 互換の軽量 mock
 # ============================================================
 
@@ -151,16 +167,16 @@ class TestAvailableEndpoints:
 
 
 # ============================================================
-# プラン自動検出
+# Plan auto-detection
 # ============================================================
 
 
 class TestLoadPlan:
-    """_load_plan のテスト。"""
+    """Tests for _load_plan."""
 
     def test_returns_none_when_not_configured(self, monkeypatch, tmp_path):
         monkeypatch.delenv("JQUANTS_PLAN", raising=False)
-        # config.ini が存在しないディレクトリを HOME にする
+        # point HOME at a dir with no config.ini
         monkeypatch.setenv("HOME", str(tmp_path))
         assert _load_plan() is None
 
@@ -179,14 +195,11 @@ class TestLoadPlan:
 
 
 class TestDetectPlanFromApi:
-    """_detect_plan_from_api のテスト。"""
+    """Tests for _detect_plan_from_api."""
 
     def _make_cli(self, premium_ok: bool, standard_ok: bool, light_ok: bool) -> MagicMock:
-        import requests
-
         def _raise_403(*args, **kwargs):
-            exc = requests.exceptions.HTTPError(response=MagicMock(status_code=403))
-            raise exc
+            raise _FakeHTTPError(403)
 
         cli = MagicMock()
         cli.get_fin_details.side_effect = None if premium_ok else _raise_403
@@ -211,11 +224,8 @@ class TestDetectPlanFromApi:
         assert _detect_plan_from_api(cli) == "free"
 
     def test_raises_on_401(self):
-        import requests
-
         cli = MagicMock()
-        exc = requests.exceptions.HTTPError(response=MagicMock(status_code=401))
-        cli.get_fin_details.side_effect = exc
+        cli.get_fin_details.side_effect = _FakeHTTPError(401)
         with pytest.raises(RuntimeError, match="401"):
             _detect_plan_from_api(cli)
 

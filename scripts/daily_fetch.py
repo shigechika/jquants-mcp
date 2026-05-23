@@ -111,11 +111,13 @@ def _detect_plan_from_api(cli: "jquantsapi.ClientV2") -> str:
 
     Tries plan-specific endpoints from Premium down to Light.  Returns the
     highest plan whose endpoint responds with HTTP 200; returns "free" when
-    all higher-plan probes are rejected (HTTP 403).  Raises on HTTP 401
-    (bad API key).  Falls back to "free" on unexpected errors.
-    """
-    import requests
+    all higher-plan probes are rejected (HTTP 403).  Raises RuntimeError on
+    HTTP 401 (bad API key) or unexpected errors.
 
+    Uses duck-typing on exception.response.status_code so this function does
+    not need to import ``requests`` directly — jquantsapi is an optional
+    runtime dependency not available in the test environment.
+    """
     probes: list[tuple[str, Callable[[], Any]]] = [
         ("premium", lambda: cli.get_fin_details(date_yyyymmdd="20240101")),
         ("standard", lambda: cli.get_mkt_short_ratio(date_yyyymmdd="20240101")),
@@ -126,16 +128,17 @@ def _detect_plan_from_api(cli: "jquantsapi.ClientV2") -> str:
         try:
             probe()
             return plan_name
-        except requests.exceptions.HTTPError as exc:
-            code = exc.response.status_code if exc.response is not None else None
+        except Exception as exc:
+            response = getattr(exc, "response", None)
+            code = getattr(response, "status_code", None)
             if code == 403:
                 continue
             if code == 401:
                 raise RuntimeError(
                     "J-Quants API authentication failed (401). Check your API key."
                 ) from exc
-            raise
-        except Exception as exc:
+            if code is not None:
+                raise  # HTTP error with unexpected status code
             raise RuntimeError(
                 f"Plan auto-detection failed: {exc}. "
                 "Set JQUANTS_PLAN env var or config.ini [jquants] plan to bypass."
@@ -985,7 +988,7 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(
         description="J-Quants 追加データを取得してキャッシュに投入",
-        epilog="プランは API から自動検出されます"
+        epilog="Plan is auto-detected from the J-Quants API"
         if auto_detect
         else (
             f"現在のプラン: {configured_plan}"
@@ -1055,9 +1058,9 @@ def main() -> None:
     cli = jquantsapi.ClientV2()
 
     if auto_detect:
-        print("プランを API から自動検出中...")
+        print("Detecting plan from J-Quants API...")
         plan = _detect_plan_from_api(cli)
-        print(f"検出されたプラン: {plan}")
+        print(f"Detected plan: {plan}")
     else:
         assert configured_plan is not None
         plan = configured_plan
