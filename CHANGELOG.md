@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.41.4](https://github.com/shigechika/jquants-mcp/compare/v0.41.3...v0.41.4) (2026-05-23)
+
+
+### Documentation
+
+* add verify_cache_completeness.py to README ([#405](https://github.com/shigechika/jquants-mcp/issues/405)) ([580f6f4](https://github.com/shigechika/jquants-mcp/commit/580f6f44d81ca676eb067a73b13a6f9c0cd548b7))
+
 ## [0.41.3](https://github.com/shigechika/jquants-mcp/compare/v0.41.2...v0.41.3) (2026-05-23)
 
 
