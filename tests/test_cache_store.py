@@ -1313,6 +1313,31 @@ class TestGetFyDividendHistory:
         assert len(disc) == 10 and disc[4] == "-" and disc[7] == "-"
         store.close()
 
+    def test_us_structure_excluded(self, tmp_path: Path):
+        """DocType に US を含む行は除外される。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "23450", "2023-06-20", "FYFinancialStatementsUS", "2023-03-31", 100.0)
+        self._insert(conn, "13010", "2023-06-20", "FYFinancialStatements", "2023-03-31", 50.0)
+        conn.commit()
+
+        result = store.get_fy_dividend_history()
+        assert "23450" not in result
+        assert "13010" in result
+        store.close()
+
+    def test_zero_div_ann_included(self, tmp_path: Path):
+        """DivAnn == 0 の行は含まれる（配当カット年を履歴に残す）。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(conn, "13010", "2023-06-20", "FYFinancialStatements", "2023-03-31", 0.0)
+        conn.commit()
+
+        result = store.get_fy_dividend_history()
+        assert "13010" in result
+        assert result["13010"][0]["div_ann"] == 0.0
+        store.close()
+
     def test_empty_store_returns_empty_dict(self, tmp_path: Path):
         """空のキャッシュでは空の dict を返す。"""
         store = CacheStore(tmp_path / "cache.db", default_plan="standard")

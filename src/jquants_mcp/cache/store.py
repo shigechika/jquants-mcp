@@ -1457,6 +1457,9 @@ class CacheStore:
             Mapping of 5-digit code to a list of dicts, each with keys
             ``fy_end`` (str), ``disc_date`` (str), ``div_ann`` (float).
             The list is sorted by ``fy_end`` ascending.
+            Zero values (``div_ann == 0.0``) are included — they represent a year
+            where no dividend was paid and will break any consecutive-growth streak
+            in callers.
             Returns an empty dict when the table is unavailable or the connection
             is unavailable.
         """
@@ -1464,7 +1467,7 @@ class CacheStore:
         if conn is None:
             return {}
         date_filter = ""
-        params: tuple[()] | tuple[str] = ()
+        params: tuple | tuple[str] = ()
         if as_of_date:
             date_filter = "  AND substr(disc_date, 1, 10) <= ?"
             params = (as_of_date,)
@@ -1476,7 +1479,7 @@ class CacheStore:
             "    json_extract(data, '$.DivAnn') AS div_ann,"
             "    ROW_NUMBER() OVER ("
             "      PARTITION BY code, json_extract(data, '$.CurFYEn')"
-            "      ORDER BY disc_date DESC"
+            "      ORDER BY substr(disc_date, 1, 10) DESC"
             "    ) AS rn"
             "  FROM fins_summary"
             "  WHERE json_extract(data, '$.DocType') LIKE 'FY%'"
