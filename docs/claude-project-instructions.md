@@ -51,6 +51,6 @@ Tool returns parallel arrays. Transform before passing to Recharts:
 
 ### get_sector_performance — BarChart
 
-  sectors[]: { code, name, avg_change_pct, advances, declines, unchanged }
+  sectors[]: { code, name, avg_change_pct, advances, declines, unchanged, count }
   BarChart sorted by avg_change_pct, horizontal layout for readability
 ```
