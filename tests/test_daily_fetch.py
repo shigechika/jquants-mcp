@@ -176,13 +176,14 @@ class TestLoadPlan:
 
     def test_returns_none_when_not_configured(self, monkeypatch, tmp_path):
         monkeypatch.delenv("JQUANTS_PLAN", raising=False)
-        # point HOME at a dir with no config.ini
-        monkeypatch.setenv("HOME", str(tmp_path))
+        # Patch Path.home() directly — setenv("HOME") is ignored on Windows
+        # where Path.home() reads USERPROFILE instead.
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
         assert _load_plan() is None
 
     def test_env_var_takes_priority(self, monkeypatch, tmp_path):
         monkeypatch.setenv("JQUANTS_PLAN", "Premium")
-        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
         assert _load_plan() == "premium"
 
     def test_config_ini_is_used_when_no_env(self, monkeypatch, tmp_path):
@@ -190,7 +191,7 @@ class TestLoadPlan:
         cfg_dir = tmp_path / ".config" / "jquants-mcp"
         cfg_dir.mkdir(parents=True)
         (cfg_dir / "config.ini").write_text("[jquants]\nplan = Standard\n")
-        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
         assert _load_plan() == "standard"
 
 
