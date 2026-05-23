@@ -5,7 +5,7 @@ Useful after bulk imports, plan changes, or daily_fetch failures.
 
 Usage:
     uv run python scripts/verify_cache_completeness.py
-    uv run python scripts/verify_cache_completeness.py --plan standard --output json
+    uv run python scripts/verify_cache_completeness.py --output json
     uv run python scripts/verify_cache_completeness.py --db /path/to/cache.db
 
     # Detect date-level gaps (days where stock count is abnormally low)
