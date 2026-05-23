@@ -63,18 +63,20 @@ api_key = YOUR_API_KEY_HERE
 
 ## 3. Connect to Claude
 
-=== "claude.ai (browser / mobile)"
+=== "claude.ai (browser / desktop / mobile)"
 
     1. Open [claude.ai](https://claude.ai) and create a **Project**
-       (left sidebar → **Projects** → **+ New project**).
+       (left sidebar → **Projects** → **New project**).
     2. Open the project → gear icon → **Integrations** → **Add integration** →
        **Custom** → enter the URL of your jquants-mcp server (e.g. a
        Cloud Run deployment). Authenticate with Google OAuth.
-    3. _(Optional but recommended)_ Click **Project instructions** and paste
+    3. _(Optional but recommended)_ Click **Add instructions** and paste
        the contents of
        [`docs/claude-project-instructions.md`](claude-project-instructions.md).
        This teaches Claude how to render React artifact charts from the tool
        output without extra prompting.
+    4. The project settings (including the MCP connection) sync automatically
+       to the Claude mobile app after a short wait.
 
 === "Claude Code (CLI)"
 
