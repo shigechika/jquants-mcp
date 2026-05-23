@@ -898,6 +898,51 @@ class CacheStore:
             result[code] = result.get(code, 1.0) * factor
         return result
 
+    def get_split_events_by_code(
+        self,
+        codes: list[str],
+    ) -> dict[str, list[tuple[str, float]]]:
+        """Return all split events for multiple codes, sorted ascending by date.
+
+        Fetches every (date, adj_factor) row in equities_bars_daily for the
+        given codes where adj_factor differs from 1.0 and 0.0.  Callers can
+        then compute cumulative factors for arbitrary (code, disc_date) pairs
+        in Python, avoiding per-entry SQLite round-trips.
+
+        Args:
+            codes: List of 5-digit codes.
+
+        Returns:
+            {code: [(date, factor), ...]} sorted ascending by date.
+            Codes with no split events are omitted.
+        """
+        conn = self._ensure_connection()
+        if conn is None or not codes:
+            return {}
+        all_rows: list[tuple[str, str, float]] = []
+        for i in range(0, len(codes), 900):
+            batch = codes[i : i + 900]
+            placeholders = ",".join("?" * len(batch))
+            try:
+                rows = conn.execute(
+                    f"SELECT code, date, adj_factor FROM ("
+                    f"  SELECT code, date, "
+                    f"  COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
+                    f"  FROM equities_bars_daily WHERE code IN ({placeholders})"
+                    f") WHERE adj_factor IS NOT NULL AND adj_factor != 1.0 AND adj_factor != 0.0"
+                    f" ORDER BY code, date",
+                    batch,
+                ).fetchall()
+            except Exception:
+                continue
+            all_rows.extend((str(r[0]), str(r[1]), float(r[2])) for r in rows)
+        result: dict[str, list[tuple[str, float]]] = {}
+        for code, bar_date, factor in all_rows:
+            if code not in result:
+                result[code] = []
+            result[code].append((bar_date, factor))
+        return result
+
     def get_split_factors_before_disc(
         self,
         code_disc_dates: dict[str, str],

@@ -1202,11 +1202,17 @@ def register(
                 "data": [],
             }
 
+        # Pre-load all split events in one batch to avoid O(N) per-entry SQLite
+        # round-trips inside _compute_consecutive_div_years.
+        all_split_events = cache.get_split_events_by_code(list(fy_history.keys()))
+
         consecutive_map: dict[str, int] = {}
         for code, entries in fy_history.items():
             if len(entries) <= min_consecutive_years:
                 continue
-            consecutive, _ = _compute_consecutive_div_years(code, entries, cache)
+            consecutive, _ = _compute_consecutive_div_years(
+                code, entries, cache, split_events=all_split_events.get(code, [])
+            )
             if consecutive >= min_consecutive_years:
                 consecutive_map[code] = consecutive
 
@@ -1304,6 +1310,7 @@ def _compute_consecutive_div_years(
     code: str,
     entries: list[dict[str, Any]],
     cache: CacheStore,
+    split_events: list[tuple[str, float]] | None = None,
 ) -> tuple[int, list[dict[str, Any]]]:
     """Compute split-adjusted consecutive dividend increase years for one code.
 
@@ -1311,25 +1318,35 @@ def _compute_consecutive_div_years(
     in current per-share terms, then counts consecutive years of increase from
     the latest year backwards.
 
+    Args:
+        split_events: Pre-loaded list of (date, factor) tuples sorted ascending,
+            obtained via ``CacheStore.get_split_events_by_code``.  When supplied,
+            cumulative factors are computed in Python without extra SQLite queries.
+            When omitted, falls back to per-entry ``get_cumulative_split_factor``
+            calls (O(N) round-trips — acceptable for single-code use but slow
+            for full-universe scans).
+
     Returns:
         (consecutive_count, adj_entries) where adj_entries is the split-adjusted
         list sorted ascending by fy_end.
 
-    Performance note: calls get_cumulative_split_factor once per entry (O(N)
-    SQLite round-trips per code).  For large universes, consider batching split
-    events with get_split_factors_after before calling this helper.
-
     Known limitation: splits that occurred within ~45 days BEFORE disc_date
-    (FY-end split) are not reflected here because get_cumulative_split_factor
-    only considers splits AFTER disc_date.
+    (FY-end split) are not reflected here because only post-disc splits are used.
     """
     adj_entries: list[dict[str, Any]] = []
     for entry in entries:
-        factor = cache.get_cumulative_split_factor(code, entry["disc_date"])
+        disc_date = entry["disc_date"]
+        if split_events is not None:
+            factor = 1.0
+            for ev_date, ev_factor in split_events:
+                if ev_date > disc_date:
+                    factor *= ev_factor
+        else:
+            factor = cache.get_cumulative_split_factor(code, disc_date)
         adj_entries.append(
             {
                 "fy_end": entry["fy_end"],
-                "disc_date": entry["disc_date"],
+                "disc_date": disc_date,
                 "div_ann": round(entry["div_ann"] * factor, 4),
             }
         )
