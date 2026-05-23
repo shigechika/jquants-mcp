@@ -2025,7 +2025,11 @@ class TestGetCandlestickData:
     async def test_bb20_returns_three_series(self, mock_env):
         """bb20 indicator expands into bb20_upper, bb20_mid, bb20_lower."""
         rows = [
-            _bar("72030", f"2026-{i // 28 + 1:02d}-{i % 28 + 1:02d}", c=float(100 + i))
+            _bar(
+                "72030",
+                (datetime(2026, 1, 1) + timedelta(days=i)).strftime("%Y-%m-%d"),
+                c=float(100 + i),
+            )
             for i in range(25)
         ]
         _seed(mock_env["cache"], rows)
@@ -2121,3 +2125,19 @@ class TestGetCandlestickData:
         assert len(result["lock_days"]) == 1
         assert result["lock_days"][0]["direction"] == "high"
         assert result["lock_days"][0]["price"] == pytest.approx(100.0)
+
+    async def test_earnings_dates_populated(self, mock_env):
+        """earnings_dates includes dates seeded in equities_earnings_calendar."""
+        rows = [_bar("72030", "2026-01-05")]
+        _seed(mock_env["cache"], rows)
+        _seed_earnings(mock_env["cache"], "72030", ["2026-01-05"])
+
+        result = await _call(
+            "get_candlestick_data",
+            code="7203",
+            from_date="2026-01-05",
+            to_date="2026-01-05",
+            indicators=[],
+        )
+        assert "error" not in result
+        assert result["earnings_dates"] == ["2026-01-05"]

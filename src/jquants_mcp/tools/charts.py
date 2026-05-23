@@ -615,7 +615,7 @@ def register(
             from_date: Range start (YYYYMMDD or YYYY-MM-DD). Default: 91 days before to_date.
             to_date: Range end (YYYYMMDD or YYYY-MM-DD). Default: today.
             indicators: Overlays list. Default ["volume","sma5","sma25"]. Options:
-                volume, sma5/20/25/60/75/200, bb20.
+                volume, sma5, sma20, sma25, sma60, sma75, sma200, bb20.
             adjusted: Use split-adjusted prices (default True).
 
         Returns:
@@ -829,7 +829,7 @@ def register(
             from_date: Range start (YYYYMMDD or YYYY-MM-DD). Default: 91 days before to_date.
             to_date: Range end (YYYYMMDD or YYYY-MM-DD). Default: today.
             indicators: Overlays list. Default ["volume","sma5","sma25"]. Options:
-                volume, sma5/20/25/60/75/200, bb20.
+                volume, sma5, sma20, sma25, sma60, sma75, sma200, bb20.
             style: "default" (Yahoo-like), "dark", or "colorblind".
             adjusted: Use split-adjusted prices (default True).
             aspect_ratio: "square" (default), "landscape", or "portrait".
