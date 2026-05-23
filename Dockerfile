@@ -8,17 +8,13 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 
 # Install dependencies first (separate layer for caching).
-# `charts` extra is included in the production image so the
-# `render_candlestick` MCP tool is registered (per #109). Adds
-# ~120 MB to the image (matplotlib 25 + mplfinance <1 + pandas 48
-# + numpy 27 + pillow 14 + transitive deps).
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project --extra cloud-run --extra charts
+RUN uv sync --frozen --no-dev --no-install-project --extra cloud-run
 
 # Install the project itself
 COPY README.md ./
 COPY src/ ./src/
-RUN uv sync --frozen --no-dev --extra cloud-run --extra charts
+RUN uv sync --frozen --no-dev --extra cloud-run
 
 
 # Stage 2: Runtime image
@@ -26,12 +22,9 @@ FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
-# Install Noto CJK JP font so matplotlib can render company names in
-# render_candlestick chart titles. ~10 MB; without this Japanese
-# characters render as tofu (□).
 ARG SUPERCRONIC_VERSION=0.2.33
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends fonts-noto-cjk curl \
+    && apt-get install -y --no-install-recommends curl \
     && curl -fsSL "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-amd64" \
        -o /usr/local/bin/supercronic \
     && chmod +x /usr/local/bin/supercronic \
