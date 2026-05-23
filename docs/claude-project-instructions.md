@@ -7,7 +7,7 @@ that uses jquants-mcp as an MCP connector.
 
 1. Open [claude.ai](https://claude.ai) in a browser
 2. Open the Project connected to jquants-mcp
-3. Click the project name or gear icon → **Project instructions**
+3. Click the project name or gear icon → **Add instructions**
 4. Copy the text in the **Instructions** section below and paste it in
 
 ## Instructions
