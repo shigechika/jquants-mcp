@@ -888,9 +888,6 @@ def _register_tools() -> None:
     technical.register(mcp, _get_user_client, _get_cache)
     valuation.register(mcp, _get_user_client, _get_cache)
 
-    # Optional: chart rendering needs the [charts] extra. The module's
-    # own register() returns silently if mplfinance/matplotlib are
-    # missing, so we don't need a try/except guard here.
     from .tools import charts
 
     charts.register(mcp, _get_user_client, _get_cache)

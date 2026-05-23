@@ -1,29 +1,18 @@
 """Chart tools for jquants-mcp.
 
-Three tools are exposed:
+Two tools are exposed:
 
 * ``get_comparison_chart_data`` — returns JSON time-series data (wide
-  Recharts format) for multi-stock performance comparison. No optional
-  dependencies; always registered.
+  Recharts format) for multi-stock performance comparison.
 
 * ``get_candlestick_data`` — returns candlestick OHLCV + indicator data
-  as JSON parallel arrays (Plotly/React artifact format). No optional
-  dependencies; always registered.
+  as JSON parallel arrays (Plotly/React artifact format).
 
-* ``render_candlestick`` — reads daily bars and renders a candlestick PNG
-  via ``mplfinance``. Requires the ``[charts]`` extra (~60 MB). Install
-  with::
-
-      pip install "jquants-mcp[charts]"
-      uv sync --extra charts
-
-  ``register()`` silently skips ``render_candlestick`` registration when
-  the extra is not installed; the other two tools are still available.
+Both tools have no optional dependencies and are always registered.
 """
 
 from __future__ import annotations
 
-import io
 import logging
 import math
 import re
@@ -33,7 +22,6 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from fastmcp import FastMCP
-from fastmcp.utilities.types import Image
 
 from ..cache.store import CacheStore
 from ..exceptions import (
@@ -56,7 +44,6 @@ from ..validators import (
 logger = logging.getLogger(__name__)
 
 
-# Indicator names accepted by ``render_candlestick``.
 # JP convention favours 5 / 25 / 75 (短期/中期/長期); US convention is
 # closer to 20 / 50 / 200. Accept both families so JP traders and
 # international users don't have to fight defaults.
@@ -73,65 +60,8 @@ _VALID_INDICATORS: frozenset[str] = frozenset(
     }
 )
 
-# Visual styles passed to ``mplfinance``.
-_STYLE_ALIASES: dict[str, str] = {
-    "default": "yahoo",
-    "dark": "nightclouds",
-    "colorblind": "blueskies",
-}
-
-# matplotlib color names per style alias, keyed (up_color, down_color).
-# Used when overlaying lock-day horizontal bars: a 寄らずストップ高 is
-# drawn in the up-candle colour, 寄らずストップ安 in the down-candle
-# colour, so the visual matches how a non-lock day of the same direction
-# would have been coloured.
-_LOCK_COLORS: dict[str, tuple[str, str]] = {
-    "default": ("g", "r"),
-    "dark": ("lime", "red"),
-    "colorblind": ("blue", "orange"),
-}
-
-# Half-width of the lock-day horizontal overlay bar, in mplfinance's
-# integer date-index space. mplfinance draws daily candles at width
-# ~0.6, so 0.4 is roughly two-thirds of a candle — wide enough to read
-# at a glance, narrow enough not to overlap neighbouring bars.
-_LOCK_BAR_HALF_WIDTH = 0.4
-
-# Annotation types accepted by ``render_candlestick``.
-# "earnings" draws a vertical dashed line on each earnings announcement date
-# found in the equities_earnings_calendar Tier 1 cache (~3 months history).
-_VALID_ANNOTATIONS: frozenset[str] = frozenset({"earnings"})
-
-# Vertical line style for earnings annotations.
-_EARNINGS_LINE_STYLE: dict[str, object] = {
-    "linestyle": "--",
-    "linewidth": 1.0,
-    "alpha": 0.65,
-}
-
-# Colour of earnings vertical lines per style alias.
-# colorblind uses black: it is the only hue guaranteed to be distinguishable
-# across all common colour-vision deficiencies (protanopia, deuteranopia,
-# tritanopia) without relying on the Okabe-Ito palette already used for
-# stock-price lines in that style.
-_EARNINGS_COLORS: dict[str, str] = {
-    "default": "purple",
-    "dark": "violet",
-    "colorblind": "black",
-}
-
-_DPI = 100
-
-# Default display range for render_candlestick when from_date / to_date are omitted.
+# Default display range when from_date / to_date are omitted.
 _DEFAULT_RANGE_DAYS = 91
-
-# Accepted aspect ratios for render_candlestick.
-# "square" is the default — fits naturally in both chat and mobile viewports.
-_ASPECT_RATIOS: dict[str, tuple[float, float]] = {
-    "square": (8.0, 8.0),
-    "landscape": (12.0, 6.0),
-    "portrait": (6.0, 9.0),
-}
 
 # Maximum display length for auto-shortened company name labels.
 _BRIEF_NAME_MAX_LEN = 20
@@ -141,30 +71,6 @@ _CORP_SUFFIX_RE = re.compile(r"(?:株式会社|合同会社|有限会社)")
 _ETF_SUFFIX_RE = re.compile(r"(?:ETF|ETN)$", re.IGNORECASE)
 _ETF_PREFIX_RE = re.compile(r"^(?:ETF|ETN)(?=[^A-Za-z0-9])", re.IGNORECASE)
 _ETF_STANDALONE = frozenset({"etf", "etn"})
-
-
-# CJK-aware font fallback chain so the chart title (company name)
-# renders in Japanese instead of tofu. mplfinance styles override
-# matplotlib's global rcParams, so register() builds per-style
-# ``mpf_style`` objects with this dict injected as ``rc=``.
-# Cloud Run image installs ``fonts-noto-cjk`` (Dockerfile) so
-# ``Noto Sans CJK JP`` is the production hit; the rest cover macOS
-# / other Linux distros for local development.
-_CJK_RC: dict[str, Any] = {
-    "font.family": "sans-serif",
-    "font.sans-serif": [
-        "Noto Sans CJK JP",
-        "Noto Sans JP",
-        "Hiragino Sans",
-        "Hiragino Maru Gothic Pro",
-        "Yu Gothic",
-        "Meiryo",
-        "TakaoGothic",
-        "IPAexGothic",
-        "DejaVu Sans",
-    ],
-    "axes.unicode_minus": False,
-}
 
 
 def _max_indicator_window(indicators: list[str]) -> int:
@@ -275,44 +181,14 @@ def _brief_company_name(name: str) -> str:
     return name
 
 
-def _short_date(date_str: str) -> str:
-    """Shorten ``YYYY-MM-DD`` to ``'YY/MM`` for compact chart titles.
-
-    Examples: ``"2026-01-05"`` → ``"'26/01"``, ``"2026-05-01"`` → ``"'26/05"``.
-    """
-    return f"'{date_str[2:4]}/{date_str[5:7]}"
-
-
-def _build_chart_title(code: str, company: str | None, norm_from: str, norm_to: str) -> str:
-    """Compose the chart title used by ``mpf.plot``.
-
-    Format: ``CODE [COMPANY ]'YY/MM → 'YY/MM``.
-
-    The adjusted/raw distinction is intentionally omitted — Kabutan,
-    Yahoo! Finance Japan, JPX official pages, every JP brokerage chart,
-    and TradingView all show the chart title without an explicit
-    "adjusted" suffix. Adjusted is the universal default convention; a
-    suffix would be surprising rather than informative. The
-    ``render_candlestick`` caller may pass ``adjusted=False`` to use
-    raw prices, but that's a deliberate choice and the title doesn't
-    advertise it.
-
-    Extracted so the title format can be unit-tested without spinning
-    up matplotlib.
-    """
-    name_part = f" {company}" if company else ""
-    return f"{code}{name_part} {_short_date(norm_from)} → {_short_date(norm_to)}"
-
-
 def _detect_lock_days(rows: list[dict], adjusted: bool) -> list[dict]:
     """Find 寄らずストップ高/安 (lock-up / lock-down) days.
 
     Lock days are bars where ``Open == High == Low == Close`` AND the
-    J-Quants ``UpperLimit`` / ``LowerLimit`` flag is set. mplfinance
-    draws these as a single-pixel horizontal line (degenerate doji)
-    that visually disappears into the axis even though the day itself
-    — a stock locked at the daily limit without trading — is usually
-    the most informative bar in the window.
+    J-Quants ``UpperLimit`` / ``LowerLimit`` flag is set. Charting
+    libraries typically draw these as a single-pixel horizontal line
+    (degenerate doji) that visually disappears into the axis, so the
+    lock_days field lets clients render them explicitly.
 
     Returns:
         List of ``{"date": str, "direction": "high"|"low", "price": float}``
@@ -416,13 +292,7 @@ def register(
     get_client: Any,  # noqa: ARG001 — signature parity with other tool modules
     get_cache: Any,
 ) -> None:
-    """Register chart-rendering tools.
-
-    ``get_comparison_chart_data`` is always registered (no optional
-    dependencies). ``render_candlestick`` requires the ``[charts]``
-    extra (mplfinance + matplotlib) and is silently skipped when those
-    are not installed.
-    """
+    """Register chart tools (get_comparison_chart_data, get_candlestick_data)."""
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def get_comparison_chart_data(
@@ -436,7 +306,7 @@ def register(
 
         Use for 比較チャート・パフォーマンス比較・リターン比較・relative performance queries (up to 10 codes).
         Returns JSON records suitable for React artifact rendering with Recharts LineChart.
-        For ローソク足・candlestick charts use sibling render_candlestick (returns PNG).
+        For ローソク足・candlestick charts use sibling get_candlestick_data (returns JSON).
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
@@ -604,9 +474,9 @@ def register(
     ) -> dict:
         """Return candlestick OHLCV + indicator data as JSON (ローソク足データJSON). All plans.
 
-        Use for ローソク足・株価チャート・React artifact チャート queries (JSON format, no PNG).
+        Use for ローソク足・株価チャート・React artifact チャート queries (JSON format).
         Returns parallel arrays for Plotly/Recharts React artifact rendering.
-        For PNG chart use sibling render_candlestick; for comparison charts use get_comparison_chart_data.
+        For multi-stock comparison use sibling get_comparison_chart_data.
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
@@ -784,318 +654,3 @@ def register(
             "lock_days": lock_days,
             "earnings_dates": earnings_dates,
         }
-
-    try:
-        import mplfinance as mpf
-        import pandas as pd
-        from matplotlib import pyplot as plt
-    except ModuleNotFoundError:
-        logger.info(
-            "charts: mplfinance / matplotlib not installed; "
-            "render_candlestick tool will not be registered. "
-            "Install with: pip install 'jquants-mcp[charts]'"
-        )
-        return
-
-    # ``mpf_style`` objects built per alias with the module-level CJK
-    # rcParams so the title font falls back to a CJK-capable family.
-    _STYLES = {
-        alias: mpf.make_mpf_style(base_mpf_style=base, rc=_CJK_RC)
-        for alias, base in _STYLE_ALIASES.items()
-    }
-
-    @mcp.tool(annotations=READ_ONLY_CACHE)
-    async def render_candlestick(
-        code: str,
-        from_date: str | None = None,
-        to_date: str | None = None,
-        indicators: list[str] | None = None,
-        style: str = "default",
-        adjusted: bool = True,
-        aspect_ratio: str = "square",
-        annotations: list[str] | None = None,
-    ) -> Image:
-        """Render a candlestick chart as PNG (ローソク足チャート). All plans.
-
-        Use for チャート・ローソク足・株価チャート・日足チャート・テクニカルチャート queries.
-        Render charts sequentially (not in parallel) — parallel renders can OOM on Cloud Run.
-        SMA/Bollinger warmup fetches extra days before from_date for accurate indicator values.
-
-        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
-        [Optional dependency] pip install 'jquants-mcp[charts]' (mplfinance + matplotlib)
-
-        Args:
-            code: Stock code (e.g. "7203" or "72030").
-            from_date: Range start (YYYYMMDD or YYYY-MM-DD). Default: 91 days before to_date.
-            to_date: Range end (YYYYMMDD or YYYY-MM-DD). Default: today.
-            indicators: Overlays list. Default ["volume","sma5","sma25"]. Options:
-                volume, sma5, sma20, sma25, sma60, sma75, sma200, bb20.
-            style: "default" (Yahoo-like), "dark", or "colorblind".
-            adjusted: Use split-adjusted prices (default True).
-            aspect_ratio: "square" (default), "landscape", or "portrait".
-            annotations: Optional overlays e.g. ["earnings"] for earnings date lines.
-        """
-        if indicators is None:
-            indicators = ["volume", "sma5", "sma25"]
-        if annotations is None:
-            annotations = []
-
-        errors = collect_errors(
-            validate_code(code),
-            validate_date(from_date, param="from_date"),
-            validate_date(to_date, param="to_date"),
-        )
-        if errors:
-            return _error_image(errors[0])
-
-        unknown = sorted(set(indicators) - _VALID_INDICATORS)
-        if unknown:
-            return _error_image(
-                f"Unknown indicators: {unknown}. Accepted: {sorted(_VALID_INDICATORS)}"
-            )
-        unknown_ann = sorted(set(annotations) - _VALID_ANNOTATIONS)
-        if unknown_ann:
-            return _error_image(
-                f"Unknown annotations: {unknown_ann}. Accepted: {sorted(_VALID_ANNOTATIONS)}"
-            )
-        if style not in _STYLE_ALIASES:
-            return _error_image(f"Unknown style: {style!r}. Accepted: {sorted(_STYLE_ALIASES)}")
-        if aspect_ratio not in _ASPECT_RATIOS:
-            return _error_image(
-                f"Unknown aspect_ratio: {aspect_ratio!r}. Accepted: {sorted(_ASPECT_RATIOS)}"
-            )
-
-        today_str = date.today().strftime("%Y-%m-%d")
-        norm_to = _normalize_date(to_date) if to_date is not None else today_str
-        norm_from = (
-            _normalize_date(from_date)
-            if from_date is not None
-            else (
-                datetime.strptime(norm_to, "%Y-%m-%d") - timedelta(days=_DEFAULT_RANGE_DAYS - 1)
-            ).strftime("%Y-%m-%d")
-        )
-        if norm_from > norm_to:
-            return _error_image("`from_date` must be <= `to_date`.")
-
-        norm_code = normalize_code(code)
-
-        # Extend the fetch window backwards so rolling-average indicators
-        # (SMA, Bollinger) are fully warmed before the first displayed bar.
-        max_win = _max_indicator_window(indicators)
-        warmup_start = (
-            (datetime.strptime(norm_from, "%Y-%m-%d") - timedelta(days=max_win * 2)).strftime(
-                "%Y-%m-%d"
-            )
-            if max_win > 0
-            else norm_from
-        )
-
-        cache: CacheStore = get_cache()
-        try:
-            all_rows = cache.get_rows(
-                "equities_bars_daily",
-                key_filter={"code": norm_code},
-                date_from=warmup_start,
-                date_to=norm_to,
-            )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
-            err = format_api_error(e)
-            return _error_image(err.get("message") or "API error")
-
-        # Rows visible in the rendered chart (≥ norm_from).
-        display_rows = [r for r in all_rows if str(r.get("Date") or "")[:10] >= norm_from]
-
-        if not display_rows:
-            return _error_image(
-                f"No cached bars for code={norm_code} in {norm_from}..{norm_to}. "
-                "Run scripts/daily_fetch.py to populate the cache."
-            )
-
-        prefix = "Adj" if adjusted else ""
-        cols = {
-            "Date": "Date",
-            "Open": f"{prefix}O" if adjusted else "O",
-            "High": f"{prefix}H" if adjusted else "H",
-            "Low": f"{prefix}L" if adjusted else "L",
-            "Close": f"{prefix}C" if adjusted else "C",
-            "Volume": f"{prefix}Vo" if adjusted else "Vo",
-        }
-
-        # Build extended DataFrame (warmup + display) for indicator computation.
-        all_records = []
-        for r in all_rows:
-            try:
-                all_records.append(
-                    {
-                        "Date": pd.to_datetime(r[cols["Date"]]),
-                        "Open": float(r[cols["Open"]]),
-                        "High": float(r[cols["High"]]),
-                        "Low": float(r[cols["Low"]]),
-                        "Close": float(r[cols["Close"]]),
-                        "Volume": float(r[cols["Volume"]]),
-                    }
-                )
-            except (KeyError, TypeError, ValueError):
-                # Skip malformed rows rather than fail the whole chart.
-                continue
-        if not all_records:
-            return _error_image(f"Cached rows for code={norm_code} are missing OHLC columns.")
-
-        df_extended = pd.DataFrame.from_records(all_records).set_index("Date").sort_index()
-        display_start = pd.Timestamp(norm_from)
-        df = df_extended[df_extended.index >= display_start]
-
-        if df.empty:
-            return _error_image(f"Cached rows for code={norm_code} are missing OHLC columns.")
-
-        addplots = []
-        for ind in indicators:
-            if ind == "volume":
-                continue  # handled by mpf.plot(volume=True)
-            if ind.startswith("sma"):
-                length = int(ind[3:])
-                if len(df_extended) >= length:
-                    sma_ext = df_extended["Close"].rolling(length).mean()
-                    sma = sma_ext[sma_ext.index >= display_start]
-                    addplots.append(mpf.make_addplot(sma, width=1.0))
-            elif ind == "bb20":
-                if len(df_extended) >= 20:
-                    mid_ext = df_extended["Close"].rolling(20).mean()
-                    std_ext = df_extended["Close"].rolling(20).std()
-                    mid = mid_ext[mid_ext.index >= display_start]
-                    std = std_ext[std_ext.index >= display_start]
-                    addplots.append(mpf.make_addplot(mid + 2 * std, width=0.8))
-                    addplots.append(mpf.make_addplot(mid - 2 * std, width=0.8))
-
-        company_raw = _get_company_name(cache, norm_code)
-        # Run the company name through the same normaliser that
-        # ``render_comparison_chart`` uses for legend labels: NFKC folds
-        # full-width ASCII (e.g. "ＨＥＮＮＧＥ" → "HENNGE") so the title
-        # does not render with phantom inter-character spacing, the
-        # corporate-suffix prefix is dropped (e.g. "野村アセットマネジメント
-        # 株式会社　NEXT FUNDS …" → "NEXT FUNDS …"), and the result is
-        # truncated to ``_BRIEF_NAME_MAX_LEN`` so long ETF names no
-        # longer overflow the figure width.
-        company = _brief_company_name(company_raw) if company_raw else None
-        # Cache lookups always use the 5-digit form, but display the
-        # conventional 4-digit form (``72030`` → ``7203``) for
-        # ordinary shares so the title matches how JP investors
-        # actually refer to the stock.
-        title = _build_chart_title(display_code(norm_code), company, norm_from, norm_to)
-
-        lock_days = _detect_lock_days(display_rows, adjusted)
-
-        # Fetch earnings dates within the display window when requested.
-        earnings_dates: list[str] = []
-        if "earnings" in annotations:
-            earnings_dates = cache.get_earnings_dates(norm_code, norm_from, norm_to)
-
-        buf = io.BytesIO()
-        # mplfinance's addplot validator rejects ``None`` (only dict / list
-        # of dicts allowed), so omit the kwarg entirely when there are no
-        # overlay addplots — e.g. ``indicators=["volume"]`` only.
-        plot_kwargs = {
-            "type": "candle",
-            "style": _STYLES[style],
-            "volume": "volume" in indicators,
-            "title": title,
-            "figsize": _ASPECT_RATIOS[aspect_ratio],
-        }
-        if addplots:
-            plot_kwargs["addplot"] = addplots
-
-        # ``bbox_inches="tight"`` crops the surrounding figure padding at
-        # save time, which is the canonical mplfinance + matplotlib fix
-        # for the "extra right-side margin" that mpf.plot leaves when the
-        # title is shorter than the figure or when the title pushes the
-        # axes inward. Applied to both the lock-day ``returnfig`` path
-        # and the default ``savefig`` path so the two are visually
-        # identical.
-        savefig_kwargs = {"fname": buf, "dpi": _DPI, "format": "png", "bbox_inches": "tight"}
-
-        try:
-            if lock_days or earnings_dates:
-                # Take the ``returnfig`` path whenever we need to draw custom
-                # overlays: lock-day horizontal bars and/or earnings vertical lines.
-                plot_kwargs["returnfig"] = True
-                fig, axes = mpf.plot(df, **plot_kwargs)
-                try:
-                    price_ax = axes[0]
-                    # Lock days: invisible doji lines → replace with short hlines.
-                    up_color, down_color = _LOCK_COLORS[style]
-                    for lock in lock_days:
-                        lock_date = pd.to_datetime(lock["date"])
-                        if lock_date not in df.index:
-                            continue
-                        x_idx = df.index.get_loc(lock_date)
-                        color = up_color if lock["direction"] == "high" else down_color
-                        price_ax.hlines(
-                            lock["price"],
-                            x_idx - _LOCK_BAR_HALF_WIDTH,
-                            x_idx + _LOCK_BAR_HALF_WIDTH,
-                            colors=color,
-                            linewidth=2.0,
-                        )
-                    # Earnings annotations: vertical dashed lines.
-                    earn_color = _EARNINGS_COLORS[style]
-                    for earn_date in earnings_dates:
-                        earn_ts = pd.to_datetime(earn_date)
-                        if earn_ts not in df.index:
-                            continue
-                        x_idx = df.index.get_loc(earn_ts)
-                        price_ax.axvline(x=x_idx, color=earn_color, **_EARNINGS_LINE_STYLE)
-                    # Reuse the same savefig kwargs as the default path
-                    # so the two visual outputs match exactly.
-                    fig.savefig(**savefig_kwargs)
-                finally:
-                    plt.close(fig)
-            else:
-                plot_kwargs["savefig"] = savefig_kwargs
-                mpf.plot(df, **plot_kwargs)
-        except Exception as exc:  # mplfinance / matplotlib runtime errors
-            logger.warning("render_candlestick: rendering failed: %s", exc)
-            return _error_image(f"Chart rendering failed: {exc}")
-
-        return Image(data=buf.getvalue(), format="png")
-
-
-def _error_image(message: str) -> Image:
-    """Render a plain-text PNG carrying the error message.
-
-    Returning an Image (rather than a dict) keeps the tool's contract
-    consistent — clients that expect an inline image always get one.
-    The message is encoded into the PNG by matplotlib so Claude can
-    surface it visually instead of failing the call.
-    """
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")  # headless
-        import matplotlib.pyplot as plt
-    except ModuleNotFoundError:
-        # If matplotlib itself isn't installed we shouldn't be here —
-        # register() would have skipped. As a last resort raise so the
-        # caller surfaces something instead of silently truncating.
-        raise
-
-    fig, ax = plt.subplots(figsize=(8, 2), dpi=100)
-    ax.axis("off")
-    ax.text(
-        0.5,
-        0.5,
-        message,
-        ha="center",
-        va="center",
-        wrap=True,
-        fontsize=11,
-    )
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight")
-    plt.close(fig)
-    return Image(data=buf.getvalue(), format="png")

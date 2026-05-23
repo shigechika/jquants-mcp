@@ -29,15 +29,6 @@ Get jquants-mcp answering Japanese stock questions in Claude in about 5 minutes.
     pip install --user jquants-mcp
     ```
 
-For inline candlestick / comparison charts, install with the `[charts]` extra:
-
-```bash
-uv tool install "jquants-mcp[charts]"
-```
-
-This pulls `mplfinance` and `matplotlib` (~60 MB). If you skip the extra, the
-chart tools are silently unregistered and the rest still works.
-
 ## 2. Get your J-Quants API key
 
 The easiest way is the built-in browser login (PKCE flow):
@@ -121,7 +112,7 @@ Try a chart:
 
 > キオクシア（285A）のチャートを 3 か月分
 
-If you installed the `[charts]` extra, Claude renders a candlestick PNG inline.
+Claude calls `get_candlestick_data` and renders a candlestick React artifact inline.
 
 <p align="center" markdown>
 ![Candlestick chart for KIOXIA Holdings on the Claude iPhone app](screenshots/jquants-mcp-demo5.png){ width="280" }

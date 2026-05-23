@@ -28,7 +28,7 @@ jobs:
           enable-cache: true
           cache-suffix: py${{ matrix.python-version }}
       - run: uv python install ${{ matrix.python-version }}
-      - run: uv sync --dev --extra charts --python ${{ matrix.python-version }}
+      - run: uv sync --dev --python ${{ matrix.python-version }}
       - run: uv run pytest -v
 
   build:

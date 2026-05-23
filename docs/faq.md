@@ -30,18 +30,6 @@ queries (e.g. fetching daily bars for many codes), the rate limiter will
 back off automatically with exponential retry. If you keep hitting the wall,
 upgrade to Light (60 req/min) or Standard (120 req/min).
 
-## Charts say `[charts] not installed` — how do I enable them?
-
-Reinstall with the chart extras:
-
-```bash
-uv tool install --reinstall "jquants-mcp[charts]"
-# or
-pipx reinstall --pip-args '"jquants-mcp[charts]"' jquants-mcp
-```
-
-The extra pulls `mplfinance` and `matplotlib` (~60 MB).
-
 ## Does it work on iPhone?
 
 Yes — install the
@@ -74,7 +62,7 @@ env var.
 
 When the J-Quants `AdjFactor` field changes for a code, jquants-mcp invalidates
 the cached daily bars for that code automatically. Adjusted prices in
-`render_candlestick`, `get_fins_summary` (`AdjEPS` / `AdjBPS`), and the
+`get_candlestick_data`, `get_fins_summary` (`AdjEPS` / `AdjBPS`), and the
 screeners all account for splits without manual intervention.
 
 ## I want to run a query that doesn't fit any tool

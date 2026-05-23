@@ -5,8 +5,7 @@ and return a parallel list of float | None values. None is emitted wherever
 the warmup window is not yet satisfied.
 
 Design goals:
-- No NumPy / pandas dependency so the module can be imported from any tool
-  regardless of whether the [charts] optional extra is installed.
+- No NumPy / pandas dependency so the module can be imported from any tool.
 - Sample std (ddof=1) for Bollinger Bands to match pandas .rolling().std()
   behaviour used in charts.py — ensures visual and numeric outputs agree.
 - Wilder's smoothed RSI (same as TradingView / Yahoo Finance default).

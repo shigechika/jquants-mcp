@@ -66,14 +66,15 @@ Drill into a specific code:
 | "7203 (Toyota) — past month daily prices" | `get_equities_bars_daily` |
 | "8053 Sumitomo Corp earnings summary" | `get_fins_summary` |
 | "9984 SoftBank dividend history" | `get_fins_dividend` |
-| "285A (Kioxia) — 3-month candlestick chart" | `render_candlestick` |
+| "285A (Kioxia) — 3-month candlestick chart" | `get_candlestick_data` |
 | "7203 SMA25 above or below? RSI?" | `get_technical_indicators` |
 | "What's the code for Sumitomo Corp?" | `search_equities` |
 
-`render_candlestick` defaults to a 91-day window with `volume + sma5 + sma25`
-overlays. SMAs are warmed up from earlier bars so the moving averages are
-fully populated from the first displayed candle. RSI is not yet available as a
-chart overlay — use `get_technical_indicators` for numeric RSI values.
+`get_candlestick_data` defaults to a 91-day window with `volume + sma5 + sma25`
+overlays and returns JSON for React artifact rendering. SMAs are warmed up from
+earlier bars so the moving averages are fully populated from the first displayed
+candle. RSI is not yet available as a chart indicator — use
+`get_technical_indicators` for numeric RSI values.
 
 `get_technical_indicators` returns SMA (5/25/75), Bollinger Bands (bb20), and
 RSI (rsi14) as numeric values — useful when you want to ask "is the close above

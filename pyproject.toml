@@ -25,15 +25,6 @@ cloud-run = [
     "google-cloud-storage>=2.0.0",
     "google-cloud-firestore>=2.0.0",
 ]
-# Candlestick chart rendering (matplotlib + mplfinance ≈ 60 MB).
-# Pulled in by `render_candlestick` in tools/charts.py; the registration
-# silently skips when these are not installed, so the lean stdio install
-# can omit them.
-charts = [
-    "mplfinance>=0.12",
-    "matplotlib>=3.7",
-]
-
 [project.scripts]
 jquants-mcp = "jquants_mcp.cli:main"
 

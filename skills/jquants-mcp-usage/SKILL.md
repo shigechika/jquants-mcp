@@ -89,8 +89,8 @@ The 6 cross-sectional screener tools above (`detect_price_limit`, `detect_52w_hi
 `compare_close_vs_vwap` is per-code only and always returns a `data` array (no `detail` param).
 
 ### Charts
-- `render_candlestick` — returns a candlestick chart as an inline PNG image
-- `render_comparison_chart` — multi-stock performance comparison line chart as inline PNG; up to 10 codes, `mode="return_pct"` (default) or `"price"`, `style="default"|"dark"|"colorblind"`
+- `get_candlestick_data` — returns OHLCV + indicator data as JSON for React artifact rendering
+- `get_comparison_chart_data` — multi-stock performance comparison data as JSON; up to 10 codes, `mode="return_pct"` (default) or `"price"`
 
 ### Bulk
 - `get_bulk_list` — list available bulk data files
@@ -151,6 +151,5 @@ get_equities_bars_daily(code="72030", date_from="2024-01-01")
 
 **Render a chart:**
 ```text
-get_equities_bars_daily(code="72030", date_from="2024-10-01")
-render_candlestick(code="72030", date_from="2024-10-01")
+get_candlestick_data(code="72030", from_date="2024-10-01")
 ```
