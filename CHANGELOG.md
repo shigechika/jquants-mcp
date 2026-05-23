@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.41.0](https://github.com/shigechika/jquants-mcp/compare/v0.40.0...v0.41.0) (2026-05-23)
+
+
+### Features
+
+* **charts:** add get_candlestick_data JSON tool ([#395](https://github.com/shigechika/jquants-mcp/issues/395)) ([69f1764](https://github.com/shigechika/jquants-mcp/commit/69f176410fbe337adc1a9cfbe262b236a23c1ad1))
+
 ## [0.40.0](https://github.com/shigechika/jquants-mcp/compare/v0.39.0...v0.40.0) (2026-05-23)
 
 
