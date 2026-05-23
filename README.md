@@ -24,7 +24,7 @@ Deployment shapes (stdio / Docker Compose / self-hosted HTTP / Cloud Run) and ho
 - Top turnover by trading value (売買代金ランキング) — `get_top_turnover_value`
 - Candlestick chart with SMA — `get_candlestick_data`
 - Quarterly financial summary (決算ダイジェスト) — `get_fins_summary`
-- 5-stock return comparison — `render_comparison_chart`
+- 5-stock return comparison — `get_comparison_chart_data`
 
 Individual frames are in [docs/screenshots/](docs/screenshots/).
 
