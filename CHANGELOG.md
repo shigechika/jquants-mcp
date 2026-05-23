@@ -5,6 +5,17 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.42.0](https://github.com/shigechika/jquants-mcp/compare/v0.41.4...v0.42.0) (2026-05-23)
+
+
+### ⚠ BREAKING CHANGES
+
+* `render_candlestick` is no longer registered. Callers that relied on the PNG tool should switch to `get_candlestick_data` and render the returned JSON as a React artifact (Plotly / Recharts).
+
+### Features
+
+* remove render_candlestick and [charts] optional extra ([#407](https://github.com/shigechika/jquants-mcp/issues/407)) ([7892c12](https://github.com/shigechika/jquants-mcp/commit/7892c12c0b2c7b8ba5303e3558e18e839265d267))
+
 ## [0.41.4](https://github.com/shigechika/jquants-mcp/compare/v0.41.3...v0.41.4) (2026-05-23)
 
 
