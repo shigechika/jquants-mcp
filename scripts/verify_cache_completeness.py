@@ -5,7 +5,7 @@ Useful after bulk imports, plan changes, or daily_fetch failures.
 
 Usage:
     uv run python scripts/verify_cache_completeness.py
-    uv run python scripts/verify_cache_completeness.py --plan standard --output json
+    uv run python scripts/verify_cache_completeness.py --output json
     uv run python scripts/verify_cache_completeness.py --db /path/to/cache.db
 
     # Detect date-level gaps (days where stock count is abnormally low)
@@ -62,7 +62,8 @@ _SCREENER_MIN_ROWS = 52 * 3
 # ---------------------------------------------------------------------------
 
 
-def _load_plan() -> str:
+def _load_plan() -> str | None:
+    """Return configured plan, or None when not set (triggers API auto-detection)."""
     plan = os.environ.get("JQUANTS_PLAN")
     if plan:
         return plan.lower()
@@ -77,7 +78,42 @@ def _load_plan() -> str:
     try:
         return cfg.get("jquants", "plan").lower()
     except (configparser.NoSectionError, configparser.NoOptionError):
+        return None
+
+
+def _detect_plan_from_api(api_key: str, base_url: str) -> str:
+    """Probe the J-Quants API to detect the active subscription plan.
+
+    Tries plan-specific endpoints from premium down to light.  Returns the
+    highest plan whose endpoint responds with HTTP 200; returns 'free' when
+    all higher-plan probes are rejected (HTTP 403).  Falls back to 'free' on
+    any error (network failure, missing httpx, etc.) so the script stays usable
+    without API access.
+    """
+    try:
+        import httpx
+    except ImportError:
         return "free"
+
+    if not api_key:
+        return "free"
+
+    headers = {"x-api-key": api_key}
+    probes = [
+        ("premium", f"{base_url}/fins/details?date=20240101"),
+        ("standard", f"{base_url}/markets/short-ratio?date=20240101"),
+        ("light", f"{base_url}/equities/investor-types"),
+    ]
+    for plan_name, url in probes:
+        try:
+            resp = httpx.get(url, headers=headers, timeout=10.0)
+            if resp.status_code == 200:
+                return plan_name
+            if resp.status_code != 403:
+                break
+        except Exception:
+            break
+    return "free"
 
 
 def _default_db() -> str:
@@ -554,7 +590,7 @@ def _fetch_bars_for_date(
         List of row dicts from the 'data' key across all pages.
     """
     try:
-        import httpx  # type: ignore[import]
+        import httpx
     except ImportError as exc:
         raise RuntimeError("httpx is required for --auto-fix. Run: pip install httpx") from exc
 
@@ -719,14 +755,16 @@ def _print_fix_result(result: dict) -> None:
 
 
 def main() -> None:
-    plan_default = _load_plan()
+    configured_plan = _load_plan()
     db_default = _default_db()
 
     parser = argparse.ArgumentParser(description="Verify jquants-mcp cache completeness.")
     parser.add_argument(
         "--plan",
-        default=plan_default,
-        help=f"Subscription plan (default: {plan_default})",
+        default=configured_plan,
+        help="Subscription plan override (also honoured via JQUANTS_PLAN env var). "
+        "When neither is provided, auto-detected from the J-Quants API "
+        "(falls back to 'free' if API key is unavailable).",
     )
     parser.add_argument(
         "--db",
@@ -787,12 +825,20 @@ def main() -> None:
         print(f"ERROR: cache.db not found: {args.db}", file=sys.stderr)
         sys.exit(1)
 
+    # Resolve plan: use explicit --plan if given, otherwise auto-detect from API.
+    plan = args.plan
+    if plan is None:
+        print("Detecting plan from J-Quants API...", file=sys.stderr)
+        api_key, base_url = _load_api_credentials()
+        plan = _detect_plan_from_api(api_key, base_url)
+        print(f"Detected plan: {plan}", file=sys.stderr)
+
     conn = _connect(args.db)
     exit_code = 0
     gaps_result = None
     fix_result = None
     try:
-        result = check_all(conn, args.plan)
+        result = check_all(conn, plan)
 
         if args.check_gaps:
             gaps_result = check_date_gaps(
@@ -816,7 +862,7 @@ def main() -> None:
                 gaps_result,
                 api_key=api_key,
                 base_url=base_url,
-                plan=args.plan,
+                plan=plan,
                 from_date=args.from_date,
                 to_date=args.to_date,
                 dry_run=args.dry_run,

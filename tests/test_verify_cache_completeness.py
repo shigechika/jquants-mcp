@@ -19,6 +19,7 @@ from verify_cache_completeness import (  # noqa: E402
     _check_markets_calendar,
     _check_screener_results,
     _collect_fix_dates,
+    _detect_plan_from_api,
     _latest_trading_day,
     _table_exists,
     _trading_dates_in_range,
@@ -706,3 +707,89 @@ def test_auto_fix_gaps_records_api_error(conn, monkeypatch):
     )
     assert len(result["errors"]) > 0
     assert "network error" in result["errors"][0]["error"]
+
+
+# ---------------------------------------------------------------------------
+# _detect_plan_from_api
+# ---------------------------------------------------------------------------
+
+
+def test_detect_plan_from_api_no_httpx(monkeypatch):
+    """Returns 'free' when httpx is not installed."""
+    import builtins
+    import sys
+
+    # Remove from sys.modules so the lazy import inside the function goes through
+    # __import__ rather than returning the cached module.
+    monkeypatch.delitem(sys.modules, "httpx", raising=False)
+
+    real_import = builtins.__import__
+
+    def _block_httpx(name, *args, **kwargs):
+        if name == "httpx":
+            raise ImportError("httpx not available")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _block_httpx)
+    assert _detect_plan_from_api("any-key", "https://api.jquants.com/v2") == "free"
+
+
+def test_detect_plan_from_api_no_api_key():
+    """Returns 'free' immediately when api_key is empty."""
+    assert _detect_plan_from_api("", "https://api.jquants.com/v2") == "free"
+
+
+def test_detect_plan_from_api_returns_premium(monkeypatch):
+    """Returns 'premium' when the premium probe responds with HTTP 200."""
+    import httpx  # noqa: PLC0415
+
+    class _Resp:
+        status_code = 200
+
+    monkeypatch.setattr(httpx, "get", lambda *_a, **_kw: _Resp())
+    result = _detect_plan_from_api("key", "https://api.jquants.com/v2")
+    assert result == "premium"
+
+
+def test_detect_plan_from_api_returns_light(monkeypatch):
+    """Returns 'light' when premium/standard are 403 but light is 200."""
+    import httpx  # noqa: PLC0415
+
+    call_count = [0]
+
+    class _Resp:
+        def __init__(self, code):
+            self.status_code = code
+
+    def _fake_get(url, **_kw):
+        call_count[0] += 1
+        if "fins/details" in url or "short-ratio" in url:
+            return _Resp(403)
+        return _Resp(200)
+
+    monkeypatch.setattr(httpx, "get", _fake_get)
+    result = _detect_plan_from_api("key", "https://api.jquants.com/v2")
+    assert result == "light"
+    assert call_count[0] == 3
+
+
+def test_detect_plan_from_api_all_403_returns_free(monkeypatch):
+    """Returns 'free' when all probes are rejected (HTTP 403)."""
+    import httpx  # noqa: PLC0415
+
+    class _Resp:
+        status_code = 403
+
+    monkeypatch.setattr(httpx, "get", lambda *_a, **_kw: _Resp())
+    assert _detect_plan_from_api("key", "https://api.jquants.com/v2") == "free"
+
+
+def test_detect_plan_from_api_network_error_returns_free(monkeypatch):
+    """Returns 'free' on network exception."""
+    import httpx  # noqa: PLC0415
+
+    def _raise(*_a, **_kw):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(httpx, "get", _raise)
+    assert _detect_plan_from_api("key", "https://api.jquants.com/v2") == "free"
