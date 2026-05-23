@@ -5,6 +5,14 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.41.2](https://github.com/shigechika/jquants-mcp/compare/v0.41.1...v0.41.2) (2026-05-23)
+
+
+### Documentation
+
+* add Claude Project instructions for React artifact charts ([#400](https://github.com/shigechika/jquants-mcp/issues/400)) ([17d913f](https://github.com/shigechika/jquants-mcp/commit/17d913f057e0b6ff3e5487fd584c7eb9d76c881a))
+* fix claude.ai tab label and UI labels in quickstart ([#402](https://github.com/shigechika/jquants-mcp/issues/402)) ([6a06250](https://github.com/shigechika/jquants-mcp/commit/6a0625088325c321c51ca11b84460b07c9755921))
+
 ## [0.41.1](https://github.com/shigechika/jquants-mcp/compare/v0.41.0...v0.41.1) (2026-05-23)
 
 
