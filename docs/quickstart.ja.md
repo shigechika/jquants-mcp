@@ -62,6 +62,19 @@ api_key = YOUR_API_KEY_HERE
 
 ## 3. Claude に接続
 
+=== "claude.ai（ブラウザ / モバイル）"
+
+    1. [claude.ai](https://claude.ai) を開き **Project** を作成
+       （左サイドバー → **Projects** → **+ New project**）。
+    2. プロジェクトを開く → 歯車アイコン → **Integrations** → **Add integration** →
+       **Custom** → jquants-mcp サーバーの URL を入力（例：Cloud Run のエンドポイント）。
+       Google OAuth で認証。
+    3. _（推奨）_ **Project instructions** をクリックし、
+       [`docs/claude-project-instructions.md`](claude-project-instructions.md)
+       の内容を貼り付ける。
+       これにより React artifact でのチャート描画パターンが Claude に伝わり、
+       追加のプロンプトなしで正しいレイアウトが得られる。
+
 === "Claude Code（CLI）"
 
     ```bash
