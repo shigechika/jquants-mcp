@@ -1203,6 +1203,76 @@ class TestGetAllLatestFyFinsTimestamp:
         store.close()
 
 
+class TestGetSplitEventsByCode:
+    """get_split_events_by_code のテスト。"""
+
+    def _insert_bar(
+        self,
+        conn,
+        code: str,
+        date: str,
+        adj_factor: float,
+    ) -> None:
+        import json
+        import time
+
+        data = {"Code": code, "AdjFactor": str(adj_factor)}
+        conn.execute(
+            "INSERT OR REPLACE INTO equities_bars_daily"
+            " (code, date, data, adj_factor, fetched_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (code, date, json.dumps(data), adj_factor, time.time()),
+        )
+
+    def test_returns_split_events_sorted_asc(self, tmp_path: Path) -> None:
+        """スプリットありコードの (date, factor) ペアが昇順で返る。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert_bar(conn, "12340", "2023-10-01", 0.5)
+        self._insert_bar(conn, "12340", "2022-04-01", 0.5)
+        conn.commit()
+
+        result = store.get_split_events_by_code(["12340"])
+        assert "12340" in result
+        dates = [ev[0] for ev in result["12340"]]
+        assert dates == sorted(dates), "events must be sorted ascending by date"
+        assert len(result["12340"]) == 2
+        store.close()
+
+    def test_code_without_splits_omitted(self, tmp_path: Path) -> None:
+        """スプリットなしコード（adj_factor==1.0）は結果から省略される。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert_bar(conn, "12340", "2023-10-01", 1.0)  # no split
+        conn.commit()
+
+        result = store.get_split_events_by_code(["12340"])
+        assert "12340" not in result
+        store.close()
+
+    def test_empty_codes_returns_empty(self, tmp_path: Path) -> None:
+        """空リストを渡すと空 dict が返る。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        result = store.get_split_events_by_code([])
+        assert result == {}
+        store.close()
+
+    def test_multiple_codes_batch(self, tmp_path: Path) -> None:
+        """複数コードを一括取得でき、コードごとに正しく分かれる。"""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert_bar(conn, "11110", "2023-06-01", 0.5)
+        self._insert_bar(conn, "22220", "2023-07-01", 0.1)
+        self._insert_bar(conn, "33330", "2023-08-01", 1.0)  # excluded
+        conn.commit()
+
+        result = store.get_split_events_by_code(["11110", "22220", "33330"])
+        assert "11110" in result and result["11110"][0][1] == 0.5
+        assert "22220" in result and result["22220"][0][1] == 0.1
+        assert "33330" not in result
+        store.close()
+
+
 class TestGetFyDividendHistory:
     """get_fy_dividend_history のテスト。"""
 

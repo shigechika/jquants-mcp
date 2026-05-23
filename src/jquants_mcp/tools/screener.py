@@ -37,11 +37,6 @@ Exposed tools:
   occurred from a specified ``rally_start`` date.
 - ``detect_consecutive_dividend_increase`` — screen for stocks with at least
   N consecutive years of annual dividend increase (連続増配), split-adjusted.
-  Educational tool — use ``detect_stable_payout_growth`` for investment
-  decisions.
-- ``detect_stable_payout_growth`` — composite screener combining consecutive
-  dividend growth, forward yield ≥ threshold, and payout ratio in [30 %, 50 %].
-  Internal back-test showed +16.95 % excess return vs TOPIX; methodology unpublished.
 
 The 52w/YTD detectors are also backed by the ``screener_results``
 pre-compute cache (default-params cross-sectional outputs are
@@ -1068,9 +1063,9 @@ def register(
         """Screen for stocks with consecutive annual dividend increases (連続増配). All plans.
 
         Use for 連続増配・dividend growth・増配継続 queries.
-        NOTE: consecutive dividend growth alone does NOT beat TOPIX on a risk-adjusted
-        basis.  For investment decisions combine with yield and payout discipline via
-        detect_stable_payout_growth.
+        NOTE: consecutive dividend growth alone does NOT guarantee outperformance on a
+        risk-adjusted basis.  Consider combining results with yield and payout ratio
+        filters for investment decisions.
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
@@ -1143,163 +1138,6 @@ def register(
             "data": results,
         }
 
-    @mcp.tool(annotations=READ_ONLY_CACHE)
-    async def detect_stable_payout_growth(
-        min_consecutive_years: int = 3,
-        min_dividend_yield: float = 3.0,
-        payout_ratio_min: float = 30.0,
-        payout_ratio_max: float = 50.0,
-        as_of_date: str | None = None,
-    ) -> dict[str, Any]:
-        """Composite screener: consecutive dividend growth + high yield + sustainable payout. All plans.
-
-        Use for 高配当連続増配・配当方針の安定銘柄・dividend compounder queries.
-        Combines three filters: (1) ≥ min_consecutive_years of annual dividend increase
-        (split-adjusted), (2) forward dividend yield ≥ min_dividend_yield %, and
-        (3) trailing payout ratio in [payout_ratio_min, payout_ratio_max] %.
-        Internal back-test (TOPIX universe, annual rebalance, default params) showed
-        +16.95 % excess return vs TOPIX; methodology is unpublished.
-        For the educational consecutive-only version see detect_consecutive_dividend_increase.
-
-        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
-
-        Args:
-            min_consecutive_years: Minimum consecutive years of dividend increase (default 3).
-            min_dividend_yield: Minimum forward dividend yield % (default 3.0).
-            payout_ratio_min: Minimum trailing payout ratio % (default 30.0).
-            payout_ratio_max: Maximum trailing payout ratio % (default 50.0).
-            as_of_date: Cut-off date for disclosures (YYYY-MM-DD or YYYYMMDD).
-                Prevents lookahead bias when back-testing.  Defaults to all data.
-        """
-        cache: CacheStore = get_cache()
-
-        if min_consecutive_years < 1:
-            return make_validation_error_response(["`min_consecutive_years` must be >= 1."])
-        if min_dividend_yield < 0:
-            return make_validation_error_response(["`min_dividend_yield` must be >= 0."])
-        if payout_ratio_min < 0 or payout_ratio_max < 0:
-            return make_validation_error_response(["payout ratio bounds must be >= 0."])
-        if payout_ratio_min > payout_ratio_max:
-            return make_validation_error_response(
-                ["`payout_ratio_min` must be <= `payout_ratio_max`."]
-            )
-
-        norm_as_of: str | None = None
-        if as_of_date:
-            norm_as_of = _normalize_date(as_of_date)
-            errors = collect_errors(validate_date(norm_as_of))
-            if errors:
-                return make_validation_error_response(errors)
-
-        # --- Step 1: Consecutive dividend growth filter ---
-        fy_history = cache.get_fy_dividend_history(as_of_date=norm_as_of)
-        if not fy_history:
-            return {
-                "error": True,
-                "error_type": "CacheNotReady",
-                "message": "fins_summary cache is empty. Run daily_fetch to populate.",
-                "count": 0,
-                "data": [],
-            }
-
-        # Pre-load all split events in one batch to avoid O(N) per-entry SQLite
-        # round-trips inside _compute_consecutive_div_years.
-        all_split_events = cache.get_split_events_by_code(list(fy_history.keys()))
-
-        consecutive_map: dict[str, int] = {}
-        for code, entries in fy_history.items():
-            if len(entries) <= min_consecutive_years:
-                continue
-            consecutive, _ = _compute_consecutive_div_years(
-                code, entries, cache, split_events=all_split_events.get(code, [])
-            )
-            if consecutive >= min_consecutive_years:
-                consecutive_map[code] = consecutive
-
-        if not consecutive_map:
-            return {
-                "count": 0,
-                "filters": _stable_payout_filters(
-                    min_consecutive_years,
-                    min_dividend_yield,
-                    payout_ratio_min,
-                    payout_ratio_max,
-                    norm_as_of,
-                ),
-                "data": [],
-            }
-
-        # --- Step 2: Yield filter ---
-        # Forward dividend (NxFDivAnn > FDivAnn) is already in post-split terms
-        # at disclosure time; apply get_split_factors_after for splits since then.
-        # as_of_date is passed so back-test callers see no future disclosures.
-        fwd_div_map = cache.get_forward_div_ann_map(as_of_date=norm_as_of)
-        close_map = cache.get_latest_close_map(as_of_date=norm_as_of)
-        name_map = cache.get_name_map()
-
-        fwd_disc_dates = {code: disc for code, (_, disc) in fwd_div_map.items()}
-        # get_split_factors_after has no upper date bound, so splits after as_of_date
-        # are included when back-testing.  The practical impact is small (splits are rare)
-        # but a future improvement would be to add as_of_date support to that method.
-        split_factors = cache.get_split_factors_after(fwd_disc_dates)
-
-        # --- Step 3: Payout ratio filter ---
-        # payout = DivAnn / EPS from the same FY filing.
-        # Split factors cancel in the ratio, so no adjustment needed for post-disc splits.
-        # Known limitation: FY-end splits (within ~45 days before disc_date) inflate
-        # the ratio because DivAnn stays pre-split while EPS is post-split per GAAP.
-        fy_fins = cache.get_all_latest_fy_fins(as_of_date=norm_as_of)
-
-        results: list[dict[str, Any]] = []
-        for code, consecutive in consecutive_map.items():
-            fwd_entry = fwd_div_map.get(code)
-            close = close_map.get(code)
-            if fwd_entry is None or close is None or close <= 0:
-                continue
-
-            fwd_div, _ = fwd_entry
-            adj_fwd_div = fwd_div * split_factors.get(code, 1.0)
-            yield_pct = adj_fwd_div / close * 100
-            if yield_pct < min_dividend_yield:
-                continue
-
-            fins = fy_fins.get(code, {})
-            try:
-                div_ann = float(fins.get("DivAnn") or 0)
-                eps = float(fins.get("EPS") or 0)
-            except (TypeError, ValueError):
-                continue
-            if eps <= 0 or div_ann <= 0:
-                continue
-            payout = div_ann / eps * 100
-            if not (payout_ratio_min <= payout <= payout_ratio_max):
-                continue
-
-            results.append(
-                {
-                    "code": display_code(code),
-                    "name": name_map.get(code, ""),
-                    "consecutive_years": consecutive,
-                    "forward_div_ann": round(adj_fwd_div, 2),
-                    "yield_pct": round(yield_pct, 2),
-                    "payout_ratio": round(payout, 1),
-                    "close": round(close, 2),
-                }
-            )
-
-        results.sort(key=lambda x: -x["yield_pct"])
-        return {
-            "count": len(results),
-            "filters": _stable_payout_filters(
-                min_consecutive_years,
-                min_dividend_yield,
-                payout_ratio_min,
-                payout_ratio_max,
-                norm_as_of,
-            ),
-            "data": results,
-        }
-
 
 # ----------------------------------------------------------------
 # helpers
@@ -1360,23 +1198,6 @@ def _compute_consecutive_div_years(
         else:
             break
     return consecutive, adj_entries
-
-
-def _stable_payout_filters(
-    min_consecutive_years: int,
-    min_dividend_yield: float,
-    payout_ratio_min: float,
-    payout_ratio_max: float,
-    as_of_date: str | None,
-) -> dict[str, Any]:
-    """Build the filters dict for detect_stable_payout_growth responses."""
-    return {
-        "min_consecutive_years": min_consecutive_years,
-        "min_dividend_yield": min_dividend_yield,
-        "payout_ratio_min": payout_ratio_min,
-        "payout_ratio_max": payout_ratio_max,
-        "as_of_date": as_of_date,
-    }
 
 
 def _load_topix_series(
