@@ -1,9 +1,13 @@
 """Chart tools for jquants-mcp.
 
-Two tools are exposed:
+Three tools are exposed:
 
 * ``get_comparison_chart_data`` — returns JSON time-series data (wide
   Recharts format) for multi-stock performance comparison. No optional
+  dependencies; always registered.
+
+* ``get_candlestick_data`` — returns candlestick OHLCV + indicator data
+  as JSON parallel arrays (Plotly/React artifact format). No optional
   dependencies; always registered.
 
 * ``render_candlestick`` — reads daily bars and renders a candlestick PNG
@@ -14,14 +18,14 @@ Two tools are exposed:
       uv sync --extra charts
 
   ``register()`` silently skips ``render_candlestick`` registration when
-  the extra is not installed; ``get_comparison_chart_data`` is still
-  available.
+  the extra is not installed; the other two tools are still available.
 """
 
 from __future__ import annotations
 
 import io
 import logging
+import math
 import re
 import sqlite3
 import unicodedata
@@ -361,6 +365,52 @@ def _detect_lock_days(rows: list[dict], adjusted: bool) -> list[dict]:
     return out
 
 
+def _rolling_mean(values: list[float | None], window: int) -> list[float | None]:
+    """Compute a simple rolling mean over *values* with the given *window* size.
+
+    Returns ``None`` for each position that has fewer than *window* preceding
+    non-``None`` values (i.e. the warm-up period). A ``None`` input value
+    resets the accumulation buffer so a gap in the series propagates correctly.
+    """
+    result: list[float | None] = []
+    buf: list[float] = []
+    for v in values:
+        if v is None:
+            buf.clear()
+            result.append(None)
+        else:
+            buf.append(v)
+            if len(buf) > window:
+                buf.pop(0)
+            result.append(sum(buf) / window if len(buf) == window else None)
+    return result
+
+
+def _rolling_std(values: list[float | None], window: int) -> list[float | None]:
+    """Compute a rolling sample standard deviation (ddof=1) with *window* size.
+
+    Matches ``pandas.Series.rolling(window).std()`` (Bessel's correction).
+    Returns ``None`` during the warm-up period; a ``None`` input resets the buffer.
+    """
+    result: list[float | None] = []
+    buf: list[float] = []
+    for v in values:
+        if v is None:
+            buf.clear()
+            result.append(None)
+        else:
+            buf.append(v)
+            if len(buf) > window:
+                buf.pop(0)
+            if len(buf) == window:
+                mean = sum(buf) / window
+                variance = sum((x - mean) ** 2 for x in buf) / (window - 1)
+                result.append(math.sqrt(variance))
+            else:
+                result.append(None)
+    return result
+
+
 def register(
     mcp: FastMCP,
     get_client: Any,  # noqa: ARG001 — signature parity with other tool modules
@@ -544,6 +594,197 @@ def register(
             "series_keys": all_labels,
         }
 
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def get_candlestick_data(
+        code: str,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        indicators: list[str] | None = None,
+        adjusted: bool = True,
+    ) -> dict:
+        """Return candlestick OHLCV + indicator data as JSON (ローソク足データJSON). All plans.
+
+        Use for ローソク足・株価チャート・React artifact チャート queries (JSON format, no PNG).
+        Returns parallel arrays for Plotly/Recharts React artifact rendering.
+        For PNG chart use sibling render_candlestick; for comparison charts use get_comparison_chart_data.
+
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+
+        Args:
+            code: Stock code (e.g. "7203" or "72030").
+            from_date: Range start (YYYYMMDD or YYYY-MM-DD). Default: 91 days before to_date.
+            to_date: Range end (YYYYMMDD or YYYY-MM-DD). Default: today.
+            indicators: Overlays list. Default ["volume","sma5","sma25"]. Options:
+                volume, sma5, sma20, sma25, sma60, sma75, sma200, bb20.
+            adjusted: Use split-adjusted prices (default True).
+
+        Returns:
+            dict with keys:
+              code          — normalised 5-char code
+              display_code  — 4-char display code (e.g. "7203")
+              company       — brief company name or null
+              from_date     — YYYY-MM-DD display start
+              to_date       — YYYY-MM-DD display end
+              adjusted      — bool
+              dates         — list[str] YYYY-MM-DD
+              ohlcv         — {open, high, low, close, volume} each list[float]
+              indicators    — {sma5, ..., bb20_upper, bb20_mid, bb20_lower} list[float|null]
+              lock_days     — list[{date, direction, price}]
+              earnings_dates — list[str] YYYY-MM-DD within the display window
+            On error: {"error": "<message>"}
+        """
+        if indicators is None:
+            indicators = ["volume", "sma5", "sma25"]
+
+        errors = collect_errors(
+            validate_code(code),
+            validate_date(from_date, param="from_date"),
+            validate_date(to_date, param="to_date"),
+        )
+        if errors:
+            return {"error": errors[0]}
+
+        unknown = sorted(set(indicators) - _VALID_INDICATORS)
+        if unknown:
+            return {
+                "error": f"Unknown indicators: {unknown}. Accepted: {sorted(_VALID_INDICATORS)}"
+            }
+
+        today_str = date.today().strftime("%Y-%m-%d")
+        norm_to = _normalize_date(to_date) if to_date is not None else today_str
+        norm_from = (
+            _normalize_date(from_date)
+            if from_date is not None
+            else (
+                datetime.strptime(norm_to, "%Y-%m-%d") - timedelta(days=_DEFAULT_RANGE_DAYS - 1)
+            ).strftime("%Y-%m-%d")
+        )
+        if norm_from > norm_to:
+            return {"error": "`from_date` must be <= `to_date`."}
+
+        norm_code = normalize_code(code)
+
+        # Extend fetch window so indicators are warmed before the first display bar.
+        max_win = _max_indicator_window(indicators)
+        warmup_start = (
+            (datetime.strptime(norm_from, "%Y-%m-%d") - timedelta(days=max_win * 2)).strftime(
+                "%Y-%m-%d"
+            )
+            if max_win > 0
+            else norm_from
+        )
+
+        cache: CacheStore = get_cache()
+        try:
+            all_rows = cache.get_rows(
+                "equities_bars_daily",
+                key_filter={"code": norm_code},
+                date_from=warmup_start,
+                date_to=norm_to,
+            )
+        except (
+            APIError,
+            InvalidAPIKeyError,
+            UserNotConfiguredError,
+            DecryptionError,
+            UserNotAllowedError,
+        ) as e:
+            err = format_api_error(e)
+            return {"error": err.get("message") or "API error"}
+
+        all_rows.sort(key=lambda r: str(r.get("Date") or ""))
+
+        o_key = "AdjO" if adjusted else "O"
+        h_key = "AdjH" if adjusted else "H"
+        l_key = "AdjL" if adjusted else "L"
+        c_key = "AdjC" if adjusted else "C"
+        v_key = "AdjVo" if adjusted else "Vo"
+
+        # Parse all rows (warmup + display) for indicator computation.
+        all_parsed: list[tuple[str, float, float, float, float, float]] = []
+        for r in all_rows:
+            try:
+                d = _normalize_date(str(r["Date"])[:10])
+                all_parsed.append(
+                    (
+                        d,
+                        float(r[o_key]),
+                        float(r[h_key]),
+                        float(r[l_key]),
+                        float(r[c_key]),
+                        float(r[v_key]),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+
+        # Slice to the display range.
+        display_parsed = [row for row in all_parsed if row[0] >= norm_from]
+
+        if not display_parsed:
+            return {
+                "error": (
+                    f"No cached bars for code={norm_code} in {norm_from}..{norm_to}. "
+                    "Run scripts/daily_fetch.py to populate the cache."
+                )
+            }
+
+        # Compute indicators over the full (warmup + display) close series.
+        closes_all = [row[4] for row in all_parsed]
+        ind_series: dict[str, list[float | None]] = {}
+        for ind in indicators:
+            if ind == "volume":
+                continue
+            if ind.startswith("sma"):
+                length = int(ind[3:])
+                ind_series[ind] = _rolling_mean(closes_all, length)
+            elif ind == "bb20":
+                mid = _rolling_mean(closes_all, 20)
+                std = _rolling_std(closes_all, 20)
+                ind_series["bb20_upper"] = [
+                    m + 2 * s if m is not None and s is not None else None for m, s in zip(mid, std)
+                ]
+                ind_series["bb20_mid"] = mid
+                ind_series["bb20_lower"] = [
+                    m - 2 * s if m is not None and s is not None else None for m, s in zip(mid, std)
+                ]
+
+        display_start_idx = len(all_parsed) - len(display_parsed)
+
+        dates: list[str] = [row[0] for row in display_parsed]
+        ohlcv = {
+            "open": [row[1] for row in display_parsed],
+            "high": [row[2] for row in display_parsed],
+            "low": [row[3] for row in display_parsed],
+            "close": [row[4] for row in display_parsed],
+            "volume": [row[5] for row in display_parsed],
+        }
+        indicators_out: dict[str, list[float | None]] = {
+            key: series[display_start_idx:] for key, series in ind_series.items()
+        }
+
+        display_rows = [r for r in all_rows if str(r.get("Date") or "")[:10] >= norm_from]
+        lock_days = _detect_lock_days(display_rows, adjusted)
+
+        earnings_dates = cache.get_earnings_dates(norm_code, norm_from, norm_to)
+
+        company_raw = _get_company_name(cache, norm_code)
+        company = _brief_company_name(company_raw) if company_raw else None
+
+        return {
+            "code": norm_code,
+            "display_code": display_code(norm_code),
+            "company": company,
+            "from_date": norm_from,
+            "to_date": norm_to,
+            "adjusted": adjusted,
+            "dates": dates,
+            "ohlcv": ohlcv,
+            "indicators": indicators_out,
+            "lock_days": lock_days,
+            "earnings_dates": earnings_dates,
+        }
+
     try:
         import mplfinance as mpf
         import pandas as pd
@@ -588,7 +829,7 @@ def register(
             from_date: Range start (YYYYMMDD or YYYY-MM-DD). Default: 91 days before to_date.
             to_date: Range end (YYYYMMDD or YYYY-MM-DD). Default: today.
             indicators: Overlays list. Default ["volume","sma5","sma25"]. Options:
-                volume, sma5/20/25/60/75/200, bb20.
+                volume, sma5, sma20, sma25, sma60, sma75, sma200, bb20.
             style: "default" (Yahoo-like), "dark", or "colorblind".
             adjusted: Use split-adjusted prices (default True).
             aspect_ratio: "square" (default), "landscape", or "portrait".

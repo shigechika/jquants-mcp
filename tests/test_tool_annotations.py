@@ -82,6 +82,7 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     # tools/charts.py — cache only
     "render_candlestick": READ_ONLY_CACHE,
     "get_comparison_chart_data": READ_ONLY_CACHE,
+    "get_candlestick_data": READ_ONLY_CACHE,
     # server.py utilities — pure server-local read
     "health_check": READ_ONLY_LOCAL,
     "cache_status": READ_ONLY_LOCAL,

@@ -1783,10 +1783,11 @@ def test_brief_company_name():
 
 
 def test_register_no_op_when_extras_missing():
-    """register() registers only get_comparison_chart_data when mplfinance isn't importable.
+    """register() registers only the non-mplfinance tools when mplfinance isn't importable.
 
     Simulated by patching the import to raise. Confirms the lean stdio
     profile (no [charts] extras) starts cleanly without render_candlestick.
+    Both get_comparison_chart_data and get_candlestick_data are always registered.
     """
     real_import = builtins.__import__
 
@@ -1801,11 +1802,11 @@ def test_register_no_op_when_extras_missing():
     with patch.object(builtins, "__import__", side_effect=fake_import):
         # Should not raise.
         charts_module.register(mcp_stub, lambda: None, lambda: None)
-    # get_comparison_chart_data is always registered (called once).
-    mcp_stub.tool.assert_called_once()
-    # Verify the registered function is get_comparison_chart_data, not render_candlestick.
-    registered_fn = mcp_stub.tool.return_value.call_args[0][0]
-    assert registered_fn.__name__ == "get_comparison_chart_data"
+    # get_comparison_chart_data and get_candlestick_data are always registered (two calls).
+    assert mcp_stub.tool.call_count == 2
+    registered_names = {call[0][0].__name__ for call in mcp_stub.tool.return_value.call_args_list}
+    assert registered_names == {"get_comparison_chart_data", "get_candlestick_data"}
+    assert "render_candlestick" not in registered_names
 
 
 # ---------------------------------------------------------------------------
@@ -1928,3 +1929,215 @@ class TestRenderCandlestickAnnotations:
             raw = base64.b64decode(raw)
         # An error PNG is still a valid PNG (the _error_image helper).
         assert _is_png(raw)
+
+
+# ---------------------------------------------------------------------------
+# get_candlestick_data
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestGetCandlestickData:
+    async def test_basic_structure(self, mock_env):
+        """Returns expected top-level keys for a normal request."""
+        rows = [_bar("72030", f"2026-01-0{i + 1}", c=float(100 + i)) for i in range(5)]
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "get_candlestick_data",
+            code="7203",
+            from_date="2026-01-01",
+            to_date="2026-01-05",
+            indicators=[],
+        )
+        assert "error" not in result
+        assert result["code"] == "72030"
+        assert result["display_code"] == "7203"
+        assert result["from_date"] == "2026-01-01"
+        assert result["to_date"] == "2026-01-05"
+        assert result["adjusted"] is True
+        assert len(result["dates"]) == 5
+        assert result["dates"][0] == "2026-01-01"
+        for key in ("open", "high", "low", "close", "volume"):
+            assert key in result["ohlcv"]
+            assert len(result["ohlcv"][key]) == 5
+        assert isinstance(result["lock_days"], list)
+        assert isinstance(result["earnings_dates"], list)
+
+    async def test_ohlcv_values_match_input(self, mock_env):
+        """OHLCV parallel arrays carry the adjusted values from the cache."""
+        rows = [_bar("72030", "2026-01-05", o=100, h=110, low=90, c=105, vo=2000)]
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "get_candlestick_data",
+            code="7203",
+            from_date="2026-01-05",
+            to_date="2026-01-05",
+            indicators=[],
+        )
+        assert result["ohlcv"]["open"] == [100.0]
+        assert result["ohlcv"]["high"] == [110.0]
+        assert result["ohlcv"]["low"] == [90.0]
+        assert result["ohlcv"]["close"] == [105.0]
+        assert result["ohlcv"]["volume"] == [2000.0]
+
+    async def test_default_indicators_include_sma5_sma25(self, mock_env):
+        """Default indicators list is ['volume','sma5','sma25']."""
+        rows = [_bar("72030", f"2026-01-{i + 1:02d}") for i in range(10)]
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "get_candlestick_data",
+            code="7203",
+            from_date="2026-01-01",
+            to_date="2026-01-10",
+        )
+        assert "error" not in result
+        # volume is in ohlcv, not indicators
+        assert "volume" not in result["indicators"]
+        assert "sma5" in result["indicators"]
+        assert "sma25" in result["indicators"]
+
+    async def test_sma5_computation(self, mock_env):
+        """SMA5 is None for the first 4 bars and equals the rolling mean for bars 5+."""
+        closes = [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0]
+        rows = [_bar("72030", f"2026-01-0{i + 1}", c=closes[i]) for i in range(7)]
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "get_candlestick_data",
+            code="7203",
+            from_date="2026-01-01",
+            to_date="2026-01-07",
+            indicators=["sma5"],
+        )
+        assert "error" not in result
+        sma5 = result["indicators"]["sma5"]
+        assert sma5[0] is None
+        assert sma5[1] is None
+        assert sma5[2] is None
+        assert sma5[3] is None
+        assert sma5[4] == pytest.approx(sum(closes[:5]) / 5)
+        assert sma5[5] == pytest.approx(sum(closes[1:6]) / 5)
+        assert sma5[6] == pytest.approx(sum(closes[2:7]) / 5)
+
+    async def test_bb20_returns_three_series(self, mock_env):
+        """bb20 indicator expands into bb20_upper, bb20_mid, bb20_lower."""
+        rows = [
+            _bar(
+                "72030",
+                (datetime(2026, 1, 1) + timedelta(days=i)).strftime("%Y-%m-%d"),
+                c=float(100 + i),
+            )
+            for i in range(25)
+        ]
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "get_candlestick_data",
+            code="7203",
+            from_date="2026-01-01",
+            to_date="2026-01-25",
+            indicators=["bb20"],
+        )
+        assert "error" not in result
+        assert "bb20_upper" in result["indicators"]
+        assert "bb20_mid" in result["indicators"]
+        assert "bb20_lower" in result["indicators"]
+        assert "bb20" not in result["indicators"]
+        # First 19 values are None (warm-up), 20th onward are valid
+        assert result["indicators"]["bb20_mid"][18] is None
+        assert result["indicators"]["bb20_mid"][19] is not None
+        # upper > mid > lower
+        assert result["indicators"]["bb20_upper"][19] > result["indicators"]["bb20_mid"][19]
+        assert result["indicators"]["bb20_mid"][19] > result["indicators"]["bb20_lower"][19]
+
+    async def test_unknown_indicator_returns_error(self, mock_env):
+        result = await _call("get_candlestick_data", code="7203", indicators=["sma999"])
+        assert "error" in result
+        assert "sma999" in result["error"]
+
+    async def test_invalid_code_returns_error(self, mock_env):
+        result = await _call("get_candlestick_data", code="INVALID")
+        assert "error" in result
+
+    async def test_invalid_date_returns_error(self, mock_env):
+        result = await _call("get_candlestick_data", code="7203", from_date="not-a-date")
+        assert "error" in result
+
+    async def test_from_gt_to_returns_error(self, mock_env):
+        result = await _call(
+            "get_candlestick_data",
+            code="7203",
+            from_date="2026-02-01",
+            to_date="2026-01-01",
+            indicators=[],
+        )
+        assert "error" in result
+
+    async def test_no_cached_bars_returns_error(self, mock_env):
+        result = await _call(
+            "get_candlestick_data",
+            code="7203",
+            from_date="2026-01-01",
+            to_date="2026-01-05",
+            indicators=[],
+        )
+        assert "error" in result
+        assert "No cached bars" in result["error"]
+
+    async def test_adjusted_false_uses_raw_prices(self, mock_env):
+        """adjusted=False reads O/H/L/C/Vo instead of AdjO/AdjH/AdjL/AdjC/AdjVo."""
+        rows = [_bar("72030", "2026-01-05", o=200, h=220, low=180, c=210, vo=500, adj_factor=0.5)]
+        # Override raw vs adjusted values so they differ
+        rows[0]["O"] = 400.0
+        rows[0]["C"] = 420.0
+        _seed(mock_env["cache"], rows)
+
+        result = await _call(
+            "get_candlestick_data",
+            code="7203",
+            from_date="2026-01-05",
+            to_date="2026-01-05",
+            indicators=[],
+            adjusted=False,
+        )
+        assert "error" not in result
+        assert result["adjusted"] is False
+        assert result["ohlcv"]["open"] == [400.0]
+        assert result["ohlcv"]["close"] == [420.0]
+
+    async def test_lock_day_detected(self, mock_env):
+        """A 寄らずストップ高 bar appears in lock_days."""
+        row = _bar("72030", "2026-01-05", o=100, h=100, low=100, c=100, vo=0)
+        row["UL"] = "1"
+        _seed(mock_env["cache"], [row])
+
+        result = await _call(
+            "get_candlestick_data",
+            code="7203",
+            from_date="2026-01-05",
+            to_date="2026-01-05",
+            indicators=[],
+        )
+        assert "error" not in result
+        assert len(result["lock_days"]) == 1
+        assert result["lock_days"][0]["direction"] == "high"
+        assert result["lock_days"][0]["price"] == pytest.approx(100.0)
+
+    async def test_earnings_dates_populated(self, mock_env):
+        """earnings_dates includes dates seeded in equities_earnings_calendar."""
+        rows = [_bar("72030", "2026-01-05")]
+        _seed(mock_env["cache"], rows)
+        _seed_earnings(mock_env["cache"], "72030", ["2026-01-05"])
+
+        result = await _call(
+            "get_candlestick_data",
+            code="7203",
+            from_date="2026-01-05",
+            to_date="2026-01-05",
+            indicators=[],
+        )
+        assert "error" not in result
+        assert result["earnings_dates"] == ["2026-01-05"]
