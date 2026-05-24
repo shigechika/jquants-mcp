@@ -2069,3 +2069,166 @@ class TestDetectConsecutiveDividendIncrease:
             "history",
         ):
             assert field in item, f"Missing field: {field}"
+
+    async def test_cache_hit_filters_by_min_years(self, mock_env):
+        """screener_results キャッシュヒット時に min_years で正しく絞り込まれる。"""
+        cache = mock_env["cache"]
+        # Pre-populate screener_results with two stocks: 5y and 12y streaks.
+        payload = {
+            "count": 2,
+            "data": [
+                {
+                    "code": "13010",
+                    "consecutive_years": 12,
+                    "latest_div_ann": 50.0,
+                    "latest_fy_end": "2025-03-31",
+                    "history": [],
+                },
+                {
+                    "code": "72030",
+                    "consecutive_years": 5,
+                    "latest_div_ann": 20.0,
+                    "latest_fy_end": "2025-03-31",
+                    "history": [],
+                },
+            ],
+        }
+        cache.screener_result_put(
+            screener_compute.TOOL_DETECT_CONSECUTIVE_DIV,
+            screener_compute.default_params_hash_consecutive_div(),
+            "2025-05-23",
+            payload,
+        )
+        _seed_master(cache, "13010", "花王")
+        _seed_master(cache, "72030", "ホンダ")
+
+        result = await _call("detect_consecutive_dividend_increase", min_years=10)
+        assert result.get("error") is None or result.get("error") is False
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" in codes
+        assert "7203" not in codes  # only 5y streak, below min_years=10
+        assert result["min_years"] == 10
+        assert result["as_of_date"] is None
+
+    async def test_as_of_date_bypasses_cache(self, mock_env):
+        """as_of_date 指定時はキャッシュをバイパスしてライブ計算する。"""
+        cache = mock_env["cache"]
+        # Seed a valid cache entry with 12-year streak.
+        payload = {
+            "count": 1,
+            "data": [
+                {
+                    "code": "13010",
+                    "consecutive_years": 12,
+                    "latest_div_ann": 50.0,
+                    "latest_fy_end": "2025-03-31",
+                    "history": [],
+                }
+            ],
+        }
+        cache.screener_result_put(
+            screener_compute.TOOL_DETECT_CONSECUTIVE_DIV,
+            screener_compute.default_params_hash_consecutive_div(),
+            "2025-05-23",
+            payload,
+        )
+        _seed_master(cache, "13010", "花王")
+        # Seed fins_summary with only 5 years (below min_years=10) before as_of_date.
+        for y in range(2018, 2024):
+            _seed_fins_summary(
+                cache,
+                "13010",
+                f"{y + 1}-06-20",
+                "FYFinancialStatements",
+                f"{y}-03-31",
+                float(10 + (y - 2018)),
+            )
+
+        # With as_of_date set, must use live computation (5 years only → excluded).
+        result = await _call(
+            "detect_consecutive_dividend_increase",
+            min_years=10,
+            as_of_date="2024-12-31",
+        )
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" not in codes  # live calc shows only 5y streak
+
+
+class TestComputeConsecutiveDivSnapshot:
+    """screener_compute.compute_consecutive_div_snapshot の純粋関数テスト。"""
+
+    def test_basic_streak(self):
+        """連続増配のある銘柄が正しく検出される。"""
+        fy_history = {
+            "13010": [
+                {"fy_end": "2021-03-31", "disc_date": "2021-06-20", "div_ann": 40.0},
+                {"fy_end": "2022-03-31", "disc_date": "2022-06-20", "div_ann": 50.0},
+                {"fy_end": "2023-03-31", "disc_date": "2023-06-20", "div_ann": 60.0},
+            ]
+        }
+        result = screener_compute.compute_consecutive_div_snapshot(fy_history, {})
+        assert result["count"] == 1
+        item = result["data"][0]
+        assert item["code"] == "13010"
+        assert item["consecutive_years"] == 2
+        assert item["latest_div_ann"] == 60.0
+
+    def test_no_streak_excluded(self):
+        """連続増配なし（減配あり）の銘柄は除外される。"""
+        fy_history = {
+            "99990": [
+                {"fy_end": "2022-03-31", "disc_date": "2022-06-20", "div_ann": 50.0},
+                {"fy_end": "2023-03-31", "disc_date": "2023-06-20", "div_ann": 30.0},
+            ]
+        }
+        result = screener_compute.compute_consecutive_div_snapshot(fy_history, {})
+        assert result["count"] == 0
+
+    def test_split_adjusted(self):
+        """分割補正後に連続増配となるケースが正しく検出される。"""
+        # raw: 120 -> 70 (looks like a cut), adj: 60 -> 70 (increase after 1:2 split)
+        fy_history = {
+            "74660": [
+                {"fy_end": "2020-03-31", "disc_date": "2020-06-20", "div_ann": 120.0},
+                {"fy_end": "2021-03-31", "disc_date": "2021-06-20", "div_ann": 70.0},
+            ]
+        }
+        # Split on 2020-10-01, after disc_date 2020-06-20 → factor=0.5 applied to FY2020
+        split_events = {"74660": [("2020-10-01", 0.5)]}
+        result = screener_compute.compute_consecutive_div_snapshot(fy_history, split_events)
+        assert result["count"] == 1
+        assert result["data"][0]["consecutive_years"] == 1
+
+    def test_sorted_by_consecutive_years_desc(self):
+        """結果は consecutive_years 降順でソートされる。"""
+        fy_history = {
+            "10010": [
+                {
+                    "fy_end": f"{2020 + i}-03-31",
+                    "disc_date": f"{2021 + i}-06-20",
+                    "div_ann": float(10 + i),
+                }
+                for i in range(3)  # 2 consecutive
+            ],
+            "20020": [
+                {
+                    "fy_end": f"{2018 + i}-03-31",
+                    "disc_date": f"{2019 + i}-06-20",
+                    "div_ann": float(5 + i),
+                }
+                for i in range(5)  # 4 consecutive
+            ],
+        }
+        result = screener_compute.compute_consecutive_div_snapshot(fy_history, {})
+        assert result["data"][0]["consecutive_years"] >= result["data"][1]["consecutive_years"]
+
+    def test_raw_code_stored(self):
+        """キャッシュには 5 桁の raw code が格納される（display_code 変換なし）。"""
+        fy_history = {
+            "13010": [
+                {"fy_end": "2022-03-31", "disc_date": "2022-06-20", "div_ann": 40.0},
+                {"fy_end": "2023-03-31", "disc_date": "2023-06-20", "div_ann": 50.0},
+            ]
+        }
+        result = screener_compute.compute_consecutive_div_snapshot(fy_history, {})
+        assert result["data"][0]["code"] == "13010"  # raw 5-digit, not "1301"

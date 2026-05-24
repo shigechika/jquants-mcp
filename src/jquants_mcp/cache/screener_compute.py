@@ -39,10 +39,14 @@ SCREENER_CACHE_LOOKBACK_WEEKS = 52
 # the MCP tools can not drift apart.
 TOOL_DETECT_52W = "detect_52w_high_low"
 TOOL_DETECT_YTD = "detect_ytd_high_low"
+TOOL_DETECT_CONSECUTIVE_DIV = "detect_consecutive_dividend_increase"
 
 # Bump when compute_high_low_signals output schema changes so that stale
 # pre-computed Tier-2 cache entries are bypassed rather than served.
 _SCHEMA_VERSION = 2
+
+# Bump when compute_consecutive_div_snapshot output schema changes.
+_CONSECUTIVE_DIV_SCHEMA_VERSION = 1
 
 # Number of prior sessions used for volume_ratio baseline.
 _VOLUME_BASELINE_SESSIONS = 20
@@ -81,6 +85,11 @@ def default_params_hash_ytd(
     return params_hash(
         {"schema_version": _SCHEMA_VERSION, "min_prior_sessions": min_prior_sessions}
     )
+
+
+def default_params_hash_consecutive_div() -> str:
+    """Hash for ``detect_consecutive_dividend_increase`` default-shaped parameters."""
+    return params_hash({"schema_version": _CONSECUTIVE_DIV_SCHEMA_VERSION})
 
 
 def _as_float(v: Any) -> float | None:
@@ -317,6 +326,199 @@ def latest_session_date(conn: Any) -> str | None:
     if row is None or row[0] is None:
         return None
     return str(row[0])[:10]
+
+
+def fetch_fy_dividend_history(conn: Any) -> dict[str, list[dict[str, Any]]]:
+    """Load full FY dividend history from fins_summary.
+
+    Mirrors ``CacheStore.get_fy_dividend_history`` for callers that hold
+    a raw ``sqlite3.Connection`` (daily_fetch / populate scripts).  No
+    ``as_of_date`` filter — loads the complete history for pre-computation.
+
+    Returns:
+        {code: [{fy_end, disc_date, div_ann}, ...]} sorted ascending by fy_end.
+    """
+    sql = (
+        "WITH ranked AS ("
+        "  SELECT code,"
+        "    json_extract(data, '$.CurFYEn') AS fy_end,"
+        "    substr(disc_date, 1, 10) AS disc_date_norm,"
+        "    json_extract(data, '$.DivAnn') AS div_ann,"
+        "    ROW_NUMBER() OVER ("
+        "      PARTITION BY code, json_extract(data, '$.CurFYEn')"
+        "      ORDER BY substr(disc_date, 1, 10) DESC"
+        "    ) AS rn"
+        "  FROM fins_summary"
+        "  WHERE json_extract(data, '$.DocType') LIKE 'FY%'"
+        "    AND json_extract(data, '$.DocType') NOT LIKE '%REIT%'"
+        "    AND json_extract(data, '$.DocType') NOT LIKE '%US%'"
+        ")"
+        " SELECT code, fy_end, disc_date_norm, div_ann"
+        " FROM ranked"
+        " WHERE rn = 1"
+        "   AND fy_end IS NOT NULL AND fy_end != ''"
+        "   AND div_ann IS NOT NULL AND div_ann != ''"
+        " ORDER BY code, fy_end"
+    )
+    try:
+        rows = conn.execute(sql).fetchall()
+    except Exception:
+        return {}
+    result: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        code = str(row[0] or "")
+        if not code:
+            continue
+        try:
+            div_ann = float(row[3])
+        except (TypeError, ValueError):
+            continue
+        result.setdefault(code, []).append(
+            {
+                "fy_end": str(row[1] or ""),
+                "disc_date": str(row[2] or ""),
+                "div_ann": div_ann,
+            }
+        )
+    return result
+
+
+def fetch_split_events_by_code(
+    conn: Any,
+    codes: list[str],
+) -> dict[str, list[tuple[str, float]]]:
+    """Return split events for multiple codes from equities_bars_daily.
+
+    Mirrors ``CacheStore.get_split_events_by_code`` for callers that hold
+    a raw ``sqlite3.Connection`` (daily_fetch / populate scripts).
+
+    Note: equities_bars_daily has no index on ``code`` (only on ``date``),
+    so each batch performs a full-table scan.  With ~3800 codes and 5.6M rows
+    this takes ~12s on m1.local — acceptable for a nightly batch.
+    Adding ``CREATE INDEX idx_ebd_code ON equities_bars_daily(code)`` would
+    reduce this significantly if latency becomes a concern.
+
+    Returns:
+        {code: [(date, factor), ...]} sorted ascending by date.
+        Codes with no split events are omitted.
+    """
+    if not codes:
+        return {}
+    all_rows: list[tuple[str, str, float]] = []
+    for i in range(0, len(codes), 900):
+        batch = codes[i : i + 900]
+        placeholders = ",".join("?" * len(batch))
+        try:
+            rows = conn.execute(
+                f"SELECT code, date, adj_factor FROM ("
+                f"  SELECT code, date,"
+                f"  COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor"
+                f"  FROM equities_bars_daily WHERE code IN ({placeholders})"
+                f") WHERE adj_factor IS NOT NULL AND adj_factor != 1.0 AND adj_factor != 0.0"
+                f" ORDER BY code, date",
+                batch,
+            ).fetchall()
+        except Exception:
+            continue
+        all_rows.extend((str(r[0]), str(r[1]), float(r[2])) for r in rows)
+    # Build per-code lists.  all_rows is already ORDER BY code, date from SQL,
+    # but sort explicitly to guarantee ascending order regardless of batch merging.
+    result: dict[str, list[tuple[str, float]]] = {}
+    for code, bar_date, factor in all_rows:
+        result.setdefault(code, []).append((bar_date, factor))
+    for lst in result.values():
+        lst.sort()
+    return result
+
+
+def _apply_split_adj(
+    entries: list[dict[str, Any]],
+    split_events: list[tuple[str, float]],
+) -> list[dict[str, Any]]:
+    """Apply cumulative post-disc split correction to a single code's div_ann values.
+
+    Assumes ``split_events`` is sorted ascending by date — callers must guarantee
+    this (``fetch_split_events_by_code`` does; ``CacheStore.get_split_events_by_code``
+    also guarantees ascending order).
+
+    Split adjustment logic mirrors ``_compute_consecutive_div_years`` in
+    ``tools/screener.py``.  If the computation rule changes, update both.
+    """
+    adj: list[dict[str, Any]] = []
+    for entry in entries:
+        disc_date = entry["disc_date"]
+        factor = 1.0
+        for ev_date, ev_factor in split_events:
+            if ev_date > disc_date:
+                factor *= ev_factor
+        adj.append(
+            {
+                "fy_end": entry["fy_end"],
+                "disc_date": disc_date,
+                "div_ann": round(entry["div_ann"] * factor, 4),
+            }
+        )
+    return adj
+
+
+def compute_consecutive_div_snapshot(
+    fy_history: dict[str, list[dict[str, Any]]],
+    split_events_by_code: dict[str, list[tuple[str, float]]],
+) -> dict[str, Any]:
+    """Compute split-adjusted consecutive dividend increase years for all codes.
+
+    Pure function — no I/O. All codes with >= 1 consecutive year of dividend
+    increase are stored; ``min_years`` filtering is applied by the MCP tool at
+    read time so a single cache entry serves every ``min_years`` value.
+
+    Args:
+        fy_history: Mapping of 5-digit code to sorted-ascending list of
+            {fy_end, disc_date, div_ann} dicts (from ``fetch_fy_dividend_history``).
+        split_events_by_code: Mapping of code to split events from
+            ``fetch_split_events_by_code``.
+
+    Returns:
+        Dict with ``"count"`` (total records) and ``"data"`` list sorted by
+        ``consecutive_years`` descending.  Each item contains:
+        ``code`` (raw 5-digit), ``consecutive_years``, ``latest_div_ann``,
+        ``latest_fy_end``, ``history`` (sorted ascending streak entries).
+    """
+    records: list[dict[str, Any]] = []
+    for code, entries in fy_history.items():
+        if len(entries) < 2:
+            continue
+        split_events = split_events_by_code.get(code, [])
+        adj_entries = _apply_split_adj(entries, split_events)
+
+        consecutive = 0
+        for i in range(len(adj_entries) - 1, 0, -1):
+            curr = adj_entries[i]["div_ann"]
+            prev = adj_entries[i - 1]["div_ann"]
+            if curr > 0 and curr > prev:
+                consecutive += 1
+            else:
+                break
+
+        if consecutive < 1:
+            continue
+
+        latest = adj_entries[-1]
+        streak_entries = adj_entries[-(consecutive + 1) :]
+        records.append(
+            {
+                "code": code,
+                "consecutive_years": consecutive,
+                "latest_div_ann": round(latest["div_ann"], 2),
+                "latest_fy_end": latest["fy_end"],
+                "history": [
+                    {"fy_end": e["fy_end"], "div_ann": round(e["div_ann"], 2)}
+                    for e in streak_entries
+                ],
+            }
+        )
+
+    records.sort(key=lambda x: -x["consecutive_years"])
+    return {"count": len(records), "data": records}
 
 
 def distinct_session_dates(

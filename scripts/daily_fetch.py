@@ -786,11 +786,11 @@ def _screener_default_jobs() -> list[tuple[str, str, dict]]:
 def populate_screener_results(conn: sqlite3.Connection) -> int:
     """Pre-compute and cache screener payloads for the latest session.
 
-    Computes ``detect_52w_high_low`` and ``detect_ytd_high_low`` with
-    default parameters for the most recent date in
-    ``equities_bars_daily`` and ``INSERT OR REPLACE``s the rows.
-    Then prunes rows older than 52 weeks. Returns the number of new
-    or replaced rows.
+    Computes ``detect_52w_high_low``, ``detect_ytd_high_low``, and
+    ``detect_consecutive_dividend_increase`` with default parameters for
+    the most recent date in ``equities_bars_daily`` and
+    ``INSERT OR REPLACE``s the rows.  Then prunes rows older than 52 weeks.
+    Returns the number of new or replaced rows.
     """
     latest = screener_compute.latest_session_date(conn)
     if latest is None:
@@ -799,6 +799,8 @@ def populate_screener_results(conn: sqlite3.Connection) -> int:
 
     print(f"  対象日: {latest}")
     written = 0
+
+    # --- equities_bars_daily based screeners (52w / YTD high-low) ---
     for tool_name, params_hash, kwargs in _screener_default_jobs():
         t0 = time.time()
         payload = screener_compute.compute_for_date(
@@ -817,6 +819,32 @@ def populate_screener_results(conn: sqlite3.Connection) -> int:
         written += 1
         elapsed = time.time() - t0
         print(f"    {tool_name}: count={payload.get('count')} ({elapsed:.1f}s)")
+
+    # --- fins_summary based screeners (consecutive dividend increase) ---
+    t0 = time.time()
+    fy_history = screener_compute.fetch_fy_dividend_history(conn)
+    if fy_history:
+        all_codes = list(fy_history.keys())
+        split_events = screener_compute.fetch_split_events_by_code(conn, all_codes)
+        payload = screener_compute.compute_consecutive_div_snapshot(fy_history, split_events)
+        screener_compute.upsert_screener_result(
+            conn,
+            tool_name=screener_compute.TOOL_DETECT_CONSECUTIVE_DIV,
+            params_hash_value=screener_compute.default_params_hash_consecutive_div(),
+            norm_date=latest,
+            payload=payload,
+            computed_at=time.time(),
+        )
+        written += 1
+        elapsed = time.time() - t0
+        print(
+            f"    {screener_compute.TOOL_DETECT_CONSECUTIVE_DIV}: "
+            f"count={payload.get('count')} ({elapsed:.1f}s)"
+        )
+    else:
+        print(
+            f"    {screener_compute.TOOL_DETECT_CONSECUTIVE_DIV}: fins_summary が空のためスキップ"
+        )
 
     pruned = screener_compute.prune_old_results(conn, retention_weeks=_SCREENER_RETENTION_WEEKS)
     conn.commit()

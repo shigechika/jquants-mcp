@@ -1675,6 +1675,33 @@ class CacheStore:
         except (TypeError, ValueError):
             return None
 
+    def screener_result_get_latest(
+        self,
+        tool_name: str,
+        params_hash: str,
+    ) -> dict[str, Any] | None:
+        """Return the most recent cached payload for ``(tool_name, params_hash)``.
+
+        Used for screeners that have no ``date`` parameter (e.g., consecutive
+        dividend increase). Returns ``None`` on miss or when the cache DB is
+        not ready.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return None
+        row = conn.execute(
+            "SELECT payload_json FROM screener_results "
+            "WHERE tool_name = ? AND params_hash = ? "
+            "ORDER BY date DESC LIMIT 1",
+            (tool_name, params_hash),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            return json.loads(row["payload_json"])
+        except (TypeError, ValueError):
+            return None
+
     def screener_result_get_range(
         self,
         tool_name: str,

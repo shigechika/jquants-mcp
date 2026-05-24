@@ -1092,6 +1092,17 @@ def register(
             if errors:
                 return make_validation_error_response(errors)
 
+        name_map = cache.get_name_map()
+
+        # Cache-first path: screener_results pre-computed by daily_fetch.
+        # Bypassed when as_of_date is set (backtesting requires exact cut-off).
+        if norm_as_of is None:
+            cached = _try_screener_cache_consecutive_div(
+                cache, min_years=min_years, name_map=name_map
+            )
+            if cached is not None:
+                return cached
+
         fy_history = cache.get_fy_dividend_history(as_of_date=norm_as_of)
         if not fy_history:
             return {
@@ -1102,7 +1113,6 @@ def register(
                 "data": [],
             }
 
-        name_map = cache.get_name_map()
         results: list[dict[str, Any]] = []
 
         for code, entries in fy_history.items():
@@ -1320,6 +1330,40 @@ async def _high_low_signals(
             item["name"] = name_map.get(item["Code"])
             item["Code"] = display_code(item["Code"])
     return result
+
+
+def _try_screener_cache_consecutive_div(
+    cache: CacheStore,
+    *,
+    min_years: int,
+    name_map: dict[str, str],
+) -> dict[str, Any] | None:
+    """Look up the latest pre-computed consecutive dividend payload.
+
+    Filters the stored all-codes snapshot by ``min_years`` in Python.
+    Returns None on miss.
+    """
+    params_hash_val = screener_compute.default_params_hash_consecutive_div()
+    payload = cache.screener_result_get_latest(
+        screener_compute.TOOL_DETECT_CONSECUTIVE_DIV, params_hash_val
+    )
+    if payload is None:
+        return None
+    result: list[dict[str, Any]] = []
+    for item in payload.get("data", []):
+        if item.get("consecutive_years", 0) < min_years:
+            continue
+        raw_code = item.get("code", "")
+        d = dict(item)
+        d["name"] = name_map.get(raw_code, "")
+        d["code"] = display_code(raw_code)
+        result.append(d)
+    return {
+        "count": len(result),
+        "min_years": min_years,
+        "as_of_date": None,
+        "data": result,
+    }
 
 
 def _try_screener_cache_52w(
