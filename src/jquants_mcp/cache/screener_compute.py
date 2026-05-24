@@ -392,6 +392,12 @@ def fetch_split_events_by_code(
     Mirrors ``CacheStore.get_split_events_by_code`` for callers that hold
     a raw ``sqlite3.Connection`` (daily_fetch / populate scripts).
 
+    Note: equities_bars_daily has no index on ``code`` (only on ``date``),
+    so each batch performs a full-table scan.  With ~3800 codes and 5.6M rows
+    this takes ~12s on m1.local — acceptable for a nightly batch.
+    Adding ``CREATE INDEX idx_ebd_code ON equities_bars_daily(code)`` would
+    reduce this significantly if latency becomes a concern.
+
     Returns:
         {code: [(date, factor), ...]} sorted ascending by date.
         Codes with no split events are omitted.
@@ -415,9 +421,13 @@ def fetch_split_events_by_code(
         except Exception:
             continue
         all_rows.extend((str(r[0]), str(r[1]), float(r[2])) for r in rows)
+    # Build per-code lists.  all_rows is already ORDER BY code, date from SQL,
+    # but sort explicitly to guarantee ascending order regardless of batch merging.
     result: dict[str, list[tuple[str, float]]] = {}
     for code, bar_date, factor in all_rows:
         result.setdefault(code, []).append((bar_date, factor))
+    for lst in result.values():
+        lst.sort()
     return result
 
 
@@ -425,7 +435,15 @@ def _apply_split_adj(
     entries: list[dict[str, Any]],
     split_events: list[tuple[str, float]],
 ) -> list[dict[str, Any]]:
-    """Apply cumulative post-disc split correction to a single code's div_ann values."""
+    """Apply cumulative post-disc split correction to a single code's div_ann values.
+
+    Assumes ``split_events`` is sorted ascending by date — callers must guarantee
+    this (``fetch_split_events_by_code`` does; ``CacheStore.get_split_events_by_code``
+    also guarantees ascending order).
+
+    Split adjustment logic mirrors ``_compute_consecutive_div_years`` in
+    ``tools/screener.py``.  If the computation rule changes, update both.
+    """
     adj: list[dict[str, Any]] = []
     for entry in entries:
         disc_date = entry["disc_date"]
