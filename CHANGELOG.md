@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.43.1](https://github.com/shigechika/jquants-mcp/compare/v0.43.0...v0.43.1) (2026-05-24)
+
+
+### Performance Improvements
+
+* **screener:** cache detect_consecutive_dividend_increase in screener_results ([#414](https://github.com/shigechika/jquants-mcp/issues/414)) ([b248b8c](https://github.com/shigechika/jquants-mcp/commit/b248b8cfbaef4c02073a2334d964a0ff09ca0e4f))
+
 ## [0.43.0](https://github.com/shigechika/jquants-mcp/compare/v0.42.0...v0.43.0) (2026-05-24)
 
 
