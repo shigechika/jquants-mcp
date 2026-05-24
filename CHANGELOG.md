@@ -5,6 +5,20 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.43.0](https://github.com/shigechika/jquants-mcp/compare/v0.42.0...v0.43.0) (2026-05-24)
+
+
+### Features
+
+* **cache:** add get_fy_dividend_history() for annual dividend history lookup ([#409](https://github.com/shigechika/jquants-mcp/issues/409)) ([80fca1e](https://github.com/shigechika/jquants-mcp/commit/80fca1e7b499ac8e58f662c8f38681841aced6f5))
+* **screener:** add detect_consecutive_dividend_increase tool ([#411](https://github.com/shigechika/jquants-mcp/issues/411)) ([8de3313](https://github.com/shigechika/jquants-mcp/commit/8de3313c231741ecefd8a0a805421dffc39a2ad1))
+* **screener:** add detect_stable_payout_growth composite screener ([#412](https://github.com/shigechika/jquants-mcp/issues/412)) ([653aee4](https://github.com/shigechika/jquants-mcp/commit/653aee4d3d8410c8b92d9219cb52094ed63ccf6a))
+
+
+### Documentation
+
+* fix v0.43.0 README for detect_consecutive_dividend_increase ([#413](https://github.com/shigechika/jquants-mcp/issues/413)) ([f2ce237](https://github.com/shigechika/jquants-mcp/commit/f2ce23762a8b070e307ddeb528db61fcd1edd92d))
+
 ## [0.42.0](https://github.com/shigechika/jquants-mcp/compare/v0.41.4...v0.42.0) (2026-05-23)
 
 
