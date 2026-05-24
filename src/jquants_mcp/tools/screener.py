@@ -1357,6 +1357,11 @@ def _try_screener_cache_consecutive_div(
         d = dict(item)
         d["name"] = name_map.get(raw_code, "")
         d["code"] = display_code(raw_code)
+        # Strip any " 00:00:00" timestamp that may have been stored in older cache entries.
+        d["latest_fy_end"] = str(d.get("latest_fy_end") or "")[:10]
+        d["history"] = [
+            {**h, "fy_end": str(h.get("fy_end") or "")[:10]} for h in d.get("history", [])
+        ]
         result.append(d)
     return {
         "count": len(result),

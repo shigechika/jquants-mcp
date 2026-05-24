@@ -2232,3 +2232,77 @@ class TestComputeConsecutiveDivSnapshot:
         }
         result = screener_compute.compute_consecutive_div_snapshot(fy_history, {})
         assert result["data"][0]["code"] == "13010"  # raw 5-digit, not "1301"
+
+
+class TestFyEndTimestampStrip:
+    """CurFYEn の '00:00:00' タイムスタンプ除去テスト。"""
+
+    def test_get_fy_dividend_history_strips_timestamp(self, tmp_path):
+        """get_fy_dividend_history が '2026-03-31 00:00:00' → '2026-03-31' に正規化する。"""
+        import json
+        import sqlite3
+
+        from jquants_mcp.cache.store import CacheStore
+
+        db = tmp_path / "cache.db"
+        # Minimal schema
+        conn = sqlite3.connect(str(db))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT, disc_date TEXT, data TEXT, plan TEXT DEFAULT 'standard')"
+        )
+        conn.execute(
+            "INSERT INTO fins_summary VALUES (?, ?, ?, ?)",
+            (
+                "13010",
+                "2026-06-20",
+                json.dumps(
+                    {
+                        "DocType": "FYFinancialStatements",
+                        "CurFYEn": "2026-03-31 00:00:00",
+                        "DivAnn": "50",
+                    }
+                ),
+                "standard",
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        cache = CacheStore(db)
+        history = cache.get_fy_dividend_history()
+        assert "13010" in history
+        assert history["13010"][0]["fy_end"] == "2026-03-31"
+
+    @pytest.mark.asyncio
+    async def test_cache_reader_strips_timestamp_from_stored_payload(self, mock_env):
+        """既存 screener_results に '00:00:00' が入っていても読み出し時に除去される。"""
+        cache = mock_env["cache"]
+        payload = {
+            "count": 1,
+            "data": [
+                {
+                    "code": "13010",
+                    "consecutive_years": 10,
+                    "latest_div_ann": 50.0,
+                    "latest_fy_end": "2026-03-31 00:00:00",
+                    "history": [
+                        {"fy_end": "2025-03-31 00:00:00", "div_ann": 40.0},
+                        {"fy_end": "2026-03-31 00:00:00", "div_ann": 50.0},
+                    ],
+                }
+            ],
+        }
+        cache.screener_result_put(
+            screener_compute.TOOL_DETECT_CONSECUTIVE_DIV,
+            screener_compute.default_params_hash_consecutive_div(),
+            "2026-05-22",
+            payload,
+        )
+        _seed_master(cache, "13010", "花王")
+
+        result = await _call("detect_consecutive_dividend_increase", min_years=10)
+        assert result["data"][0]["latest_fy_end"] == "2026-03-31"
+        for h in result["data"][0]["history"]:
+            assert len(h["fy_end"]) == 10
+            assert " " not in h["fy_end"]

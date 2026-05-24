@@ -341,11 +341,11 @@ def fetch_fy_dividend_history(conn: Any) -> dict[str, list[dict[str, Any]]]:
     sql = (
         "WITH ranked AS ("
         "  SELECT code,"
-        "    json_extract(data, '$.CurFYEn') AS fy_end,"
+        "    substr(json_extract(data, '$.CurFYEn'), 1, 10) AS fy_end,"
         "    substr(disc_date, 1, 10) AS disc_date_norm,"
         "    json_extract(data, '$.DivAnn') AS div_ann,"
         "    ROW_NUMBER() OVER ("
-        "      PARTITION BY code, json_extract(data, '$.CurFYEn')"
+        "      PARTITION BY code, substr(json_extract(data, '$.CurFYEn'), 1, 10)"
         "      ORDER BY substr(disc_date, 1, 10) DESC"
         "    ) AS rn"
         "  FROM fins_summary"
@@ -375,7 +375,7 @@ def fetch_fy_dividend_history(conn: Any) -> dict[str, list[dict[str, Any]]]:
             continue
         result.setdefault(code, []).append(
             {
-                "fy_end": str(row[1] or ""),
+                "fy_end": str(row[1] or "")[:10],
                 "disc_date": str(row[2] or ""),
                 "div_ann": div_ann,
             }
