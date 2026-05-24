@@ -2306,3 +2306,37 @@ class TestFyEndTimestampStrip:
         for h in result["data"][0]["history"]:
             assert len(h["fy_end"]) == 10
             assert " " not in h["fy_end"]
+
+    @pytest.mark.asyncio
+    async def test_live_path_fy_end_no_timestamp(self, mock_env):
+        """as_of_date 指定時（live path）でも fy_end にタイムスタンプが残らない。
+
+        CurFYEn が '2026-03-31 00:00:00' 形式で保存されていても、
+        get_fy_dividend_history の substr 正規化により ':' が含まれない。
+        """
+        cache = mock_env["cache"]
+        _seed_master(cache, "13010", "花王")
+        # Seed fins_summary with timestamp-format CurFYEn (19-char form).
+        for y in range(2013, 2024):
+            _seed_fins_summary(
+                cache,
+                "13010",
+                f"{y + 1}-06-20",
+                "FYFinancialStatements",
+                f"{y}-03-31 00:00:00",  # timestamp format as stored in real DB
+                float(10 + (y - 2013)),
+            )
+
+        # as_of_date forces live path (cache bypass).
+        result = await _call(
+            "detect_consecutive_dividend_increase",
+            min_years=10,
+            as_of_date="2026-12-31",
+        )
+        assert result.get("count", 0) > 0, "Expected at least one result"
+        item = result["data"][0]
+        assert " " not in item["latest_fy_end"], f"Timestamp leaked: {item['latest_fy_end']}"
+        assert len(item["latest_fy_end"]) == 10
+        for h in item["history"]:
+            assert " " not in h["fy_end"], f"Timestamp leaked in history: {h['fy_end']}"
+            assert len(h["fy_end"]) == 10
