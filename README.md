@@ -30,7 +30,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ## Features
 
-- **50 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 9 offline screener, 1 technical indicators, 1 single-stock summary, 1 cache-only equity search, 2 chart tools (JSON, no optional dependencies), and 5 server utilities
+- **51 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 10 offline screener, 1 technical indicators, 1 single-stock summary, 1 cache-only equity search, 2 chart tools (JSON, no optional dependencies), and 5 server utilities
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -663,9 +663,9 @@ Cross-sectional cache-only tools that scan all listed equities. No extra API cal
 | `get_dividend_yield_ranking` | High dividend yield stock ranking (高配当利回りランキング). Joins `DivAnn` from `fins_summary` with `AdjC` to compute yield_pct = DivAnn / AdjC × 100. Skips interim reports with empty DivAnn. |
 | `get_market_briefing` | Composite daily briefing (相場ブリーフィング) — advance/decline + 25-day ADR + sector top/bottom + top movers + top turnover + screener highlights + TOPIX change in one call. |
 
-### Screener (9 tools)
+### Screener (10 tools)
 
-Offline tools that compute signals directly from the cached `equities_bars_daily` rows. No extra API calls, pure Python, no numpy/pandas. Intended for Claude-assisted stock screening without hitting rate limits.
+Offline tools that compute signals directly from the SQLite cache. No extra API calls, pure Python, no numpy/pandas. Intended for Claude-assisted stock screening without hitting rate limits.
 
 | Tool | Description |
 |---|---|
@@ -678,6 +678,7 @@ Offline tools that compute signals directly from the cached `equities_bars_daily
 | `detect_volume_surge` | List stocks whose volume on `date` exceeds the trailing 20-day average by a configurable `multiplier` (default 2.0). |
 | `detect_distribution_days` | Identify distribution days (機関投資家の売り圧力) using TOPIX as the market proxy and total market turnover (`SUM(Va)`) as the volume signal. A distribution day fires when TOPIX falls ≥ `sigma_multiplier` σ (default 2.0) below the 20-session rolling mean. Four or more within `window_sessions` (default 25) sessions is a warning that the uptrend may be failing (IBD — Investor's Business Daily — method adapted for TOPIX). Each entry includes `volume_confirmed` (whether total market Va exceeded the prior session). |
 | `detect_follow_through_day` | Confirm a new uptrend (フォロースルーデイ). TOPIX must rise ≥ `sigma_multiplier` σ (default 2.0) above the 20-session rolling mean on session 4 or later from `rally_start` (the low/reversal day), with higher total market Va than the prior session. Provide the first day of the rally attempt as `rally_start`; check each subsequent date until the signal fires or distribution resumes. |
+| `detect_consecutive_dividend_increase` | Screen for stocks with at least `min_years` (default 10) consecutive years of annual dividend increase (連続増配). Split-adjusted. Supports `as_of_date` for lookahead-free back-testing. Results sorted by consecutive years descending; each entry includes `code`, `name`, `consecutive_years`, `latest_div_ann`, `latest_fy_end`, and a `history` list of recent fiscal years. All plans (cache-only). |
 
 ### Single Stock Briefing (1 tool)
 
