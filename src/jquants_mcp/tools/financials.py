@@ -33,6 +33,9 @@ _SPLIT_ADJ_FIELDS = ("BPS", "EPS", "DivAnn")
 # Fiscal period values surfaced via the derived FiscalPeriod field.
 _VALID_FISCAL_PERIODS = ("1Q", "2Q", "3Q", "FY", "Other")
 
+# fins_summary Tier 1 cache may store 19-char datetime for these fields; strip to YYYY-MM-DD.
+_FY_DATE_FIELDS = ("CurFYEn", "CurFYSt", "NxtFYEn", "NxtFYSt")
+
 
 def _derive_fiscal_period(row: dict[str, Any]) -> str | None:
     """Return the fiscal period label for a fins_summary row.
@@ -181,6 +184,8 @@ def register(
         try:
             data = await client.get_all_pages("/fins/summary", params)
             _annotate_fiscal_period(data)
+            for row in data:
+                _normalize_fy_date_fields(row)
             result: dict[str, Any] = {"count": len(data), "data": data}
             result["split_adjustment"] = "not_applied"
             result["split_adjustment_reason"] = (
@@ -310,6 +315,14 @@ def _normalize_disc_date(row: dict[str, Any]) -> None:
         row["DiscDate"] = raw[:10]
 
 
+def _normalize_fy_date_fields(row: dict[str, Any]) -> None:
+    """Normalize fiscal year date fields in-place to YYYY-MM-DD, stripping any time suffix."""
+    for field in _FY_DATE_FIELDS:
+        val = row.get(field)
+        if isinstance(val, str) and len(val) > 10:
+            row[field] = val[:10]
+
+
 def _dedup_key(row: dict[str, Any]) -> str:
     """Return a dedup key that is stable regardless of DiscDate time-suffix format."""
     disc = (row.get("DiscDate") or "")[:10]
@@ -339,6 +352,8 @@ async def _get_fins_summary_with_cache(
             # Apply split adjustment even for cached data
             adjusted, _ = _apply_split_adjustment(cached_data, cache)
             _annotate_fiscal_period(adjusted)
+            for row in adjusted:
+                _normalize_fy_date_fields(row)
             return {"count": len(adjusted), "data": adjusted, "source": "cache"}
 
         # API から取得
@@ -380,6 +395,8 @@ async def _get_fins_summary_with_cache(
 
         merged, split_adjusted = _apply_split_adjustment(merged, cache)
         _annotate_fiscal_period(merged)
+        for row in merged:
+            _normalize_fy_date_fields(row)
         result = {"count": len(merged), "data": merged, "source": source}
         if not split_adjusted and any(
             r.get(f) not in (None, "") for r in merged for f in _SPLIT_ADJ_FIELDS

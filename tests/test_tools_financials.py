@@ -540,3 +540,74 @@ class TestGetFinsDividend:
                 date_to="2024-12-31",
             )
             assert result["count"] == 2
+
+
+class TestFinsSummaryFyDateNormalization:
+    """Verify that CurFYEn/CurFYSt/NxtFYEn/NxtFYSt are stripped to YYYY-MM-DD."""
+
+    _ROW_WITH_TIMESTAMPS = {
+        "Code": "72030",
+        "DiscDate": "2026-03-31 00:00:00",
+        "DiscNo": "001",
+        "CurFYEn": "2026-03-31 00:00:00",
+        "CurFYSt": "2025-04-01 00:00:00",
+        "NxtFYEn": "2027-03-31 00:00:00",
+        "NxtFYSt": "2026-04-01 00:00:00",
+        "EPS": 100.0,
+        "BPS": 2000.0,
+        "DivAnn": 60.0,
+    }
+
+    async def test_api_path_strips_fy_timestamps(self, mock_env):
+        """19-char timestamps from the API response are normalized before returning."""
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            return_value=[dict(self._ROW_WITH_TIMESTAMPS)],
+        ):
+            result = await _call("get_fins_summary", code="72030")
+        row = result["data"][0]
+        assert row["CurFYEn"] == "2026-03-31"
+        assert row["CurFYSt"] == "2025-04-01"
+        assert row["NxtFYEn"] == "2027-03-31"
+        assert row["NxtFYSt"] == "2026-04-01"
+
+    async def test_cache_path_strips_fy_timestamps(self, mock_env):
+        """19-char timestamps in Tier 1 cache rows are normalized on read (date specified)."""
+        cache = mock_env["cache"]
+        # Store a row with 19-char format directly in the cache
+        cache.put_rows(
+            "fins_summary",
+            [dict(self._ROW_WITH_TIMESTAMPS)],
+            key_columns=["Code", "DiscDate"],
+        )
+        # Second call with no API data should hit cache
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            return_value=[],
+        ):
+            result = await _call("get_fins_summary", code="72030", date="2026-03-31")
+        assert result["source"] == "cache"
+        row = result["data"][0]
+        assert row["CurFYEn"] == "2026-03-31"
+        assert row["CurFYSt"] == "2025-04-01"
+        assert row["NxtFYEn"] == "2027-03-31"
+        assert row["NxtFYSt"] == "2026-04-01"
+
+    async def test_date_only_path_strips_fy_timestamps(self, mock_env):
+        """date-only (Tier 2) path also strips 19-char timestamps."""
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            return_value=[dict(self._ROW_WITH_TIMESTAMPS)],
+        ):
+            result = await _call("get_fins_summary", date="2026-03-31")
+        row = result["data"][0]
+        assert row["CurFYEn"] == "2026-03-31"
+        assert row["CurFYSt"] == "2025-04-01"
+        assert row["NxtFYEn"] == "2027-03-31"
+        assert row["NxtFYSt"] == "2026-04-01"
