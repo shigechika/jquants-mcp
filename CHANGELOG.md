@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.43.2](https://github.com/shigechika/jquants-mcp/compare/v0.43.1...v0.43.2) (2026-05-24)
+
+
+### Bug Fixes
+
+* strip ' 00:00:00' timestamp from CurFYEn / fy_end fields ([#416](https://github.com/shigechika/jquants-mcp/issues/416)) ([d866ecf](https://github.com/shigechika/jquants-mcp/commit/d866ecf0cace2bb24e1fbc9542fad8a131caac6e))
+
 ## [0.43.1](https://github.com/shigechika/jquants-mcp/compare/v0.43.0...v0.43.1) (2026-05-24)
 
 
