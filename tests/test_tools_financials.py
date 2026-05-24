@@ -609,3 +609,5 @@ class TestFinsSummaryFyDateNormalization:
         row = result["data"][0]
         assert row["CurFYEn"] == "2026-03-31"
         assert row["CurFYSt"] == "2025-04-01"
+        assert row["NxtFYEn"] == "2027-03-31"
+        assert row["NxtFYSt"] == "2026-04-01"

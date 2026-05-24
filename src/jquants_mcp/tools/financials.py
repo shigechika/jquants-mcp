@@ -33,8 +33,7 @@ _SPLIT_ADJ_FIELDS = ("BPS", "EPS", "DivAnn")
 # Fiscal period values surfaced via the derived FiscalPeriod field.
 _VALID_FISCAL_PERIODS = ("1Q", "2Q", "3Q", "FY", "Other")
 
-# Fiscal year date fields that may carry a stale " 00:00:00" time suffix in cache
-# rows (fins_summary stores raw API JSON; some rows were ingested with 19-char format).
+# fins_summary Tier 1 cache may store 19-char datetime for these fields; strip to YYYY-MM-DD.
 _FY_DATE_FIELDS = ("CurFYEn", "CurFYSt", "NxtFYEn", "NxtFYSt")
 
 
