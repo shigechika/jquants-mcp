@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.43.3](https://github.com/shigechika/jquants-mcp/compare/v0.43.2...v0.43.3) (2026-05-24)
+
+
+### Bug Fixes
+
+* **financials:** normalize CurFYEn/CurFYSt/NxtFYEn/NxtFYSt timestamps in get_fins_summary ([#418](https://github.com/shigechika/jquants-mcp/issues/418)) ([e60675c](https://github.com/shigechika/jquants-mcp/commit/e60675c1f9e70b16f6a774546c01a33655283e46))
+
 ## [0.43.2](https://github.com/shigechika/jquants-mcp/compare/v0.43.1...v0.43.2) (2026-05-24)
 
 

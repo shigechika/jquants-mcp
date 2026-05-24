@@ -1,6 +1,6 @@
 [project]
 name = "jquants-mcp"
-version = "0.43.2"
+version = "0.43.3"
 description = "MCP server for retrieving Japanese stock market data via J-Quants API v2"
 readme = "README.md"
 authors = [{ name = "shige" }]
