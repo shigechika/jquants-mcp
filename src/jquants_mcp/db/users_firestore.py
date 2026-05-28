@@ -12,7 +12,7 @@ import logging
 import time
 from collections.abc import Callable
 
-from ..models.user import User
+from ..models.user import User, UserMeta
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,22 @@ class FirestoreUserStore:
             created_at=int(data.get("created_at", 0)),
             updated_at=int(data.get("updated_at", 0)),
             last_validated_at=data.get("last_validated_at"),
+        )
+
+    def get_user_meta(self, user_id: str) -> UserMeta | None:
+        """Return user metadata without decrypting the API key.
+
+        Used on the hot path when a per-user client is already cached, to avoid
+        an unnecessary PBKDF2 key-derivation (decryption) on every request.
+        """
+        snap = self._doc(user_id).get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        lv = data.get("last_validated_at")
+        return UserMeta(
+            plan=data.get("plan", "free"),
+            last_validated_at=(int(lv) if lv is not None else None),
         )
 
     def has_corrupted_key(self, user_id: str) -> bool:

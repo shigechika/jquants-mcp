@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from typing import Any
 
@@ -36,18 +37,26 @@ class RateLimiter:
         self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
-        """Wait until a request slot is available."""
-        async with self._lock:
-            now = time.monotonic()
-            self._timestamps = [t for t in self._timestamps if now - t < self._window]
+        """Wait until a request slot is available.
 
-            if len(self._timestamps) >= self._max_requests:
+        The sleep happens outside the lock so a coroutine that hits the limit
+        does not serialize every other coroutine behind its backoff. After
+        sleeping, the loop re-acquires the lock and re-checks the window. A
+        small jitter is added so waiters that hit the limit together do not
+        wake in lockstep and stampede the next slot.
+        """
+        while True:
+            async with self._lock:
+                now = time.monotonic()
+                self._timestamps = [t for t in self._timestamps if now - t < self._window]
+                if len(self._timestamps) < self._max_requests:
+                    self._timestamps.append(now)
+                    return
                 wait_time = self._timestamps[0] + self._window - now
-                if wait_time > 0:
-                    logger.info("Rate limiter: waiting %.1fs", wait_time)
-                    await asyncio.sleep(wait_time)
-
-            self._timestamps.append(time.monotonic())
+            if wait_time > 0:
+                wait_time += random.uniform(0.0, 0.1)
+                logger.info("Rate limiter: waiting %.1fs", wait_time)
+                await asyncio.sleep(wait_time)
 
 
 class JQuantsClient:

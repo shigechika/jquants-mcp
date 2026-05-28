@@ -512,6 +512,32 @@ async def _evict_stale_clients() -> None:
         logger.info("Evicted stale client for user %s (idle >%ds)", uid, _STALE_CLIENT_TTL)
 
 
+async def _validate_user_client(
+    user_db: Any,
+    client: JQuantsClient,
+    user_id: str,
+    last_validated_at: int | None,
+) -> None:
+    """Run the once-per-day API key validation for a per-user client.
+
+    On revocation, evict the cached client and raise InvalidAPIKeyError so the
+    caller surfaces an actionable error instead of repeated 401s.
+    """
+    from .exceptions import AuthenticationError, InvalidAPIKeyError
+    from .validation import needs_validation, validate_api_key
+
+    if not needs_validation(last_validated_at):
+        return
+    try:
+        await validate_api_key(client)
+        user_db.update_last_validated(user_id)
+        logger.info("Daily validation passed for user %s", user_id)
+    except AuthenticationError:
+        _user_clients.pop(user_id, None)
+        _user_client_last_used.pop(user_id, None)
+        raise InvalidAPIKeyError(user_id)
+
+
 async def _get_user_client() -> JQuantsClient:
     """Return the J-Quants client for the currently authenticated user.
 
@@ -532,7 +558,7 @@ async def _get_user_client() -> JQuantsClient:
 
     from fastmcp.server.dependencies import get_access_token
 
-    from .exceptions import InvalidAPIKeyError, UserNotConfiguredError
+    from .exceptions import UserNotConfiguredError
 
     token = get_access_token()
 
@@ -577,9 +603,25 @@ async def _get_user_client() -> JQuantsClient:
         await _evict_stale_clients()
         _last_cleanup = now_mono
 
-    # 暗号化ストアからユーザーの API キーを検索
     from .exceptions import DecryptionError
 
+    # Fast path: a per-user client is already cached. Reuse it without
+    # decrypting the stored API key — get_user() runs PBKDF2 (200k iterations)
+    # on every call, which is wasteful on the per-tool-call hot path when we
+    # already hold a working client. Only lightweight metadata is read here.
+    cached_client = _user_clients.get(user_id)
+    if cached_client is not None:
+        meta = user_db.get_user_meta(user_id)
+        if meta is not None:
+            _user_client_last_used[user_id] = now_mono
+            await _validate_user_client(user_db, cached_client, user_id, meta.last_validated_at)
+            return cached_client
+        # User row vanished (deleted or store reset) since the client was
+        # cached — drop the stale client and fall through to full resolution.
+        _user_clients.pop(user_id, None)
+        _user_client_last_used.pop(user_id, None)
+
+    # Full path: decrypt the stored key to build a new client.
     user = user_db.get_user(user_id)
     if user is None:
         if user_db.has_corrupted_key(user_id):
@@ -596,32 +638,15 @@ async def _get_user_client() -> JQuantsClient:
             return client
         raise UserNotConfiguredError(user_id)
 
-    # ユーザー別クライアントが未キャッシュなら作成
-    if user_id not in _user_clients:
-        user_settings = Settings(
-            jquants_api_key=user.api_key,
-            jquants_plan=user.plan,
-        )
-        _user_clients[user_id] = JQuantsClient(user_settings)
-
-    client = _user_clients[user_id]
+    user_settings = Settings(
+        jquants_api_key=user.api_key,
+        jquants_plan=user.plan,
+    )
+    client = JQuantsClient(user_settings)
+    _user_clients[user_id] = client
     _user_client_last_used[user_id] = now_mono
 
-    # 日次 API キー検証
-    from .validation import needs_validation, validate_api_key
-    from .exceptions import AuthenticationError
-
-    if needs_validation(user.last_validated_at):
-        try:
-            await validate_api_key(client)
-            user_db.update_last_validated(user_id)
-            logger.info("Daily validation passed for user %s", user_id)
-        except AuthenticationError:
-            # キーが無効化された — キャッシュされたクライアントを削除してエラーを返す
-            _user_clients.pop(user_id, None)
-            _user_client_last_used.pop(user_id, None)
-            raise InvalidAPIKeyError(user_id)
-
+    await _validate_user_client(user_db, client, user_id, user.last_validated_at)
     return client
 
 

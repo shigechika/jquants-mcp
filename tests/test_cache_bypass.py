@@ -100,6 +100,50 @@ class TestCacheBypassAuth:
         cache.close()
 
     @pytest.mark.asyncio
+    async def test_cached_client_skips_decryption(self, tmp_path):
+        """When a per-user client is already cached, get_user (decryption) is not called.
+
+        The hot path must reuse the cached client via get_user_meta to avoid a
+        PBKDF2 key-derivation on every request.
+        """
+        settings, client, cache = _make_env(tmp_path, cache_bypass_auth="false")
+        user_id = "github|cached"
+
+        mock_user_db = MagicMock()
+        # Already validated today → no validation round-trip.
+        import time as _time
+
+        from jquants_mcp.models.user import UserMeta
+
+        mock_user_db.get_user_meta.return_value = UserMeta(
+            plan="standard", last_validated_at=int(_time.time())
+        )
+
+        mock_rate_limiter = AsyncMock()
+        mock_rate_limiter.acquire = AsyncMock()
+
+        cached = JQuantsClient(settings)
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_client", client),
+            patch.object(server_module, "_cache", cache),
+            patch.dict(server_module._user_clients, {user_id: cached}, clear=False),
+            patch(
+                "fastmcp.server.dependencies.get_access_token", return_value=_fake_token(user_id)
+            ),
+            patch.object(server_module, "_get_user_db", return_value=mock_user_db),
+            patch.object(server_module, "_get_rate_limiter", return_value=mock_rate_limiter),
+            patch("jquants_mcp.allowlist.get_user_email", return_value="user@example.com"),
+            patch("jquants_mcp.allowlist.is_email_allowed", return_value=True),
+        ):
+            result = await server_module._get_user_client()
+
+        assert result is cached
+        mock_user_db.get_user.assert_not_called()
+        mock_user_db.get_user_meta.assert_called_once_with(user_id)
+        cache.close()
+
+    @pytest.mark.asyncio
     async def test_bypass_does_not_suppress_decryption_error(self, tmp_path):
         """Even with bypass on, a corrupted key still raises DecryptionError."""
         from jquants_mcp.exceptions import DecryptionError
