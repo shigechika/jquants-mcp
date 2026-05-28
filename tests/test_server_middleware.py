@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import logging
 
+import pytest
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 from starlette.testclient import TestClient
 
-from jquants_mcp.server import OAuthDebugMiddleware
+from jquants_mcp.server import (
+    _REDACTED_QUERY_PARAMS,
+    OAuthDebugMiddleware,
+)
 
 
 def _make_client() -> TestClient:
@@ -33,6 +37,18 @@ def test_oauth_callback_redacts_code_and_state(caplog):
     assert "[REDACTED]" in logged
     # Non-secret params are preserved.
     assert "email" in logged
+
+
+@pytest.mark.parametrize("param", sorted(_REDACTED_QUERY_PARAMS))
+def test_every_sensitive_query_param_is_redacted(caplog, param):
+    """Each secret query param in _REDACTED_QUERY_PARAMS is redacted from logs."""
+    client = _make_client()
+    secret = f"SECRET_{param.upper()}"
+    with caplog.at_level(logging.INFO, logger="jquants_mcp.server"):
+        client.get(f"/oauth/callback?{param}={secret}")
+    logged = "\n".join(r.getMessage() for r in caplog.records)
+    assert secret not in logged
+    assert "[REDACTED]" in logged
 
 
 def test_oauth_request_redacts_credential_headers(caplog):
