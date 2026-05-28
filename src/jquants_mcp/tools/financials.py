@@ -353,6 +353,7 @@ async def _get_fins_summary_with_cache(
             adjusted, _ = _apply_split_adjustment(cached_data, cache)
             _annotate_fiscal_period(adjusted)
             for row in adjusted:
+                _normalize_disc_date(row)
                 _normalize_fy_date_fields(row)
             return {"count": len(adjusted), "data": adjusted, "source": "cache"}
 
