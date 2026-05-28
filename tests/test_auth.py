@@ -82,6 +82,30 @@ def test_create_auth_provider_github_oauth():
         assert kwargs.get("redirect_path") == "/oauth/callback"
 
 
+def test_create_auth_provider_github_restricts_redirect_uris():
+    """GitHubProvider must receive an explicit redirect-URI allowlist.
+
+    Without allowed_client_redirect_uris, FastMCP accepts any redirect URI
+    (open-redirect / client-confusion risk).
+    """
+    from unittest.mock import patch
+
+    from jquants_mcp.auth import _ALLOWED_CLIENT_REDIRECT_URIS
+
+    settings = Settings(
+        bearer_token="ignored",
+        github_client_id="Ov23liTEST",
+        github_client_secret="gh_secret_abc",
+        oauth_base_url="https://mcp.example.com",
+    )
+    with patch("fastmcp.server.auth.providers.github.GitHubProvider") as MockProvider:
+        MockProvider.return_value = object()
+        create_auth_provider(settings)
+        _, kwargs = MockProvider.call_args
+        assert kwargs.get("allowed_client_redirect_uris") == _ALLOWED_CLIENT_REDIRECT_URIS
+        assert kwargs["allowed_client_redirect_uris"]  # non-empty
+
+
 def test_create_auth_provider_github_oauth_incomplete():
     """Returns BearerTokenVerifier (fallback) when GitHub OAuth is only partially configured."""
     settings = Settings(

@@ -16,6 +16,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Allowed client redirect URIs for OAuth providers. Without this, FastMCP
+# treats redirect validation as disabled and accepts any URI (open-redirect /
+# client-confusion risk).
+# RFC 8252: localhost redirect_uri can use dynamic ports.
+# Claude Desktop uses claude.ai; Claude Code CLI uses localhost.
+_ALLOWED_CLIENT_REDIRECT_URIS = [
+    "https://claude.ai/api/mcp/auth_callback",
+    "http://localhost:*/callback",
+    "http://127.0.0.1:*/callback",
+]
+
 
 class BearerTokenVerifier(TokenVerifier):
     """Verify bearer tokens using constant-time comparison.
@@ -72,6 +83,7 @@ def _create_github_provider(settings: Settings) -> OAuthProvider:
         jwt_signing_key=settings.oauth_jwt_signing_key or None,
         require_authorization_consent=settings.oauth_require_consent,
         client_storage=client_storage,
+        allowed_client_redirect_uris=_ALLOWED_CLIENT_REDIRECT_URIS,
     )
 
 
@@ -117,13 +129,7 @@ def _create_google_provider(settings: Settings) -> OAuthProvider:
         jwt_signing_key=settings.oauth_jwt_signing_key or None,
         require_authorization_consent=settings.oauth_require_consent,
         client_storage=client_storage,
-        # RFC 8252: localhost redirect_uri can use dynamic ports
-        # Claude Desktop uses claude.ai, Claude Code CLI uses localhost
-        allowed_client_redirect_uris=[
-            "https://claude.ai/api/mcp/auth_callback",
-            "http://localhost:*/callback",
-            "http://127.0.0.1:*/callback",
-        ],
+        allowed_client_redirect_uris=_ALLOWED_CLIENT_REDIRECT_URIS,
     )
 
 
