@@ -461,7 +461,11 @@ def register(
         matches = []
         seen_dates: set[str] = set()
         for row in t2_rows:
-            records = json.loads(row["data"])
+            try:
+                records = json.loads(row["data"])
+            except (TypeError, ValueError):
+                # Skip corrupted cache rows instead of failing the whole query.
+                continue
             if isinstance(records, dict):
                 records = records.get("data", [])
             for rec in records:

@@ -1220,12 +1220,16 @@ def register(
         # Per-code close/volume series for RSI14 and volume-ratio used by
         # _compute_notable_stocks.  Built in one pass over the already-fetched
         # adr_rows so no additional DB queries are needed.
+        # Use split-adjusted close (AdjC) only — consistent with prev_close_map
+        # (_rows_to_close_map), advance/decline, and top_movers. Falling back to
+        # raw C would mix adjusted and raw prices across days and corrupt
+        # cross-day deltas (RSI series, change_pct) whenever a split occurred.
         code_closes: dict[str, list[float]] = {}
         code_volumes: dict[str, list[float]] = {}
         for d in sorted(by_date.keys()):
             for row in by_date[d]:
                 c5 = str(row.get("Code") or "")
-                cl = _as_float(row.get("AdjC") or row.get("C"))
+                cl = _as_float(row.get("AdjC"))
                 vo = _as_float(row.get("Vo"))
                 if c5 and cl is not None:
                     code_closes.setdefault(c5, []).append(cl)
@@ -1233,9 +1237,7 @@ def register(
                     code_volumes.setdefault(c5, []).append(vo)
 
         today_close_map: dict[str, float | None] = {
-            str(r.get("Code") or ""): _as_float(r.get("AdjC") or r.get("C"))
-            for r in today_rows
-            if r.get("Code")
+            str(r.get("Code") or ""): _as_float(r.get("AdjC")) for r in today_rows if r.get("Code")
         }
 
         prev_close_map = _rows_to_close_map(prev_rows)
@@ -1284,7 +1286,10 @@ def register(
         # which never matches the S33 keys in short_ratio_map → always null.
         # sector_short_ratios below is always S33-based regardless of sector_type.
         for entry in sectors_top + sectors_bottom:
-            sr_row = short_ratio_map.get(entry["code"])
+            # short_ratio_map keys are normalised via _norm_s33 (e.g. "50"),
+            # but entry["code"] is the raw S33 from sector_map (e.g. "0050"),
+            # so the lookup must normalise too. (S17 codes never match and stay null.)
+            sr_row = short_ratio_map.get(CacheStore._norm_s33(entry["code"]))
             ratio = _calc_short_ratio(sr_row) if sr_row else None
             entry["short_sale_ratio"] = round(ratio, 2) if ratio is not None else None
 

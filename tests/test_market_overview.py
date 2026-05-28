@@ -2696,6 +2696,49 @@ class TestGetMarketBriefingShortRatio:
             assert "short_sale_ratio" in entry
 
     @pytest.mark.asyncio
+    async def test_sectors_top_bottom_short_ratio_nonnull_with_zero_padded_s33(self, tmp_path):
+        """sectors.top/bottom short_sale_ratio resolves when master S33 is zero-padded.
+
+        Regression: short_ratio_map keys are normalised via _norm_s33 ("0050"->"50"),
+        but sector entry["code"] is the raw master S33 ("0050"). The enrichment lookup
+        must normalise too, otherwise short_sale_ratio is always null in production.
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "83060", "2026-05-01", 1000.0, vo=10_000_000)
+        _insert_bar(conn, "83060", "2026-05-02", 1100.0, vo=12_000_000)
+        # Master stores the zero-padded S33 form "0050".
+        _insert_master_with_sector(conn, "83060", "三菱UFJ", "0050", "銀行業", "7", "金融")
+        conn.commit()
+        conn.close()
+        cache.put_rows(
+            "markets_short_ratio",
+            [
+                {
+                    "S33": "0050",
+                    "Date": "2026-05-02",
+                    "SellExShortVa": 615000000,
+                    "ShrtWithResVa": 300000000,
+                    "ShrtNoResVa": 85000000,
+                },
+            ],
+            key_columns=["S33", "Date"],
+        )
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        data = _call(result)
+        entries = data["sectors"]["top"] + data["sectors"]["bottom"]
+        bank = next(e for e in entries if CacheStore._norm_s33(e["code"]) == "50")
+        # (300+85)/(615+300+85)*100 = 38.5%
+        assert bank["short_sale_ratio"] == pytest.approx(38.5)
+
+    @pytest.mark.asyncio
     async def test_sector_short_ratios_empty_when_not_cached(self, tmp_path):
         """sector_short_ratios is an empty list when markets_short_ratio is absent."""
         cache = _make_cache(tmp_path)
