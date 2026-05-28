@@ -26,8 +26,13 @@ from .tool_annotations import DESTRUCTIVE_LOCAL, READ_ONLY_LOCAL
 
 logger = logging.getLogger(__name__)
 
-# OAuth デバッグログを出力するパス
+# Paths whose requests are logged for OAuth debugging.
 _OAUTH_DEBUG_PATHS = ("/oauth/", "/.well-known/")
+
+# Query params and headers redacted from OAuth debug logs to avoid leaking
+# short-lived authorization secrets and session credentials.
+_REDACTED_QUERY_PARAMS = frozenset({"code", "state", "token", "access_token", "id_token"})
+_REDACTED_HEADERS = frozenset({"authorization", "cookie", "set-cookie"})
 
 
 class OAuthDebugMiddleware(BaseHTTPMiddleware):
@@ -38,10 +43,15 @@ class OAuthDebugMiddleware(BaseHTTPMiddleware):
         is_oauth = any(p in path for p in _OAUTH_DEBUG_PATHS)
 
         if is_oauth:
-            query = dict(request.query_params)
-            # ヘッダーをサニタイズしてログ出力（Authorization の値は伏せる）
+            # Redact short-lived OAuth secrets from query params (authorization
+            # code, state, token) so they never reach the logs.
+            query = {
+                k: (v if k.lower() not in _REDACTED_QUERY_PARAMS else "[REDACTED]")
+                for k, v in request.query_params.items()
+            }
+            # Redact credential-bearing headers (auth bearer token, session cookie).
             headers = {
-                k: (v if k.lower() != "authorization" else "[REDACTED]")
+                k: (v if k.lower() not in _REDACTED_HEADERS else "[REDACTED]")
                 for k, v in request.headers.items()
             }
             logger.info(
