@@ -8,7 +8,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from ..models.user import User
+from ..models.user import User, UserMeta
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +108,8 @@ class UserStore:
             last_validated_at=row["last_validated_at"],
         )
 
-    def get_user_meta(self, user_id: str) -> tuple[str, int | None] | None:
-        """Return ``(plan, last_validated_at)`` without decrypting the API key.
+    def get_user_meta(self, user_id: str) -> UserMeta | None:
+        """Return user metadata without decrypting the API key.
 
         Used on the hot path when a per-user client is already cached, to avoid
         an unnecessary PBKDF2 key-derivation (decryption) on every request.
@@ -118,7 +118,7 @@ class UserStore:
             user_id: The unique user identifier.
 
         Returns:
-            ``(plan, last_validated_at)`` if the user exists, else ``None``.
+            A ``UserMeta`` if the user exists, else ``None``.
         """
         with self._connect() as conn:
             row = conn.execute(
@@ -126,7 +126,7 @@ class UserStore:
             ).fetchone()
         if row is None:
             return None
-        return row["plan"], row["last_validated_at"]
+        return UserMeta(plan=row["plan"], last_validated_at=row["last_validated_at"])
 
     def has_corrupted_key(self, user_id: str) -> bool:
         """Return True if the user exists in the DB but their key cannot be decrypted.

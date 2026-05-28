@@ -613,9 +613,8 @@ async def _get_user_client() -> JQuantsClient:
     if cached_client is not None:
         meta = user_db.get_user_meta(user_id)
         if meta is not None:
-            _, last_validated_at = meta
             _user_client_last_used[user_id] = now_mono
-            await _validate_user_client(user_db, cached_client, user_id, last_validated_at)
+            await _validate_user_client(user_db, cached_client, user_id, meta.last_validated_at)
             return cached_client
         # User row vanished (deleted or store reset) since the client was
         # cached — drop the stale client and fall through to full resolution.

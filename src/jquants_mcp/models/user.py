@@ -4,6 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from time import time
+from typing import NamedTuple
+
+
+class UserMeta(NamedTuple):
+    """Lightweight user metadata read without decrypting the API key.
+
+    Returned by ``get_user_meta`` on the hot path to reuse a cached client
+    without paying the PBKDF2 key-derivation cost of a full ``get_user``.
+    """
+
+    plan: str
+    last_validated_at: int | None
 
 
 @dataclass

@@ -113,7 +113,11 @@ class TestCacheBypassAuth:
         # Already validated today → no validation round-trip.
         import time as _time
 
-        mock_user_db.get_user_meta.return_value = ("standard", int(_time.time()))
+        from jquants_mcp.models.user import UserMeta
+
+        mock_user_db.get_user_meta.return_value = UserMeta(
+            plan="standard", last_validated_at=int(_time.time())
+        )
 
         mock_rate_limiter = AsyncMock()
         mock_rate_limiter.acquire = AsyncMock()

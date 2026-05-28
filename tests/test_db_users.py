@@ -107,9 +107,8 @@ def test_get_user_meta_returns_plan_and_validated(store):
 
     meta = store.get_user_meta("gh-meta")
     assert meta is not None
-    plan, last_validated_at = meta
-    assert plan == "standard"
-    assert isinstance(last_validated_at, int)
+    assert meta.plan == "standard"
+    assert isinstance(meta.last_validated_at, int)
 
 
 def test_get_user_meta_does_not_decrypt(tmp_path):
