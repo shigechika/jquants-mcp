@@ -98,3 +98,36 @@ def test_multiple_users_independent(store):
     u2 = store.get_user("u2")
     assert u1.api_key == "key-for-u1"
     assert u2.api_key == "key-for-u2"
+
+
+def test_get_user_meta_returns_plan_and_validated(store):
+    """get_user_meta returns (plan, last_validated_at) without decryption."""
+    store.save_user(User(user_id="gh-meta", api_key="key", plan="standard"))
+    store.update_last_validated("gh-meta")
+
+    meta = store.get_user_meta("gh-meta")
+    assert meta is not None
+    plan, last_validated_at = meta
+    assert plan == "standard"
+    assert isinstance(last_validated_at, int)
+
+
+def test_get_user_meta_does_not_decrypt(tmp_path):
+    """get_user_meta must not invoke the decrypt function (avoids PBKDF2)."""
+    calls = {"decrypt": 0}
+
+    def counting_decrypt(blob):
+        calls["decrypt"] += 1
+        return decrypt(blob, _PASSPHRASE)
+
+    s = UserStore(tmp_path / "users.db", _ENCRYPT, counting_decrypt)
+    s.save_user(User(user_id="gh-x", api_key="key", plan="light"))
+
+    meta = s.get_user_meta("gh-x")
+    assert meta == ("light", None)
+    assert calls["decrypt"] == 0
+
+
+def test_get_user_meta_nonexistent(store):
+    """get_user_meta returns None for an unknown user."""
+    assert store.get_user_meta("nobody") is None

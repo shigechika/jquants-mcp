@@ -1115,11 +1115,19 @@ def register(
 
         results: list[dict[str, Any]] = []
 
+        # Batch-load split events for the whole universe once, so the per-code
+        # loop computes cumulative factors in Python instead of issuing O(codes
+        # × years) SQLite round-trips (the backtesting as_of_date path).
+        candidate_codes = [c for c, e in fy_history.items() if len(e) > min_years]
+        split_events_by_code = cache.get_split_events_by_code(candidate_codes)
+
         for code, entries in fy_history.items():
             # Need at least min_years + 1 data points to have min_years consecutive pairs.
             if len(entries) <= min_years:
                 continue
-            consecutive, adj_entries = _compute_consecutive_div_years(code, entries, cache)
+            consecutive, adj_entries = _compute_consecutive_div_years(
+                code, entries, cache, split_events=split_events_by_code.get(code, [])
+            )
             if consecutive < min_years:
                 continue
 

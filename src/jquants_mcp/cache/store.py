@@ -1458,12 +1458,18 @@ class CacheStore:
         if conn is None:
             return None
         norm = self._norm_s33(s33_code)
+        # Build the set of stored key forms that normalise to `norm`:
+        # the integer form ("50"), the 4-digit zero-padded form ("0050"),
+        # and the caller's original input. Using IN (...) keeps the PK index
+        # on (s33, date) usable, unlike a per-row CAST in the WHERE clause.
+        candidates = {s33_code, norm, norm.zfill(4)}
+        placeholders = ",".join("?" * len(candidates))
         try:
             row = conn.execute(
                 "SELECT data FROM markets_short_ratio"
-                " WHERE CAST(CAST(s33 AS INTEGER) AS TEXT) = ?"
+                f" WHERE s33 IN ({placeholders})"
                 " ORDER BY date DESC LIMIT 1",
-                (norm,),
+                tuple(candidates),
             ).fetchone()
         except Exception:
             return None

@@ -70,6 +70,19 @@ class FirestoreUserStore:
             last_validated_at=data.get("last_validated_at"),
         )
 
+    def get_user_meta(self, user_id: str) -> tuple[str, int | None] | None:
+        """Return ``(plan, last_validated_at)`` without decrypting the API key.
+
+        Used on the hot path when a per-user client is already cached, to avoid
+        an unnecessary PBKDF2 key-derivation (decryption) on every request.
+        """
+        snap = self._doc(user_id).get()
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        lv = data.get("last_validated_at")
+        return data.get("plan", "free"), (int(lv) if lv is not None else None)
+
     def has_corrupted_key(self, user_id: str) -> bool:
         snap = self._doc(user_id).get()
         if not snap.exists:
