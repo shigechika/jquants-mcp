@@ -465,6 +465,7 @@ def register(
                 records = json.loads(row["data"])
             except (TypeError, ValueError):
                 # Skip corrupted cache rows instead of failing the whole query.
+                logger.warning("Skipping corrupted earnings-calendar cache row")
                 continue
             if isinstance(records, dict):
                 records = records.get("data", [])
