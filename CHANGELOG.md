@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.43.6](https://github.com/shigechika/jquants-mcp/compare/v0.43.5...v0.43.6) (2026-05-29)
+
+
+### Bug Fixes
+
+* **cache:** apply plan date window to screener_results reads ([#431](https://github.com/shigechika/jquants-mcp/issues/431)) ([e715fe5](https://github.com/shigechika/jquants-mcp/commit/e715fe586edc2aa150c174004cfc15c0a7ffbe47))
+
 ## [0.43.5](https://github.com/shigechika/jquants-mcp/compare/v0.43.4...v0.43.5) (2026-05-29)
 
 
