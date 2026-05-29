@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Re-encrypt all stored user API keys with a new MCP_ENCRYPTION_KEY.
 
+Scope: Firestore backend only (Cloud Run multi-user). A self-hosted SQLite
+``users.db`` is not handled by this script — rotate those keys separately.
+
 Intended for a planned key rotation. Run **after** the new key has been
 deployed to Cloud Run as ``MCP_ENCRYPTION_KEY`` with the previous key
 still set as ``MCP_ENCRYPTION_KEY_PREVIOUS`` — the dual-key decrypt path

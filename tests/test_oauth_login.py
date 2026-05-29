@@ -17,6 +17,7 @@ from jquants_mcp.oauth_login import (
     _build_authorize_url,
     _compute_challenge,
     _exchange_code_for_id_token,
+    _generate_state,
     _generate_verifier,
     _post_api_key,
 )
@@ -36,13 +37,22 @@ def test_verifier_and_challenge_are_s256_compliant():
 
 
 def test_authorize_url_contains_required_params():
-    url = _build_authorize_url("CHALLENGE")
+    url = _build_authorize_url("CHALLENGE", "STATE123")
     assert url.startswith(f"https://{COGNITO_DOMAIN}/oauth2/authorize?")
     assert f"client_id={COGNITO_CLIENT_ID}" in url
     assert "response_type=code" in url
     assert "code_challenge=CHALLENGE" in url
     assert "code_challenge_method=S256" in url
     assert "redirect_uri=http%3A%2F%2Flocalhost%3A8697%2Fcallback" in url
+    assert "state=STATE123" in url
+
+
+def test_state_is_random_and_urlsafe():
+    s1 = _generate_state()
+    s2 = _generate_state()
+    assert s1 != s2  # random per call
+    assert "=" not in s1  # unpadded
+    assert len(s1) >= 24
 
 
 @respx.mock
