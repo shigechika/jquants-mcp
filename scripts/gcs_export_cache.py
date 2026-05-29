@@ -26,6 +26,7 @@ import os
 import shutil
 import sqlite3
 import sys
+import tempfile
 import time
 from datetime import date
 from pathlib import Path
@@ -40,8 +41,6 @@ logging.basicConfig(
 logger = logging.getLogger("gcs_export_cache")
 
 _TIER1_TABLE_NAMES = list(TIER1_TABLES.keys())
-
-_EXPORT_PATH = Path("/tmp/cache_gcs_export.db")
 
 
 def _get_source_path() -> Path:
@@ -188,13 +187,18 @@ def _upload_to_gcs(db_path: Path) -> None:
         prefix += "/"
 
     blob_name = f"{prefix}cache.db"
+    # Upload to a temporary object first, then server-side rename onto the live
+    # name. A crash mid-upload leaves the previous cache.db untouched instead of
+    # exposing a half-written object to the Cloud Run startup copy.
+    upload_name = f"{blob_name}.uploading"
     client = storage.Client()
     bucket = client.bucket(bucket_name)
-    blob = bucket.blob(blob_name)
+    upload_blob = bucket.blob(upload_name)
 
     size_gb = db_path.stat().st_size / (1024**3)
-    logger.info("Uploading %.1f GB to gs://%s/%s ...", size_gb, bucket_name, blob_name)
-    blob.upload_from_filename(str(db_path))
+    logger.info("Uploading %.1f GB to gs://%s/%s ...", size_gb, bucket_name, upload_name)
+    upload_blob.upload_from_filename(str(db_path))
+    bucket.rename_blob(upload_blob, blob_name)
     logger.info("Upload complete: gs://%s/%s", bucket_name, blob_name)
 
 
@@ -224,50 +228,58 @@ def main() -> None:
     source_size = source.stat().st_size / (1024**3)
     logger.info("Source: %s (%.1f GB)", source, source_size)
 
-    # 一時コピー作成
-    start = time.time()
-    logger.info("Copying to %s ...", _EXPORT_PATH)
-    shutil.copy2(str(source), str(_EXPORT_PATH))
-    logger.info("Copy done (%.0fs)", time.time() - start)
+    # Unique temp path so concurrent runs do not clobber each other; cleaned up
+    # in the finally block even when an intermediate step raises.
+    fd, tmp_name = tempfile.mkstemp(suffix=".db", prefix="cache_gcs_export_", dir="/tmp")
+    os.close(fd)
+    export_path = Path(tmp_name)
+    try:
+        # Make a working copy of the source DB.
+        start = time.time()
+        logger.info("Copying to %s ...", export_path)
+        shutil.copy2(str(source), str(export_path))
+        logger.info("Copy done (%.0fs)", time.time() - start)
 
-    # Legacy: non-standard plan 行の削除（plan カラム除去済みなら no-op）
-    start = time.time()
-    deleted = _trim_to_standard(_EXPORT_PATH)
-    total_deleted = sum(deleted.values())
-    if total_deleted:
-        logger.info("Trimmed %d plan rows (%.0fs)", total_deleted, time.time() - start)
+        # Legacy: drop non-standard plan rows (no-op once the plan column is gone).
+        start = time.time()
+        deleted = _trim_to_standard(export_path)
+        total_deleted = sum(deleted.values())
+        if total_deleted:
+            logger.info("Trimmed %d plan rows (%.0fs)", total_deleted, time.time() - start)
 
-    # 日付ベースのトリム（Cloud Run 用にデータ期間を制限）
-    start = time.time()
-    date_deleted = _trim_by_date(_EXPORT_PATH, args.retention_years)
-    total_date_deleted = sum(date_deleted.values())
-    logger.info(
-        "Date trim (%d-year retention): %d rows deleted (%.0fs)",
-        args.retention_years,
-        total_date_deleted,
-        time.time() - start,
-    )
+        # Date-based trim (limit the data window for Cloud Run).
+        start = time.time()
+        date_deleted = _trim_by_date(export_path, args.retention_years)
+        total_date_deleted = sum(date_deleted.values())
+        logger.info(
+            "Date trim (%d-year retention): %d rows deleted (%.0fs)",
+            args.retention_years,
+            total_date_deleted,
+            time.time() - start,
+        )
 
-    # VACUUM
-    start = time.time()
-    _vacuum(_EXPORT_PATH)
-    export_size = _EXPORT_PATH.stat().st_size / (1024**3)
-    logger.info(
-        "VACUUM done (%.0fs): %.1f GB -> %.1f GB", time.time() - start, source_size, export_size
-    )
+        # VACUUM
+        start = time.time()
+        _vacuum(export_path)
+        export_size = export_path.stat().st_size / (1024**3)
+        logger.info(
+            "VACUUM done (%.0fs): %.1f GB -> %.1f GB",
+            time.time() - start,
+            source_size,
+            export_size,
+        )
 
-    # Skip Cloud Run migration by marking the DB as already-migrated
-    _ensure_user_version(_EXPORT_PATH)
+        # Skip Cloud Run migration by marking the DB as already-migrated
+        _ensure_user_version(export_path)
 
-    # GCS アップロード
-    if args.dry_run:
-        logger.info("Dry run: skipping GCS upload")
-    else:
-        _upload_to_gcs(_EXPORT_PATH)
-
-    # 一時ファイル削除
-    _EXPORT_PATH.unlink(missing_ok=True)
-    logger.info("Cleanup done")
+        # Upload to GCS
+        if args.dry_run:
+            logger.info("Dry run: skipping GCS upload")
+        else:
+            _upload_to_gcs(export_path)
+    finally:
+        export_path.unlink(missing_ok=True)
+        logger.info("Cleanup done")
 
 
 if __name__ == "__main__":
