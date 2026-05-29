@@ -205,7 +205,10 @@ def register(
 
         Args:
             date: Trading date (YYYYMMDD or YYYY-MM-DD).
-            code: Optional stock code. Omit to scan all stocks.
+            code: Optional stock code. Omit to scan all stocks (returns only
+                triggered rows). When a code is given, that stock's row is
+                always returned, even if it did not hit the limit, so callers
+                can read its UL/LL state directly.
             detail: Include full per-stock data array (default False).
         """
         errors = collect_errors(validate_date(date), validate_code(code))

@@ -20,7 +20,12 @@ def compute_sma(values: list[float], period: int) -> list[float | None]:
     """Simple moving average over *period* sessions.
 
     Returns None for the first ``period - 1`` positions.
+
+    Raises:
+        ValueError: if ``period`` is not a positive integer.
     """
+    if period < 1:
+        raise ValueError(f"period must be >= 1, got {period}")
     result: list[float | None] = [None] * len(values)
     running = 0.0
     for i, v in enumerate(values):
@@ -41,7 +46,12 @@ def compute_bb(
 
     Uses sample std (ddof=1) to match pandas .rolling().std() used in charts.py.
     Returns three parallel lists; all elements before ``period - 1`` are None.
+
+    Raises:
+        ValueError: if ``period`` < 2 (sample std needs at least 2 points).
     """
+    if period < 2:
+        raise ValueError(f"period must be >= 2 for Bollinger Bands, got {period}")
     mid = compute_sma(values, period)
     upper: list[float | None] = [None] * len(values)
     lower: list[float | None] = [None] * len(values)

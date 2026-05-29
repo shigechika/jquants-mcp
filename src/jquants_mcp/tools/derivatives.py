@@ -18,6 +18,7 @@ from ..exceptions import (
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_API
+from ..validators import make_validation_error_response, validate_date
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,10 @@ def register(
                 Omit for all categories.
             contract_flag: Contract month flag (0 = all, 1 = front month, 2 = back month)
         """
+        err = validate_date(date)
+        if err:
+            return make_validation_error_response([err])
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -93,6 +98,10 @@ def register(
             code: Issue code
             contract_flag: Contract month flag (0 = all, 1 = front month, 2 = back month)
         """
+        err = validate_date(date)
+        if err:
+            return make_validation_error_response([err])
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -136,6 +145,10 @@ def register(
         Args:
             date: Date (YYYYMMDD or YYYY-MM-DD) (required)
         """
+        err = validate_date(date)
+        if err:
+            return make_validation_error_response([err])
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 

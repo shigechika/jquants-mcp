@@ -302,11 +302,11 @@ class CacheStore:
             self._conn = conn
             self._init_tables()
             self._ready = True
-            logger.info("キャッシュDB接続: %s", self._db_path)
+            logger.info("Cache DB connected: %s", self._db_path)
             self._start_integrity_check()
             return self._conn
         except sqlite3.DatabaseError as e:
-            logger.warning("キャッシュDB接続失敗: %s", e)
+            logger.warning("Cache DB connection failed: %s", e)
             return None
 
     def _init_tables(self) -> None:
@@ -1168,7 +1168,10 @@ class CacheStore:
         cached_adj = row["adj_factor"]
         if cached_adj is not None and abs(cached_adj - new_adj_factor) > 1e-10:
             logger.info(
-                "株式分割検知: code=%s (AdjFactor: %s → %s)", code, cached_adj, new_adj_factor
+                "Stock split detected: code=%s (AdjFactor: %s -> %s)",
+                code,
+                cached_adj,
+                new_adj_factor,
             )
             return False
 
