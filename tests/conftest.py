@@ -11,13 +11,22 @@ from jquants_mcp.config import Settings
 
 
 @pytest.fixture(autouse=True)
-def _reset_plan_detected():
-    """Reset the plan detection flag between tests."""
+def _reset_server_globals():
+    """Reset mutable server-module globals between tests.
+
+    ``_user_clients`` / ``_user_client_last_used`` are process-wide dicts; left
+    populated they leak per-user clients across tests and can mask or trigger
+    the cached-client fast path in unrelated cases.
+    """
     import jquants_mcp.server as server_module
 
     server_module._plan_detected = False
+    server_module._user_clients.clear()
+    server_module._user_client_last_used.clear()
     yield
     server_module._plan_detected = False
+    server_module._user_clients.clear()
+    server_module._user_client_last_used.clear()
 
 
 @pytest.fixture()
