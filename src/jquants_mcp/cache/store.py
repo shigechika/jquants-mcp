@@ -176,6 +176,22 @@ class CacheStore:
         """Update the default plan (e.g. after auto-detection)."""
         self._default_plan = value
 
+    def _effective_plan(self, plan: str | None = None) -> str:
+        """Resolve the plan that governs date restrictions for a query.
+
+        Priority: explicit ``plan`` arg > per-request plan from the current
+        tool call (set by the server's PlanContextMiddleware for the
+        authenticated user) > this store's configured ``default_plan``.
+
+        The middleware path lets a multi-user deployment apply each user's
+        own plan window without threading ``plan`` through every tool.
+        """
+        if plan is not None:
+            return plan
+        from ..request_context import get_current_plan
+
+        return get_current_plan() or self._default_plan
+
     @property
     def ready(self) -> bool:
         """Return whether the cache database is usable."""
@@ -608,7 +624,7 @@ class CacheStore:
         for col in key_filter:
             _validate_column(col, table)
 
-        effective_plan = plan if plan is not None else self._default_plan
+        effective_plan = self._effective_plan(plan)
         conn = self._ensure_connection()
         if conn is None:
             return []
@@ -1075,7 +1091,7 @@ class CacheStore:
         for col in key_filter:
             _validate_column(col, table)
 
-        effective_plan = plan if plan is not None else self._default_plan
+        effective_plan = self._effective_plan(plan)
         conn = self._ensure_connection()
         if conn is None:
             return set()
@@ -1702,7 +1718,7 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return None
-        plan_min, plan_max = _plan_date_bounds(self._default_plan)
+        plan_min, plan_max = _plan_date_bounds(self._effective_plan())
         if (plan_min and date < plan_min) or (plan_max and date > plan_max):
             return None
         row = conn.execute(
@@ -1733,7 +1749,7 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return None
-        plan_min, plan_max = _plan_date_bounds(self._default_plan)
+        plan_min, plan_max = _plan_date_bounds(self._effective_plan())
         conditions = ["tool_name = ?", "params_hash = ?"]
         params: list[str] = [tool_name, params_hash]
         if plan_min:
@@ -1770,7 +1786,7 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return {}
-        plan_min, plan_max = _plan_date_bounds(self._default_plan)
+        plan_min, plan_max = _plan_date_bounds(self._effective_plan())
         if plan_min and date_from < plan_min:
             date_from = plan_min
         if plan_max and date_to > plan_max:

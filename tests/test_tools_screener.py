@@ -715,6 +715,56 @@ class TestScreenerCachePersistence:
         assert cache.screener_result_count() == 1
 
 
+class TestPlanContextMiddlewareE2E:
+    """End-to-end: the per-call middleware applies each user's plan window.
+
+    Proves the full chain works — PlanContextMiddleware.on_call_tool resolves
+    the user's plan from user_db, sets the request contextvar, and CacheStore
+    reads it (overriding the store's premium default_plan). Without the
+    contextvar wiring this gating would silently not happen.
+    """
+
+    @pytest.mark.asyncio
+    async def test_free_user_gated_premium_not(self, mock_env):
+        from unittest.mock import MagicMock
+
+        from jquants_mcp.models.user import UserMeta
+
+        cache = mock_env["cache"]  # default_plan = premium (no gating by default)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()  # inside 12-week embargo
+        ph = screener_compute.default_params_hash_52w()
+        _put_cache_payload(
+            cache,
+            tool_name=screener_compute.TOOL_DETECT_52W,
+            params_hash=ph,
+            date=recent,
+            payload=_stub_payload_52w(recent, ["12340", "67890"]),
+        )
+        # No equities_bars_daily seeded → a cache miss yields no live results.
+
+        plans = {"premium-user": "premium", "free-user": "free"}
+        user_db = MagicMock()
+        user_db.get_user_meta.side_effect = lambda uid: UserMeta(
+            plan=plans[uid], last_validated_at=None
+        )
+        tok = MagicMock()
+
+        with (
+            patch.object(server_module, "_get_user_db", return_value=user_db),
+            patch("fastmcp.server.dependencies.get_access_token", return_value=tok),
+        ):
+            tok.client_id = "premium-user"
+            res_prem = await _call("detect_52w_high_low", date=recent, detail=True)
+            # Sequential call as a different (Free) user — must not inherit premium.
+            tok.client_id = "free-user"
+            res_free = await _call("detect_52w_high_low", date=recent, detail=True)
+
+        # Premium sees the cached snapshot; Free is embargoed (12-week delay) and
+        # falls through to a live compute that has no data → empty.
+        assert res_prem["count"] == 2
+        assert res_free.get("count", 0) == 0
+
+
 class TestScreenerResultPlanDateGate:
     """screener_result reads honour the plan's entitled date window.
 

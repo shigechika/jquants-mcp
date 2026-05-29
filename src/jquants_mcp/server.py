@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from fastmcp import FastMCP
+from fastmcp.server.middleware.middleware import Middleware as ToolMiddleware
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -22,6 +23,7 @@ from . import __version__
 from .cache.store import CacheStore
 from .client import JQuantsClient
 from .config import Settings
+from .request_context import reset_current_plan, set_current_plan
 from .tool_annotations import DESTRUCTIVE_LOCAL, READ_ONLY_LOCAL
 
 logger = logging.getLogger(__name__)
@@ -104,6 +106,66 @@ _user_clients: dict[str, JQuantsClient] = {}
 
 # Last-used timestamps for stale-client eviction: user_id -> monotonic timestamp.
 _user_client_last_used: dict[str, float] = {}
+
+# Short-TTL cache of each user's plan (user_id -> (plan, expiry_monotonic)) so the
+# per-call PlanContextMiddleware does not hit the user DB (Firestore) on every
+# tool call. A plan change is reflected within _PLAN_CACHE_TTL seconds.
+_plan_cache: dict[str, tuple[str | None, float]] = {}
+_PLAN_CACHE_TTL = 60.0
+
+
+def _resolve_current_plan() -> str | None:
+    """Resolve the authenticated user's plan for the current tool call.
+
+    Returns ``None`` for single-user / bearer / unauthenticated paths (the cache
+    then uses its configured ``default_plan``). Cached per user_id for a short
+    TTL to avoid a user-DB round-trip on every tool call. Never raises — any
+    failure resolves to ``None`` so tool calls are not broken by plan lookup.
+    """
+    user_db = _get_user_db()
+    if user_db is None:
+        return None
+    try:
+        from fastmcp.server.dependencies import get_access_token
+
+        token = get_access_token()
+    except Exception:
+        return None
+    if token is None or token.client_id == "bearer":
+        return None
+    user_id = token.client_id
+
+    now = time.monotonic()
+    cached = _plan_cache.get(user_id)
+    if cached is not None and cached[1] > now:
+        return cached[0]
+    try:
+        meta = user_db.get_user_meta(user_id)
+    except Exception:
+        return None
+    plan = meta.plan if meta is not None else None
+    _plan_cache[user_id] = (plan, now + _PLAN_CACHE_TTL)
+    return plan
+
+
+class PlanContextMiddleware(ToolMiddleware):
+    """Bind the authenticated user's plan to the request for each tool call.
+
+    Lets ``CacheStore`` apply per-user plan date restrictions (e.g. Free =
+    2 years + 12-week delay) without threading a ``plan`` argument through every
+    tool. Single-user / bearer deployments resolve to ``None`` and keep using
+    the cache's configured ``default_plan``.
+    """
+
+    async def on_call_tool(self, context, call_next):  # type: ignore[override]
+        token = set_current_plan(_resolve_current_plan())
+        try:
+            return await call_next(context)
+        finally:
+            reset_current_plan(token)
+
+
+mcp.add_middleware(PlanContextMiddleware())
 
 # Timestamp of the last stale-client cleanup run (monotonic).
 _last_cleanup: float = 0.0
