@@ -53,14 +53,14 @@ from jquants_mcp.cache import screener_compute  # noqa: E402  # stdlib-only
 
 import jquantsapi  # noqa: E402
 
-# キャッシュ DB のデフォルトパス
+# Default cache DB path
 DEFAULT_DB_PATH = Path.home() / ".cache" / "jquants-mcp" / "cache.db"
 
-# 決算サマリーのデフォルト遡り日数
+# Default lookback days for financial summaries
 FINS_LOOKBACK_DAYS = 7
 
-# プラン別取得可能エンドポイント（J-Quants API v2 仕様に基づく）
-# 各エンドポイントの最低必要プランを定義
+# Endpoints available per plan (based on the J-Quants API v2 spec).
+# Defines the minimum required plan for each endpoint.
 PLAN_LEVELS = {"free": 0, "light": 1, "standard": 2, "premium": 3}
 
 ENDPOINT_MIN_PLAN: dict[str, str] = {
@@ -76,7 +76,7 @@ ENDPOINT_MIN_PLAN: dict[str, str] = {
     "breakdown": "premium",
 }
 
-# Tier 2 キャッシュの TTL（秒）— MCP サーバーの設定に合わせる
+# Tier 2 cache TTL (seconds) — matches the MCP server configuration
 TTL_6H = 6 * 3600
 TTL_24H = 24 * 3600
 TTL_7D = 7 * 24 * 3600
@@ -270,14 +270,14 @@ def _migrate_drop_plan(conn: sqlite3.Connection) -> None:
         migrated = True
 
     if migrated:
-        print("  マイグレーション: plan カラムを除去しました")
+        print("  migration: removed plan column")
 
     conn.execute("PRAGMA user_version = 2")
     conn.commit()
 
 
 def _sanitize_row(row_data: dict) -> dict:
-    """NaN を None に変換する（JSON シリアライズ用）。"""
+    """Convert NaN to None (for JSON serialization)."""
     return {k: (None if isinstance(v, float) and v != v else v) for k, v in row_data.items()}
 
 
@@ -345,14 +345,14 @@ def fetch_topix(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan: str) -
 
     if max_date:
         from_date = (datetime.strptime(max_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y%m%d")
-        print(f"  キャッシュ最新日: {max_date}、{from_date} から取得")
+        print(f"  latest cached date: {max_date}, fetching from {from_date}")
         df = cli.get_idx_bars_daily_topix(from_yyyymmdd=from_date)
     else:
-        print("  キャッシュ空、全期間取得")
+        print("  cache empty, fetching full history")
         df = cli.get_idx_bars_daily_topix()
 
     if df is None or len(df) == 0:
-        print("  新しいデータなし")
+        print("  no new data")
         return 0
 
     now = time.time()
@@ -388,7 +388,7 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan:
         try:
             df = cli.get_fin_summary(date_yyyymmdd=date_str)
         except Exception as e:
-            print(f"  {date_iso}: エラー ({e})")
+            print(f"  {date_iso}: error ({e})")
             continue
 
         if df is None or len(df) == 0:
@@ -427,7 +427,7 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan:
             count += 1
 
         conn.commit()
-        print(f"  {date_iso}: {len(df)} 件")
+        print(f"  {date_iso}: {len(df)} rows")
 
     return count
 
@@ -445,7 +445,7 @@ def fetch_earnings_calendar(
     df = cli.get_eq_earnings_cal()
 
     if df is None or len(df) == 0:
-        print("  データなし")
+        print("  no data")
         return 0
 
     records = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
@@ -464,14 +464,14 @@ def fetch_earnings_calendar(
     now = time.time()
     response_data = json.dumps(records, ensure_ascii=False, default=str)
 
-    # 日付別キーで蓄積（TTL 90日）
+    # Accumulate under date-keyed entries (TTL 90 days)
     cache_key = f"/equities/earnings-calendar?date={date_key}"
     conn.execute(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
         (cache_key, response_data, now, TTL_90D),
     )
 
-    # パラメータなしキーも更新（最新データ用）
+    # Also update the no-params key (for latest data)
     conn.execute(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
         ("/equities/earnings-calendar", response_data, now, TTL_90D),
@@ -510,7 +510,7 @@ def fetch_investor_types(
     df = cli.get_eq_investor_types(from_yyyymmdd=from_date, to_yyyymmdd=to_date)
 
     if df is None or len(df) == 0:
-        print("  データなし")
+        print("  no data")
         return 0
 
     now = time.time()
@@ -543,7 +543,7 @@ def _store_response_cache(
     tool itself when it falls back to the API.
     """
     if not data:
-        print("  データなし")
+        print("  no data")
         return 0
 
     response_data = json.dumps(data, ensure_ascii=False, default=str)
@@ -559,7 +559,7 @@ def _store_response_cache(
 
 
 # ------------------------------------------------------------------
-# Markets Tier 1 取得関数
+# Markets Tier 1 fetch functions
 # ------------------------------------------------------------------
 
 
@@ -592,14 +592,14 @@ def _fetch_markets_tier1(
         incremental: If True, fetch only new data
         **extra_params: Extra params passed to cli_method
     """
-    # 差分取得: キャッシュ最新日の翌日から
+    # Incremental fetch: start from the day after the latest cached date
     if incremental and not from_yyyymmdd and not date_yyyymmdd:
         max_date = _get_max_date(conn, table, date_column)
         if max_date:
             from_yyyymmdd = (
                 datetime.strptime(max_date[:10], "%Y-%m-%d") + timedelta(days=1)
             ).strftime("%Y%m%d")
-            print(f"  キャッシュ最新日: {max_date}、{from_yyyymmdd} から取得")
+            print(f"  latest cached date: {max_date}, fetching from {from_yyyymmdd}")
 
     params = {**extra_params}
     if from_yyyymmdd:
@@ -609,28 +609,28 @@ def _fetch_markets_tier1(
     if date_yyyymmdd:
         params["date_yyyymmdd"] = date_yyyymmdd
 
-    # 日次取得で日付指定なしの場合はデフォルトで当日
+    # For daily fetch with no date specified, default to today
     if not from_yyyymmdd and not to_yyyymmdd and not date_yyyymmdd:
         params["date_yyyymmdd"] = datetime.today().strftime("%Y%m%d")
 
     try:
         df = cli_method(**params)
     except Exception as e:
-        print(f"  エラー: {e}")
+        print(f"  error: {e}")
         return 0
 
     if df is None or len(df) == 0:
-        # 当日データなしの場合、パラメータなしでフォールバック
+        # No data for today: fall back to fetching without params
         if date_yyyymmdd or params.get("date_yyyymmdd"):
-            print("  当日データなし、パラメータなしで取得")
+            print("  no data for today, fetching without params")
             try:
                 df = cli_method(**{k: v for k, v in extra_params.items()})
             except Exception as e:
-                print(f"  フォールバックエラー: {e}")
+                print(f"  fallback error: {e}")
                 return 0
 
     if df is None or len(df) == 0:
-        print("  データなし")
+        print("  no data")
         return 0
 
     rows = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
@@ -658,9 +658,9 @@ def fetch_short_ratio(
             _store_response_cache(
                 conn, "/markets/short-ratio", {"count": len(records), "data": records}, TTL_24H
             )
-            print(f"  Tier 2: {len(records)} 件")
+            print(f"  Tier 2: {len(records)} rows")
     except Exception as e:
-        print(f"  Tier 2 エラー: {e}")
+        print(f"  Tier 2 error: {e}")
     return count
 
 
@@ -708,19 +708,19 @@ def fetch_short_sale_report(
     try:
         df = cli.get_mkt_short_sale_report(calculated_date=today)
     except Exception as e:
-        print(f"  エラー: {e}")
+        print(f"  error: {e}")
         return 0
 
     if df is None or len(df) == 0:
-        print("  当日データなし、パラメータなしで取得")
+        print("  no data for today, fetching without params")
         try:
             df = cli.get_mkt_short_sale_report()
         except Exception as e:
-            print(f"  フォールバックエラー: {e}")
+            print(f"  fallback error: {e}")
             return 0
 
     if df is None or len(df) == 0:
-        print("  データなし")
+        print("  no data")
         return 0
 
     records = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
@@ -794,10 +794,10 @@ def populate_screener_results(conn: sqlite3.Connection) -> int:
     """
     latest = screener_compute.latest_session_date(conn)
     if latest is None:
-        print("  equities_bars_daily が空のためスキップ")
+        print("  skipped: equities_bars_daily is empty")
         return 0
 
-    print(f"  対象日: {latest}")
+    print(f"  target date: {latest}")
     written = 0
 
     # --- equities_bars_daily based screeners (52w / YTD high-low) ---
@@ -842,14 +842,12 @@ def populate_screener_results(conn: sqlite3.Connection) -> int:
             f"count={payload.get('count')} ({elapsed:.1f}s)"
         )
     else:
-        print(
-            f"    {screener_compute.TOOL_DETECT_CONSECUTIVE_DIV}: fins_summary が空のためスキップ"
-        )
+        print(f"    {screener_compute.TOOL_DETECT_CONSECUTIVE_DIV}: skipped, fins_summary is empty")
 
     pruned = screener_compute.prune_old_results(conn, retention_weeks=_SCREENER_RETENTION_WEEKS)
     conn.commit()
     if pruned:
-        print(f"  保持期間外 ({_SCREENER_RETENTION_WEEKS} 週) の {pruned} 行を削除")
+        print(f"  pruned {pruned} rows outside retention ({_SCREENER_RETENTION_WEEKS} weeks)")
     return written
 
 
@@ -862,11 +860,11 @@ def fetch_calendar(
     try:
         df = cli.get_mkt_calendar()
     except Exception as e:
-        print(f"  エラー: {e}")
+        print(f"  error: {e}")
         return 0
 
     if df is None or len(df) == 0:
-        print("  データなし")
+        print("  no data")
         return 0
 
     rows = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
@@ -874,7 +872,7 @@ def fetch_calendar(
 
 
 # ------------------------------------------------------------------
-# バックフィル: 過去データの一括取得
+# Backfill: bulk-fetch historical data
 # ------------------------------------------------------------------
 
 
@@ -902,43 +900,43 @@ def _backfill_markets_tier1(
     )
 
 
-# エンドポイント名 → (表示名, 取得関数)
+# Endpoint name → (display name, fetch function)
 FETCH_REGISTRY: dict[str, tuple[str, callable]] = {
-    "topix": ("TOPIX 日足", fetch_topix),
-    "fins_summary": ("決算サマリー", fetch_fins_summary),
-    "earnings_cal": ("決算発表予定", fetch_earnings_calendar),
-    "investor_types": ("投資部門別売買動向", fetch_investor_types),
-    "short_ratio": ("業種別空売り比率", fetch_short_ratio),
-    "margin_interest": ("信用取引残高", fetch_margin_interest),
-    "margin_alert": ("増担保規制情報", fetch_margin_alert),
-    "short_sale_report": ("空売り残高報告", fetch_short_sale_report),
-    "breakdown": ("売買内訳", fetch_breakdown),
-    "calendar": ("取引カレンダー", fetch_calendar),
+    "topix": ("TOPIX daily bars", fetch_topix),
+    "fins_summary": ("financial summaries", fetch_fins_summary),
+    "earnings_cal": ("earnings calendar", fetch_earnings_calendar),
+    "investor_types": ("investor types", fetch_investor_types),
+    "short_ratio": ("sector short-selling ratios", fetch_short_ratio),
+    "margin_interest": ("margin interest", fetch_margin_interest),
+    "margin_alert": ("margin regulation alerts", fetch_margin_alert),
+    "short_sale_report": ("short sale report", fetch_short_sale_report),
+    "breakdown": ("trade breakdown", fetch_breakdown),
+    "calendar": ("trading calendar", fetch_calendar),
 }
 
-# バックフィル対応エンドポイント（from/to 範囲指定可能なもの）
+# Backfill-capable endpoints (those that accept a from/to date range)
 BACKFILL_REGISTRY: dict[str, tuple[str, callable, str, list[tuple[str, str]]]] = {
-    # key: (表示名, cli_method_name, table, key_mapping)
+    # key: (display name, cli_method_name, table, key_mapping)
     "short_ratio": (
-        "業種別空売り比率",
+        "sector short-selling ratios",
         "get_mkt_short_ratio",
         "markets_short_ratio",
         [("S33", "s33"), ("Date", "date")],
     ),
     "margin_interest": (
-        "信用取引残高",
+        "margin interest",
         "get_mkt_margin_interest",
         "markets_margin_interest",
         [("Code", "code"), ("Date", "date")],
     ),
     "margin_alert": (
-        "増担保規制情報",
+        "margin regulation alerts",
         "get_mkt_margin_alert",
         "markets_margin_alert",
         [("Code", "code"), ("PubDate", "date")],
     ),
     "breakdown": (
-        "売買内訳",
+        "trade breakdown",
         "get_mkt_breakdown",
         "markets_breakdown",
         [("Code", "code"), ("Date", "date")],
@@ -958,16 +956,16 @@ def _run_backfill(
     from_date = (today - timedelta(days=days)).strftime("%Y%m%d")
     to_date = today.strftime("%Y%m%d")
 
-    print(f"バックフィル: {from_date} → {to_date} ({days}日間)")
+    print(f"backfill: {from_date} → {to_date} ({days} days)")
 
     for ep in targets:
         if ep not in BACKFILL_REGISTRY:
-            print(f"  {ep}: バックフィル非対応、スキップ")
+            print(f"  {ep}: backfill not supported, skipping")
             continue
 
         label, method_name, table, key_mapping = BACKFILL_REGISTRY[ep]
         cli_method = getattr(cli, method_name)
-        print(f"{label}をバックフィル中...")
+        print(f"backfilling {label}...")
         t0 = time.time()
         try:
             n = _backfill_markets_tier1(
@@ -980,23 +978,23 @@ def _run_backfill(
                 plan=plan,
             )
         except Exception as e:
-            print(f"  エラー: {e}")
+            print(f"  error: {e}")
             n = 0
-        print(f"  完了: {n} 件 ({time.time() - t0:.1f}秒)")
+        print(f"  done: {n} rows ({time.time() - t0:.1f}s)")
 
-    # カレンダーはバックフィル対象に含まれていたら全件取得
+    # If the calendar is in the backfill targets, fetch all of it
     if "calendar" in targets:
-        print("取引カレンダーを取得中...")
+        print("fetching trading calendar...")
         t0 = time.time()
         try:
             n = fetch_calendar(cli, conn, plan)
         except Exception as e:
-            print(f"  エラー: {e}")
+            print(f"  error: {e}")
             n = 0
-        print(f"  完了: {n} 件 ({time.time() - t0:.1f}秒)")
+        print(f"  done: {n} rows ({time.time() - t0:.1f}s)")
 
 
-# Tier 1 テーブル一覧（結果サマリー用）
+# List of Tier 1 tables (for the result summary)
 _TIER1_TABLES = [
     "indices_bars_daily_topix",
     "fins_summary",
@@ -1015,51 +1013,57 @@ def main() -> None:
     auto_detect = configured_plan is None
 
     parser = argparse.ArgumentParser(
-        description="J-Quants 追加データを取得してキャッシュに投入",
+        description="Fetch additional J-Quants data and insert into the cache",
         epilog="Plan is auto-detected from the J-Quants API"
         if auto_detect
         else f"Active plan: {configured_plan} (available: {', '.join(_available_endpoints(configured_plan))})",
     )
-    parser.add_argument("--topix", action="store_true", help="TOPIX 日足を取得 (Light+)")
-    parser.add_argument("--fins-summary", action="store_true", help="決算サマリーを取得 (Free+)")
-    parser.add_argument("--earnings-cal", action="store_true", help="決算発表予定を取得 (Free+)")
+    parser.add_argument("--topix", action="store_true", help="fetch TOPIX daily bars (Light+)")
     parser.add_argument(
-        "--investor-types", action="store_true", help="投資部門別売買動向を取得 (Light+)"
+        "--fins-summary", action="store_true", help="fetch financial summaries (Free+)"
     )
     parser.add_argument(
-        "--short-ratio", action="store_true", help="業種別空売り比率を取得 (Standard+)"
+        "--earnings-cal", action="store_true", help="fetch earnings calendar (Free+)"
     )
     parser.add_argument(
-        "--margin-interest", action="store_true", help="信用取引残高を取得 (Standard+)"
+        "--investor-types", action="store_true", help="fetch investor types (Light+)"
     )
     parser.add_argument(
-        "--margin-alert", action="store_true", help="増担保規制情報を取得 (Standard+)"
+        "--short-ratio", action="store_true", help="fetch sector short-selling ratios (Standard+)"
     )
     parser.add_argument(
-        "--short-sale-report", action="store_true", help="空売り残高報告を取得 (Standard+)"
+        "--margin-interest", action="store_true", help="fetch margin interest (Standard+)"
     )
-    parser.add_argument("--breakdown", action="store_true", help="売買内訳データを取得 (Premium)")
-    parser.add_argument("--calendar", action="store_true", help="取引カレンダーを取得 (Free+)")
+    parser.add_argument(
+        "--margin-alert", action="store_true", help="fetch margin regulation alerts (Standard+)"
+    )
+    parser.add_argument(
+        "--short-sale-report", action="store_true", help="fetch short sale report (Standard+)"
+    )
+    parser.add_argument(
+        "--breakdown", action="store_true", help="fetch trade breakdown data (Premium)"
+    )
+    parser.add_argument("--calendar", action="store_true", help="fetch trading calendar (Free+)")
     parser.add_argument(
         "--backfill",
         type=int,
         metavar="DAYS",
-        help="過去N日分のバックフィル（Markets系 Tier 1 対象）",
+        help="backfill the last N days (Markets-family Tier 1 endpoints)",
     )
     parser.add_argument(
         "--skip-screener-results",
         action="store_true",
-        help="末尾の screener_results 事前計算をスキップ",
+        help="skip the trailing screener_results pre-compute",
     )
     parser.add_argument(
         "--db",
         type=Path,
         default=DEFAULT_DB_PATH,
-        help=f"キャッシュ DB パス (default: {DEFAULT_DB_PATH})",
+        help=f"cache DB path (default: {DEFAULT_DB_PATH})",
     )
     args = parser.parse_args()
 
-    # オプション指定があればそれを使う、なければプランに応じて自動決定
+    # Use explicit options if given, otherwise auto-decide based on the plan
     explicit = {
         "topix": args.topix,
         "fins_summary": args.fins_summary,
@@ -1074,7 +1078,7 @@ def main() -> None:
     }
     has_explicit = any(explicit.values())
 
-    print(f"キャッシュ DB: {args.db}")
+    print(f"cache DB: {args.db}")
     args.db.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(args.db))
     conn.execute("PRAGMA journal_mode=WAL")
@@ -1094,59 +1098,59 @@ def main() -> None:
 
     if has_explicit:
         targets = [ep for ep, selected in explicit.items() if selected]
-        # 明示指定でもプラン外なら警告
+        # Warn when an explicitly requested endpoint is outside the plan
         for ep in targets:
             if ep not in available:
                 min_plan = ENDPOINT_MIN_PLAN[ep]
-                print(f"⚠️ {ep} は {min_plan}+ プランが必要です（現在: {plan}）、スキップ")
+                print(f"⚠️ {ep} requires the {min_plan}+ plan (current: {plan}), skipping")
         targets = [ep for ep in targets if ep in available]
     else:
         targets = available
 
-    print(f"プラン: {plan} | 取得対象: {', '.join(targets)}")
+    print(f"plan: {plan} | targets: {', '.join(targets)}")
 
-    # バックフィルモード
+    # Backfill mode
     if args.backfill:
         _run_backfill(cli, conn, targets, args.backfill, plan)
     else:
-        # 通常の日次取得
+        # Normal daily fetch
         for ep in targets:
             label, func = FETCH_REGISTRY[ep]
-            print(f"{label}を取得中...")
+            print(f"fetching {label}...")
             t0 = time.time()
             try:
                 n = func(cli, conn, plan)
             except Exception as e:
-                print(f"  エラー: {e}")
+                print(f"  error: {e}")
                 n = 0
-            print(f"  完了: {n} 件 ({time.time() - t0:.1f}秒)")
+            print(f"  done: {n} rows ({time.time() - t0:.1f}s)")
 
-    # 最新営業日の screener_results を事前計算（Issue #142）
-    # backfill モードでは過去日付向けに populate_history を別途使うので skip
+    # Pre-compute screener_results for the latest trading day (Issue #142).
+    # Skipped in backfill mode, which uses populate_history separately for past dates.
     if not args.backfill and not args.skip_screener_results:
-        print("screener_results を事前計算中...")
+        print("pre-computing screener_results...")
         t0 = time.time()
         try:
             n = populate_screener_results(conn)
         except Exception as e:
-            print(f"  エラー: {e}")
+            print(f"  error: {e}")
             n = 0
-        print(f"  完了: {n} 件 ({time.time() - t0:.1f}秒)")
+        print(f"  done: {n} rows ({time.time() - t0:.1f}s)")
 
-    # 結果サマリー
-    print("--- テーブル件数 ---")
+    # Result summary
+    print("--- table row counts ---")
     for table in _TIER1_TABLES + ["screener_results"]:
         try:
             row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
-            print(f"  {table}: {row[0]:,} 行")
+            print(f"  {table}: {row[0]:,} rows")
         except sqlite3.OperationalError:
             pass
 
     db_size = args.db.stat().st_size / (1024 * 1024)
-    print(f"  DB サイズ: {db_size:.1f} MB")
+    print(f"  DB size: {db_size:.1f} MB")
 
     conn.close()
-    print("取得完了")
+    print("done")
 
 
 if __name__ == "__main__":

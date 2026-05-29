@@ -85,7 +85,7 @@ def _date_window(
         return date_from, date_to
     latest = screener_compute.latest_session_date(conn)
     if latest is None:
-        raise SystemExit("equities_bars_daily が空のため back-fill できません")
+        raise SystemExit("equities_bars_daily is empty; cannot back-fill")
     end = date_to or latest
     if date_from:
         return date_from, end
@@ -95,36 +95,40 @@ def _date_window(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="screener_results を 52 週分（またはカスタム範囲で）一括計算",
+        description="Bulk-compute screener_results for 52 weeks (or a custom range)",
     )
     parser.add_argument(
         "--db",
         type=Path,
         default=DEFAULT_DB_PATH,
-        help=f"キャッシュ DB パス (default: {DEFAULT_DB_PATH})",
+        help=f"Cache DB path (default: {DEFAULT_DB_PATH})",
     )
     parser.add_argument(
         "--weeks",
         type=int,
         default=DEFAULT_RETENTION_WEEKS,
-        help=f"過去 N 週分を計算（default: {DEFAULT_RETENTION_WEEKS}）",
+        help=f"Compute the past N weeks (default: {DEFAULT_RETENTION_WEEKS})",
     )
-    parser.add_argument("--from", dest="date_from", help="開始日 YYYY-MM-DD（--weeks より優先）")
-    parser.add_argument("--to", dest="date_to", help="終了日 YYYY-MM-DD（既定は最新営業日）")
+    parser.add_argument(
+        "--from", dest="date_from", help="Start date YYYY-MM-DD (takes precedence over --weeks)"
+    )
+    parser.add_argument(
+        "--to", dest="date_to", help="End date YYYY-MM-DD (defaults to the latest session)"
+    )
     parser.add_argument(
         "--skip-existing",
         action="store_true",
-        help="既に screener_results にある日付はスキップ（resume / 増分実行向け）",
+        help="Skip dates already in screener_results (for resume / incremental runs)",
     )
     parser.add_argument(
         "--prune",
         action="store_true",
-        help="完了後に保持期間外の行を削除（既定は --weeks に合わせる）",
+        help="Delete rows outside the retention window after completion (defaults to --weeks)",
     )
     args = parser.parse_args()
 
     if not args.db.exists():
-        raise SystemExit(f"cache.db が見つかりません: {args.db}")
+        raise SystemExit(f"cache.db not found: {args.db}")
 
     conn = sqlite3.connect(str(args.db))
     conn.execute("PRAGMA journal_mode=WAL")
@@ -133,13 +137,13 @@ def main() -> None:
     date_from, date_to = _date_window(
         conn, weeks=args.weeks, date_from=args.date_from, date_to=args.date_to
     )
-    print(f"対象範囲: {date_from} → {date_to}")
+    print(f"Range: {date_from} -> {date_to}")
 
     sessions = screener_compute.distinct_session_dates(conn, date_from, date_to)
     if not sessions:
-        print("対象期間に営業日データがありません")
+        print("No session data in the target period")
         return
-    print(f"対象営業日: {len(sessions)} 日")
+    print(f"Target sessions: {len(sessions)} days")
 
     jobs = [
         (
@@ -197,7 +201,7 @@ def main() -> None:
         conn.commit()
         total_written += written
         print(
-            f"  完了: 書き込み {written} 行 / スキップ {len(sessions) - written} 行"
+            f"  done: wrote {written} rows / skipped {len(sessions) - written} rows"
             f" ({time.time() - t0:.1f}s)"
         )
 
@@ -205,9 +209,9 @@ def main() -> None:
         deleted = screener_compute.prune_old_results(conn, retention_weeks=args.weeks)
         conn.commit()
         if deleted:
-            print(f"保持期間外を削除: {deleted} 行")
+            print(f"Pruned rows outside retention window: {deleted} rows")
 
-    print(f"=== 全体 {total_written} 行 ({time.time() - overall_t0:.1f}s) ===")
+    print(f"=== total {total_written} rows ({time.time() - overall_t0:.1f}s) ===")
     conn.close()
 
 
