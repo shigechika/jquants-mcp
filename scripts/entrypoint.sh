@@ -21,7 +21,12 @@ echo "ENABLE_DAILY_FETCH=${ENABLE_DAILY_FETCH:-false}"
 # Step 1: Download auth databases from GCS (small, needed for auth)
 if [ -n "${GCS_BUCKET:-}" ]; then
     echo "Downloading auth databases from GCS..."
-    python /app/scripts/gcs_sync.py --init
+    # Non-fatal: gcs_sync now exits non-zero on a genuine download failure (for
+    # cron/manual detection), but startup must continue under `set -e` — the
+    # server can still run with local/empty auth state. A missing object on
+    # first run is not a failure and exits 0.
+    python /app/scripts/gcs_sync.py --init \
+        || echo "WARNING: auth DB download failed; continuing with local state"
 else
     echo "GCS_BUCKET not set, skipping GCS download"
 fi
