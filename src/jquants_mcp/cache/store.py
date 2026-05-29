@@ -1676,10 +1676,17 @@ class CacheStore:
     ) -> dict[str, Any] | None:
         """Return the cached payload for ``(tool_name, params_hash, date)``.
 
-        Returns ``None`` on miss or when the cache DB is not ready.
+        The requested ``date`` is gated by the plan's entitled window
+        (``_plan_date_bounds(default_plan)``) — consistent with ``get_rows`` —
+        so a lower-tier plan cannot read an embargoed (e.g. Free 12-week delay)
+        or out-of-retention screener snapshot. Returns ``None`` on miss, when
+        the date is outside the plan window, or when the cache DB is not ready.
         """
         conn = self._ensure_connection()
         if conn is None:
+            return None
+        plan_min, plan_max = _plan_date_bounds(self._default_plan)
+        if (plan_min and date < plan_min) or (plan_max and date > plan_max):
             return None
         row = conn.execute(
             "SELECT payload_json FROM screener_results "
@@ -1701,17 +1708,27 @@ class CacheStore:
         """Return the most recent cached payload for ``(tool_name, params_hash)``.
 
         Used for screeners that have no ``date`` parameter (e.g., consecutive
-        dividend increase). Returns ``None`` on miss or when the cache DB is
-        not ready.
+        dividend increase). The "most recent" row is taken from within the
+        plan's entitled window (``_plan_date_bounds(default_plan)``), so a Free
+        plan sees the latest snapshot at or before its 12-week delay rather than
+        today's. Returns ``None`` on miss or when the cache DB is not ready.
         """
         conn = self._ensure_connection()
         if conn is None:
             return None
+        plan_min, plan_max = _plan_date_bounds(self._default_plan)
+        conditions = ["tool_name = ?", "params_hash = ?"]
+        params: list[str] = [tool_name, params_hash]
+        if plan_min:
+            conditions.append("date >= ?")
+            params.append(plan_min)
+        if plan_max:
+            conditions.append("date <= ?")
+            params.append(plan_max)
         row = conn.execute(
-            "SELECT payload_json FROM screener_results "
-            "WHERE tool_name = ? AND params_hash = ? "
+            f"SELECT payload_json FROM screener_results WHERE {' AND '.join(conditions)} "
             "ORDER BY date DESC LIMIT 1",
-            (tool_name, params_hash),
+            params,
         ).fetchone()
         if row is None:
             return None
@@ -1727,10 +1744,20 @@ class CacheStore:
         date_from: str,
         date_to: str,
     ) -> dict[str, dict[str, Any]]:
-        """Return all cached payloads in [date_from, date_to] keyed by date."""
+        """Return all cached payloads in [date_from, date_to] keyed by date.
+
+        The requested range is clamped to the plan's entitled window
+        (``_plan_date_bounds(default_plan)``) — consistent with ``get_rows`` —
+        so a lower-tier plan cannot read embargoed or out-of-retention rows.
+        """
         conn = self._ensure_connection()
         if conn is None:
             return {}
+        plan_min, plan_max = _plan_date_bounds(self._default_plan)
+        if plan_min and date_from < plan_min:
+            date_from = plan_min
+        if plan_max and date_to > plan_max:
+            date_to = plan_max
         rows = conn.execute(
             "SELECT date, payload_json FROM screener_results "
             "WHERE tool_name = ? AND params_hash = ? "

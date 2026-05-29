@@ -715,6 +715,70 @@ class TestScreenerCachePersistence:
         assert cache.screener_result_count() == 1
 
 
+class TestScreenerResultPlanDateGate:
+    """screener_result reads honour the plan's entitled date window.
+
+    Free = 2 years retention with a 12-week disclosure delay. The writer
+    stores every date; the reader must not surface embargoed or
+    out-of-retention rows to a lower-tier plan (consistent with get_rows).
+    """
+
+    @staticmethod
+    def _free_cache(tmp_path):
+        return CacheStore(tmp_path / "free.db", default_plan="free")
+
+    def test_get_embargoed_recent_date_returns_none(self, tmp_path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=1)).isoformat()  # inside 12-week delay
+        cache.screener_result_put("t", "p", recent, {"count": 1, "data": []})
+        assert cache.screener_result_get("t", "p", recent) is None
+        cache.close()
+
+    def test_get_entitled_old_date_returns_row(self, tmp_path):
+        cache = self._free_cache(tmp_path)
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()  # past delay, within 2y
+        cache.screener_result_put("t", "p", entitled, {"count": 7, "data": []})
+        got = cache.screener_result_get("t", "p", entitled)
+        assert got is not None and got["count"] == 7
+        cache.close()
+
+    def test_get_out_of_retention_date_returns_none(self, tmp_path):
+        cache = self._free_cache(tmp_path)
+        too_old = (date.today() - timedelta(days=365 * 2 + 90)).isoformat()  # older than 2y
+        cache.screener_result_put("t", "p", too_old, {"count": 1, "data": []})
+        assert cache.screener_result_get("t", "p", too_old) is None
+        cache.close()
+
+    def test_get_latest_skips_embargoed_rows(self, tmp_path):
+        cache = self._free_cache(tmp_path)
+        embargoed = (date.today() - timedelta(weeks=1)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.screener_result_put("t", "p", entitled, {"count": 5, "data": []})
+        cache.screener_result_put("t", "p", embargoed, {"count": 9, "data": []})
+        got = cache.screener_result_get_latest("t", "p")
+        # The most recent row is embargoed; the latest entitled one wins.
+        assert got is not None and got["count"] == 5
+        cache.close()
+
+    def test_get_range_clamps_to_plan_window(self, tmp_path):
+        cache = self._free_cache(tmp_path)
+        embargoed = (date.today() - timedelta(weeks=1)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.screener_result_put("t", "p", entitled, {"count": 5, "data": []})
+        cache.screener_result_put("t", "p", embargoed, {"count": 9, "data": []})
+        got = cache.screener_result_get_range("t", "p", entitled, embargoed)
+        assert set(got.keys()) == {entitled}  # embargoed date clamped out
+        cache.close()
+
+    def test_premium_plan_has_no_restriction(self, tmp_path):
+        cache = CacheStore(tmp_path / "prem.db", default_plan="premium")
+        recent = (date.today() - timedelta(weeks=1)).isoformat()
+        cache.screener_result_put("t", "p", recent, {"count": 3, "data": []})
+        got = cache.screener_result_get("t", "p", recent)
+        assert got is not None and got["count"] == 3
+        cache.close()
+
+
 class TestDetect52wCacheRead:
     async def test_cache_hit_short_circuits(self, mock_env):
         cache = mock_env["cache"]
