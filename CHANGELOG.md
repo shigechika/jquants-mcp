@@ -5,6 +5,19 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.43.4](https://github.com/shigechika/jquants-mcp/compare/v0.43.3...v0.43.4) (2026-05-29)
+
+
+### Bug Fixes
+
+* sector short_sale_ratio lookup, AdjC basis unification, cache-read hardening ([#422](https://github.com/shigechika/jquants-mcp/issues/422)) ([243a60b](https://github.com/shigechika/jquants-mcp/commit/243a60ba5069c356640f303b14fbb5782ca767fe))
+* **security:** redact OAuth secrets from debug logs and restrict GitHub redirect URIs ([#420](https://github.com/shigechika/jquants-mcp/issues/420)) ([9c0d3f0](https://github.com/shigechika/jquants-mcp/commit/9c0d3f06efe35a8b78a2d4e305028e6069f16e45))
+
+
+### Performance Improvements
+
+* avoid per-call PBKDF2, batch split events, index short-ratio lookup, free rate-limiter lock ([#423](https://github.com/shigechika/jquants-mcp/issues/423)) ([21ca75b](https://github.com/shigechika/jquants-mcp/commit/21ca75ba13ff189ae04d9d4023f0b729af9bf454))
+
 ## [0.43.3](https://github.com/shigechika/jquants-mcp/compare/v0.43.2...v0.43.3) (2026-05-24)
 
 
