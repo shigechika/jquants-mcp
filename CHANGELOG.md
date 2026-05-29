@@ -5,6 +5,18 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.44.0](https://github.com/shigechika/jquants-mcp/compare/v0.43.7...v0.44.0) (2026-05-29)
+
+
+### Features
+
+* propagate per-user plan to the cache (resolve project_per_user_plan_cache) ([#439](https://github.com/shigechika/jquants-mcp/issues/439)) ([189542b](https://github.com/shigechika/jquants-mcp/commit/189542be980c64a1612adb3d3f69df6a76c39bce))
+
+
+### Bug Fixes
+
+* address the three deferred low-severity review items ([#437](https://github.com/shigechika/jquants-mcp/issues/437)) ([847b82c](https://github.com/shigechika/jquants-mcp/commit/847b82c0d274302004afde947c4426ca7dba9b74))
+
 ## [0.43.7](https://github.com/shigechika/jquants-mcp/compare/v0.43.6...v0.43.7) (2026-05-29)
 
 
