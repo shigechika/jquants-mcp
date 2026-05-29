@@ -1174,34 +1174,27 @@ def _compute_consecutive_div_years(
     """Compute split-adjusted consecutive dividend increase years for one code.
 
     Applies cumulative split adjustment to each entry so all div_ann values are
-    in current per-share terms, then counts consecutive years of increase from
-    the latest year backwards.
+    in current per-share terms (including the fiscal-year-end pre-split DivAnn
+    correction via ``screener_compute.div_split_factor``), then counts
+    consecutive years of increase from the latest year backwards.
 
     Args:
-        split_events: Pre-loaded list of (date, factor) tuples sorted ascending,
-            obtained via ``CacheStore.get_split_events_by_code``.  When supplied,
-            cumulative factors are computed in Python without extra SQLite queries.
-            When omitted, falls back to per-entry ``get_cumulative_split_factor``
-            calls (O(N) round-trips — acceptable for single-code use but slow
-            for full-universe scans).
+        split_events: Pre-loaded list of (date, factor) tuples for the code,
+            obtained via ``CacheStore.get_split_events_by_code``. When supplied,
+            factors are computed in Python without extra SQLite queries. When
+            omitted, the code's events are loaded with a single query (the
+            documented single-code path).
 
     Returns:
         (consecutive_count, adj_entries) where adj_entries is the split-adjusted
         list sorted ascending by fy_end.
-
-    Known limitation: splits that occurred within ~45 days BEFORE disc_date
-    (FY-end split) are not reflected here because only post-disc splits are used.
     """
+    if split_events is None:
+        split_events = cache.get_split_events_by_code([code]).get(code, [])
     adj_entries: list[dict[str, Any]] = []
     for entry in entries:
         disc_date = entry["disc_date"]
-        if split_events is not None:
-            factor = 1.0
-            for ev_date, ev_factor in split_events:
-                if ev_date > disc_date:
-                    factor *= ev_factor
-        else:
-            factor = cache.get_cumulative_split_factor(code, disc_date)
+        factor = screener_compute.div_split_factor(disc_date, split_events)
         adj_entries.append(
             {
                 "fy_end": entry["fy_end"],
