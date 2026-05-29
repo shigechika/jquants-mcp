@@ -77,7 +77,7 @@ def _get_config() -> tuple[str, str, Path]:
     return bucket, prefix, cache_dir
 
 
-def download_files(file_list: list[str] | None = None) -> None:
+def download_files(file_list: list[str] | None = None) -> int:
     """Download files from GCS to local cache dir.
 
     Args:
@@ -87,11 +87,15 @@ def download_files(file_list: list[str] | None = None) -> None:
     Returns immediately without initializing the GCS client when the
     resolved file list is empty, avoiding unnecessary credential lookups
     that can hang indefinitely on non-GCP hosts.
+
+    Returns:
+        The number of files that failed to download (a missing object is not a
+        failure). Callers running one-shot can map this to an exit code.
     """
     files = file_list if file_list is not None else _DOWNLOAD_FILES
     if not files:
         logger.debug("No files configured for download, skipping")
-        return
+        return 0
 
     from google.cloud import storage  # type: ignore[import-untyped]
     from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
@@ -100,6 +104,7 @@ def download_files(file_list: list[str] | None = None) -> None:
     client = storage.Client()
     gcs_bucket = client.bucket(bucket)
 
+    failures = 0
     for filename in files:
         blob_name = f"{prefix}{filename}"
         local_path = cache_dir / filename
@@ -120,6 +125,8 @@ def download_files(file_list: list[str] | None = None) -> None:
         except Exception as e:
             logger.warning("Failed to download %s: %s", blob_name, e)
             tmp_path.unlink(missing_ok=True)
+            failures += 1
+    return failures
 
 
 def _checkpoint_sqlite(db_path: Path) -> None:
@@ -141,17 +148,21 @@ def _checkpoint_sqlite(db_path: Path) -> None:
         logger.warning("Failed to checkpoint %s: %s", db_path, e)
 
 
-def upload_files() -> None:
+def upload_files() -> int:
     """Upload local cache files to GCS.
 
     Files that do not exist locally are silently skipped.
     Returns immediately without initializing the GCS client when
     _UPLOAD_FILES is empty, avoiding unnecessary credential lookups that
     can hang indefinitely on non-GCP hosts.
+
+    Returns:
+        The number of files that failed to upload. Callers running one-shot can
+        map this to an exit code; the daemon loop ignores it and retries.
     """
     if not _UPLOAD_FILES:
         logger.debug("No files configured for upload, skipping")
-        return
+        return 0
 
     from google.cloud import storage  # type: ignore[import-untyped]
 
@@ -159,6 +170,7 @@ def upload_files() -> None:
     client = storage.Client()
     gcs_bucket = client.bucket(bucket)
 
+    failures = 0
     for filename in _UPLOAD_FILES:
         local_path = cache_dir / filename
         if not local_path.exists():
@@ -178,6 +190,8 @@ def upload_files() -> None:
             )
         except Exception as e:
             logger.warning("Failed to upload %s: %s", blob_name, e)
+            failures += 1
+    return failures
 
 
 def run_daemon() -> None:
@@ -232,14 +246,23 @@ def main() -> None:
     group.add_argument("--upload", action="store_true", help="Upload local cache to GCS and exit")
     args = parser.parse_args()
 
+    # One-shot modes surface failures as a non-zero exit code so callers
+    # (entrypoint.sh, cron) can detect them. The daemon stays resilient and
+    # ignores the return value (it retries on the next tick).
     if args.init_cache:
-        download_files(_CACHE_FILES)
+        failures = download_files(_CACHE_FILES)
     elif args.init:
-        download_files()
+        failures = download_files()
     elif args.daemon:
         run_daemon()
+        return
     elif args.upload:
-        upload_files()
+        failures = upload_files()
+    else:
+        failures = 0
+
+    if failures:
+        sys.exit(1)
 
 
 if __name__ == "__main__":

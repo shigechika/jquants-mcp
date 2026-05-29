@@ -777,6 +777,34 @@ class TestMigrateNormalizeFields:
         assert "Open" in row["data"]
         store.close()
 
+    def test_migration_normalizes_all_rows_across_batches(self, tmp_path: Path):
+        """Every legacy row is normalized when the loop spans multiple reads."""
+        import json
+
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = self._get_conn(store)
+        conn.execute("PRAGMA user_version = 0")
+        for i in range(7):
+            code = f"7203{i}"
+            legacy = json.dumps({"Code": code, "Date": "2024-01-04", "Open": 100 + i, "O": ""})
+            conn.execute(
+                "INSERT OR REPLACE INTO equities_bars_daily "
+                "(code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+                (code, "2024-01-04", legacy, 0.0),
+            )
+        conn.commit()
+
+        store._migrate_normalize_fields()
+
+        rows = conn.execute("SELECT data FROM equities_bars_daily").fetchall()
+        assert len(rows) == 7
+        for row in rows:
+            data = json.loads(row["data"])
+            assert "Open" not in data
+            assert isinstance(data["O"], int)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        store.close()
+
     def test_migration_ignores_rows_without_legacy_fields(self, tmp_path: Path):
         """Rows with only current field names are not touched."""
         store = CacheStore(tmp_path / "cache.db", default_plan="standard")

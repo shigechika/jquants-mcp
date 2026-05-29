@@ -154,6 +154,22 @@ def test_oauth_require_consent_zero():
     assert settings.oauth_require_consent is False
 
 
+def test_oauth_require_consent_empty_falls_back_to_default():
+    """An empty value falls back to the default (True), not a silent False.
+
+    Guards against an empty env var (OAUTH_REQUIRE_CONSENT="") silently
+    disabling consent on a True-default security flag.
+    """
+    settings = Settings(oauth_require_consent="")
+    assert settings.oauth_require_consent is True
+
+
+def test_cache_bypass_auth_empty_falls_back_to_default():
+    """An empty value falls back to cache_bypass_auth's default (False)."""
+    settings = Settings(cache_bypass_auth="")
+    assert settings.cache_bypass_auth is False
+
+
 def test_oauth_settings_defaults():
     """GitHub OAuth settings default to empty strings."""
     settings = Settings()

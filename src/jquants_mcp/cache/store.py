@@ -531,26 +531,43 @@ class CacheStore:
             return
 
         total_updated = 0
+        batch_size = 5000
         for table_name in _TIER1_TABLES:
-            try:
-                rows = conn.execute(f"SELECT rowid, data FROM {table_name}").fetchall()
-            except sqlite3.OperationalError:
-                continue
+            table_updated = 0
+            last_rowid = 0
+            while True:
+                # Read in rowid-ordered batches so peak memory stays bounded even
+                # on a large pre-v1 DB. Each SELECT cursor is fully drained before
+                # the UPDATE runs, and UPDATE never changes a rowid, so paginating
+                # by rowid is stable across the writes.
+                try:
+                    batch = conn.execute(
+                        f"SELECT rowid, data FROM {table_name} "
+                        "WHERE rowid > ? ORDER BY rowid LIMIT ?",
+                        (last_rowid, batch_size),
+                    ).fetchall()
+                except sqlite3.OperationalError:
+                    break
+                if not batch:
+                    break
+                last_rowid = batch[-1]["rowid"]
 
-            updates: list[tuple[str, int]] = []
-            for row in rows:
-                original = row["data"]
-                parsed = json.loads(original)
-                # Skip if no legacy field names are present
-                if not any(k in parsed for k in _LEGACY_FIELD_MAP):
-                    continue
-                normalized = _normalize_fields(parsed)
-                updates.append((json.dumps(normalized, ensure_ascii=False), row["rowid"]))
+                updates: list[tuple[str, int]] = []
+                for row in batch:
+                    parsed = json.loads(row["data"])
+                    # Skip if no legacy field names are present
+                    if not any(k in parsed for k in _LEGACY_FIELD_MAP):
+                        continue
+                    normalized = _normalize_fields(parsed)
+                    updates.append((json.dumps(normalized, ensure_ascii=False), row["rowid"]))
 
-            if updates:
-                conn.executemany(f"UPDATE {table_name} SET data = ? WHERE rowid = ?", updates)
-                total_updated += len(updates)
-                logger.info("Migration: normalized %d rows in %s", len(updates), table_name)
+                if updates:
+                    conn.executemany(f"UPDATE {table_name} SET data = ? WHERE rowid = ?", updates)
+                    table_updated += len(updates)
+
+            if table_updated:
+                total_updated += table_updated
+                logger.info("Migration: normalized %d rows in %s", table_updated, table_name)
 
         conn.execute("PRAGMA user_version = 1")
         conn.commit()
