@@ -142,13 +142,10 @@ def _convert_numeric(value: str) -> int | float | str:
 class BulkFetcher:
     """Fetches data via the J-Quants Bulk API and loads it into SQLite."""
 
-    def __init__(
-        self, settings: Settings, db_path: Path, dry_run: bool = False, plan: str | None = None
-    ):
+    def __init__(self, settings: Settings, db_path: Path, dry_run: bool = False):
         self._settings = settings
         self._db_path = db_path
         self._dry_run = dry_run
-        self._plan = plan or settings.jquants_plan
         self._base_url = settings.jquants_base_url
         self._api_headers = {"x-api-key": settings.jquants_api_key}
         self._request_count = 0
@@ -309,7 +306,6 @@ class BulkFetcher:
         logger.info("J-Quants bulk fetch")
         logger.info("targets: %s", ", ".join(targets))
         logger.info("cache DB: %s", self._db_path)
-        logger.info("saving plan: %s", self._plan)
         logger.info(
             "rate limit: %d req/min (%s plan)",
             self._rate_limit,
@@ -386,12 +382,6 @@ def main() -> None:
         help=f"Cache DB path (default: {DEFAULT_DB_PATH})",
     )
     parser.add_argument(
-        "--plan",
-        choices=["free", "light", "standard", "premium"],
-        default=None,
-        help="Plan to record rows under (default: value from config file).",
-    )
-    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="List the files that would be fetched without downloading them.",
@@ -403,8 +393,16 @@ def main() -> None:
         logger.error("JQUANTS_API_KEY is not configured")
         sys.exit(1)
 
-    fetcher = BulkFetcher(settings, args.db, dry_run=args.dry_run, plan=args.plan)
-    fetcher.run(args.endpoints)
+    fetcher = BulkFetcher(settings, args.db, dry_run=args.dry_run)
+    results = fetcher.run(args.endpoints)
+
+    # Surface endpoint failures (rows == -1) as a non-zero exit code so cron / CI
+    # can detect them. Plan-restricted endpoints (403) are recorded as 0, not -1,
+    # so they do not count as failures.
+    failed = [name for name, rows in results.items() if rows < 0]
+    if failed:
+        logger.error("failed endpoints: %s", ", ".join(failed))
+        sys.exit(1)
 
 
 if __name__ == "__main__":

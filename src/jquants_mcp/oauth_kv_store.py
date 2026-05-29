@@ -22,6 +22,12 @@ def _safe_table_name(name: str) -> str:
     """Sanitize a collection name to a safe SQLite table name.
 
     Replaces any character that is not alphanumeric or underscore with ``_``.
+
+    Invariant: collection names are internal (FastMCP DCR uses a small fixed
+    set), so the sanitized names are effectively unique. The mapping is NOT
+    injective — ``foo-bar`` and ``foo_bar`` collapse to the same table — so if
+    collection names ever become user-derived, add a hash suffix here to
+    guarantee uniqueness (and migrate existing tables) before doing so.
     """
     return "".join(c if c.isalnum() or c == "_" else "_" for c in name)
 

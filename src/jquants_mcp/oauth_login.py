@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import http.server
 import logging
 import os
@@ -56,11 +57,16 @@ def _compute_challenge(verifier: str) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
+def _generate_state() -> str:
+    return base64.urlsafe_b64encode(os.urandom(24)).rstrip(b"=").decode("ascii")
+
+
 class _CallbackHandler(http.server.BaseHTTPRequestHandler):
     """Single-shot HTTP handler that captures the ?code= query param."""
 
     captured_code: str | None = None
     captured_error: str | None = None
+    captured_state: str | None = None
 
     # Silence the default access log.
     def log_message(self, format: str, *args) -> None:  # noqa: A002
@@ -77,6 +83,7 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
             body = "<h1>Login failed</h1><p>You can close this tab.</p>"
         elif "code" in params:
             type(self).captured_code = params["code"][0]
+            type(self).captured_state = params.get("state", [None])[0]
             body = (
                 "<h1>Login successful</h1><p>You can close this tab and return to the terminal.</p>"
             )
@@ -91,7 +98,7 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body_bytes)
 
 
-def _build_authorize_url(challenge: str) -> str:
+def _build_authorize_url(challenge: str, state: str) -> str:
     redirect_uri = f"http://localhost:{CALLBACK_PORT}{CALLBACK_PATH}"
     params = {
         "response_type": "code",
@@ -100,6 +107,7 @@ def _build_authorize_url(challenge: str) -> str:
         "scope": COGNITO_SCOPES,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
+        "state": state,
     }
     return f"https://{COGNITO_DOMAIN}/oauth2/authorize?{urllib.parse.urlencode(params)}"
 
@@ -151,10 +159,12 @@ def perform_login(
     """
     verifier = _generate_verifier()
     challenge = _compute_challenge(verifier)
-    authorize_url = _build_authorize_url(challenge)
+    state = _generate_state()
+    authorize_url = _build_authorize_url(challenge, state)
 
     _CallbackHandler.captured_code = None
     _CallbackHandler.captured_error = None
+    _CallbackHandler.captured_state = None
 
     server = socketserver.TCPServer(("127.0.0.1", CALLBACK_PORT), _CallbackHandler)
     server.timeout = 1.0
@@ -186,6 +196,10 @@ def perform_login(
         raise LoginError(f"Authorization denied: {_CallbackHandler.captured_error}")
     if _CallbackHandler.captured_code is None:
         raise LoginError(f"Login did not complete within {LOGIN_TIMEOUT_SECS}s")
+    # Verify the state round-trips to reject a callback not initiated here
+    # (CSRF defense-in-depth; PKCE already binds the code to this verifier).
+    if not hmac.compare_digest(_CallbackHandler.captured_state or "", state):
+        raise LoginError("State mismatch on callback — possible CSRF; aborting login")
 
     id_token = _exchange_code_for_id_token(_CallbackHandler.captured_code, verifier)
     api_key = _post_api_key(base_url, id_token)
