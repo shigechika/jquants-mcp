@@ -20,13 +20,15 @@ def _reset_server_globals():
     """
     import jquants_mcp.server as server_module
 
-    server_module._plan_detected = False
-    server_module._user_clients.clear()
-    server_module._user_client_last_used.clear()
+    def _reset() -> None:
+        server_module._plan_detected = False
+        server_module._user_clients.clear()
+        server_module._user_client_last_used.clear()
+        server_module._plan_cache.clear()
+
+    _reset()
     yield
-    server_module._plan_detected = False
-    server_module._user_clients.clear()
-    server_module._user_client_last_used.clear()
+    _reset()
 
 
 @pytest.fixture()

@@ -1463,3 +1463,128 @@ class TestGetFyDividendHistory:
         result = store.get_fy_dividend_history()
         assert result == {}
         store.close()
+
+
+class TestLatestReadersPlanGate:
+    """The 'latest'-aggregate readers honour the effective plan's date window.
+
+    These back the cache-only briefing tools a Free user can call, so without
+    gating a Free user would see today's data inside the 12-week embargo.
+    """
+
+    @staticmethod
+    def _free_cache(tmp_path: Path) -> CacheStore:
+        return CacheStore(tmp_path / "free.db", default_plan="free")
+
+    def test_latest_close_map_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()  # embargoed for Free
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()  # past 12-week delay
+        cache.put_rows(
+            "equities_bars_daily",
+            [
+                {"Code": "12340", "Date": recent, "AdjC": 999.0, "C": 999.0, "AdjFactor": 1.0},
+                {"Code": "12340", "Date": entitled, "AdjC": 111.0, "C": 111.0, "AdjFactor": 1.0},
+            ],
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        # Free is embargoed from `recent`; the latest entitled close is 111.
+        assert cache.get_latest_close_map().get("12340") == 111.0
+        cache.close()
+
+    def test_latest_close_map_premium_sees_recent(self, tmp_path: Path):
+        cache = CacheStore(tmp_path / "prem.db", default_plan="premium")
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        cache.put_rows(
+            "equities_bars_daily",
+            [{"Code": "12340", "Date": recent, "AdjC": 999.0, "C": 999.0, "AdjFactor": 1.0}],
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        assert cache.get_latest_close_map().get("12340") == 999.0
+        cache.close()
+
+    def test_latest_fy_fins_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "fins_summary",
+            [
+                {
+                    "Code": "12340",
+                    "DiscDate": recent,
+                    "DocType": "FYFinancialStatements_x",
+                    "EPS": 9,
+                },
+                {
+                    "Code": "12340",
+                    "DiscDate": entitled,
+                    "DocType": "FYFinancialStatements_x",
+                    "EPS": 1,
+                },
+            ],
+            key_columns=["Code", "DiscDate"],
+        )
+        fins = cache.get_all_latest_fy_fins()
+        assert fins.get("12340", {}).get("EPS") == 1  # entitled row, not the embargoed recent one
+        cache.close()
+
+    def test_latest_margin_interest_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "markets_margin_interest",
+            [
+                {"Code": "12340", "Date": recent, "LongVol": 999},
+                {"Code": "12340", "Date": entitled, "LongVol": 111},
+            ],
+            key_columns=["Code", "Date"],
+        )
+        margin = cache.get_all_latest_margin_interest()
+        assert margin.get("12340", {}).get("LongVol") == 111
+        cache.close()
+
+    def test_div_ann_map_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "fins_summary",
+            [
+                {"Code": "12340", "DiscDate": recent, "DivAnn": 999},
+                {"Code": "12340", "DiscDate": entitled, "DivAnn": 111},
+            ],
+            key_columns=["Code", "DiscDate"],
+        )
+        val, disc = cache.get_div_ann_map()["12340"]
+        assert val == 111.0 and disc == entitled  # embargoed recent row excluded
+        cache.close()
+
+    def test_forward_div_ann_map_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "fins_summary",
+            [
+                {
+                    "Code": "12340",
+                    "DiscDate": recent,
+                    "DocType": "FYFinancialStatements_x",
+                    "NxFDivAnn": 999,
+                },
+                {
+                    "Code": "12340",
+                    "DiscDate": entitled,
+                    "DocType": "FYFinancialStatements_x",
+                    "NxFDivAnn": 111,
+                },
+            ],
+            key_columns=["Code", "DiscDate"],
+        )
+        val, disc = cache.get_forward_div_ann_map()["12340"]
+        assert val == 111.0 and disc == entitled  # embargoed recent forecast excluded
+        cache.close()
