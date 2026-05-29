@@ -78,3 +78,40 @@ class TestDownloadFilesEmpty:
         monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
         gcs_sync.download_files(["cache.db"])
         mock_google_storage.Client.assert_called_once()
+
+
+class TestFailureExitCode:
+    """One-shot invocations surface failures as a non-zero exit code."""
+
+    def test_upload_returns_failure_count(self, monkeypatch, tmp_path, mock_google_storage):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(gcs_sync, "_UPLOAD_FILES", ["users.db"])
+        (tmp_path / "users.db").write_bytes(b"x")
+        monkeypatch.setattr(gcs_sync, "_checkpoint_sqlite", lambda _p: None)
+        blob = mock_google_storage.Client.return_value.bucket.return_value.blob.return_value
+        blob.upload_from_filename.side_effect = RuntimeError("network down")
+        assert gcs_sync.upload_files() == 1
+
+    def test_main_upload_exits_nonzero_on_failure(self, monkeypatch, tmp_path, mock_google_storage):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(gcs_sync, "_UPLOAD_FILES", ["users.db"])
+        (tmp_path / "users.db").write_bytes(b"x")
+        monkeypatch.setattr(gcs_sync, "_checkpoint_sqlite", lambda _p: None)
+        monkeypatch.setattr(sys, "argv", ["gcs_sync.py", "--upload"])
+        blob = mock_google_storage.Client.return_value.bucket.return_value.blob.return_value
+        blob.upload_from_filename.side_effect = RuntimeError("network down")
+        with pytest.raises(SystemExit) as exc:
+            gcs_sync.main()
+        assert exc.value.code == 1
+
+    def test_main_upload_exits_zero_on_success(self, monkeypatch, tmp_path, mock_google_storage):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(gcs_sync, "_UPLOAD_FILES", ["users.db"])
+        (tmp_path / "users.db").write_bytes(b"x")
+        monkeypatch.setattr(gcs_sync, "_checkpoint_sqlite", lambda _p: None)
+        monkeypatch.setattr(sys, "argv", ["gcs_sync.py", "--upload"])
+        # Upload succeeds (no side_effect) → main returns without SystemExit.
+        gcs_sync.main()

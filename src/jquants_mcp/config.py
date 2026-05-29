@@ -211,7 +211,13 @@ class Settings:
             if target_type and not isinstance(value, target_type):
                 value = target_type(value)
             elif attr in _BOOL_SETTINGS and not isinstance(value, bool):
-                value = str(value).lower() not in ("false", "0", "no", "off", "")
+                s = str(value).strip().lower()
+                if s == "":
+                    # An explicitly empty env var (e.g. OAUTH_REQUIRE_CONSENT="")
+                    # means "unset" → fall back to the declared default rather
+                    # than silently coercing a True-default flag to False.
+                    s = str(default).strip().lower()
+                value = s not in ("false", "0", "no", "off")
 
             setattr(self, attr, value)
 
