@@ -192,6 +192,15 @@ class CacheStore:
 
         return get_current_plan() or self._default_plan
 
+    def _plan_bounds(self) -> tuple[str | None, str | None]:
+        """Return (min_date, max_date) ISO strings for the effective plan.
+
+        ``None`` on either side means no limit. Used by the "latest"-aggregate
+        readers so a lower-tier plan does not see embargoed / out-of-retention
+        rows via the cache-only briefing tools.
+        """
+        return _plan_date_bounds(self._effective_plan())
+
     @property
     def ready(self) -> bool:
         """Return whether the cache database is usable."""
@@ -1377,14 +1386,27 @@ class CacheStore:
             "  OR json_extract(data, '$.DocType') LIKE 'FYFinancial%'"
             "  OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%'"
         )
-        aod_filter = "  AND substr(disc_date, 1, 10) <= ? " if as_of_date else ""
-        params: tuple | tuple[str] = (as_of_date,) if as_of_date else ()
+        # Clamp the upper bound to the plan window so a lower-tier plan's "latest
+        # FY" is the latest disclosure within its entitled window.
+        plan_min, plan_max = self._plan_bounds()
+        upper = as_of_date
+        if plan_max and (upper is None or upper > plan_max):
+            upper = plan_max
+        bound_clause = ""
+        params_list: list[str] = []
+        if upper:
+            bound_clause += "  AND substr(disc_date, 1, 10) <= ? "
+            params_list.append(upper)
+        if plan_min:
+            bound_clause += "  AND substr(disc_date, 1, 10) >= ? "
+            params_list.append(plan_min)
+        params: tuple[str, ...] = tuple(params_list)
         sql = (
             "SELECT fs.code, fs.data FROM fins_summary fs "
             "INNER JOIN ("
             "  SELECT code, MAX(substr(disc_date, 1, 10)) AS max_date FROM fins_summary "
             f" WHERE ({_fy_cond})"
-            f"{aod_filter}"
+            f"{bound_clause}"
             " GROUP BY code"
             ") AS latest ON fs.code = latest.code AND substr(fs.disc_date, 1, 10) = latest.max_date "
             f"WHERE ({_fy_cond})"
@@ -1416,14 +1438,27 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return {}
+        # Restrict the per-code MAX(date) to the plan window so a lower-tier plan
+        # does not see embargoed / out-of-retention margin rows.
+        plan_min, plan_max = self._plan_bounds()
+        conds: list[str] = []
+        params: list[str] = []
+        if plan_max:
+            conds.append("date <= ?")
+            params.append(plan_max)
+        if plan_min:
+            conds.append("date >= ?")
+            params.append(plan_min)
+        inner_where = ("WHERE " + " AND ".join(conds) + " ") if conds else ""
         sql = (
             "SELECT m.code, m.data FROM markets_margin_interest m "
             "INNER JOIN ("
-            "  SELECT code, MAX(date) AS max_date FROM markets_margin_interest GROUP BY code"
+            f"  SELECT code, MAX(date) AS max_date FROM markets_margin_interest {inner_where}"
+            "GROUP BY code"
             ") latest ON m.code = latest.code AND m.date = latest.max_date"
         )
         try:
-            rows = conn.execute(sql).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         except Exception:
             return {}
         result: dict[str, dict] = {}
@@ -1544,8 +1579,21 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return {}
-        aod_filter = "WHERE date <= ? " if as_of_date else ""
-        params: tuple | tuple[str] = (as_of_date,) if as_of_date else ()
+        # Clamp the upper bound to the plan window so a Free user's "latest"
+        # close is the latest session at/before their 12-week delay, not today.
+        plan_min, plan_max = self._plan_bounds()
+        upper = as_of_date
+        if plan_max and (upper is None or upper > plan_max):
+            upper = plan_max
+        conds: list[str] = []
+        params: list[str] = []
+        if upper:
+            conds.append("date <= ?")
+            params.append(upper)
+        if plan_min:
+            conds.append("date >= ?")
+            params.append(plan_min)
+        inner_where = ("WHERE " + " AND ".join(conds)) if conds else ""
         try:
             rows = conn.execute(
                 "SELECT code, "
@@ -1554,7 +1602,7 @@ class CacheStore:
                 "    NULLIF(json_extract(data, '$.C'), '')"
                 "  ) AS close "
                 "FROM equities_bars_daily "
-                f"WHERE date = (SELECT MAX(date) FROM equities_bars_daily {aod_filter})",
+                f"WHERE date = (SELECT MAX(date) FROM equities_bars_daily {inner_where})",
                 params,
             ).fetchall()
         except Exception:
