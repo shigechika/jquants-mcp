@@ -5,6 +5,19 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.43.5](https://github.com/shigechika/jquants-mcp/compare/v0.43.4...v0.43.5) (2026-05-29)
+
+
+### Bug Fixes
+
+* **cache:** make get_div_ann_map deterministic for duplicate same-day rows ([#428](https://github.com/shigechika/jquants-mcp/issues/428)) ([1d59d09](https://github.com/shigechika/jquants-mcp/commit/1d59d099e56885f1e5616587f12207d159842f15))
+* **screener:** apply fiscal-year-end pre-split DivAnn correction to consecutive-increase ([#425](https://github.com/shigechika/jquants-mcp/issues/425)) ([b7f2ac0](https://github.com/shigechika/jquants-mcp/commit/b7f2ac0e516a9bf83f8d83a3c08fc4ba36f3f795))
+
+
+### Documentation
+
+* correct Cache Plan Scoping section to reflect dropped plan column ([#427](https://github.com/shigechika/jquants-mcp/issues/427)) ([244a038](https://github.com/shigechika/jquants-mcp/commit/244a038d2c871fe7965b911f28fd687ed337804a))
+
 ## [0.43.4](https://github.com/shigechika/jquants-mcp/compare/v0.43.3...v0.43.4) (2026-05-29)
 
 
