@@ -92,29 +92,29 @@ class OAuthDebugMiddleware(BaseHTTPMiddleware):
 
 mcp = FastMCP("jquants-mcp")
 
-# 共有グローバル変数 — 初回リクエスト時に遅延初期化
+# Shared global state — lazily initialized on the first request.
 _settings: Settings | None = None
 _cache: CacheStore | None = None
 
-# シングルユーザー用グローバルクライアント（Bearer トークン / 認証なしモード）
+# Single-user global client (Bearer token / no-auth mode).
 _client: JQuantsClient | None = None
 
-# マルチユーザー用クライアントプール: user_id → JQuantsClient（認証済みユーザーごとに1つ）
+# Multi-user client pool: user_id -> JQuantsClient (one per authenticated user).
 _user_clients: dict[str, JQuantsClient] = {}
 
-# 古いクライアント削除用の最終使用タイムスタンプ: user_id → monotonic タイムスタンプ
+# Last-used timestamps for stale-client eviction: user_id -> monotonic timestamp.
 _user_client_last_used: dict[str, float] = {}
 
-# 前回の古いクライアントクリーンアップ実行時のタイムスタンプ（monotonic）
+# Timestamp of the last stale-client cleanup run (monotonic).
 _last_cleanup: float = 0.0
 
 # Per-user rate limiter (multi-user mode only). Lazily initialized.
 _rate_limiter: Any | None = None
 
-# シングルユーザーモード: プラン自動検出が完了済みかどうか
+# Single-user mode: whether plan auto-detection has completed.
 _plan_detected: bool = False
 
-# クリーンアップは最大5分に1回実行
+# Run cleanup at most once every 5 minutes.
 _CLEANUP_INTERVAL = 300
 
 # Pub/Sub reload state
@@ -475,11 +475,11 @@ async def _ensure_plan_detected(client: JQuantsClient) -> None:
 
     settings = _get_settings()
     if settings.jquants_plan:
-        # 明示的に設定済み → 検出不要
+        # Explicitly configured -> no detection needed.
         _plan_detected = True
         return
 
-    _plan_detected = True  # リトライしない（失敗時は free にフォールバック）
+    _plan_detected = True  # Do not retry (fall back to free on failure).
 
     from .validation import detect_plan
 
@@ -493,7 +493,7 @@ async def _ensure_plan_detected(client: JQuantsClient) -> None:
     settings.jquants_plan = detected
     client.update_rate_limit(detected)
 
-    # CacheStore が既に初期化されていれば更新
+    # Update the CacheStore if it is already initialized.
     if _cache is not None:
         _cache.default_plan = detected
 
@@ -562,7 +562,7 @@ async def _get_user_client() -> JQuantsClient:
 
     token = get_access_token()
 
-    # 認証なしまたは静的 Bearer トークン → グローバルクライアントを使用
+    # No auth or static Bearer token -> use the global client.
     if token is None or token.client_id == "bearer":
         client = _get_client()
         await _ensure_plan_detected(client)
@@ -593,11 +593,11 @@ async def _get_user_client() -> JQuantsClient:
 
     user_db = _get_user_db()
 
-    # encryption_key 未設定 → 全 OAuth ユーザーでグローバルクライアントを共有
+    # encryption_key unset -> all OAuth users share the global client.
     if user_db is None:
         return _get_client()
 
-    # 定期的に古いクライアントを削除
+    # Periodically evict stale clients.
     now_mono = time.monotonic()
     if now_mono - _last_cleanup > _CLEANUP_INTERVAL:
         await _evict_stale_clients()
@@ -625,7 +625,7 @@ async def _get_user_client() -> JQuantsClient:
     user = user_db.get_user(user_id)
     if user is None:
         if user_db.has_corrupted_key(user_id):
-            # DB にキーは存在するが復号に失敗 — 対処方法を提示するエラーを返す
+            # Key exists in the DB but decryption failed — return an error explaining how to recover.
             raise DecryptionError()
         if _get_settings().cache_bypass_auth:
             # Bypass: fall back to global client so cache reads succeed without
@@ -651,7 +651,7 @@ async def _get_user_client() -> JQuantsClient:
 
 
 # ------------------------------------------------------------------
-# ユーティリティツール
+# Utility tools
 # ------------------------------------------------------------------
 
 
@@ -676,7 +676,7 @@ def health_check() -> dict[str, Any]:
     has_key = bool(settings.jquants_api_key)
     plan = settings.jquants_plan or "auto (not yet detected)"
 
-    # マルチユーザーモードでは実際のユーザーのプランを解決
+    # In multi-user mode, resolve the actual user's plan.
     token = get_access_token()
     if token is not None and token.client_id != "bearer":
         user_db = _get_user_db()
@@ -729,7 +729,7 @@ def cache_status() -> dict[str, Any]:
 
     result = _get_cache().status()
 
-    # マルチユーザーモードでは実際のユーザーのプランを解決
+    # In multi-user mode, resolve the actual user's plan.
     token = get_access_token()
     if token is not None and token.client_id != "bearer":
         user_db = _get_user_db()
@@ -811,11 +811,11 @@ async def register_api_key(api_key: str) -> dict[str, Any]:
     plan = "free"
     user_db.save_user(User(user_id=user_id, api_key=api_key, plan=plan))
 
-    # キャッシュされたクライアントを無効化して次回呼び出しで新しいキーを使用
+    # Invalidate the cached client so the next call uses the new key.
     _user_clients.pop(user_id, None)
     _user_client_last_used.pop(user_id, None)
 
-    # プラン固有のエンドポイントをプローブして実際のプランを自動検出
+    # Probe plan-specific endpoints to auto-detect the actual plan.
     from .audit import audit
     from .config import Settings as _Settings
     from .validation import detect_plan
@@ -891,7 +891,7 @@ async def delete_api_key() -> dict[str, Any]:
 
 
 # ------------------------------------------------------------------
-# ツール登録
+# Tool registration
 # ------------------------------------------------------------------
 
 
@@ -936,7 +936,7 @@ register_settings_routes(mcp, _get_user_db, _user_clients, _user_client_last_use
 
 
 # ------------------------------------------------------------------
-# サーバー起動
+# Server startup
 # ------------------------------------------------------------------
 
 
@@ -981,12 +981,12 @@ def run_server(
             # OSError: platform without SIGHUP (e.g. Windows)
             logger.warning("Could not install SIGHUP handler: %s", e)
 
-        # 認証プロバイダー作成前に CLI オーバーライドを設定に適用
+        # Apply CLI overrides to settings before creating the auth provider.
         settings = _get_settings()
         ssl_certfile = ssl_certfile or settings.ssl_certfile
         ssl_keyfile = ssl_keyfile or settings.ssl_keyfile
 
-        # OAuth/Bearer 設定は CLI オーバーライドが設定ファイルより優先
+        # For OAuth/Bearer settings, CLI overrides take precedence over the config file.
         if bearer_token:
             settings.bearer_token = bearer_token
         if github_client_id:
@@ -996,7 +996,7 @@ def run_server(
         if oauth_base_url:
             settings.oauth_base_url = oauth_base_url
 
-        # 認証の設定
+        # Configure authentication.
         from .auth import create_auth_provider
 
         auth_provider = create_auth_provider(settings)
@@ -1008,7 +1008,7 @@ def run_server(
                 "Set bearer_token or OAuth provider for security."
             )
 
-        # TLS 設定
+        # Configure TLS.
         uvicorn_config: dict[str, Any] = {}
         if ssl_certfile and ssl_keyfile:
             uvicorn_config["ssl_certfile"] = ssl_certfile

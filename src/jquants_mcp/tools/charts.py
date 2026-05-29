@@ -44,7 +44,7 @@ from ..validators import (
 logger = logging.getLogger(__name__)
 
 
-# JP convention favours 5 / 25 / 75 (短期/中期/長期); US convention is
+# JP convention favours 5 / 25 / 75 (short/mid/long term); US convention is
 # closer to 20 / 50 / 200. Accept both families so JP traders and
 # international users don't have to fight defaults.
 _VALID_INDICATORS: frozenset[str] = frozenset(
@@ -169,8 +169,8 @@ def _brief_company_name(name: str) -> str:
     for t in tokens:
         if t.lower() in _ETF_STANDALONE:
             continue
-        t = _ETF_SUFFIX_RE.sub("", t)  # iFreeETF → iFree
-        t = _ETF_PREFIX_RE.sub("", t)  # ETF(年1回) → (年1回)
+        t = _ETF_SUFFIX_RE.sub("", t)  # iFreeETF -> iFree
+        t = _ETF_PREFIX_RE.sub("", t)  # ETF(annual) -> (annual)
         if t:
             cleaned.append(t)
     name = re.sub(r"\s+", " ", " ".join(cleaned)).strip()

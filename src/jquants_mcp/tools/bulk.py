@@ -21,7 +21,7 @@ from ..tool_annotations import READ_ONLY_API
 
 logger = logging.getLogger(__name__)
 
-# /bulk/list の endpoint パラメータに指定可能な値
+# Accepted values for the /bulk/list endpoint parameter
 VALID_BULK_ENDPOINTS = [
     "/equities/master",
     "/equities/bars/daily",
@@ -121,7 +121,7 @@ def register(
         """
         client: JQuantsClient = await get_client()
 
-        # 署名付き URL は一時的なため、キャッシュしない
+        # Signed URLs are temporary, so do not cache them
         try:
             response = await client.get("/bulk/get", {"key": key})
             url = response.get("url", "")

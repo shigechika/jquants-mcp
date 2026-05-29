@@ -149,7 +149,7 @@ def create_auth_provider(settings: Settings) -> OAuthProvider | TokenVerifier | 
     """
     provider_type = getattr(settings, "oauth_provider", "github").lower()
 
-    # Google OAuth 認証
+    # Google OAuth authentication
     if provider_type == "google":
         if settings.google_client_id and settings.google_client_secret and settings.oauth_base_url:
             return _create_google_provider(settings)
@@ -158,11 +158,11 @@ def create_auth_provider(settings: Settings) -> OAuthProvider | TokenVerifier | 
             "(google_client_id, google_client_secret, oauth_base_url)"
         )
 
-    # GitHub OAuth（デフォルト）
+    # GitHub OAuth (default)
     if settings.github_client_id and settings.github_client_secret and settings.oauth_base_url:
         return _create_github_provider(settings)
 
-    # Bearer token フォールバック
+    # Bearer token fallback
     if settings.bearer_token:
         logger.info("Initializing Bearer token authentication")
         return BearerTokenVerifier(settings.bearer_token)

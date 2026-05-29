@@ -123,7 +123,7 @@ async def _get_topix_with_cache(
 ) -> dict[str, Any]:
     """Retrieve TOPIX daily bars with Tier 1 cache."""
     try:
-        # キャッシュから既存データを取得
+        # Fetch existing data from the cache
         cached_data = cache.get_rows(
             "indices_bars_daily_topix",
             key_filter={},
@@ -131,7 +131,7 @@ async def _get_topix_with_cache(
             date_to=date_to,
         )
 
-        # キャッシュ済み日付の確認
+        # Check which dates are already cached
         cached_dates = cache.get_cached_dates(
             "indices_bars_daily_topix",
             key_filter={},
@@ -150,10 +150,10 @@ async def _get_topix_with_cache(
         # Only accept "YYYY-MM-DD" (10) or "YYYYMMDD" (8) — the two formats the API accepts.
         valid_dates = {d for d in cached_dates if d and d[0].isdigit() and len(d) in (8, 10)}
         if valid_dates:
-            # 増分取得: キャッシュの最新日付以降を取得
+            # Incremental fetch: retrieve everything after the latest cached date
             latest_cached = max(valid_dates)
             if date_to and latest_cached >= date_to:
-                # 全期間キャッシュ済み
+                # Entire range already cached
                 logger.info("TOPIX fully cached (%d rows)", len(cached_data))
                 return {"count": len(cached_data), "data": cached_data, "source": "cache"}
             params["from"] = latest_cached
@@ -167,7 +167,7 @@ async def _get_topix_with_cache(
                 key_columns=["Date"],
             )
 
-        # マージ（重複排除）
+        # Merge (dedup)
         seen_keys: set[str] = set()
         merged: list[dict[str, Any]] = []
         for row in api_data:

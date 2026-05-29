@@ -178,7 +178,7 @@ def register(
             if short_v is not None and short_v > 0 and long_v is not None:
                 margin_ratio = round(long_v / short_v, 2)
 
-        # --- 6. Sector short-sale ratio (空売り比率) ----------------------------
+        # --- 6. Sector short-sale ratio ----------------------------
         sector_short_sale_ratio: float | None = None
         sector_short_ratio_date: str | None = None
         s33_code = sector_info.get("s33", "")

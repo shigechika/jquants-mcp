@@ -129,11 +129,11 @@ def register(
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
-        # code 指定 + 期間指定の場合は Tier 1 キャッシュで増分取得
+        # code + date range: use the Tier 1 cache for incremental fetch
         if code and (date_from or date_to or date):
             return await _get_bars_daily_with_cache(client, cache, code, date, date_from, date_to)
 
-        # date のみ指定（全銘柄）の場合は Tier 2 キャッシュ
+        # date only (all stocks): use the Tier 2 cache
         params = {"code": code, "date": date, "from": date_from, "to": date_to}
         cache_key = make_cache_key("/equities/bars/daily", params)
         cached = cache.get_response(cache_key)
@@ -228,7 +228,7 @@ def register(
 
         client: JQuantsClient = await get_client()
 
-        # リアルタイムデータのためキャッシュしない
+        # Do not cache: this is real-time data
         try:
             data = await client.get_all_pages("/equities/bars/daily/am", {"code": code})
             return {"count": len(data), "data": data}
@@ -497,7 +497,7 @@ def register(
 
 
 # ------------------------------------------------------------------
-# Tier 1 キャッシュ: 株価四本値の増分取得
+# Tier 1 cache: incremental fetch of daily OHLC bars
 # ------------------------------------------------------------------
 
 
@@ -510,11 +510,11 @@ async def _get_bars_daily_with_cache(
     date_to: str | None,
 ) -> dict[str, Any]:
     """Retrieve daily stock bars (OHLC) with Tier 1 cache."""
-    # 4桁コードを5桁に正規化（普通株式: 末尾0）
+    # Normalize 4-digit codes to 5 digits (ordinary shares: trailing 0)
     cache_code = code + "0" if len(code) == 4 else code
 
     try:
-        # キャッシュから既存データを取得（5桁コードで検索）
+        # Fetch existing data from the cache (look up by 5-digit code)
         effective_date = date or date_from
         cached_data = cache.get_rows(
             "equities_bars_daily",
@@ -523,7 +523,7 @@ async def _get_bars_daily_with_cache(
             date_to=date_to,
         )
 
-        # API にリクエスト（元のコードをそのまま渡す）
+        # Request from the API (pass the original code as-is)
         params: dict[str, Any] = {"code": code}
         if date:
             params["date"] = date
@@ -532,7 +532,7 @@ async def _get_bars_daily_with_cache(
         if date_to:
             params["to"] = date_to
 
-        # キャッシュ済み日付の確認
+        # Check which dates are already cached
         cached_dates = cache.get_cached_dates(
             "equities_bars_daily",
             key_filter={"code": cache_code},
@@ -541,14 +541,14 @@ async def _get_bars_daily_with_cache(
         )
 
         if cached_dates and not date:
-            # 増分取得: キャッシュにない期間のみ API から取得
+            # Incremental fetch: only request the uncached period from the API
             latest_cached = max(cached_dates)
             if date_to and latest_cached >= date_to:
-                # 全期間キャッシュ済み
+                # Entire range already cached
                 logger.info("全データキャッシュ済み: code=%s (%d件)", code, len(cached_data))
                 return {"count": len(cached_data), "data": cached_data, "source": "cache"}
 
-            # 最新日以降を取得
+            # Fetch everything after the latest cached date
             params["from"] = latest_cached
             if date_to:
                 params["to"] = date_to
@@ -556,7 +556,7 @@ async def _get_bars_daily_with_cache(
         try:
             api_data = await client.get_all_pages("/equities/bars/daily", params)
         except APIError:
-            # API 失敗でもキャッシュデータがあればそれを返す
+            # Return cached data even on API failure, if available
             if cached_data:
                 logger.info(
                     "API失敗、キャッシュデータを返却: code=%s (%d件)", code, len(cached_data)
@@ -565,11 +565,11 @@ async def _get_bars_daily_with_cache(
             raise
 
         if api_data:
-            # 株式分割チェック
+            # Stock split check
             latest_row = api_data[-1]
             adj_factor = latest_row.get("AdjFactor")
             if not cache.check_adj_factor(cache_code, adj_factor):
-                # 分割検知 → キャッシュ無効化して全件再取得
+                # Split detected -> invalidate the cache and refetch all rows
                 cache.invalidate_rows("equities_bars_daily", {"code": cache_code})
                 logger.info("株式分割検知、キャッシュ再取得: code=%s", code)
                 params_full = {"code": code}
@@ -582,7 +582,7 @@ async def _get_bars_daily_with_cache(
                 api_data = await client.get_all_pages("/equities/bars/daily", params_full)
                 cached_data = []
 
-            # キャッシュに保存
+            # Store in the cache
             cache.put_rows(
                 "equities_bars_daily",
                 api_data,
@@ -590,7 +590,7 @@ async def _get_bars_daily_with_cache(
                 adj_factor_key="AdjFactor",
             )
 
-        # キャッシュデータと API データをマージ（重複排除）
+        # Merge cached data and API data (dedup)
         seen_keys: set[str] = set()
         merged: list[dict[str, Any]] = []
         for row in api_data:
@@ -604,7 +604,7 @@ async def _get_bars_daily_with_cache(
                 seen_keys.add(key)
                 merged.append(row)
 
-        # 日付でソート
+        # Sort by date
         merged.sort(key=lambda r: r.get("Date", ""))
 
         source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")

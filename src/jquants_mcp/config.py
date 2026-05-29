@@ -23,7 +23,7 @@ except ModuleNotFoundError:
 
 logger = logging.getLogger(__name__)
 
-# プラン別レート制限（リクエスト/分）
+# Per-plan rate limits (requests/minute).
 RATE_LIMITS: dict[str, int] = {
     "free": 5,
     "light": 60,
@@ -42,7 +42,7 @@ class _ConfigDef(NamedTuple):
     default: str
 
 
-# config.ini のキー → (セクション, キー名, 環境変数名, デフォルト値)
+# config.ini key -> (section, key, env var, default value)
 _CONFIG_DEFS: list[_ConfigDef] = [
     # (attr_name, section, key, env_var, default)
     _ConfigDef("jquants_api_key", "jquants", "api_key", "JQUANTS_API_KEY", ""),
@@ -57,21 +57,21 @@ _CONFIG_DEFS: list[_ConfigDef] = [
     _ConfigDef("ssl_certfile", "server", "ssl_certfile", "SSL_CERTFILE", ""),
     _ConfigDef("ssl_keyfile", "server", "ssl_keyfile", "SSL_KEYFILE", ""),
     _ConfigDef("bearer_token", "server", "bearer_token", "MCP_BEARER_TOKEN", ""),
-    # OAuth プロバイダー選択（"github" or "google"）
+    # OAuth provider selection ("github" or "google").
     _ConfigDef("oauth_provider", "oauth", "provider", "OAUTH_PROVIDER", "github"),
-    # GitHub OAuth 2.1 設定
+    # GitHub OAuth 2.1 settings
     _ConfigDef("github_client_id", "oauth", "github_client_id", "GITHUB_CLIENT_ID", ""),
     _ConfigDef("github_client_secret", "oauth", "github_client_secret", "GITHUB_CLIENT_SECRET", ""),
-    # Google OAuth 2.0 設定
+    # Google OAuth 2.0 settings
     _ConfigDef("google_client_id", "oauth", "google_client_id", "GOOGLE_CLIENT_ID", ""),
     _ConfigDef("google_client_secret", "oauth", "google_client_secret", "GOOGLE_CLIENT_SECRET", ""),
-    # 共通 OAuth settings
+    # Common OAuth settings
     _ConfigDef("oauth_base_url", "oauth", "base_url", "OAUTH_BASE_URL", ""),
     _ConfigDef("oauth_jwt_signing_key", "oauth", "jwt_signing_key", "OAUTH_JWT_SIGNING_KEY", ""),
     _ConfigDef(
         "oauth_require_consent", "oauth", "require_consent", "OAUTH_REQUIRE_CONSENT", "true"
     ),
-    # マルチユーザー: ユーザーごとの API キー保存用暗号化キー
+    # Multi-user: encryption key for storing per-user API keys.
     _ConfigDef("encryption_key", "server", "encryption_key", "MCP_ENCRYPTION_KEY", ""),
     # Rotation window: previous encryption key — allowed to decrypt old blobs
     # while the primary key re-encrypts new writes. Leave empty outside a rotation.
@@ -97,7 +97,7 @@ _CONFIG_DEFS: list[_ConfigDef] = [
     _ConfigDef("cache_bypass_auth", "server", "cache_bypass_auth", "CACHE_BYPASS_AUTH", "false"),
 ]
 
-# 型変換テーブル
+# Type-conversion table
 _TYPE_MAP: dict[str, type] = {
     "max_retries": int,
     "retry_base_delay": float,
@@ -106,7 +106,7 @@ _TYPE_MAP: dict[str, type] = {
     "rate_limit_burst": int,
 }
 
-# 真偽値設定 — 文字列変換後に bool として扱う
+# Boolean settings — treated as bool after string conversion.
 _BOOL_SETTINGS: frozenset[str] = frozenset({"oauth_require_consent", "cache_bypass_auth"})
 
 # J-Quants official config file default path. Tests patch this directly,
@@ -186,12 +186,12 @@ class Settings:
     def __init__(self, **overrides: str | int | float) -> None:
         config = _load_config_files()
 
-        # jquants-api.toml から API キーを読み取り（最低優先のフォールバック）
+        # Read the API key from jquants-api.toml (lowest-priority fallback).
         toml_api_key = _read_jquants_toml()
 
         for defn in _CONFIG_DEFS:
             attr, section, key, env_var, default = defn
-            # 優先順位: overrides > env > config.ini > jquants-api.toml > default
+            # Priority: overrides > env > config.ini > jquants-api.toml > default
             if attr in overrides:
                 value = overrides[attr]
             elif os.environ.get(env_var) is not None:
@@ -200,13 +200,13 @@ class Settings:
                 try:
                     value = config.get(section, key)
                 except (configparser.NoSectionError, configparser.NoOptionError):
-                    # api_key は jquants-api.toml からのフォールバック
+                    # api_key falls back to jquants-api.toml.
                     if attr == "jquants_api_key" and toml_api_key:
                         value = toml_api_key
                     else:
                         value = default
 
-            # 型変換（overrides から直接渡された場合は既に正しい型の可能性あり）
+            # Type conversion (values passed directly via overrides may already be the correct type).
             target_type = _TYPE_MAP.get(attr)
             if target_type and not isinstance(value, target_type):
                 value = target_type(value)
