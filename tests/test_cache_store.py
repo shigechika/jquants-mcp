@@ -1095,6 +1095,27 @@ class TestGetDivAnnMapTimestamp:
         assert len(disc) == 10 and disc[4] == "-" and disc[7] == "-"
         store.close()
 
+    def test_duplicate_same_day_rows_collapse_deterministically(self, tmp_path: Path):
+        """timestamp 行と clean 行が同日共存しても 1 エントリに決定的に集約される。
+
+        GROUP BY + MAX 導入前は JOIN が両行を返し、Python の dict 上書きで
+        どちらの DivAnn が残るか非決定的だった。導入後は MAX を取るので、
+        挿入順に関わらず常に 20.0 が返る。
+        """
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        # Insert clean-date row first, timestamp row second (reverse of the other test).
+        self._insert(conn, "12340", "2026-05-16", div_ann=20.0)
+        self._insert(conn, "12340", "2026-05-16 00:00:00", div_ann=10.0)
+        conn.commit()
+
+        result = store.get_div_ann_map()
+        assert "12340" in result
+        val, disc = result["12340"]
+        assert val == 20.0, "duplicate same-day rows must collapse to a deterministic MAX"
+        assert disc == "2026-05-16"
+        store.close()
+
 
 class TestGetForwardDivAnnMapTimestamp:
     """get_forward_div_ann_map: timestamp-format disc_date が混在しても正しく選ばれる。"""
