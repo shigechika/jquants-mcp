@@ -1546,3 +1546,45 @@ class TestLatestReadersPlanGate:
         margin = cache.get_all_latest_margin_interest()
         assert margin.get("12340", {}).get("LongVol") == 111
         cache.close()
+
+    def test_div_ann_map_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "fins_summary",
+            [
+                {"Code": "12340", "DiscDate": recent, "DivAnn": 999},
+                {"Code": "12340", "DiscDate": entitled, "DivAnn": 111},
+            ],
+            key_columns=["Code", "DiscDate"],
+        )
+        val, disc = cache.get_div_ann_map()["12340"]
+        assert val == 111.0 and disc == entitled  # embargoed recent row excluded
+        cache.close()
+
+    def test_forward_div_ann_map_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "fins_summary",
+            [
+                {
+                    "Code": "12340",
+                    "DiscDate": recent,
+                    "DocType": "FYFinancialStatements_x",
+                    "NxFDivAnn": 999,
+                },
+                {
+                    "Code": "12340",
+                    "DiscDate": entitled,
+                    "DocType": "FYFinancialStatements_x",
+                    "NxFDivAnn": 111,
+                },
+            ],
+            key_columns=["Code", "DiscDate"],
+        )
+        val, disc = cache.get_forward_div_ann_map()["12340"]
+        assert val == 111.0 and disc == entitled  # embargoed recent forecast excluded
+        cache.close()

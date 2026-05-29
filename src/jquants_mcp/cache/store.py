@@ -765,6 +765,17 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return {}
+        # Clamp the latest disclosure to the plan window so a lower-tier plan's
+        # trailing DivAnn does not come from an embargoed / out-of-retention row.
+        plan_min, plan_max = self._plan_bounds()
+        bound_clause = ""
+        params: list[str] = []
+        if plan_max:
+            bound_clause += "    AND substr(disc_date, 1, 10) <= ? "
+            params.append(plan_max)
+        if plan_min:
+            bound_clause += "    AND substr(disc_date, 1, 10) >= ? "
+            params.append(plan_min)
         try:
             # GROUP BY + MAX collapses multiple rows that share the same normalised
             # disc_date for a code: legacy timestamp duplicates ("2026-05-13" vs
@@ -782,9 +793,11 @@ class CacheStore:
                 "  FROM fins_summary "
                 "  WHERE json_extract(data, '$.DivAnn') IS NOT NULL "
                 "    AND json_extract(data, '$.DivAnn') != '' "
+                f"{bound_clause}"
                 "  GROUP BY code"
                 ") m ON f.code = m.code AND substr(f.disc_date, 1, 10) = m.md "
-                "GROUP BY f.code, m.md"
+                "GROUP BY f.code, m.md",
+                params,
             ).fetchall()
         except Exception:
             return {}
@@ -833,10 +846,24 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return {}
-        # as_of_date filter applied to BOTH fy_latest and inner subquery m so
-        # the guard `fl.fy_md <= m.md` remains consistent (both see the same horizon).
-        aod_filter = "  AND substr(disc_date, 1, 10) <= ? " if as_of_date else ""
-        params = (as_of_date, as_of_date) if as_of_date else ()
+        # Date bound applied to BOTH fy_latest and inner subquery m so the guard
+        # `fl.fy_md <= m.md` stays consistent (both see the same horizon). The
+        # upper bound folds in the plan window so a lower-tier plan does not see
+        # an embargoed / out-of-retention forward forecast.
+        plan_min, plan_max = self._plan_bounds()
+        upper = as_of_date
+        if plan_max and (upper is None or upper > plan_max):
+            upper = plan_max
+        bound_clause = ""
+        _bound_params: list[str] = []
+        if upper:
+            bound_clause += "  AND substr(disc_date, 1, 10) <= ? "
+            _bound_params.append(upper)
+        if plan_min:
+            bound_clause += "  AND substr(disc_date, 1, 10) >= ? "
+            _bound_params.append(plan_min)
+        # The bound is interpolated twice (fy_latest CTE + subquery m).
+        params = tuple(_bound_params * 2)
         try:
             # Annual results generate TWO rows on the same disc_date:
             #   FYFinancialStatements: NxFDivAnn=<next-FY forecast>, FDivAnn=''
@@ -863,7 +890,7 @@ class CacheStore:
                 "  FROM fins_summary "
                 "  WHERE (json_extract(data, '$.DocType') LIKE 'FYFinancial%' "
                 "     OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%')"
-                f"{aod_filter}"
+                f"{bound_clause}"
                 "  GROUP BY code"
                 ") "
                 "SELECT f.code, "
@@ -879,7 +906,7 @@ class CacheStore:
                 "    NULLIF(json_extract(data, '$.NxFDivAnn'), ''), "
                 "    NULLIF(json_extract(data, '$.FDivAnn'), '')"
                 "  ) IS NOT NULL "
-                f"{aod_filter}"
+                f"{bound_clause}"
                 "  GROUP BY code"
                 ") m ON f.code = m.code AND substr(f.disc_date, 1, 10) = m.md "
                 "LEFT JOIN fy_latest fl ON f.code = fl.code "
