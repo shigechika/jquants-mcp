@@ -724,11 +724,13 @@ class CacheStore:
         if conn is None:
             return {}
         try:
-            # GROUP BY + MAX collapses duplicate physical rows that share the same
-            # normalised disc_date — e.g. legacy "2026-05-13" and "2026-05-13 00:00:00"
-            # coexisting under the (code, disc_date) primary key. Without it the JOIN
-            # emits both rows and the Python dict-overwrite below would pick one
-            # non-deterministically.
+            # GROUP BY + MAX collapses multiple rows that share the same normalised
+            # disc_date for a code: legacy timestamp duplicates ("2026-05-13" vs
+            # "2026-05-13 00:00:00", which coexist under the (code, disc_date) primary
+            # key) and same-day multi-document filings (FYFinancialStatements +
+            # DividendForecastRevision). Without it the JOIN emits every such row and
+            # the Python dict-overwrite below would pick one non-deterministically.
+            # CAST('' AS REAL) = 0.0, so empty-DivAnn rows never win over a real value.
             rows = conn.execute(
                 "SELECT f.code, "
                 "  MAX(CAST(json_extract(f.data, '$.DivAnn') AS REAL)) AS div_ann, m.md "
