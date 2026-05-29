@@ -42,7 +42,7 @@ class SQLiteKeyValueStore:
         self._conn: sqlite3.Connection | None = None
 
     # ------------------------------------------------------------------
-    # 内部ヘルパー
+    # Internal helpers
     # ------------------------------------------------------------------
 
     def _ensure_connection(self) -> sqlite3.Connection:
@@ -58,7 +58,7 @@ class SQLiteKeyValueStore:
         return collection if collection else _DEFAULT_COLLECTION
 
     def _ensure_table(self, conn: sqlite3.Connection, table: str) -> None:
-        # テーブル名はコレクション名から安全に生成する（英数字とアンダースコアのみ許可）
+        # Derive a safe table name from the collection name (alphanumerics and underscores only)
         safe = _safe_table_name(table)
         conn.execute(
             f"""
@@ -84,7 +84,7 @@ class SQLiteKeyValueStore:
 
         expires_at: float | None = row["expires_at"]
         if expires_at is not None and time.time() > expires_at:
-            # 期限切れエントリを削除
+            # Delete the expired entry
             conn.execute(f'DELETE FROM "{safe}" WHERE key = ?', (key,))
             conn.commit()
             return None, None
@@ -93,7 +93,7 @@ class SQLiteKeyValueStore:
         return value, expires_at
 
     # ------------------------------------------------------------------
-    # AsyncKeyValue プロトコル実装
+    # AsyncKeyValue protocol implementation
     # ------------------------------------------------------------------
 
     async def get(self, key: str, *, collection: str | None = None) -> dict[str, Any] | None:

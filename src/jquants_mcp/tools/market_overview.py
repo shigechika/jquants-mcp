@@ -1270,7 +1270,7 @@ def register(
         # 1. Core advance/decline summary.
         ad = _compute_advance_decline_summary(today_rows, prev_close_map)
 
-        # 2. 25-day advance/decline ratio (騰落レシオ).
+        # 2. 25-day advance/decline ratio.
         adr = _compute_advance_decline_ratio(by_date, session_dates_adr)
         adr_value = adr.get("ratio")
 
@@ -1394,7 +1394,7 @@ def register(
             "trend_signals": trend_signals,
         }
 
-        # 1h response cache so reloading "今日の相場" within the hour is instant.
+        # 1h response cache so reloading the briefing within the hour is instant.
         cache.put_response(cache_key, result, ttl_seconds=3600)
         return result
 

@@ -83,7 +83,7 @@ def register(
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
-        # いずれかのパラメータ指定ありの場合は Tier 1 キャッシュで増分取得
+        # When any parameter is given, use the Tier 1 cache for incremental fetch
         if code or date or date_from or date_to:
             return await _get_with_tier1_cache(
                 client,
@@ -98,7 +98,7 @@ def register(
                 date_to=date_to,
             )
 
-        # パラメータなし: Tier 2 フォールバック（API 失敗時は Tier 1 スナップショット）
+        # No parameters: Tier 2 fallback (Tier 1 snapshot when the API fails)
         result = await _tier2_fallback(
             client,
             cache,
@@ -254,7 +254,7 @@ def register(
             disc_date_to: End disclosure date for range query
             calc_date: Calculation date (YYYYMMDD or YYYY-MM-DD)
         """
-        # short_sale_report は Tier 2 のまま（同一銘柄+日付に複数報告者のレコードあり）
+        # short_sale_report stays on Tier 2 (multiple reporter records per code+date)
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -369,7 +369,7 @@ def register(
 
 
 # ------------------------------------------------------------------
-# Tier 1 キャッシュヘルパー: code+date / s33+date パターン
+# Tier 1 cache helper: code+date / s33+date patterns
 # ------------------------------------------------------------------
 
 
@@ -393,7 +393,7 @@ async def _get_with_tier1_cache(
         date_field: Date field name in the API response (e.g. "Date", "PubDate").
     """
     try:
-        # キーフィルタの構築
+        # Build the key filter
         key_filter: dict[str, str] = {}
         if key_value:
             cache_key_val = (
@@ -402,7 +402,7 @@ async def _get_with_tier1_cache(
             key_filter[key_name] = cache_key_val
 
         effective_date_from = date or date_from
-        # キャッシュから既存データを取得
+        # Fetch existing data from the cache
         cached_data = cache.get_rows(
             table,
             key_filter=key_filter,
@@ -410,7 +410,7 @@ async def _get_with_tier1_cache(
             date_to=date_to,
         )
 
-        # API パラメータの構築
+        # Build the API parameters
         params: dict[str, Any] = {}
         if key_value:
             params[key_name] = key_value
@@ -421,7 +421,7 @@ async def _get_with_tier1_cache(
         if date_to:
             params["to"] = date_to
 
-        # キャッシュ済み日付の確認
+        # Check which dates are already cached
         cached_dates = cache.get_cached_dates(
             table,
             key_filter=key_filter,
@@ -430,7 +430,7 @@ async def _get_with_tier1_cache(
         )
 
         if cached_dates and not date:
-            # 増分取得: キャッシュの最新日付以降を取得
+            # Incremental fetch: retrieve everything after the latest cached date
             latest_cached = max(cached_dates)
             if date_to and latest_cached >= date_to:
                 logger.info("%s 全データキャッシュ済み (%d件)", table, len(cached_data))
@@ -452,7 +452,7 @@ async def _get_with_tier1_cache(
                 key_columns=[key_column, date_field],
             )
 
-        # マージ（重複排除）: API データ優先
+        # Merge (dedup): API data takes priority
         seen_keys: set[str] = set()
         merged: list[dict[str, Any]] = []
         for row in api_data:
@@ -555,7 +555,7 @@ async def _tier2_fallback(
 
 
 # ------------------------------------------------------------------
-# Tier 1 キャッシュ: カレンダー（date のみ、Pattern C）
+# Tier 1 cache: calendar (date only, Pattern C)
 # ------------------------------------------------------------------
 
 
@@ -568,7 +568,7 @@ async def _get_calendar_with_cache(
 ) -> dict[str, Any]:
     """Retrieve market calendar with Tier 1 cache."""
     try:
-        # キャッシュから既存データを取得
+        # Fetch existing data from the cache
         cached_data = cache.get_rows(
             "markets_calendar",
             key_filter={},
@@ -576,7 +576,7 @@ async def _get_calendar_with_cache(
             date_to=date_to,
         )
 
-        # キャッシュ済み日付の確認
+        # Check which dates are already cached
         cached_dates = cache.get_cached_dates(
             "markets_calendar",
             key_filter={},
@@ -596,12 +596,12 @@ async def _get_calendar_with_cache(
             latest_cached = max(cached_dates)
             if date_to and latest_cached >= date_to:
                 logger.info("カレンダー全データキャッシュ済み (%d件)", len(cached_data))
-                # hol_div フィルタ適用
+                # Apply the hol_div filter
                 filtered = _filter_hol_div(cached_data, hol_div)
                 return {"count": len(filtered), "data": filtered, "source": "cache"}
             params["from"] = latest_cached
 
-        # カレンダーはページネーションなし
+        # The calendar endpoint has no pagination
         response = await client.get("/markets/calendar", params)
         api_data = response.get("data", [])
 
@@ -612,7 +612,7 @@ async def _get_calendar_with_cache(
                 key_columns=["Date"],
             )
 
-        # マージ（重複排除）
+        # Merge (dedup)
         seen_keys: set[str] = set()
         merged: list[dict[str, Any]] = []
         for row in api_data:
@@ -628,7 +628,7 @@ async def _get_calendar_with_cache(
 
         merged.sort(key=lambda r: r.get("Date", ""))
 
-        # hol_div フィルタ適用
+        # Apply the hol_div filter
         filtered = _filter_hol_div(merged, hol_div)
 
         source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")

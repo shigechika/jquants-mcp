@@ -9,14 +9,14 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives import hashes
 
-_SALT_BYTES = 16  # 128ビットランダムソルト、暗号化ごとに生成
-_IV_BYTES = 12  # AES-GCM 用 96ビット IV
+_SALT_BYTES = 16  # 128-bit random salt, generated per encryption
+_IV_BYTES = 12  # 96-bit IV for AES-GCM
 _ITERATIONS = 200_000
 
-# 新 blob フォーマットのバージョンマーカー（salt+iv+ct の前に1バイト付加）
+# Version marker for the new blob format (1 byte prepended before salt+iv+ct)
 _FORMAT_V2 = b"\x02"
 
-# レガシー固定ソルト — この変更前に作成された古い blob の復号のためにのみ保持
+# Legacy fixed salt — kept only to decrypt old blobs created before this change
 _LEGACY_SALT = b"jquants-dat-mcp-v1"
 
 
@@ -103,8 +103,8 @@ def decrypt(blob: str, passphrase: str | bytes) -> str:
     try:
         raw = base64.urlsafe_b64decode(blob.encode() + b"==")
 
-        # 新フォーマットを試行: FORMAT_V2(1) || SALT(16) || IV(12) || CT+TAG（最小45バイト）
-        min_v2_len = 1 + _SALT_BYTES + _IV_BYTES + 16  # 16 = GCM タグ+CT の最小サイズ
+        # Try the new format: FORMAT_V2(1) || SALT(16) || IV(12) || CT+TAG (min 45 bytes)
+        min_v2_len = 1 + _SALT_BYTES + _IV_BYTES + 16  # 16 = min size of GCM tag + CT
         if raw[:1] == _FORMAT_V2 and len(raw) >= min_v2_len:
             salt = raw[1 : 1 + _SALT_BYTES]
             iv = raw[1 + _SALT_BYTES : 1 + _SALT_BYTES + _IV_BYTES]
@@ -112,10 +112,10 @@ def decrypt(blob: str, passphrase: str | bytes) -> str:
             try:
                 return AESGCM(_pbkdf2(passphrase, salt)).decrypt(iv, ct, None).decode()
             except Exception:
-                # レガシー blob とのまれなバージョンバイト衝突 — レガシー処理にフォールスルー
+                # Rare version-byte collision with a legacy blob — fall through to legacy path
                 pass
 
-        # レガシーフォーマット: IV(12) || CT+TAG（固定ソルトから鍵導出）
+        # Legacy format: IV(12) || CT+TAG (key derived from the fixed salt)
         iv = raw[:_IV_BYTES]
         ct = raw[_IV_BYTES:]
         return AESGCM(_pbkdf2(passphrase, _LEGACY_SALT)).decrypt(iv, ct, None).decode()

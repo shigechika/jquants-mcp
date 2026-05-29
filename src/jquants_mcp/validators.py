@@ -5,18 +5,18 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# 銘柄コード:
-#   - 4-5 桁の数字（legacy 4桁、現行 5桁数字。例: 7203, 72030）
-#   - 4-5 桁の英数混じり (DDDU / DDDUD: 数字3 + 英大字1 + 数字 0 or 1。例: 130A, 130A0)
-# 英数混じりは新規上場で近年増加。jpx-tickers.csv (4438 件) で 340 件 (7.6%) を占める。
-# 4 桁形式は Kabutan / Yahoo!ファイナンス / JPX 公式の display 形式、
-# 5 桁形式は J-Quants API の正規化形（末尾 0 = ordinary share suffix）。
+# Stock code:
+#   - 4-5 digit numeric (legacy 4-digit, current 5-digit. e.g. 7203, 72030)
+#   - 4-5 char alphanumeric (DDDU / DDDUD: 3 digits + 1 uppercase letter + 0 or 1 digit. e.g. 130A, 130A0)
+# Alphanumeric codes have grown with recent IPOs: 340 of 4438 entries (7.6%) in jpx-tickers.csv.
+# The 4-char form is the display form used by Kabutan / Yahoo! Finance Japan / JPX,
+# the 5-char form is the J-Quants API normalized form (trailing 0 = ordinary share suffix).
 _CODE_RE = re.compile(r"^([0-9]{4,5}|[0-9]{3}[A-Z][0-9]?)$")
 
-# 日付: YYYYMMDD または YYYY-MM-DD
+# Date: YYYYMMDD or YYYY-MM-DD
 _DATE_RE = re.compile(r"^\d{4}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])$")
 
-# 有効な33業種コード（東証33業種分類、4桁ゼロ埋め）
+# Valid TSE 33-industry sector codes (zero-padded 4 digits)
 _VALID_SECTOR33_CODES = frozenset(
     [
         "0050",
@@ -55,7 +55,7 @@ _VALID_SECTOR33_CODES = frozenset(
     ]
 )
 
-# 有効な市場区分識別子
+# Valid market section identifiers
 _VALID_SECTIONS = frozenset({"TSEPrime", "TSEStandard", "TSEGrowth"})
 
 

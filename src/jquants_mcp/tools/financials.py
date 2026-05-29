@@ -170,11 +170,11 @@ def register(
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
-        # Tier 1 キャッシュ: code 指定時
+        # Tier 1 cache: when code is specified
         if code:
             return await _get_fins_summary_with_cache(client, cache, code, date)
 
-        # date のみ指定時は Tier 2 キャッシュ
+        # Tier 2 cache when only date is specified
         params = {"code": code, "date": date}
         cache_key = make_cache_key("/fins/summary", params)
         cached = cache.get_response(cache_key)
@@ -304,7 +304,7 @@ def register(
 
 
 # ------------------------------------------------------------------
-# Tier 1 キャッシュ: 財務サマリーの銘柄別キャッシュ
+# Tier 1 cache: per-code cache for financial summary
 # ------------------------------------------------------------------
 
 
@@ -337,7 +337,7 @@ async def _get_fins_summary_with_cache(
 ) -> dict[str, Any]:
     """Retrieve financial summary data with Tier 1 cache."""
     try:
-        # キャッシュ確認
+        # Check cache
         key_filter = {"code": code}
         if date:
             key_filter["disc_date"] = date
@@ -357,7 +357,7 @@ async def _get_fins_summary_with_cache(
                 _normalize_fy_date_fields(row)
             return {"count": len(adjusted), "data": adjusted, "source": "cache"}
 
-        # API から取得
+        # Fetch from API
         params: dict[str, Any] = {"code": code}
         if date:
             params["date"] = date
@@ -365,14 +365,14 @@ async def _get_fins_summary_with_cache(
         api_data = await client.get_all_pages("/fins/summary", params)
 
         if api_data:
-            # キャッシュに保存（DiscDate をキーに使用）
+            # Store in cache (keyed on DiscDate)
             cache.put_rows(
                 "fins_summary",
                 api_data,
                 key_columns=["Code", "DiscDate"],
             )
 
-        # マージ（date 指定なしの場合、キャッシュと API を統合）
+        # Merge (when date is not specified, combine cache and API)
         if not date and cached_data:
             seen_keys: set[str] = set()
             merged: list[dict[str, Any]] = []

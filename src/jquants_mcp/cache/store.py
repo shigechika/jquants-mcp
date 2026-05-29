@@ -27,15 +27,15 @@ from jquants_mcp.cache.screener_compute import (
 
 logger = logging.getLogger(__name__)
 
-# TTL 定義（秒）
-TTL_NONE = 0  # キャッシュしない
+# TTL definitions (seconds)
+TTL_NONE = 0  # do not cache
 TTL_6H = 6 * 3600
 TTL_24H = 24 * 3600
 TTL_7D = 7 * 24 * 3600
 TTL_90D = 90 * 24 * 3600
 
-# 旧 J-Quants API フィールド名 → 現行短縮名のマッピング
-# キャッシュに旧形式で保存されたデータを読み出し時に正規化する
+# Mapping of legacy J-Quants API field names → current short names.
+# Normalizes data stored in the cache in the legacy format on read.
 _LEGACY_FIELD_MAP: dict[str, str] = {
     "Open": "O",
     "High": "H",
@@ -68,7 +68,7 @@ def _normalize_fields(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-# エンドポイントパス → TTL のマッピング
+# Mapping of endpoint path → TTL
 ENDPOINT_TTL: dict[str, int] = {
     "/markets/calendar": TTL_7D,
     "/equities/earnings-calendar": TTL_90D,
@@ -82,12 +82,12 @@ ENDPOINT_TTL: dict[str, int] = {
     "/derivatives/bars/daily/futures": TTL_24H,
     "/derivatives/bars/daily/options": TTL_24H,
     "/derivatives/bars/daily/options/225": TTL_24H,
-    "/equities/bars/daily/am": TTL_NONE,  # 当日データ、キャッシュしない
+    "/equities/bars/daily/am": TTL_NONE,  # intraday data, do not cache
     "/equities/bars/minute": TTL_24H,
     "/fins/details": TTL_24H,
     "/fins/dividend": TTL_24H,
     "/bulk/list": TTL_6H,
-    "/bulk/get": TTL_NONE,  # 署名付きURL、キャッシュしない
+    "/bulk/get": TTL_NONE,  # signed URL, do not cache
 }
 
 # Tier 1 table -> minimum required plan
@@ -112,7 +112,7 @@ _PLAN_LEVEL: dict[str, int] = {
     "premium": 3,
 }
 
-# プラン別データ保持期間（年）。None = 制限なし
+# Data retention period per plan (years). None = no limit
 _PLAN_RETENTION_YEARS: dict[str, int | None] = {
     "free": 2,
     "light": 5,
@@ -120,7 +120,7 @@ _PLAN_RETENTION_YEARS: dict[str, int | None] = {
     "premium": None,
 }
 
-# Free プランのデータ遅延（週）
+# Data delay for the Free plan (weeks)
 _FREE_DELAY_WEEKS = 12
 
 
@@ -137,7 +137,7 @@ class CacheStore:
     automatically once the file becomes valid.
     """
 
-    # DB が使えない場合のリトライ間隔（秒）
+    # Retry interval (seconds) when the DB is unavailable
     _RETRY_INTERVAL = 30
 
     def __init__(
@@ -263,13 +263,13 @@ class CacheStore:
         if self._conn is not None and self._ready:
             return self._conn
 
-        # リトライ間隔の制御
+        # Throttle retries to the configured interval
         now = time.time()
         if not self._ready and (now - self._last_retry) < self._RETRY_INTERVAL:
             return None
         self._last_retry = now
 
-        # 既存の壊れた接続を閉じる
+        # Close any existing broken connection
         if self._conn is not None:
             try:
                 self._conn.close()
@@ -314,14 +314,14 @@ class CacheStore:
         conn = self._conn
         assert conn is not None
 
-        # Tier 1 テーブル
+        # Tier 1 tables
         for table_name, schema in _TIER1_TABLES.items():
             conn.execute(generate_ddl(table_name, schema))
 
-        # Tier 2 テーブル
+        # Tier 2 table
         conn.execute(_RESPONSE_CACHE_DDL)
 
-        # Screener result cache（事前計算結果、PK = tool/params/date）
+        # Screener result cache (pre-computed results, PK = tool/params/date)
         conn.execute(_SCREENER_RESULTS_DDL)
         conn.execute(_SCREENER_RESULTS_INDEX_DDL)
 
@@ -329,7 +329,7 @@ class CacheStore:
         conn.execute(_EBD_DATE_INDEX_DDL)
         conn.commit()
 
-        # 既存テーブルのマイグレーション
+        # Migrate existing tables
         self._migrate_normalize_fields()
         self._migrate_drop_plan()
         self._migrate_normalize_calendar_dates()
@@ -541,7 +541,7 @@ class CacheStore:
             for row in rows:
                 original = row["data"]
                 parsed = json.loads(original)
-                # 旧フィールド名が含まれていなければスキップ
+                # Skip if no legacy field names are present
                 if not any(k in parsed for k in _LEGACY_FIELD_MAP):
                     continue
                 normalized = _normalize_fields(parsed)
@@ -558,7 +558,7 @@ class CacheStore:
             logger.info("Migration: field normalization complete (%d rows total)", total_updated)
 
     # ----------------------------------------------------------------
-    # Tier 1: 行レベルキャッシュ
+    # Tier 1: row-level cache
     # ----------------------------------------------------------------
 
     def get_rows(
@@ -1163,7 +1163,7 @@ class CacheStore:
 
         conn = self._ensure_connection()
         if conn is None:
-            return True  # DB 未準備 → 分割チェック不可、キャッシュなしとして扱う
+            return True  # DB not ready → cannot check splits, treat as cache miss
 
         _adj_sql = (
             "SELECT COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
@@ -1172,7 +1172,7 @@ class CacheStore:
         row = conn.execute(_adj_sql, (code,)).fetchone()
 
         if row is None:
-            return True  # キャッシュなし → 問題なし
+            return True  # no cached data → nothing to invalidate
 
         cached_adj = row["adj_factor"]
         if cached_adj is not None and abs(cached_adj - new_adj_factor) > 1e-10:
@@ -1618,7 +1618,7 @@ class CacheStore:
         return result
 
     # ----------------------------------------------------------------
-    # Tier 2: レスポンスレベルキャッシュ
+    # Tier 2: response-level cache
     # ----------------------------------------------------------------
 
     def get_response(self, cache_key: str) -> dict[str, Any] | None:
@@ -1650,7 +1650,7 @@ class CacheStore:
     ) -> None:
         """Store a response in the cache."""
         if ttl_seconds == TTL_NONE:
-            return  # キャッシュしない設定
+            return  # configured to not cache
 
         conn = self._ensure_connection()
         if conn is None:
@@ -1884,7 +1884,7 @@ class CacheStore:
         return d.isoformat()
 
     # ----------------------------------------------------------------
-    # ユーティリティ
+    # Utilities
     # ----------------------------------------------------------------
 
     def status(self) -> dict[str, Any]:
@@ -1897,7 +1897,7 @@ class CacheStore:
         }
 
         if conn is None:
-            # DB 未準備 — ファイルサイズだけ返す
+            # DB not ready — return only the file size
             if self._db_path.exists():
                 stats["db_size_mb"] = round(self._db_path.stat().st_size / (1024 * 1024), 2)
             return stats
@@ -1935,7 +1935,7 @@ class CacheStore:
         except sqlite3.OperationalError:
             stats["screener_results"] = 0
 
-        # DB ファイルサイズ
+        # DB file size
         if self._db_path.exists():
             stats["db_size_mb"] = round(self._db_path.stat().st_size / (1024 * 1024), 2)
 
@@ -1998,7 +1998,7 @@ def _plan_date_bounds(plan: str) -> tuple[str | None, str | None]:
     try:
         min_date = today.replace(year=today.year - retention_years)
     except ValueError:
-        # 2/29 → 2/28 フォールバック（うるう年対策）
+        # 2/29 → 2/28 fallback (leap-year handling)
         min_date = today.replace(year=today.year - retention_years, month=today.month, day=28)
 
     max_date = None
@@ -2038,8 +2038,8 @@ def _build_where_clause(
         conditions.append(f"{col} = ?")
         params.append(val)
 
-    # plan カラムではフィルタしない（DB に複数プランのデータが混在しても OK）
-    # プラン別日付範囲制限を適用
+    # Do not filter on the plan column (mixing data from multiple plans in the DB is fine)
+    # Apply the plan-based date range restriction
     plan_min, plan_max = _plan_date_bounds(effective_plan)
     if plan_min and (not date_from or date_from < plan_min):
         date_from = plan_min
