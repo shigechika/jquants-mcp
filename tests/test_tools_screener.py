@@ -2199,6 +2199,29 @@ class TestComputeConsecutiveDivSnapshot:
         assert result["count"] == 1
         assert result["data"][0]["consecutive_years"] == 1
 
+    def test_fy_end_presplit_breaks_false_streak(self):
+        """A FY-end split (DivAnn reported pre-split) must not look like an increase.
+
+        One 1:2 split on 2025-03-28 is the only split. It is after FY2024's
+        filing (2024-05-13), so the post-disc factor scales FY2024 by 0.5
+        (100 -> 50). It is ~46 days before FY2025's filing (2025-05-13), so
+        J-Quants reports FY2025's DivAnn (80) in pre-split units.
+
+        Without the FY-end correction FY2025 stays 80 (50 -> 80 = false
+        increase). With it, FY2025 scales to 80 * 0.5 = 40, revealing the real
+        decrease (50 -> 40).
+        """
+        fy_history = {
+            "74660": [
+                {"fy_end": "2024-03-31", "disc_date": "2024-05-13", "div_ann": 100.0},
+                {"fy_end": "2025-03-31", "disc_date": "2025-05-13", "div_ann": 80.0},
+            ]
+        }
+        split_events = {"74660": [("2025-03-28", 0.5)]}
+        result = screener_compute.compute_consecutive_div_snapshot(fy_history, split_events)
+        # Corrected: 50 -> 40 is a decrease, so no streak.
+        assert result["count"] == 0
+
     def test_sorted_by_consecutive_years_desc(self):
         """結果は consecutive_years 降順でソートされる。"""
         fy_history = {
@@ -2340,3 +2363,34 @@ class TestFyEndTimestampStrip:
         for h in item["history"]:
             assert " " not in h["fy_end"], f"Timestamp leaked in history: {h['fy_end']}"
             assert len(h["fy_end"]) == 10
+
+
+class TestDivSplitFactor:
+    """screener_compute.div_split_factor unit tests."""
+
+    def test_no_events_is_identity(self):
+        assert screener_compute.div_split_factor("2025-05-13", []) == 1.0
+
+    def test_post_disc_split_applied(self):
+        # Split strictly after disc_date scales the disclosed DivAnn.
+        assert screener_compute.div_split_factor("2024-05-13", [("2025-03-28", 0.5)]) == 0.5
+
+    def test_fy_end_presplit_window_applied(self):
+        # Split ~46 days before disc_date (FY-end anomaly) is included.
+        assert screener_compute.div_split_factor("2025-05-13", [("2025-03-28", 0.5)]) == 0.5
+
+    def test_split_on_disc_date_excluded(self):
+        # Split exactly on disc_date is in neither window (strict bounds).
+        assert screener_compute.div_split_factor("2025-05-13", [("2025-05-13", 0.5)]) == 1.0
+
+    def test_split_outside_lookback_excluded(self):
+        # Split well before disc_date but earlier than the same FY filing,
+        # outside the 90-day window and before disc, is not applied.
+        assert screener_compute.div_split_factor("2025-05-13", [("2024-12-01", 0.5)]) == 1.0
+
+    def test_combined_post_and_fy_end(self):
+        # One FY-end pre-split (0.5) plus one later post-disc split (0.5) compound.
+        f = screener_compute.div_split_factor(
+            "2025-05-13", [("2025-03-28", 0.5), ("2026-01-10", 0.5)]
+        )
+        assert f == 0.25

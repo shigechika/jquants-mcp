@@ -431,26 +431,60 @@ def fetch_split_events_by_code(
     return result
 
 
+# Window before disc_date in which a fiscal-year-end split makes J-Quants
+# report the annual DivAnn in pre-split per-share units. Matches
+# CacheStore.get_split_factors_before_disc(lookback_days=90).
+_FYE_SPLIT_LOOKBACK_DAYS = 90
+
+
+def div_split_factor(disc_date: str, split_events: list[tuple[str, float]]) -> float:
+    """Cumulative split factor to express a disclosed DivAnn in current per-share terms.
+
+    Combines two corrections, matching how ``get_dividend_yield_ranking`` applies
+    ``get_split_factors_after`` and ``get_split_factors_before_disc`` together:
+
+    - Post-disclosure splits (``ev_date > disc_date``): standard retroactive
+      adjustment so older DivAnn values are comparable to the latest.
+    - Fiscal-year-end splits in ``[disc_date - 90d, disc_date)``: when a split
+      lands ~45 days before the annual filing, J-Quants still reports that year's
+      DivAnn in pre-split units, so it must be scaled by the split factor too.
+
+    Splits exactly on ``disc_date`` are excluded from both windows (mirrors the
+    strict bounds in the CacheStore helpers).
+
+    Args:
+        disc_date: Disclosure date (YYYY-MM-DD; longer forms are truncated).
+        split_events: ``(date, factor)`` tuples for the code, any order.
+    """
+    from datetime import datetime, timedelta
+
+    d = disc_date[:10]
+    lookback_start = (
+        datetime.strptime(d, "%Y-%m-%d") - timedelta(days=_FYE_SPLIT_LOOKBACK_DAYS)
+    ).strftime("%Y-%m-%d")
+    factor = 1.0
+    for ev_date, ev_factor in split_events:
+        ev = ev_date[:10]
+        if ev > d or (lookback_start <= ev < d):
+            factor *= ev_factor
+    return factor
+
+
 def _apply_split_adj(
     entries: list[dict[str, Any]],
     split_events: list[tuple[str, float]],
 ) -> list[dict[str, Any]]:
-    """Apply cumulative post-disc split correction to a single code's div_ann values.
+    """Apply cumulative split correction to a single code's div_ann values.
 
-    Assumes ``split_events`` is sorted ascending by date — callers must guarantee
-    this (``fetch_split_events_by_code`` does; ``CacheStore.get_split_events_by_code``
-    also guarantees ascending order).
-
-    Split adjustment logic mirrors ``_compute_consecutive_div_years`` in
-    ``tools/screener.py``.  If the computation rule changes, update both.
+    Uses ``div_split_factor`` (post-disclosure + fiscal-year-end pre-split
+    correction). Split adjustment logic mirrors ``_compute_consecutive_div_years``
+    in ``tools/screener.py``; both delegate to ``div_split_factor`` so the rule
+    stays in one place.
     """
     adj: list[dict[str, Any]] = []
     for entry in entries:
         disc_date = entry["disc_date"]
-        factor = 1.0
-        for ev_date, ev_factor in split_events:
-            if ev_date > disc_date:
-                factor *= ev_factor
+        factor = div_split_factor(disc_date, split_events)
         adj.append(
             {
                 "fy_end": entry["fy_end"],
