@@ -82,8 +82,11 @@ uv run ruff format src/ tests/  # Format
 
 ## Cache Plan Scoping
 
-- All Tier 1 cache tables have `plan` column (data stored as `plan='standard'`)
-- `daily_fetch.py` must include `plan` in all INSERTs
-- `_build_where_clause` enforces plan-based date restrictions at query time
+- Tier 1 cache data is **plan-agnostic** — there is no `plan` column. The legacy
+  column was dropped by the `_migrate_drop_plan` migration (`PRAGMA user_version=2`),
+  mirrored in both `cache/store.py` and `daily_fetch.py`. Do NOT add `plan` to INSERTs.
+- Plan-based date restriction is enforced **at query time** by `_build_where_clause`,
+  which clamps the requested date range to `_plan_date_bounds(default_plan)`. The stored
+  rows are not tagged by plan; only the returned date window depends on the plan.
 - Plan data retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all
 - `sync_plans.py` is removed — no longer copy data between plans
