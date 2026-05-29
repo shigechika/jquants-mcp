@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.43.7](https://github.com/shigechika/jquants-mcp/compare/v0.43.6...v0.43.7) (2026-05-29)
+
+
+### Bug Fixes
+
+* **scripts:** make gcs_export_cache upload atomic and clean up temp file ([#433](https://github.com/shigechika/jquants-mcp/issues/433)) ([b9da40a](https://github.com/shigechika/jquants-mcp/commit/b9da40af4a16a7420a791e332a82d3bb1620c0fc))
+
 ## [0.43.6](https://github.com/shigechika/jquants-mcp/compare/v0.43.5...v0.43.6) (2026-05-29)
 
 
