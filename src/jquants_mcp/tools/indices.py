@@ -18,6 +18,12 @@ from ..exceptions import (
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_API
+from ..validators import (
+    collect_errors,
+    make_validation_error_response,
+    validate_code,
+    validate_date,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +54,15 @@ def register(
             date_from: Start date for range query
             date_to: End date for range query
         """
+        errors = collect_errors(
+            validate_code(code),
+            validate_date(date),
+            validate_date(date_from, "date_from"),
+            validate_date(date_to, "date_to"),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -87,6 +102,13 @@ def register(
             date_from: Start date for range query (YYYYMMDD or YYYY-MM-DD)
             date_to: End date for range query (YYYYMMDD or YYYY-MM-DD)
         """
+        errors = collect_errors(
+            validate_date(date_from, "date_from"),
+            validate_date(date_to, "date_to"),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -132,7 +154,7 @@ async def _get_topix_with_cache(
             latest_cached = max(valid_dates)
             if date_to and latest_cached >= date_to:
                 # 全期間キャッシュ済み
-                logger.info("TOPIX 全データキャッシュ済み (%d件)", len(cached_data))
+                logger.info("TOPIX fully cached (%d rows)", len(cached_data))
                 return {"count": len(cached_data), "data": cached_data, "source": "cache"}
             params["from"] = latest_cached
 

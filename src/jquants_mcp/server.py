@@ -486,10 +486,10 @@ async def _ensure_plan_detected(client: JQuantsClient) -> None:
     try:
         detected = await detect_plan(client)
     except Exception as e:
-        logger.warning("プラン自動検出に失敗しました（free にフォールバック）: %s", e)
+        logger.warning("Plan auto-detection failed (falling back to free): %s", e)
         detected = "free"
 
-    logger.info("プラン自動検出: %s", detected)
+    logger.info("Plan auto-detected: %s", detected)
     settings.jquants_plan = detected
     client.update_rate_limit(detected)
 

@@ -97,6 +97,10 @@ class TestComputeSma:
     def test_empty(self):
         assert compute_sma([], 5) == []
 
+    def test_period_zero_raises(self):
+        with pytest.raises(ValueError, match="period must be >= 1"):
+            compute_sma([1.0, 2.0], 0)
+
 
 class TestComputeBb:
     def test_structure(self):
@@ -117,6 +121,11 @@ class TestComputeBb:
         # std of constant series is 0 → bands collapse to mid
         assert upper[19] == pytest.approx(100.0)
         assert lower[19] == pytest.approx(100.0)
+
+    def test_period_one_raises(self):
+        # Sample std (ddof=1) divides by period - 1, so period must be >= 2.
+        with pytest.raises(ValueError, match="period must be >= 2"):
+            compute_bb([1.0, 2.0, 3.0], period=1)
 
     def test_matches_pandas(self):
         """Sample-std (ddof=1) result matches pandas .rolling().std()."""

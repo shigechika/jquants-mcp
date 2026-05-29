@@ -304,6 +304,15 @@ def register(
             date_from: Start date for range query
             date_to: End date for range query
         """
+        errors = collect_errors(
+            validate_code(code),
+            validate_date(date),
+            validate_date(date_from, "date_from"),
+            validate_date(date_to, "date_to"),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
