@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a problem with jquants-mcp
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. The fields below cover the
+        details that are usually needed to reproduce a jquants-mcp issue.
+        For security vulnerabilities, do **not** open an issue — see
+        [SECURITY.md](../blob/main/SECURITY.md).
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: I am running a recent release and the issue still reproduces
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: jquants-mcp version
+      description: Output of `jquants-mcp --version` (or the release tag).
+      placeholder: "0.44.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: plan
+    attributes:
+      label: J-Quants plan
+      description: Plan tier decides which data is available, so it often matters.
+      options:
+        - Free
+        - Light
+        - Standard
+        - Premium
+        - Unknown
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+      placeholder: "3.12.x"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: A minimal sequence (tool call, CLI command, or config) that triggers it.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error message / logs
+      description: The full error and any relevant log lines. Redact API keys and tokens.
+      render: shell
+    validations:
+      required: false
