@@ -5,6 +5,24 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.45.0](https://github.com/shigechika/jquants-mcp/compare/v0.44.0...v0.45.0) (2026-05-30)
+
+
+### Features
+
+* **cache:** cache-pipeline observability — staleness alert + verify wiring (Tier B2+B3) ([#446](https://github.com/shigechika/jquants-mcp/issues/446)) ([699e6cf](https://github.com/shigechika/jquants-mcp/commit/699e6cf57f6a524c8ac753414c43853e53811177))
+
+
+### Bug Fixes
+
+* **server:** log resolved per-user plan at INFO so it is visible on Cloud Run ([#442](https://github.com/shigechika/jquants-mcp/issues/442)) ([2f032f7](https://github.com/shigechika/jquants-mcp/commit/2f032f7148b0942d0833881f01309bffd0851167))
+* Tier A post-audit findings (calendar dates, dead alert, daily_fetch exit code, /settings allowlist) ([#443](https://github.com/shigechika/jquants-mcp/issues/443)) ([a61b47e](https://github.com/shigechika/jquants-mcp/commit/a61b47ee7eaa7a31ab600a4988ef22aa696cdbaa))
+
+
+### Documentation
+
+* refresh CLAUDE.md for v0.44.0 (per-user plan, request_context) ([#440](https://github.com/shigechika/jquants-mcp/issues/440)) ([dd5699e](https://github.com/shigechika/jquants-mcp/commit/dd5699e4a87de18a39a383749de8e8c2dd47624c))
+
 ## [0.44.0](https://github.com/shigechika/jquants-mcp/compare/v0.43.7...v0.44.0) (2026-05-29)
 
 
