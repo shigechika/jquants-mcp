@@ -37,7 +37,7 @@ uv run ruff format src/ tests/  # Format
   - `rotate_encryption_key.py` — Re-encrypt user API keys during MCP_ENCRYPTION_KEY rotation
   - `collect_metrics.py` / `load_test.py` — Cloud Run sizing helpers
   - `entrypoint.sh` — Docker/Cloud Run entrypoint
-- `tests/` — pytest + pytest-asyncio tests (1090+ tests)
+- `tests/` — pytest + pytest-asyncio tests (1000+ tests as of 2026-05)
 
 ## Key Patterns
 
@@ -94,5 +94,8 @@ uv run ruff format src/ tests/  # Format
   `PlanContextMiddleware` from the authenticated user, see `request_context.py`) >
   `default_plan`. This applies each user's plan window on multi-user deployments;
   single-user / bearer paths fall back to `default_plan`.
+- The per-request path only activates on the live OAuth seam (`get_access_token()`
+  inside `on_call_tool`), which no unit test exercises — verify on Cloud Run via the
+  `Resolved plan=...` debug log before trusting it.
 - Plan data retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all
 - `sync_plans.py` is removed — no longer copy data between plans
