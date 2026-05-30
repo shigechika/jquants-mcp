@@ -96,6 +96,6 @@ uv run ruff format src/ tests/  # Format
   single-user / bearer paths fall back to `default_plan`.
 - The per-request path only activates on the live OAuth seam (`get_access_token()`
   inside `on_call_tool`), which no unit test exercises — verify on Cloud Run via the
-  `Resolved plan=...` debug log before trusting it.
+  `Resolved plan=...` INFO log (emitted on a plan-cache miss) before trusting it.
 - Plan data retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all
 - `sync_plans.py` is removed — no longer copy data between plans
