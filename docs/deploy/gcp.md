@@ -273,6 +273,8 @@ gcloud storage cp ~/.cache/jquants-mcp/cache.db \
 
 Keep a cron / launchd job running `daily_fetch.py + gcs_export_cache.py` on your workstation so Cloud Run always has a fresh snapshot. See [local.md](local.md) for the publisher pattern.
 
+Chain `verify_cache_completeness.py` after `daily_fetch.py` (`daily_fetch.py && verify_cache_completeness.py`) so an incomplete or stale cache surfaces a non-zero exit in the publisher's logs before the snapshot is exported. The bundled `scripts/daily-fetch.crontab` already does this for the container path.
+
 ## 12. Deploy
 
 Trigger the first deploy manually from the **Actions** tab → **CD** → **Run workflow**. Watch the logs; first build takes 5–10 minutes (later deploys are faster thanks to Cloud Build layer cache).
