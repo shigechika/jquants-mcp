@@ -12,11 +12,8 @@ from fastmcp import FastMCP
 from ..cache.store import ENDPOINT_TTL, CacheStore, TTL_24H, TTL_90D, make_cache_key
 from ..client import JQuantsClient
 from ..exceptions import (
+    TOOL_API_ERRORS,
     APIError,
-    DecryptionError,
-    InvalidAPIKeyError,
-    UserNotAllowedError,
-    UserNotConfiguredError,
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_API, READ_ONLY_CACHE
@@ -82,13 +79,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
     @mcp.tool(annotations=READ_ONLY_API)
@@ -145,13 +136,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
     @mcp.tool(annotations=READ_ONLY_API)
@@ -197,13 +182,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
     @mcp.tool(annotations=READ_ONLY_API)
@@ -232,13 +211,7 @@ def register(
         try:
             data = await client.get_all_pages("/equities/bars/daily/am", {"code": code})
             return {"count": len(data), "data": data}
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
     @mcp.tool(annotations=READ_ONLY_API)
@@ -283,13 +256,7 @@ def register(
             ttl = ENDPOINT_TTL.get("/equities/investor-types", TTL_24H)
             cache.put_response(cache_key, result, ttl_seconds=ttl)
             return result
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
     @mcp.tool(annotations=READ_ONLY_API)
@@ -353,13 +320,7 @@ def register(
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_90D)
             return result
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
@@ -610,11 +571,5 @@ async def _get_bars_daily_with_cache(
         source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")
         return {"count": len(merged), "data": merged, "source": source}
 
-    except (
-        APIError,
-        InvalidAPIKeyError,
-        UserNotConfiguredError,
-        DecryptionError,
-        UserNotAllowedError,
-    ) as e:
+    except TOOL_API_ERRORS as e:
         return format_api_error(e)

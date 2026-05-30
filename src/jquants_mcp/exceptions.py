@@ -130,6 +130,24 @@ class UserNotAllowedError(JQuantsDatMCPError):
         return d
 
 
+#: The exception set every tool handler must catch and route through
+#: ``format_api_error``. Defined once here so the security-critical inclusion
+#: of ``DecryptionError`` (an un-caught decrypt failure would leak an
+#: unredacted error to the user) is a single source of truth rather than a
+#: tuple hand-copied into every tool. ``AuthenticationError``,
+#: ``RateLimitError`` and ``ValidationError`` are deliberately excluded — they
+#: are surfaced differently — so do NOT broaden this to the
+#: ``JQuantsDatMCPError`` base class. ``tests/test_tool_error_handling.py``
+#: enforces that every ``format_api_error`` handler uses this constant.
+TOOL_API_ERRORS = (
+    APIError,
+    InvalidAPIKeyError,
+    UserNotConfiguredError,
+    DecryptionError,
+    UserNotAllowedError,
+)
+
+
 def format_api_error(error: JQuantsDatMCPError) -> dict:
     """Format a JQuantsDatMCPError into an MCP-compatible response dict."""
     d = error.to_dict()

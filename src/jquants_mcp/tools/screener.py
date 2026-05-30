@@ -62,11 +62,7 @@ from ..cache import screener_compute
 from ..cache.screener_compute import SCREENER_CACHE_LOOKBACK_WEEKS
 from ..cache.store import CacheStore
 from ..exceptions import (
-    APIError,
-    DecryptionError,
-    InvalidAPIKeyError,
-    UserNotAllowedError,
-    UserNotConfiguredError,
+    TOOL_API_ERRORS,
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_API, READ_ONLY_CACHE
@@ -233,13 +229,7 @@ def register(
                 date_from=norm_date,
                 date_to=norm_date,
             )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         name_map = cache.get_name_map() if detail else {}
@@ -355,13 +345,7 @@ def register(
                         date_from=start,
                         date_to=end,
                     )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         out: list[dict[str, Any]] = []
@@ -607,13 +591,7 @@ def register(
                         date_from=start,
                         date_to=norm_date,
                     )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         by_code: dict[str, list[dict[str, Any]]] = {}
@@ -1312,13 +1290,7 @@ async def _high_low_signals(
             date_from=range_start,
             date_to=norm_date,
         )
-    except (
-        APIError,
-        InvalidAPIKeyError,
-        UserNotConfiguredError,
-        DecryptionError,
-        UserNotAllowedError,
-    ) as e:
+    except TOOL_API_ERRORS as e:
         return format_api_error(e)
 
     result = screener_compute.compute_high_low_signals(
