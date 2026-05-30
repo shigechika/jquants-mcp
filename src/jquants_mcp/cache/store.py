@@ -20,6 +20,7 @@ from jquants_mcp.cache.schema import (
     TIER1_KEY_COLUMNS as _TIER1_KEY_COLUMNS,
     TIER1_TABLES as _TIER1_TABLES,
     generate_ddl,
+    migrate_drop_plan,
 )
 from jquants_mcp.cache.screener_compute import (
     SCREENER_CACHE_LOOKBACK_WEEKS as _SCREENER_CACHE_LOOKBACK_WEEKS,
@@ -360,151 +361,15 @@ class CacheStore:
         self._migrate_normalize_calendar_dates()
 
     def _migrate_drop_plan(self) -> None:
-        """Remove plan column from Tier 1 tables and plan suffix from Tier 2 keys.
+        """Drop the legacy plan column (delegates to the shared schema migration).
 
-        Runs once: skipped when ``PRAGMA user_version >= 2``.
-        For tables where plan is part of the PRIMARY KEY, the table is
-        rebuilt.  Duplicate rows (same natural key, different plan) are
-        deduplicated by keeping the highest-plan row (standard > light > free).
+        The implementation lives in ``schema.migrate_drop_plan`` so that
+        daily_fetch.py — which connects directly, bypassing CacheStore — runs
+        the exact same migration instead of a hand-copied variant that
+        produced structurally-degraded tables.
         """
-        conn = self._conn
-        assert conn is not None
-
-        version = conn.execute("PRAGMA user_version").fetchone()[0]
-        if version >= 2:
-            return
-
-        # Check if any table actually has a plan column
-        has_plan_anywhere = False
-        for table_name in _TIER1_TABLES:
-            cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-            if any(c[1] == "plan" for c in cols):
-                has_plan_anywhere = True
-                break
-
-        # Also check response_cache for plan-suffixed keys
-        has_plan_keys = False
-        try:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM response_cache WHERE cache_key LIKE '%|plan=%'"
-            ).fetchone()
-            has_plan_keys = row[0] > 0
-        except sqlite3.OperationalError:
-            pass
-
-        if not has_plan_anywhere and not has_plan_keys:
-            conn.execute("PRAGMA user_version = 2")
-            conn.commit()
-            return
-
-        logger.info("Migration: removing plan column from Tier 1 tables")
-
-        for table_name, schema in _TIER1_TABLES.items():
-            cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-            col_names = [c[1] for c in cols]
-            if "plan" not in col_names:
-                continue
-
-            # Check if plan is in PK
-            pk_cols = [c[1] for c in cols if c[5] > 0]
-
-            if "plan" in pk_cols:
-                # Rebuild table: deduplicate by inserting lowest plan first,
-                # highest last (INSERT OR REPLACE keeps the last = highest)
-                extra = f", {schema['extra_columns']}" if schema["extra_columns"] else ""
-                new_ddl = f"""
-                    CREATE TABLE {table_name}_v2 (
-                        {schema["key_columns"]},
-                        data TEXT NOT NULL,
-                        fetched_at REAL NOT NULL
-                        {extra},
-                        PRIMARY KEY ({schema["primary_key"]})
-                    )
-                """
-                conn.execute(new_ddl)
-
-                # Build column list for SELECT (exclude plan)
-                select_cols = [c for c in col_names if c != "plan"]
-                select_str = ", ".join(select_cols)
-
-                conn.execute(f"""
-                    INSERT OR REPLACE INTO {table_name}_v2 ({select_str})
-                    SELECT {select_str} FROM {table_name}
-                    ORDER BY CASE plan
-                        WHEN 'free' THEN 0
-                        WHEN 'light' THEN 1
-                        WHEN 'standard' THEN 2
-                        WHEN 'premium' THEN 3
-                        ELSE 0 END ASC
-                """)
-
-                old_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0]
-                new_count = conn.execute(f"SELECT COUNT(*) FROM {table_name}_v2").fetchone()[0]
-
-                conn.execute(f"DROP TABLE {table_name}")
-                conn.execute(f"ALTER TABLE {table_name}_v2 RENAME TO {table_name}")
-                logger.info(
-                    "Migration: rebuilt %s without plan (PK rebuild, %d -> %d rows)",
-                    table_name,
-                    old_count,
-                    new_count,
-                )
-            else:
-                # plan is not in PK — just drop the column (SQLite 3.35+)
-                try:
-                    conn.execute(f"ALTER TABLE {table_name} DROP COLUMN plan")
-                    logger.info("Migration: dropped plan column from %s", table_name)
-                except sqlite3.OperationalError:
-                    # Fallback for older SQLite: rebuild
-                    extra = f", {schema['extra_columns']}" if schema["extra_columns"] else ""
-                    new_ddl = f"""
-                        CREATE TABLE {table_name}_v2 (
-                            {schema["key_columns"]},
-                            data TEXT NOT NULL,
-                            fetched_at REAL NOT NULL
-                            {extra},
-                            PRIMARY KEY ({schema["primary_key"]})
-                        )
-                    """
-                    conn.execute(new_ddl)
-                    select_cols = [c for c in col_names if c != "plan"]
-                    select_str = ", ".join(select_cols)
-                    conn.execute(
-                        f"INSERT OR REPLACE INTO {table_name}_v2 ({select_str}) "
-                        f"SELECT {select_str} FROM {table_name}"
-                    )
-                    conn.execute(f"DROP TABLE {table_name}")
-                    conn.execute(f"ALTER TABLE {table_name}_v2 RENAME TO {table_name}")
-                    logger.info("Migration: rebuilt %s without plan (fallback)", table_name)
-
-        # Tier 2: strip |plan=X suffix from response_cache keys
-        if has_plan_keys:
-            conn.execute("""
-                CREATE TABLE response_cache_v2 (
-                    cache_key TEXT PRIMARY KEY,
-                    data TEXT NOT NULL,
-                    fetched_at REAL NOT NULL,
-                    ttl_seconds INTEGER NOT NULL
-                )
-            """)
-            conn.execute("""
-                INSERT OR REPLACE INTO response_cache_v2
-                    (cache_key, data, fetched_at, ttl_seconds)
-                SELECT
-                    CASE WHEN INSTR(cache_key, '|plan=') > 0
-                        THEN SUBSTR(cache_key, 1, INSTR(cache_key, '|plan=') - 1)
-                        ELSE cache_key END,
-                    data, fetched_at, ttl_seconds
-                FROM response_cache
-                ORDER BY fetched_at ASC
-            """)
-            conn.execute("DROP TABLE response_cache")
-            conn.execute("ALTER TABLE response_cache_v2 RENAME TO response_cache")
-            logger.info("Migration: stripped plan suffix from response_cache keys")
-
-        conn.execute("PRAGMA user_version = 2")
-        conn.commit()
-        logger.info("Migration: plan removal complete (user_version=2)")
+        assert self._conn is not None
+        migrate_drop_plan(self._conn)
 
     def _migrate_normalize_calendar_dates(self) -> None:
         """Remove timestamp-suffix duplicates from markets_calendar.date.
