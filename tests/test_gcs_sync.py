@@ -115,3 +115,46 @@ class TestFailureExitCode:
         monkeypatch.setattr(sys, "argv", ["gcs_sync.py", "--upload"])
         # Upload succeeds (no side_effect) → main returns without SystemExit.
         gcs_sync.main()
+
+
+class TestInitCacheFailureAlert:
+    """--init-cache failure emits the exact phrase the Cloud Monitoring policy
+    (ops/alerts/05-cache-db-download-fail.yaml) greps for, so the alert can fire.
+    """
+
+    def test_init_cache_failure_logs_alert_phrase(
+        self, monkeypatch, tmp_path, mock_google_storage, caplog
+    ):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(sys, "argv", ["gcs_sync.py", "--init-cache"])
+
+        # The fixture aliases NotFound to the base Exception, which would
+        # swallow any download error as a benign "first run" skip. Narrow it
+        # so a genuine RuntimeError reaches the failure branch — as it does in
+        # production, where NotFound is a specific subclass.
+        class _NotFound(Exception):
+            pass
+
+        monkeypatch.setattr(sys.modules["google.cloud.exceptions"], "NotFound", _NotFound)
+
+        blob = mock_google_storage.Client.return_value.bucket.return_value.blob.return_value
+        blob.download_to_filename.side_effect = RuntimeError("network down")
+        with caplog.at_level("ERROR"), pytest.raises(SystemExit) as exc:
+            gcs_sync.main()
+        assert exc.value.code == 1
+        # The load-bearing assertion: the alert filter substring must be emitted.
+        assert "cache.db download failed" in caplog.text
+
+    def test_init_cache_success_does_not_log_alert_phrase(
+        self, monkeypatch, tmp_path, mock_google_storage, caplog
+    ):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(sys, "argv", ["gcs_sync.py", "--init-cache"])
+        # download succeeds (no side_effect); rename needs a real temp file.
+        blob = mock_google_storage.Client.return_value.bucket.return_value.blob.return_value
+        blob.download_to_filename.side_effect = lambda p: Path(p).write_bytes(b"db")
+        with caplog.at_level("ERROR"):
+            gcs_sync.main()
+        assert "cache.db download failed" not in caplog.text

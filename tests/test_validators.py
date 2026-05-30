@@ -135,6 +135,23 @@ def test_validate_date_custom_param_name():
     assert "from_date" in msg
 
 
+def test_validate_date_rejects_feb30():
+    # Format-valid (day in 01-31) but calendar-impossible.
+    assert validate_date("20260230") is not None
+
+
+def test_validate_date_rejects_feb29_non_leap_year():
+    assert validate_date("20250229") is not None
+
+
+def test_validate_date_accepts_feb29_leap_year():
+    assert validate_date("20240229") is None
+
+
+def test_validate_date_rejects_apr31():
+    assert validate_date("2026-04-31") is not None
+
+
 # ---------------------------------------------------------------------------
 # validate_sector33
 # ---------------------------------------------------------------------------

@@ -453,6 +453,7 @@ class TestHandleSettingsGetWithGSI:
         s.google_client_id = google_client_id
         s.oauth_jwt_signing_key = signing_key
         s.encryption_key = ""
+        s.get_allowed_emails.return_value = []  # empty allowlist => allow all
         return s
 
     async def test_unauthenticated_shows_login_page_when_gsi_configured(self):
@@ -501,11 +502,14 @@ class TestHandleSettingsGetWithGSI:
 
 
 class TestHandleSettingsVerify:
-    def _mock_settings(self, google_client_id="gsi-client-id", signing_key="test-key"):
+    def _mock_settings(
+        self, google_client_id="gsi-client-id", signing_key="test-key", allowed_emails=None
+    ):
         s = MagicMock()
         s.google_client_id = google_client_id
         s.oauth_jwt_signing_key = signing_key
         s.encryption_key = ""
+        s.get_allowed_emails.return_value = allowed_emails or []
         return s
 
     def _mock_json_request(self, body: dict):
@@ -587,3 +591,97 @@ class TestHandleSettingsVerify:
         set_cookie = resp.headers.get("set-cookie", "")
         assert "jquants_session" in set_cookie
         assert "httponly" in set_cookie.lower()
+
+    async def test_returns_403_when_email_not_allowlisted(self):
+        """allowlist 設定時、リスト外 email はセッション cookie を発行せず 403。"""
+        settings = self._mock_settings(allowed_emails=["allowed@example.com"])
+        req = self._mock_json_request({"credential": "valid-token"})
+
+        tokeninfo = {
+            "aud": "gsi-client-id",
+            "email": "intruder@example.com",
+            "sub": "uid-999",
+            "email_verified": True,
+        }
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = tokeninfo
+        mock_resp.raise_for_status.return_value = None
+
+        with patch(_PATCH_HTTPX) as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client.get.return_value = mock_resp
+            resp = await handle_settings_verify(req, settings)
+
+        assert resp.status_code == 403
+        assert resp.headers.get("set-cookie") is None
+
+    async def test_allowlisted_email_still_gets_cookie(self):
+        """allowlist 設定時でもリスト内 email は従来通り cookie を取得。"""
+        settings = self._mock_settings(allowed_emails=["user@example.com"])
+        req = self._mock_json_request({"credential": "valid-token"})
+
+        tokeninfo = {
+            "aud": "gsi-client-id",
+            "email": "user@example.com",
+            "sub": "uid-123",
+            "email_verified": True,
+        }
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = tokeninfo
+        mock_resp.raise_for_status.return_value = None
+
+        with patch(_PATCH_HTTPX) as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            mock_client.get.return_value = mock_resp
+            resp = await handle_settings_verify(req, settings)
+
+        assert resp.status_code == 200
+        assert "jquants_session" in resp.headers.get("set-cookie", "")
+
+
+class TestResolveUserIdAllowlist:
+    """resolve_user_id enforces the email allowlist on BOTH identity paths.
+
+    Load-bearing guard: gating only the cookie-issuing verify handler would
+    still let an OAuth-token request reach post/delete, because resolve_user_id
+    falls back to the access token's client_id. These tests pin the OAuth-token
+    path closed.
+    """
+
+    def _token(self, client_id="oauth-sub-1", email="user@example.com", verified=True):
+        token = MagicMock()
+        token.client_id = client_id
+        token.claims = {"email": email, "email_verified": verified}
+        return token
+
+    def test_oauth_token_allowed_email_resolves(self):
+        from jquants_mcp.settings.session import resolve_user_id
+
+        req = MagicMock()
+        req.cookies = {}
+        token = self._token(email="member@example.com")
+        with patch("fastmcp.server.dependencies.get_access_token", return_value=token):
+            uid = resolve_user_id(req, "", ["member@example.com"])
+        assert uid == "oauth-sub-1"
+
+    def test_oauth_token_disallowed_email_returns_none(self):
+        from jquants_mcp.settings.session import resolve_user_id
+
+        req = MagicMock()
+        req.cookies = {}
+        token = self._token(email="intruder@example.com")
+        with patch("fastmcp.server.dependencies.get_access_token", return_value=token):
+            uid = resolve_user_id(req, "", ["member@example.com"])
+        assert uid is None
+
+    def test_empty_allowlist_allows_any_oauth_user(self):
+        from jquants_mcp.settings.session import resolve_user_id
+
+        req = MagicMock()
+        req.cookies = {}
+        token = self._token(email="anyone@example.com")
+        with patch("fastmcp.server.dependencies.get_access_token", return_value=token):
+            uid = resolve_user_id(req, "", [])
+        assert uid == "oauth-sub-1"

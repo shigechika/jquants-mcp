@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 
 # Stock code:
@@ -82,6 +83,14 @@ def validate_code(code: str | None, param: str = "code") -> str | None:
 def validate_date(date: str | None, param: str = "date") -> str | None:
     """Validate a date parameter in YYYYMMDD or YYYY-MM-DD format.
 
+    The regex enforces the surface format; a ``strptime`` round-trip then
+    rejects calendar-impossible dates (e.g. ``20260230``, ``20250229``,
+    ``20260431``) that the day-range-only pattern would otherwise accept.
+    This matters because validated dates flow straight into
+    ``datetime.strptime`` in several tools (technical/chart/screener helpers)
+    outside their try blocks, where an impossible date raises an uncaught
+    ``ValueError`` rather than returning an empty result.
+
     Args:
         date: Date string to validate, or None to skip validation.
         param: Parameter name for error messages.
@@ -94,6 +103,10 @@ def validate_date(date: str | None, param: str = "date") -> str | None:
     stripped = date.replace("-", "")
     if not _DATE_RE.match(stripped):
         return f"'{param}' must be in YYYYMMDD or YYYY-MM-DD format. Got: '{date}'"
+    try:
+        datetime.strptime(stripped, "%Y%m%d")
+    except ValueError:
+        return f"'{param}' is not a valid calendar date. Got: '{date}'"
     return None
 
 

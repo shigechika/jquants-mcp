@@ -87,22 +87,51 @@ def validate_csrf(request: Request, form_token: str | None) -> bool:
     return hmac.compare_digest(cookie_token, form_token)
 
 
-def resolve_user_id(request: Request, signing_key: str) -> str | None:
+def resolve_user_id(
+    request: Request, signing_key: str, allowed_emails: list[str] | None = None
+) -> str | None:
     """Resolve user identity from session cookie or OAuth access token.
 
     Resolution order:
     1. Signed session cookie (set after Google Sign-In)
     2. MCP OAuth access token (for MCP client access)
+
+    When ``allowed_emails`` is a non-empty list, the resolved identity must
+    carry an email on that allowlist; otherwise the caller is treated as
+    unauthenticated (returns ``None``). This mirrors the email allowlist the
+    MCP tool paths enforce in ``server.py``, so the /settings Web UI cannot be
+    used by an authenticated-but-not-allowlisted user to write or delete a key
+    row via *either* the cookie path or the OAuth-token path. An empty or
+    omitted allowlist allows any authenticated user (the self-host default).
     """
+    from ..allowlist import is_email_allowed
+
+    user_id: str | None = None
+    email: str | None = None
+
     if signing_key:
         cookie = request.cookies.get(_SESSION_COOKIE)
         if cookie:
-            user_id = verify_session(cookie, signing_key)
-            if user_id:
-                return user_id
-    from fastmcp.server.dependencies import get_access_token
+            payload = parse_session(cookie, signing_key)
+            if payload and payload.get("sub"):
+                user_id = payload["sub"]
+                email = payload.get("email")
 
-    token = get_access_token()
-    if token is not None and token.client_id != "bearer":
-        return token.client_id
-    return None
+    if user_id is None:
+        from fastmcp.server.dependencies import get_access_token
+
+        from ..allowlist import get_user_email
+
+        token = get_access_token()
+        if token is not None and token.client_id != "bearer":
+            user_id = token.client_id
+            email = get_user_email(token)
+
+    if user_id is None:
+        return None
+
+    if not is_email_allowed(email, allowed_emails or []):
+        logger.warning("Settings access denied: resolved identity not on the email allowlist")
+        return None
+
+    return user_id
