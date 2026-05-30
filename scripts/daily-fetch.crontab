@@ -1,2 +1,7 @@
-# Daily incremental fetch — weekdays at 17:30 JST (08:30 UTC)
-30 8 * * 1-5 python /app/scripts/daily_fetch.py
+# Daily incremental fetch — weekdays at 17:30 JST (08:30 UTC).
+# Chain the completeness check so a stale/incomplete cache surfaces a non-zero
+# exit in the logs. daily_fetch.py already exits non-zero on a fetch failure, so
+# && short-circuits before verifying a bad fetch. The production publisher
+# (self-hosted launchd) should chain verify_cache_completeness.py the same way —
+# see docs/deploy/gcp.md.
+30 8 * * 1-5 python /app/scripts/daily_fetch.py && python /app/scripts/verify_cache_completeness.py

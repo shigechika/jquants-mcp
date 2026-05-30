@@ -124,6 +124,40 @@ _PLAN_RETENTION_YEARS: dict[str, int | None] = {
 # Data delay for the Free plan (weeks)
 _FREE_DELAY_WEEKS = 12
 
+# Cache freshness: a (re)connected cache.db whose latest equities date is more
+# than this many calendar days behind today is almost certainly stale (the
+# publisher stopped). The tolerance absorbs weekends, the longest normal JP
+# market closure (year-end / Golden Week) and the daily publish lag, so it does
+# not fire every pre-publish morning. Mirrors verify_cache_completeness's
+# default _STALE_THRESHOLD of 7.
+_CACHE_STALE_DAYS = 7
+
+# Stable phrase emitted on a stale load and grepped by
+# ops/alerts/07-cache-stale.yaml. Keep the two in lockstep — a mismatch silently
+# disables the alert (see the dead 05 alert fixed in PR #443).
+# tests/test_cache_freshness.py asserts the YAML filter contains this phrase.
+_STALE_LOG_PHRASE = "cache.db is stale"
+
+
+def _cache_stale_message(latest_date: str | None, today: str, stale_days: int) -> str | None:
+    """Return a stale-cache WARNING message, or None when the cache is fresh.
+
+    ``latest_date`` / ``today`` are ``YYYY-MM-DD`` strings; a gap beyond
+    ``stale_days`` calendar days (or no data at all) is treated as stale. Pure
+    and side-effect-free so it can be unit-tested without a CacheStore.
+    """
+    if not latest_date:
+        return f"{_STALE_LOG_PHRASE}: equities_bars_daily is empty (as of {today})"
+    try:
+        gap = (date.fromisoformat(today[:10]) - date.fromisoformat(latest_date[:10])).days
+    except ValueError:
+        return None
+    if gap > stale_days:
+        return (
+            f"{_STALE_LOG_PHRASE}: latest equities date {latest_date} is {gap} days behind {today}"
+        )
+    return None
+
 
 class CacheStore:
     """SQLite-based two-tier cache store.
@@ -329,11 +363,36 @@ class CacheStore:
             self._init_tables()
             self._ready = True
             logger.info("Cache DB connected: %s", self._db_path)
+            self._log_cache_freshness(conn)
             self._start_integrity_check()
             return self._conn
         except sqlite3.DatabaseError as e:
             logger.warning("Cache DB connection failed: %s", e)
             return None
+
+    def _log_cache_freshness(self, conn: sqlite3.Connection) -> None:
+        """Log the freshly-loaded cache's latest equities date once per connect.
+
+        Runs in the fresh-connect branch of ``_ensure_connection``, so it fires
+        at startup and after every reload — making a stale snapshot visible in
+        the logs and driving ``ops/alerts/07-cache-stale.yaml`` (a log-match
+        alert on the WARNING phrase).
+
+        Limitation: this only catches a stale snapshot AT LOAD TIME. It cannot
+        detect a publisher that silently stops *after* a good load (no reload
+        fires) — that needs an external periodic check (e.g. Cloud Scheduler).
+        """
+        try:
+            row = conn.execute("SELECT MAX(date) FROM equities_bars_daily").fetchone()
+        except sqlite3.Error:
+            return
+        latest = row[0] if row else None
+        today = date.today().isoformat()
+        msg = _cache_stale_message(latest, today, _CACHE_STALE_DAYS)
+        if msg:
+            logger.warning(msg)
+        else:
+            logger.info("cache.db freshness: latest equities date %s (as of %s)", latest, today)
 
     def _init_tables(self) -> None:
         """Create cache tables if they don't exist, then migrate existing ones."""

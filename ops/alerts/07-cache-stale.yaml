@@ -1,0 +1,35 @@
+displayName: "cache.db loaded stale"
+documentation:
+  content: |
+    The MCP server (re)loaded a cache.db whose latest equities date is more
+    than a week behind today — the self-hosted publisher likely stopped
+    pushing fresh snapshots. The server keeps serving the stale snapshot and
+    falls back to the live J-Quants API for missing days (slower, rate-limit
+    prone), so this is a WARNING, not a CRITICAL.
+
+    Scope: this fires only when a stale snapshot is loaded (startup or a
+    Pub/Sub-triggered reload). It does NOT detect a publisher that silently
+    stops AFTER a good load, because no reload fires in that case — detecting
+    that requires an external periodic check (e.g. a Cloud Scheduler job that
+    calls health_check and inspects today_cache_ready). Tracked separately.
+
+    Runbook: https://github.com/shigechika/jquants-mcp/blob/main/docs/runbooks/cache-db-missing.md
+  mimeType: text/markdown
+combiner: OR
+conditions:
+  - displayName: "stale cache load log pattern matched"
+    conditionMatchedLog:
+      # Emitted by CacheStore._log_cache_freshness via _cache_stale_message
+      # (src/jquants_mcp/cache/store.py). The phrase is pinned to this filter
+      # by tests/test_cache_freshness.py so the alert cannot silently go dead.
+      filter: |
+        resource.type="cloud_run_revision"
+        resource.labels.service_name="jquants-mcp"
+        textPayload:"cache.db is stale"
+alertStrategy:
+  notificationRateLimit:
+    period: 3600s
+  autoClose: 86400s
+notificationChannels:
+  - __CHANNEL__
+severity: WARNING
