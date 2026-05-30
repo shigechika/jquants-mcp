@@ -1109,6 +1109,13 @@ def main() -> None:
 
     print(f"plan: {plan} | targets: {', '.join(targets)}")
 
+    # Track steps that raised so the process can exit non-zero. A scheduler
+    # (supercronic / launchd / cron) can only detect a failed run via the
+    # exit code; without this, a run where every endpoint errored is
+    # process-level indistinguishable from a clean one and the stale-data
+    # condition goes unnoticed.
+    failed_steps: list[str] = []
+
     # Backfill mode
     if args.backfill:
         _run_backfill(cli, conn, targets, args.backfill, plan)
@@ -1123,6 +1130,7 @@ def main() -> None:
             except Exception as e:
                 print(f"  error: {e}")
                 n = 0
+                failed_steps.append(ep)
             print(f"  done: {n} rows ({time.time() - t0:.1f}s)")
 
     # Pre-compute screener_results for the latest trading day (Issue #142).
@@ -1135,6 +1143,7 @@ def main() -> None:
         except Exception as e:
             print(f"  error: {e}")
             n = 0
+            failed_steps.append("screener_results")
         print(f"  done: {n} rows ({time.time() - t0:.1f}s)")
 
     # Result summary
@@ -1151,6 +1160,12 @@ def main() -> None:
 
     conn.close()
     print("done")
+
+    # Surface failures to the scheduler. The summary above still reports what
+    # succeeded, so exit 1 means "one or more steps failed", not "nothing ran".
+    if failed_steps:
+        print(f"FAILED: {len(failed_steps)} step(s): {', '.join(failed_steps)}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

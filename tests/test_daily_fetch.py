@@ -41,6 +41,7 @@ from daily_fetch import (  # noqa: E402
     fetch_short_ratio,
     fetch_short_sale_report,
     fetch_topix,
+    main,
 )
 
 
@@ -946,3 +947,44 @@ class TestFetchShortSaleReport:
         stored = json.loads(row[1])
         assert stored["count"] == 1
         assert len(stored["data"]) == 1
+
+
+# ============================================================
+# main() のプロセス終了コード（スケジューラ向けの失敗検知）
+# ============================================================
+
+
+class TestMainExitCode:
+    """main() surfaces fetch failures to the scheduler via a non-zero exit code."""
+
+    def _setup_argv(self, monkeypatch, tmp_path):
+        # JQUANTS_PLAN set => configured plan, no API auto-detect round trip.
+        monkeypatch.setenv("JQUANTS_PLAN", "premium")
+        db = tmp_path / "cache.db"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["daily_fetch.py", "--fins-summary", "--skip-screener-results", "--db", str(db)],
+        )
+        return db
+
+    def test_exits_nonzero_when_a_fetch_raises(self, monkeypatch, tmp_path):
+        self._setup_argv(monkeypatch, tmp_path)
+
+        def _boom(cli, conn, plan):
+            raise RuntimeError("api down")
+
+        monkeypatch.setitem(FETCH_REGISTRY, "fins_summary", ("Financial summaries", _boom))
+        with pytest.raises(SystemExit) as exc:
+            main()
+        assert exc.value.code == 1
+
+    def test_exits_zero_when_all_fetches_succeed(self, monkeypatch, tmp_path):
+        self._setup_argv(monkeypatch, tmp_path)
+
+        def _ok(cli, conn, plan):
+            return 7
+
+        monkeypatch.setitem(FETCH_REGISTRY, "fins_summary", ("Financial summaries", _ok))
+        # No failed step => main returns normally (no SystemExit).
+        main()
