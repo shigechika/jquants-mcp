@@ -42,8 +42,13 @@ class TestAuthentication:
             jquants_cache_dir=str(tmp_path),
         )
         c = JQuantsClient(settings)
-        with pytest.raises(AuthenticationError, match="JQUANTS_API_KEY"):
+        with pytest.raises(AuthenticationError) as exc:
             await c.get("/equities/master")
+        msg = str(exc.value)
+        # Point users at the real onboarding paths, not a non-existent .env file.
+        assert "JQUANTS_API_KEY" in msg
+        assert "jquants-mcp login" in msg
+        assert ".env" not in msg
 
     @respx.mock
     async def test_invalid_api_key_raises_error(self, client):

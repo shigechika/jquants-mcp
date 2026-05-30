@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a new tool, data source, or improvement
+labels: ["enhancement"]
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not already requested
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The use case or pain point, not just the proposed solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you'd like to see (a new tool, parameter, data source, etc.).
+    validations:
+      required: false
+  - type: input
+    id: plan
+    attributes:
+      label: Minimum J-Quants plan (if known)
+      description: Some J-Quants endpoints require a higher plan; note it if relevant.
+      placeholder: "Light"
+    validations:
+      required: false

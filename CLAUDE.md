@@ -94,8 +94,10 @@ uv run ruff format src/ tests/  # Format
   `PlanContextMiddleware` from the authenticated user, see `request_context.py`) >
   `default_plan`. This applies each user's plan window on multi-user deployments;
   single-user / bearer paths fall back to `default_plan`.
-- The per-request path only activates on the live OAuth seam (`get_access_token()`
-  inside `on_call_tool`), which no unit test exercises — verify on Cloud Run via the
-  `Resolved plan=...` INFO log (emitted on a plan-cache miss) before trusting it.
+- The per-request path's wiring (middleware → contextvar → cache gating) IS
+  unit-tested by `TestPlanContextMiddlewareE2E` (it patches `get_access_token`).
+  What stays live-only is whether FastMCP actually delivers a token to
+  `on_call_tool` in production — a mock cannot prove that; verify on Cloud Run
+  via the `Resolved plan=...` INFO log (emitted on a plan-cache miss).
 - Plan data retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all
 - `sync_plans.py` is removed — no longer copy data between plans
