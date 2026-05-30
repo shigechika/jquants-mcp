@@ -28,6 +28,7 @@ uv run ruff format src/ tests/  # Format
   - `validators.py` — Input validation (code, date, sector)
   - `settings/` — Web UI for API key registration (/settings endpoint)
   - `oauth_kv_store.py` — SQLite-backed OAuth state persistence
+  - `request_context.py` — Request-scoped plan contextvar set by `PlanContextMiddleware.on_call_tool`; read by `CacheStore._effective_plan` so each user's plan date window applies without threading `plan` through tools
 - `scripts/` — Operational scripts
   - `daily_fetch.py` — Daily data fetch (cron / scheduled-task companion for cache population)
   - `bulk_fetch_all.py` — Historical data bulk fetch via J-Quants Bulk API
@@ -36,7 +37,7 @@ uv run ruff format src/ tests/  # Format
   - `rotate_encryption_key.py` — Re-encrypt user API keys during MCP_ENCRYPTION_KEY rotation
   - `collect_metrics.py` / `load_test.py` — Cloud Run sizing helpers
   - `entrypoint.sh` — Docker/Cloud Run entrypoint
-- `tests/` — pytest + pytest-asyncio tests (412 tests)
+- `tests/` — pytest + pytest-asyncio tests (1090+ tests)
 
 ## Key Patterns
 
@@ -85,8 +86,13 @@ uv run ruff format src/ tests/  # Format
 - Tier 1 cache data is **plan-agnostic** — there is no `plan` column. The legacy
   column was dropped by the `_migrate_drop_plan` migration (`PRAGMA user_version=2`),
   mirrored in both `cache/store.py` and `daily_fetch.py`. Do NOT add `plan` to INSERTs.
-- Plan-based date restriction is enforced **at query time** by `_build_where_clause`,
-  which clamps the requested date range to `_plan_date_bounds(default_plan)`. The stored
-  rows are not tagged by plan; only the returned date window depends on the plan.
+- Plan-based date restriction is enforced **at query time**: `_build_where_clause`
+  (row queries) and `_plan_bounds` (latest-aggregate readers) clamp the date range to
+  `_plan_date_bounds(_effective_plan())`. The stored rows are not tagged by plan; only
+  the returned date window depends on the plan.
+- `_effective_plan()` resolves: explicit `plan` arg > per-request plan (set by
+  `PlanContextMiddleware` from the authenticated user, see `request_context.py`) >
+  `default_plan`. This applies each user's plan window on multi-user deployments;
+  single-user / bearer paths fall back to `default_plan`.
 - Plan data retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all
 - `sync_plans.py` is removed — no longer copy data between plans
