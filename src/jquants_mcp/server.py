@@ -145,10 +145,12 @@ def _resolve_current_plan() -> str | None:
         return None
     plan = meta.plan if meta is not None else None
     _plan_cache[user_id] = (plan, now + _PLAN_CACHE_TTL)
-    # Debug aid for verifying per-user plan resolution on the live OAuth path
-    # (the one path no automated test can exercise — get_access_token must
-    # resolve inside on_call_tool for this to be non-None).
-    logger.debug("Resolved plan=%s for user=%s", plan, user_id)
+    # Verifies per-user plan resolution on the live OAuth path — the one path no
+    # automated test can exercise (get_access_token must resolve inside
+    # on_call_tool for this to be non-None). Logged at INFO because the app's
+    # root level is INFO; only fires on a plan-cache miss (<= once per user per
+    # _PLAN_CACHE_TTL), so the volume is low.
+    logger.info("Resolved plan=%s for user=%s", plan, user_id)
     return plan
 
 
