@@ -25,11 +25,7 @@ from fastmcp import FastMCP
 
 from ..cache.store import CacheStore
 from ..exceptions import (
-    APIError,
-    DecryptionError,
-    InvalidAPIKeyError,
-    UserNotAllowedError,
-    UserNotConfiguredError,
+    TOOL_API_ERRORS,
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_CACHE
@@ -366,13 +362,7 @@ def register(
                     date_from=norm_from,
                     date_to=norm_to,
                 )
-            except (
-                APIError,
-                InvalidAPIKeyError,
-                UserNotConfiguredError,
-                DecryptionError,
-                UserNotAllowedError,
-            ) as e:
+            except TOOL_API_ERRORS as e:
                 err = format_api_error(e)
                 return {"error": err.get("message") or "API error"}
 
@@ -552,13 +542,7 @@ def register(
                 date_from=warmup_start,
                 date_to=norm_to,
             )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             err = format_api_error(e)
             return {"error": err.get("message") or "API error"}
 

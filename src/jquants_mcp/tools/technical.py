@@ -23,11 +23,7 @@ from fastmcp import FastMCP
 from ..cache.store import CacheStore
 from ..cache.technical import compute_bb, compute_rsi, compute_sma
 from ..exceptions import (
-    APIError,
-    DecryptionError,
-    InvalidAPIKeyError,
-    UserNotAllowedError,
-    UserNotConfiguredError,
+    TOOL_API_ERRORS,
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_API
@@ -197,13 +193,7 @@ def register(
                         date_from=warmup_start,
                         date_to=display_end,
                     )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         if not rows:

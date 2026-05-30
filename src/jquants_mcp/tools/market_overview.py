@@ -30,11 +30,7 @@ from ..cache import screener_compute
 from ..cache.store import CacheStore, make_cache_key
 from ..cache.technical import compute_rsi
 from ..exceptions import (
-    APIError,
-    DecryptionError,
-    InvalidAPIKeyError,
-    UserNotAllowedError,
-    UserNotConfiguredError,
+    TOOL_API_ERRORS,
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_CACHE
@@ -537,13 +533,7 @@ def register(
             prev_rows = cache.get_rows(
                 "equities_bars_daily", key_filter={}, date_from=prev_date, date_to=prev_date
             )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         prev_close_map = _rows_to_close_map(prev_rows)
@@ -598,13 +588,7 @@ def register(
                 date_from=session_dates[0],
                 date_to=norm_date,
             )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         by_date: dict[str, list[dict[str, Any]]] = {}
@@ -681,13 +665,7 @@ def register(
             prev_rows = cache.get_rows(
                 "equities_bars_daily", key_filter={}, date_from=prev_date, date_to=prev_date
             )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         prev_close_map = _rows_to_close_map(prev_rows)
@@ -735,13 +713,7 @@ def register(
             rows = cache.get_rows(
                 "equities_bars_daily", key_filter={}, date_from=norm_date, date_to=norm_date
             )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         if not rows:
@@ -806,13 +778,7 @@ def register(
             rows = cache.get_rows(
                 "equities_bars_daily", key_filter={}, date_from=norm_date, date_to=norm_date
             )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         if not rows:
@@ -877,13 +843,7 @@ def register(
             prev_rows = cache.get_rows(
                 "equities_bars_daily", key_filter={}, date_from=prev_date, date_to=prev_date
             )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         prev_close_map = _rows_to_close_map(prev_rows)
@@ -982,13 +942,7 @@ def register(
             bars = cache.get_rows(
                 "equities_bars_daily", key_filter={}, date_from=norm_date, date_to=norm_date
             )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         if not bars:
@@ -1192,13 +1146,7 @@ def register(
                 date_from=session_dates_adr[0],
                 date_to=today_date,
             )
-        except (
-            APIError,
-            InvalidAPIKeyError,
-            UserNotConfiguredError,
-            DecryptionError,
-            UserNotAllowedError,
-        ) as e:
+        except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
         # Group by date once; all sub-computations read from this dict.
