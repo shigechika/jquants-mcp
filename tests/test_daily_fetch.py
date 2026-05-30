@@ -42,6 +42,7 @@ from daily_fetch import (  # noqa: E402
     fetch_short_sale_report,
     fetch_topix,
     main,
+    migrate_drop_plan,
 )
 
 
@@ -988,3 +989,61 @@ class TestMainExitCode:
         monkeypatch.setitem(FETCH_REGISTRY, "fins_summary", ("Financial summaries", _ok))
         # No failed step => main returns normally (no SystemExit).
         main()
+
+
+# ============================================================
+# Shared plan-drop migration (consolidated into schema.py)
+# ============================================================
+
+
+class TestSharedMigration:
+    """daily_fetch and the MCP server run the SAME migrate_drop_plan.
+
+    Regression guard: daily_fetch's old hand-copied migration used
+    ``CREATE TABLE ... AS SELECT``, which silently dropped the PRIMARY KEY and
+    column types. The shared migration rebuilds from the declared DDL, so the
+    PK is preserved.
+    """
+
+    def test_daily_fetch_uses_the_schema_migration(self):
+        from jquants_mcp.cache.schema import migrate_drop_plan as schema_mig
+
+        import daily_fetch as df
+
+        # Same function object => no second hand-copied implementation.
+        assert df.migrate_drop_plan is schema_mig
+
+    def test_migration_preserves_primary_key_and_dedups(self, tmp_path):
+        db = tmp_path / "legacy.db"
+        conn = sqlite3.connect(str(db))
+        # Legacy schema: plan is part of the PRIMARY KEY.
+        conn.execute(
+            "CREATE TABLE markets_short_ratio "
+            "(s33 TEXT NOT NULL, date TEXT NOT NULL, plan TEXT NOT NULL DEFAULT 'free', "
+            "data TEXT NOT NULL, fetched_at REAL NOT NULL, PRIMARY KEY (s33, date, plan))"
+        )
+        conn.execute(
+            "INSERT INTO markets_short_ratio VALUES ('0050','2024-01-04','free','{\"v\":1}',0.0)"
+        )
+        conn.execute(
+            "INSERT INTO markets_short_ratio VALUES "
+            "('0050','2024-01-04','standard','{\"v\":999}',1.0)"
+        )
+        conn.execute("PRAGMA user_version = 1")
+        conn.commit()
+
+        migrate_drop_plan(conn)
+
+        info = conn.execute("PRAGMA table_info(markets_short_ratio)").fetchall()
+        col_names = [c[1] for c in info]
+        pk_cols = [c[1] for c in info if c[5] > 0]
+
+        # plan column gone, PRIMARY KEY preserved (the old AS-SELECT path lost it).
+        assert "plan" not in col_names
+        assert pk_cols == ["s33", "date"]
+        # Deduplicated to the highest plan (standard beats free).
+        rows = conn.execute("SELECT data FROM markets_short_ratio").fetchall()
+        assert len(rows) == 1
+        assert json.loads(rows[0][0])["v"] == 999
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        conn.close()

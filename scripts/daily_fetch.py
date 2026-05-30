@@ -48,6 +48,7 @@ from jquants_mcp.cache.schema import (  # noqa: E402
     SCREENER_RESULTS_INDEX_DDL,
     TIER1_TABLES,
     generate_ddl,
+    migrate_drop_plan,
 )
 from jquants_mcp.cache import screener_compute  # noqa: E402  # stdlib-only
 
@@ -178,102 +179,7 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     conn.execute(SCREENER_RESULTS_DDL)
     conn.execute(SCREENER_RESULTS_INDEX_DDL)
     conn.commit()
-    _migrate_drop_plan(conn)
-
-
-def _migrate_drop_plan(conn: sqlite3.Connection) -> None:
-    """Remove plan column from Tier 1 tables if present.
-
-    Mirrors the same migration in store.py._migrate_drop_plan() so that
-    daily_fetch.py (which connects directly, bypassing CacheStore) can
-    also clean up legacy plan columns.
-    """
-    version = conn.execute("PRAGMA user_version").fetchone()[0]
-    if version >= 2:
-        return
-
-    _TABLES_WITH_PLAN_SCHEMA = {
-        "indices_bars_daily_topix": ("date", "date"),
-        "fins_summary": ("code, disc_date", "code, disc_date"),
-        "investor_types": ("pub_date, section", "pub_date, section"),
-        "markets_margin_interest": ("code, date", "code, date"),
-        "markets_margin_alert": ("code, date", "code, date"),
-        "markets_short_ratio": ("s33, date", "s33, date"),
-        "markets_breakdown": ("code, date", "code, date"),
-        "markets_calendar": ("date", "date"),
-    }
-
-    migrated = False
-    for table, (key_cols, pk_cols) in _TABLES_WITH_PLAN_SCHEMA.items():
-        cols_info = conn.execute(f"PRAGMA table_info({table})").fetchall()
-        col_names = [c[1] for c in cols_info]
-        if "plan" not in col_names:
-            continue
-
-        pk_positions = [c[1] for c in cols_info if c[5] > 0]
-        select_cols = [c for c in col_names if c != "plan"]
-        select_str = ", ".join(select_cols)
-
-        if "plan" in pk_positions:
-            # Rebuild: deduplicate (highest plan wins)
-            conn.execute(f"""
-                CREATE TABLE {table}_v2 AS SELECT {select_str} FROM (
-                    SELECT {select_str},
-                        ROW_NUMBER() OVER (
-                            PARTITION BY {pk_cols}
-                            ORDER BY CASE plan
-                                WHEN 'premium' THEN 3 WHEN 'standard' THEN 2
-                                WHEN 'light' THEN 1 ELSE 0 END DESC
-                        ) AS rn
-                    FROM {table}
-                ) WHERE rn = 1
-            """)
-            conn.execute(f"DROP TABLE {table}")
-            conn.execute(f"ALTER TABLE {table}_v2 RENAME TO {table}")
-        else:
-            try:
-                conn.execute(f"ALTER TABLE {table} DROP COLUMN plan")
-            except sqlite3.OperationalError:
-                pass
-        migrated = True
-
-    # Tier 2: strip |plan= suffix
-    try:
-        has_plan_keys = conn.execute(
-            "SELECT COUNT(*) FROM response_cache WHERE cache_key LIKE '%|plan=%'"
-        ).fetchone()[0]
-    except sqlite3.OperationalError:
-        has_plan_keys = 0
-
-    if has_plan_keys:
-        conn.execute("""
-            CREATE TABLE response_cache_v2 (
-                cache_key TEXT PRIMARY KEY,
-                data TEXT NOT NULL,
-                fetched_at REAL NOT NULL,
-                ttl_seconds INTEGER NOT NULL
-            )
-        """)
-        conn.execute("""
-            INSERT OR REPLACE INTO response_cache_v2
-                (cache_key, data, fetched_at, ttl_seconds)
-            SELECT
-                CASE WHEN INSTR(cache_key, '|plan=') > 0
-                    THEN SUBSTR(cache_key, 1, INSTR(cache_key, '|plan=') - 1)
-                    ELSE cache_key END,
-                data, fetched_at, ttl_seconds
-            FROM response_cache
-            ORDER BY fetched_at ASC
-        """)
-        conn.execute("DROP TABLE response_cache")
-        conn.execute("ALTER TABLE response_cache_v2 RENAME TO response_cache")
-        migrated = True
-
-    if migrated:
-        print("  migration: removed plan column")
-
-    conn.execute("PRAGMA user_version = 2")
-    conn.commit()
+    migrate_drop_plan(conn)
 
 
 def _sanitize_row(row_data: dict) -> dict:
