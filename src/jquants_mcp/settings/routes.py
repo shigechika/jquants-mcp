@@ -10,6 +10,7 @@ import httpx
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, Response
 
+from ..allowlist import is_email_allowed
 from ..audit import audit
 from ..client import JQuantsClient
 from ..config import Settings as _Settings
@@ -36,7 +37,8 @@ _GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 async def handle_settings_get(request: Request, get_user_db_fn, settings=None) -> Response:
     """Handle GET /settings — show registration form."""
     signing_key = get_signing_key(settings)
-    user_id = resolve_user_id(request, signing_key)
+    allowed_emails = settings.get_allowed_emails() if settings else []
+    user_id = resolve_user_id(request, signing_key, allowed_emails)
 
     if user_id is None:
         google_client_id = settings.google_client_id if settings else ""
@@ -89,7 +91,8 @@ async def handle_settings_post(
 ) -> Response:
     """Handle POST /settings — save API key."""
     signing_key = get_signing_key(settings)
-    user_id = resolve_user_id(request, signing_key)
+    allowed_emails = settings.get_allowed_emails() if settings else []
+    user_id = resolve_user_id(request, signing_key, allowed_emails)
 
     if user_id is None:
         return HTMLResponse(
@@ -167,7 +170,8 @@ async def handle_settings_delete(
 ) -> Response:
     """Handle POST /settings/delete — delete registered API key."""
     signing_key = get_signing_key(settings)
-    user_id = resolve_user_id(request, signing_key)
+    allowed_emails = settings.get_allowed_emails() if settings else []
+    user_id = resolve_user_id(request, signing_key, allowed_emails)
 
     if user_id is None:
         return HTMLResponse(
@@ -266,6 +270,15 @@ async def handle_settings_verify(request: Request, settings=None) -> Response:
     email = token_data.get("email", "")
     if not email:
         return Response("No email in token", status_code=401)
+
+    # Enforce the same email allowlist as the MCP tool paths before issuing a
+    # session cookie. resolve_user_id() re-checks this on every subsequent
+    # request (covering the OAuth-token path too); rejecting here gives a clear
+    # 403 instead of minting a cookie that would be refused on the next call.
+    allowed_emails = settings.get_allowed_emails() if settings else []
+    if not is_email_allowed(email, allowed_emails):
+        logger.warning("Settings sign-in denied: email not on the allowlist")
+        return Response("Email not allowed", status_code=403)
 
     # Create signed session cookie (sub as user ID, email for display)
     session_value = sign_session(sub, signing_key, email=email)
