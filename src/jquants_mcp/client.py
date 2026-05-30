@@ -75,8 +75,10 @@ class JQuantsClient:
         if self._client is None:
             if not self._settings.jquants_api_key:
                 raise AuthenticationError(
-                    "JQUANTS_API_KEY is not set. "
-                    "Please configure it via environment variable or .env file."
+                    "JQUANTS_API_KEY is not set. Run `jquants-mcp login` to "
+                    "authenticate via your browser, or set the JQUANTS_API_KEY "
+                    "environment variable (or [jquants] api_key in "
+                    "~/.config/jquants-mcp/config.ini)."
                 )
             self._client = httpx.AsyncClient(
                 base_url=self._settings.jquants_base_url,
