@@ -19,7 +19,6 @@ updates:
       interval: monthly
     labels:
       - dependencies
-      - ci
 
   - package-ecosystem: docker
     directory: /
@@ -37,4 +36,3 @@ updates:
           - version-update:semver-minor
     labels:
       - dependencies
-      - docker
