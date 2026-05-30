@@ -87,13 +87,20 @@ if [ "${ENABLE_DAILY_FETCH}" = "true" ] || [ "${ENABLE_DAILY_FETCH}" = "1" ]; th
     echo "supercronic started (PID=${SUPERCRONIC_PID})"
 fi
 
-# Step 4: Download cache.db in background, then signal MCP server to reload
+# Step 4: Download cache.db in background, then signal MCP server to reload.
+# Only signal the reload on a successful download — signalling after a failed
+# download would point the server at a missing/partial file. On failure, emit
+# the phrase the cache.db-download alert greps for and keep serving via the
+# live-API fallback (gcs_sync.py also logs "cache.db download failed").
 if [ -n "${GCS_BUCKET:-}" ]; then
     echo "Starting background cache.db download..."
     (
-        python /app/scripts/gcs_sync.py --init-cache
-        echo "cache.db download complete; signaling MCP server to reload"
-        kill -HUP "${MCP_PID}" 2>/dev/null || true
+        if python /app/scripts/gcs_sync.py --init-cache; then
+            echo "cache.db download complete; signaling MCP server to reload"
+            kill -HUP "${MCP_PID}" 2>/dev/null || true
+        else
+            echo "cache.db download failed; continuing with live-API fallback"
+        fi
     ) &
     CACHE_DL_PID=$!
 fi

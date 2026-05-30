@@ -251,6 +251,12 @@ def main() -> None:
     # ignores the return value (it retries on the next tick).
     if args.init_cache:
         failures = download_files(_CACHE_FILES)
+        if failures:
+            # Emit the exact phrase the Cloud Monitoring policy
+            # (ops/alerts/05-cache-db-download-fail.yaml) greps for, so a
+            # genuine startup download failure actually pages instead of
+            # silently disabling the only alert guarding the cache pipeline.
+            logger.error("cache.db download failed")
     elif args.init:
         failures = download_files()
     elif args.daemon:

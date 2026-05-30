@@ -11,12 +11,13 @@ combiner: OR
 conditions:
   - displayName: "download failure log pattern matched"
     conditionMatchedLog:
+      # The startup path (entrypoint.sh Step 4 -> gcs_sync.py --init-cache)
+      # emits the literal phrase "cache.db download failed" on a genuine
+      # failure, via both gcs_sync.py's logger.error and the entrypoint echo.
       filter: |
         resource.type="cloud_run_revision"
         resource.labels.service_name="jquants-mcp"
-        (textPayload:"cache.db download failed" OR
-         textPayload:"gcs_sync.py: error" OR
-         jsonPayload.message:"cache.db download failed")
+        textPayload:"cache.db download failed"
 alertStrategy:
   notificationRateLimit:
     period: 3600s
