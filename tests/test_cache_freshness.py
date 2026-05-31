@@ -54,7 +54,7 @@ class TestStaleMessage:
 
 def test_alert_filter_matches_the_emitted_phrase():
     """Gate against a dead alert: the YAML filter must contain the emitted phrase."""
-    yaml_text = _ALERT_YAML.read_text()
+    yaml_text = _ALERT_YAML.read_text(encoding="utf-8")
     assert f'textPayload:"{_STALE_LOG_PHRASE}"' in yaml_text
     # And a real stale message actually contains that substring.
     stale = _cache_stale_message("2000-01-01", "2026-05-31", _CACHE_STALE_DAYS)
