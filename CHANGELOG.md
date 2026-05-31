@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.45.1](https://github.com/shigechika/jquants-mcp/compare/v0.45.0...v0.45.1) (2026-05-31)
+
+
+### Bug Fixes
+
+* **ci:** read tool sources as UTF-8 and run Windows in CI ([#452](https://github.com/shigechika/jquants-mcp/issues/452)) ([7c996ce](https://github.com/shigechika/jquants-mcp/commit/7c996ce128f275535ab2b97a2e51e5746bd9e0d8))
+
 ## [0.45.0](https://github.com/shigechika/jquants-mcp/compare/v0.44.0...v0.45.0) (2026-05-30)
 
 
