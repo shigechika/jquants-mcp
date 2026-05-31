@@ -57,7 +57,7 @@ def test_tool_api_errors_includes_decryption_error():
 @pytest.mark.parametrize("tool_file", _TOOL_FILES, ids=lambda p: p.name)
 def test_every_format_api_error_handler_uses_the_shared_tuple(tool_file: Path):
     """No tool handler may catch an inline tuple instead of TOOL_API_ERRORS."""
-    tree = ast.parse(tool_file.read_text())
+    tree = ast.parse(tool_file.read_text(encoding="utf-8"))
     offenders = []
     for handler in _handlers_calling_format_api_error(tree):
         # The caught type must be exactly the Name ``TOOL_API_ERRORS``.
@@ -77,6 +77,7 @@ def test_walk_finds_all_known_handlers():
     so pin a sane lower bound.
     """
     total = sum(
-        len(_handlers_calling_format_api_error(ast.parse(f.read_text()))) for f in _TOOL_FILES
+        len(_handlers_calling_format_api_error(ast.parse(f.read_text(encoding="utf-8"))))
+        for f in _TOOL_FILES
     )
     assert total >= 30

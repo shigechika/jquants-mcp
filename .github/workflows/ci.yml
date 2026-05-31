@@ -36,3 +36,21 @@ jobs:
       - run: uv python install ${{ matrix.python-version }}
       - run: uv sync --dev --python ${{ matrix.python-version }}
       - run: uv run pytest -v
+
+  # Separate job (NOT folded into the `test` matrix) so the existing
+  # `test (3.x)` check names stay stable for branch protection, while still
+  # catching Windows-only breakage (file encoding, paths) at PR time instead
+  # of only at release (release.yml).
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # hatch-vcs needs full history for version
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: py-windows-3.12
+      - run: uv python install 3.12
+      - run: uv sync --dev --python 3.12
+      - run: uv run pytest -v
