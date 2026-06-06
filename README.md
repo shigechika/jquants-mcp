@@ -924,7 +924,7 @@ sequenceDiagram
     E->>D: spawn background job
     activate D
     D->>G: gcloud storage cp cache.db /tmp
-    G-->>D: ~2.9 GiB (1-2 min)
+    G-->>D: ~3 GiB (1-2 min)
     D->>M: SIGHUP
     deactivate D
     Note right of M: reload cache.db,<br/>switch to Tier 1 cache
@@ -932,7 +932,7 @@ sequenceDiagram
 ```
 
 Notes:
-- `cache.db` is ~2.9 GiB and takes 1–2 minutes to download. Requests during that window hit the live J-Quants API, so they work but are slower and count against rate limits.
+- `cache.db` is ~3 GiB and takes 1–2 minutes to download. Requests during that window hit the live J-Quants API, so they work but are slower and count against rate limits.
 - During the cold-start window `cache_status` returns a minimal payload (`db_path` + `plan` only). A full payload with row counts and `db_size_mb` indicates the cache is loaded.
 - Firestore is strongly consistent, so multiple Cloud Run instances can run concurrently without data races. There is no `maxScale: 1` restriction — scale as needed.
 
@@ -958,7 +958,7 @@ sequenceDiagram
     CR->>CR: verify OIDC token<br/>(PUBSUB_INVOKER_SA)
     CR-->>PS: 200 OK (immediate ACK)
     CR->>G: download new cache.db to /tmp
-    G-->>CR: ~2.9 GiB
+    G-->>CR: ~3 GiB
     CR->>C: request_reload()<br/>(lazy reconnect on next query)
 ```
 
@@ -1068,13 +1068,13 @@ No manual Firestore setup is required — the server creates the `users` and `oa
 
 Cloud Run materializes `cache.db` into `/tmp` (a tmpfs, i.e. RAM). The memory limit therefore must cover:
 
-- `cache.db` size (currently ~2.9 GiB)
+- `cache.db` size (currently ~3 GiB)
 - Python runtime + fastmcp + sqlite + httpx overhead (~300 MiB)
 - Request-time JSON serialization headroom
 
 Current production sizing (see [.github/workflows/cd.yml](.github/workflows/cd.yml)) is `--memory 6Gi --cpu 2 --max-instances 3` with CPU throttling left at the default. CPU throttling means **request-based billing** — compute is billed only while a request is being processed — which keeps this near-idle service within the monthly free tier; `--no-cpu-throttling` would instead bill every second an instance stays alive (idle keepalive included). Cloud Run gen2 is required for memory allocations above 4 Gi, and >4 GiB also forces ≥2 vCPU.
 
-Memory stays at 6 GiB and should not be trimmed: a cache reload downloads the new snapshot to a temp file in `/tmp` before renaming it over the old one, so the tmpfs peak is briefly ~2× `cache.db` (old + new), not 1×. With a ~2.9 GiB snapshot that peak (~5.8 GiB) already sits near the 6 GiB limit, so if `cache.db` grows materially, raise the memory limit (and keep ≥2 vCPU).
+Memory stays at 6 GiB and should not be trimmed: a cache reload downloads the new snapshot to a temp file in `/tmp` before renaming it over the old one, so the tmpfs peak is briefly ~2× `cache.db` (old + new), not 1×. With a ~3 GiB snapshot that peak (~2× `cache.db`) sits close to the 6 GiB limit, so if `cache.db` grows materially, raise the memory limit (and keep ≥2 vCPU).
 
 ## Operations
 

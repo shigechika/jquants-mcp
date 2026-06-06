@@ -286,6 +286,16 @@ For the Apr 11 cache.db of 3.57 GiB, that landed at ~5.4 GiB minimum. After
 the Apr 12 shrink to 2.7 GiB, the minimum is ~4.5 GiB. 4 GiB is tight but
 passed the full load test without OOM.
 
+> **Correction (request-based-billing change):** the formula above omits the
+> *reload* peak. A Pub/Sub-triggered reload (and the cold-start download)
+> writes the new snapshot to a temp file in `/tmp` before renaming it over the
+> old one, so tmpfs transiently holds ~2× `cache.db` (old + new). The true
+> floor is therefore closer to `2 × cache.db`, not `cache.db + ~1.5 GiB`. With
+> the current ~3 GiB snapshot that is ~6 GiB, which is why production stays at
+> 6 GiB / 2 vCPU and is **not** trimmed to 4 GiB (Cloud Run also forces ≥2 vCPU
+> above 4 GiB). The Apr load test passed at 4 GiB only because it never
+> exercised a warm-instance reload. See README → "Memory requirements".
+
 ### 5. `cache.db` is downloaded asynchronously at cold start
 
 The entrypoint starts the MCP server immediately and runs `gcs_sync.py
