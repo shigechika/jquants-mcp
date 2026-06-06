@@ -282,11 +282,52 @@ def _verify_pubsub_oidc_token(token: str, expected_email: str, audience: str) ->
         raise ValueError(f"OIDC token email {email!r} does not match expected {expected_email!r}")
 
 
+def _stream_download_zst(bucket, zst_blob_name: str, dest) -> bool:
+    """Stream-download a zstd object from GCS and decompress it to ``dest``.
+
+    Streaming (GCS read -> zstd decompress -> file) keeps the tmpfs/RAM peak at
+    just the decompressed output — the full compressed object is never staged —
+    so a warm-instance reload stays within the same 2x-cache.db budget as the
+    uncompressed path.
+
+    Returns:
+        True on success. False when zstandard is unavailable, the object is
+        missing, or decompression fails; the caller then falls back to the
+        uncompressed object so a missing/old ``.zst`` never breaks the reload.
+    """
+    try:
+        import zstandard
+    except ImportError:
+        return False
+
+    from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
+
+    blob = bucket.blob(zst_blob_name)
+    try:
+        dctx = zstandard.ZstdDecompressor()
+        with blob.open("rb") as src, open(dest, "wb") as out:
+            dctx.copy_stream(src, out)
+        return True
+    except NotFound:
+        dest.unlink(missing_ok=True)
+        return False
+    except Exception as exc:
+        logger.warning(
+            "zstd reload download of %s failed (%s); falling back to uncompressed",
+            zst_blob_name,
+            exc,
+        )
+        dest.unlink(missing_ok=True)
+        return False
+
+
 def _download_cache_db_from_gcs() -> None:
     """Download cache.db from GCS to the local cache directory (blocking).
 
-    Uses atomic write: downloads to ``.cache.db.download`` then renames to
-    ``cache.db`` to prevent the MCP server from reading a half-written file.
+    Prefers the zstd-compressed ``cache.db.zst`` (stream-decompressed) and falls
+    back to the uncompressed ``cache.db`` when it is absent. Uses atomic write:
+    downloads to ``.cache.db.reload`` then renames to ``cache.db`` to prevent the
+    MCP server from reading a half-written file.
 
     Raises:
         RuntimeError: When ``GCS_BUCKET`` is not set or the object is not found.
@@ -313,9 +354,17 @@ def _download_cache_db_from_gcs() -> None:
 
     client = gcs.Client()
     bucket = client.bucket(bucket_name)
+
+    # 1. Preferred: compressed cache.db.zst, stream-decompressed.
+    if _stream_download_zst(bucket, f"{prefix}cache.db.zst", tmp_path):
+        tmp_path.rename(local_path)
+        size_mb = local_path.stat().st_size / 1024 / 1024
+        logger.info("Downloaded+decompressed cache.db.zst from GCS (%.1f MB)", size_mb)
+        return
+
+    # 2. Fallback: uncompressed cache.db.
     blob_name = f"{prefix}cache.db"
     blob = bucket.blob(blob_name)
-
     logger.info("Downloading gs://%s/%s ...", bucket_name, blob_name)
     try:
         blob.download_to_filename(str(tmp_path))

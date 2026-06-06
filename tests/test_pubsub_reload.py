@@ -237,6 +237,9 @@ class TestDownloadCacheDbFromGcs:
             pathlib.Path(path).write_bytes(b"fake-db-content")
 
         mock_blob = MagicMock()
+        # No compressed object -> the .zst probe returns False (avoids feeding a
+        # mock stream to zstandard) and the uncompressed download is exercised.
+        mock_blob.open.side_effect = mock_google_cloud_storage["NotFound"]("no zst")
         mock_blob.download_to_filename.side_effect = fake_download
         mock_storage_client = mock_google_cloud_storage["mock_storage_client"]
         mock_storage_client.bucket.return_value.blob.return_value = mock_blob
@@ -253,6 +256,7 @@ class TestDownloadCacheDbFromGcs:
 
         NotFound = mock_google_cloud_storage["NotFound"]
         mock_blob = MagicMock()
+        mock_blob.open.side_effect = NotFound("no zst")  # compressed object absent
         mock_blob.download_to_filename.side_effect = NotFound("not found")
         mock_storage_client = mock_google_cloud_storage["mock_storage_client"]
         mock_storage_client.bucket.return_value.blob.return_value = mock_blob
@@ -261,6 +265,44 @@ class TestDownloadCacheDbFromGcs:
             server_module._download_cache_db_from_gcs()
 
         assert not (tmp_path / ".cache.db.reload").exists()
+
+    def test_stream_download_zst_round_trip(self, tmp_path, mock_google_cloud_storage):
+        import io
+
+        import zstandard
+
+        original = b"sqlite-reload-bytes" * 4000
+        compressed = zstandard.ZstdCompressor().compress(original)
+        bucket = MagicMock()
+        cm = bucket.blob.return_value.open.return_value
+        cm.__enter__.return_value = io.BytesIO(compressed)
+        cm.__exit__.return_value = False
+        dest = tmp_path / ".cache.db.reload"
+
+        assert server_module._stream_download_zst(bucket, "p/cache.db.zst", dest) is True
+        assert dest.read_bytes() == original
+
+    def test_prefers_zst_when_present(self, tmp_path, monkeypatch, mock_google_cloud_storage):
+        import io
+
+        import zstandard
+
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("GCS_PREFIX", "jquants-mcp/")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        original = b"zstd-reload-db" * 2000
+        compressed = zstandard.ZstdCompressor().compress(original)
+        blob = mock_google_cloud_storage[
+            "mock_storage_client"
+        ].bucket.return_value.blob.return_value
+        cm = blob.open.return_value
+        cm.__enter__.return_value = io.BytesIO(compressed)
+        cm.__exit__.return_value = False
+
+        server_module._download_cache_db_from_gcs()
+
+        assert (tmp_path / "cache.db").read_bytes() == original
+        blob.download_to_filename.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

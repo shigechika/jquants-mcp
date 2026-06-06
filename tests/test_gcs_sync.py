@@ -139,6 +139,9 @@ class TestInitCacheFailureAlert:
         monkeypatch.setattr(sys.modules["google.cloud.exceptions"], "NotFound", _NotFound)
 
         blob = mock_google_storage.Client.return_value.bucket.return_value.blob.return_value
+        # No compressed object -> the .zst probe returns False (avoids feeding a
+        # mock stream to zstandard) and the uncompressed download is exercised.
+        blob.open.side_effect = _NotFound("no zst")
         blob.download_to_filename.side_effect = RuntimeError("network down")
         with caplog.at_level("ERROR"), pytest.raises(SystemExit) as exc:
             gcs_sync.main()
@@ -154,7 +157,68 @@ class TestInitCacheFailureAlert:
         monkeypatch.setattr(sys, "argv", ["gcs_sync.py", "--init-cache"])
         # download succeeds (no side_effect); rename needs a real temp file.
         blob = mock_google_storage.Client.return_value.bucket.return_value.blob.return_value
+        # No compressed object -> fall through to the uncompressed download.
+        blob.open.side_effect = sys.modules["google.cloud.exceptions"].NotFound("no zst")
         blob.download_to_filename.side_effect = lambda p: Path(p).write_bytes(b"db")
         with caplog.at_level("ERROR"):
             gcs_sync.main()
         assert "cache.db download failed" not in caplog.text
+
+
+def _zst_stream_blob(payload: bytes):
+    """Return a blob mock whose open('rb') streams the zstd-compressed payload."""
+    import io
+
+    import zstandard
+
+    compressed = zstandard.ZstdCompressor().compress(payload)
+    blob = MagicMock()
+    cm = blob.open.return_value
+    cm.__enter__.return_value = io.BytesIO(compressed)
+    cm.__exit__.return_value = False
+    return blob
+
+
+class TestZstCacheDownload:
+    """download_cache_db prefers cache.db.zst, falls back to uncompressed."""
+
+    def test_download_zst_to_round_trip(self, tmp_path, mock_google_storage):
+        payload = b"sqlite-bytes" * 5000
+        bucket = MagicMock()
+        bucket.blob.return_value = _zst_stream_blob(payload)
+        dest = tmp_path / ".cache.db.download"
+
+        assert gcs_sync._download_zst_to(bucket, "p/cache.db.zst", dest) is True
+        assert dest.read_bytes() == payload
+
+    def test_download_zst_to_false_when_missing(self, tmp_path, mock_google_storage):
+        NotFound = sys.modules["google.cloud.exceptions"].NotFound
+        bucket = MagicMock()
+        bucket.blob.return_value.open.side_effect = NotFound("no zst")
+        dest = tmp_path / ".cache.db.download"
+
+        assert gcs_sync._download_zst_to(bucket, "p/cache.db.zst", dest) is False
+        assert not dest.exists()
+
+    def test_cache_db_prefers_zst(self, tmp_path, monkeypatch, mock_google_storage):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_google_storage.Client.return_value.bucket.return_value.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        blob.download_to_filename.assert_not_called()
+
+    def test_cache_db_falls_back_to_uncompressed(self, tmp_path, monkeypatch, mock_google_storage):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        NotFound = sys.modules["google.cloud.exceptions"].NotFound
+        blob = mock_google_storage.Client.return_value.bucket.return_value.blob.return_value
+        blob.open.side_effect = NotFound("no zst")  # compressed object absent
+        blob.download_to_filename.side_effect = lambda p: Path(p).write_bytes(b"raw-db")
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == b"raw-db"
+        blob.download_to_filename.assert_called_once()
