@@ -47,12 +47,6 @@ _DOWNLOAD_FILES: list[str] = []
 # Cache file to download in background at startup
 _CACHE_FILES = ["cache.db"]
 
-# Sliced concurrent-download tuning for the multi-GB cache.db. THREAD workers
-# avoid multiprocessing (fork) issues in the container and parallelize the
-# I/O-bound transfer well; any failure falls back to a single-stream download.
-_SLICE_CHUNK_SIZE = 64 * 1024 * 1024  # 64 MiB
-_SLICE_MAX_WORKERS = 8
-
 # Files to upload to GCS (daemon / --upload)
 # cache.db is excluded here: it is owned by the self-hosted publisher
 # (see scripts/daily_fetch.py + scripts/gcs_export_cache.py) which pushes
@@ -81,35 +75,6 @@ def _get_config() -> tuple[str, str, Path]:
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     return bucket, prefix, cache_dir
-
-
-def _download_blob_to(blob, dest: Path) -> None:
-    """Download ``blob`` to ``dest``, preferring concurrent sliced chunks.
-
-    ``transfer_manager.download_chunks_concurrently`` splits the object into
-    ranges fetched in parallel, cutting the multi-GB cache.db download on Cloud
-    Run from ~45-90 s to ~15-25 s — which matters because the download now runs
-    synchronously during container startup (see entrypoint.sh). Any failure
-    (transfer_manager missing, a chunk/checksum error, or no file produced)
-    falls back to a single-stream ``download_to_filename`` so correctness never
-    depends on the fast path; the only cost of the fallback is a slower download.
-    """
-    try:
-        from google.cloud.storage import transfer_manager  # type: ignore[import-untyped]
-
-        blob.reload()  # populate blob.size, required to slice the object
-        transfer_manager.download_chunks_concurrently(
-            blob,
-            str(dest),
-            chunk_size=_SLICE_CHUNK_SIZE,
-            max_workers=_SLICE_MAX_WORKERS,
-            worker_type=transfer_manager.THREAD,
-        )
-        if not dest.exists():
-            raise RuntimeError("sliced download produced no file")
-    except Exception as exc:
-        logger.info("Sliced download unavailable/failed (%s); using single-stream", exc)
-        blob.download_to_filename(str(dest))
 
 
 def download_files(file_list: list[str] | None = None) -> int:
@@ -148,7 +113,7 @@ def download_files(file_list: list[str] | None = None) -> int:
         tmp_path = cache_dir / f".{filename}.download"
         blob = gcs_bucket.blob(blob_name)
         try:
-            _download_blob_to(blob, tmp_path)
+            blob.download_to_filename(str(tmp_path))
             tmp_path.rename(local_path)
             size_mb = local_path.stat().st_size / 1024 / 1024
             logger.info(
