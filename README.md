@@ -869,7 +869,7 @@ gcloud run deploy jquants-mcp \
   --region "${REGION}" \
   --source . \
   --execution-environment gen2 \
-  --memory 6Gi \
+  --memory 8Gi \
   --cpu 2 \
   --cpu-boost \
   --max-instances 3 \
@@ -1067,9 +1067,9 @@ Cloud Run materializes `cache.db` into `/tmp` (a tmpfs, i.e. RAM). The memory li
 - Python runtime + fastmcp + sqlite + httpx overhead (~300 MiB)
 - Request-time JSON serialization headroom
 
-Current production sizing (see [.github/workflows/cd.yml](.github/workflows/cd.yml)) is `--memory 6Gi --cpu 2 --max-instances 3` with CPU throttling left at the default. CPU throttling means **request-based billing** — compute is billed only while a request is being processed — which keeps this near-idle service within the monthly free tier; `--no-cpu-throttling` would instead bill every second an instance stays alive (idle keepalive included). Cloud Run gen2 is required for memory allocations above 4 Gi, and >4 GiB also forces ≥2 vCPU.
+Current production sizing (see [.github/workflows/cd.yml](.github/workflows/cd.yml)) is `--memory 8Gi --cpu 2 --max-instances 3` with CPU throttling left at the default. CPU throttling means **request-based billing** — compute is billed only while a request is being processed — which keeps this near-idle service within the monthly free tier; `--no-cpu-throttling` would instead bill every second an instance stays alive (idle keepalive included). Under request-based billing memory is billed only during active requests too, so the larger limit is effectively free (it stays within the free tier). Cloud Run gen2 is required for memory allocations above 4 Gi, and >4 GiB also forces ≥2 vCPU (8 GiB is the ceiling for 2 vCPU).
 
-Memory stays at 6 GiB and should not be trimmed: a cache reload downloads the new snapshot to a temp file in `/tmp` before renaming it over the old one, so the tmpfs peak is briefly ~2× `cache.db` (old + new), not 1×. With a ~3 GiB snapshot that peak (~2× `cache.db`) sits close to the 6 GiB limit, so if `cache.db` grows materially, raise the memory limit (and keep ≥2 vCPU).
+Memory is 8 GiB because a cache reload briefly holds **~2× `cache.db`** in `/tmp` (which is tmpfs, i.e. RAM): the new snapshot downloads to a temp file while the current `cache.db` is still mapped, then atomically replaces it. At ~3 GiB per snapshot that peak (~6 GiB) plus the Python/SQLite RSS exceeds a 6 GiB limit and tmpfs writes fail with **SIGBUS** (observed as `Container terminated on signal 7`), so the limit is 8 GiB. If `cache.db` grows materially, raise the limit further (and keep ≥2 vCPU; >8 GiB needs ≥4 vCPU).
 
 ## Operations
 
