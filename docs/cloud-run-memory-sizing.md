@@ -291,10 +291,13 @@ passed the full load test without OOM.
 > writes the new snapshot to a temp file in `/tmp` before renaming it over the
 > old one, so tmpfs transiently holds ~2× `cache.db` (old + new). The true
 > floor is therefore closer to `2 × cache.db`, not `cache.db + ~1.5 GiB`. With
-> the current ~3 GiB snapshot that is ~6 GiB, which is why production stays at
-> 6 GiB / 2 vCPU and is **not** trimmed to 4 GiB (Cloud Run also forces ≥2 vCPU
-> above 4 GiB). The Apr load test passed at 4 GiB only because it never
-> exercised a warm-instance reload. See README → "Memory requirements".
+> the current ~3 GiB snapshot that 2× peak is ~6 GiB; adding the Python/SQLite
+> RSS pushed a 6 GiB limit over the edge and tmpfs writes failed with **SIGBUS**
+> (`Container terminated on signal 7`) during a live reload, so production runs
+> at **8 GiB / 2 vCPU** (8 GiB is the ceiling for 2 vCPU). Under request-based
+> billing memory is billed only during active requests, so the larger limit is
+> effectively free. The Apr load test passed at 4 GiB only because it never
+> exercised a reload. See README → "Memory requirements".
 
 ### 5. `cache.db` is downloaded asynchronously at cold start
 
