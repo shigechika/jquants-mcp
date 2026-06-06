@@ -47,6 +47,20 @@ class TestUploadBlobAtomic:
         upload_blob.upload_from_filename.assert_called_once_with(str(db))
         bucket.rename_blob.assert_called_once_with(upload_blob, "jquants-mcp/cache.db")
 
+    def test_log_includes_full_gs_uri_with_bucket(self, tmp_path, caplog):
+        """The log line must show gs://<bucket>/<object>, not just the object path."""
+        db = tmp_path / "export.db"
+        db.write_bytes(b"x")
+
+        bucket = MagicMock()
+        bucket.name = "my-bucket"
+        bucket.blob.return_value = MagicMock()
+
+        with caplog.at_level("INFO"):
+            gcs_export_cache._upload_blob_atomic(bucket, db, "jquants-mcp/cache.db")
+
+        assert "gs://my-bucket/jquants-mcp/cache.db" in caplog.text
+
     def test_rename_happens_after_upload(self, tmp_path):
         """The rename must not run before the upload finishes."""
         db = tmp_path / "export.db"

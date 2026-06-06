@@ -203,10 +203,10 @@ def _upload_blob_atomic(bucket, local_path: Path, blob_name: str) -> None:
     upload_name = f"{blob_name}.uploading"
     upload_blob = bucket.blob(upload_name)
     size_gb = local_path.stat().st_size / (1024**3)
-    logger.info("Uploading %.2f GB to gs://%s ...", size_gb, blob_name)
+    logger.info("Uploading %.2f GB to gs://%s/%s ...", size_gb, bucket.name, blob_name)
     upload_blob.upload_from_filename(str(local_path))
     bucket.rename_blob(upload_blob, blob_name)
-    logger.info("Upload complete: gs://%s", blob_name)
+    logger.info("Upload complete: gs://%s/%s", bucket.name, blob_name)
 
 
 def _upload_to_gcs(db_path: Path) -> None:
