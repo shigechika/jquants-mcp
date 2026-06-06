@@ -916,9 +916,10 @@ sequenceDiagram
     participant G as GCS
     participant M as MCP サーバー
 
-    E->>G: cache.db を /tmp に同期ダウンロード
+    E->>G: cache.db.zst を /tmp に同期ダウンロード
     Note right of E: CPU が全割当される<br/>起動ウィンドウで実行
-    G-->>E: 約 3 GiB
+    G-->>E: 約 1.2 GiB（圧縮）
+    Note right of E: ~3 GiB にストリーム解凍。<br/>.zst 不在時は無圧縮 cache.db に fallback
     E->>M: 起動（cache.db 取得済み）
     activate M
     Note right of M: Tier 1 キャッシュから応答<br/>（DL skip/失敗時のみ<br/>live J-Quants API）
@@ -926,7 +927,7 @@ sequenceDiagram
 ```
 
 注意点:
-- `cache.db`（約 3 GiB）は**コンテナ起動中に同期ダウンロード**され、サーバーがポートを bind する前に完了します。Cloud Run のリクエストベース課金では CPU がリクエスト間で ~0 に絞られるため、サーバー起動「後」に始めた DL は CPU 枯渇で完走しません。起動ウィンドウは CPU 全割当（+ `--cpu-boost`）です。トレードオフは cold-start が長くなる点で、scale-to-zero 後の最初のリクエストは DL を待ちます。
+- `cache.db` は**コンテナ起動中に同期ダウンロード**され、サーバーがポートを bind する前に完了します。zstd 圧縮された `cache.db.zst`（wire 上 約 1.2 GiB、~3 GiB にストリーム解凍）として publish されます — Cloud Run インスタンスの GCS 読み込み帯域（~60 MB/s）がボトルネックのため。`.zst` 不在時は無圧縮 `cache.db` に fallback します。Cloud Run のリクエストベース課金では CPU がリクエスト間で ~0 に絞られるため、サーバー起動「後」に始めた DL は CPU 枯渇で完走しません。起動ウィンドウは CPU 全割当（+ `--cpu-boost`）です。トレードオフは cold-start が長くなる点で、scale-to-zero 後の最初のリクエストは DL を待ちます。
 - DL が失敗しても起動は続行し、サーバーは live J-Quants API で応答します（遅く、rate limit 対象）。その間 `cache_status` は最小ペイロード（`db_path` + `plan` のみ）を返します。
 - Firestore は強整合性のため、複数の Cloud Run インスタンスが同時稼働してもデータ競合は発生しません。`maxScale: 1` のような制約は不要で、必要に応じて水平スケール可能です。
 
@@ -950,7 +951,7 @@ sequenceDiagram
     G->>PS: GCS オブジェクト通知
     PS->>CR: POST /internal/reload<br/>（Google 署名 OIDC トークン）
     CR->>CR: OIDC トークン検証<br/>（PUBSUB_INVOKER_SA）
-    CR->>G: 新しい cache.db を /tmp にダウンロード<br/>（リクエスト中に同期実行）
+    CR->>G: 新しい cache.db.zst を /tmp にダウンロード<br/>（リクエスト中に同期実行）
     G-->>CR: 約 3 GiB
     CR->>C: request_reload()<br/>（次のクエリ時に遅延再接続）
     CR-->>PS: 200 OK（reload 後に ACK）

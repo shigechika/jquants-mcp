@@ -28,44 +28,77 @@ def mock_google_storage(monkeypatch):
     return mock_storage
 
 
-class TestUploadToGcsAtomic:
-    def test_uploads_to_temp_blob_then_renames(self, monkeypatch, tmp_path, mock_google_storage):
-        """Upload writes a .uploading object then server-side renames onto cache.db.
+class TestUploadBlobAtomic:
+    def test_uploads_to_temp_blob_then_renames(self, tmp_path):
+        """Upload writes a .uploading object then server-side renames onto the live name.
 
-        This keeps the live cache.db intact if the upload crashes mid-way.
+        This keeps the live object intact if the upload crashes mid-way.
         """
-        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
-        monkeypatch.delenv("GCS_PREFIX", raising=False)
-
         db = tmp_path / "export.db"
         db.write_bytes(b"sqlite-bytes")
 
-        bucket = mock_google_storage.Client.return_value.bucket.return_value
+        bucket = MagicMock()
         upload_blob = MagicMock()
         bucket.blob.return_value = upload_blob
 
-        gcs_export_cache._upload_to_gcs(db)
+        gcs_export_cache._upload_blob_atomic(bucket, db, "jquants-mcp/cache.db")
 
-        # Uploaded to the temporary name, not the live name.
         bucket.blob.assert_called_once_with("jquants-mcp/cache.db.uploading")
         upload_blob.upload_from_filename.assert_called_once_with(str(db))
-        # Then renamed onto the live object.
         bucket.rename_blob.assert_called_once_with(upload_blob, "jquants-mcp/cache.db")
 
-    def test_rename_happens_after_upload(self, monkeypatch, tmp_path, mock_google_storage):
+    def test_rename_happens_after_upload(self, tmp_path):
         """The rename must not run before the upload finishes."""
-        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
-        monkeypatch.delenv("GCS_PREFIX", raising=False)
-
         db = tmp_path / "export.db"
         db.write_bytes(b"x")
 
         order: list[str] = []
-        bucket = mock_google_storage.Client.return_value.bucket.return_value
+        bucket = MagicMock()
         upload_blob = MagicMock()
         upload_blob.upload_from_filename.side_effect = lambda *_a, **_k: order.append("upload")
         bucket.blob.return_value = upload_blob
         bucket.rename_blob.side_effect = lambda *_a, **_k: order.append("rename")
 
-        gcs_export_cache._upload_to_gcs(db)
+        gcs_export_cache._upload_blob_atomic(bucket, db, "jquants-mcp/cache.db")
         assert order == ["upload", "rename"]
+
+
+class TestCompressAndUpload:
+    def test_compress_to_zst_round_trip(self, tmp_path):
+        import io
+
+        import zstandard
+
+        original = b"sqlite-db-bytes" * 5000
+        db = tmp_path / "export.db"
+        db.write_bytes(original)
+
+        zst = gcs_export_cache._compress_to_zst(db)
+
+        assert zst == Path(f"{db}.zst")
+        assert zst.exists()
+        out = io.BytesIO()
+        zstandard.ZstdDecompressor().copy_stream(io.BytesIO(zst.read_bytes()), out)
+        assert out.getvalue() == original
+
+    def test_upload_to_gcs_uploads_zst_and_uncompressed(
+        self, monkeypatch, tmp_path, mock_google_storage
+    ):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.delenv("GCS_PREFIX", raising=False)
+
+        db = tmp_path / "export.db"
+        db.write_bytes(b"sqlite-bytes" * 1000)
+        bucket = mock_google_storage.Client.return_value.bucket.return_value
+        bucket.blob.return_value = MagicMock()
+
+        gcs_export_cache._upload_to_gcs(db)
+
+        uploaded = [c.args[0] for c in bucket.blob.call_args_list]
+        assert "jquants-mcp/cache.db.zst.uploading" in uploaded
+        assert "jquants-mcp/cache.db.uploading" in uploaded
+        renamed = [c.args[1] for c in bucket.rename_blob.call_args_list]
+        assert "jquants-mcp/cache.db.zst" in renamed
+        assert "jquants-mcp/cache.db" in renamed
+        # The compressed temp file is cleaned up after upload.
+        assert not Path(f"{db}.zst").exists()

@@ -94,7 +94,8 @@ gcloud pubsub subscriptions create jquants-mcp-cache-updated-push \
 ```
 
 > **Ack deadline must exceed the cache.db download time.** The `/internal/reload`
-> handler downloads the new `cache.db` (~3 GiB, typically 30–90 s) *synchronously*
+> handler downloads the new `cache.db.zst` (~1.2 GiB compressed, stream-decompressed
+> to ~3 GiB, typically 20–60 s) *synchronously*
 > before acknowledging, so the work runs under the active push request's CPU. This
 > is required under Cloud Run request-based billing (the default; CPU is throttled
 > between requests), where a detached background download would be CPU-starved and
