@@ -913,26 +913,21 @@ Cloud Run デプロイはコンテナ内 SQLite セットではなく、2 つの
 ```mermaid
 sequenceDiagram
     participant E as entrypoint.sh
-    participant M as MCP サーバー
-    participant D as cache.db ダウンローダ
     participant G as GCS
+    participant M as MCP サーバー
 
-    E->>M: 起動（cache.db 未取得）
+    E->>G: cache.db を /tmp に同期ダウンロード
+    Note right of E: CPU が全割当される<br/>起動ウィンドウで実行
+    G-->>E: 約 3 GiB
+    E->>M: 起動（cache.db 取得済み）
     activate M
-    Note right of M: J-Quants API フォールバックで<br/>リクエスト応答
-    E->>D: バックグラウンド起動
-    activate D
-    D->>G: gcloud storage cp cache.db /tmp
-    G-->>D: 約 3 GiB（1〜2 分）
-    D->>M: SIGHUP
-    deactivate D
-    Note right of M: cache.db をリロードして<br/>Tier 1 キャッシュに切替
+    Note right of M: Tier 1 キャッシュから応答<br/>（DL skip/失敗時のみ<br/>live J-Quants API）
     deactivate M
 ```
 
 注意点:
-- `cache.db` は約 3 GiB、ダウンロードに 1〜2 分かかります。この間のリクエストは J-Quants API に直接アクセスします（動作はしますが遅くなり、rate limit 対象となります）。
-- コールドスタート中は `cache_status` が最小ペイロード（`db_path` + `plan` のみ）を返します。行数や `db_size_mb` まで返るようになればキャッシュロード完了のサインです。
+- `cache.db`（約 3 GiB）は**コンテナ起動中に同期ダウンロード**され、サーバーがポートを bind する前に完了します。Cloud Run のリクエストベース課金では CPU がリクエスト間で ~0 に絞られるため、サーバー起動「後」に始めた DL は CPU 枯渇で完走しません。起動ウィンドウは CPU 全割当（+ `--cpu-boost`）です。トレードオフは cold-start が長くなる点で、scale-to-zero 後の最初のリクエストは DL を待ちます。
+- DL が失敗しても起動は続行し、サーバーは live J-Quants API で応答します（遅く、rate limit 対象）。その間 `cache_status` は最小ペイロード（`db_path` + `plan` のみ）を返します。
 - Firestore は強整合性のため、複数の Cloud Run インスタンスが同時稼働してもデータ競合は発生しません。`maxScale: 1` のような制約は不要で、必要に応じて水平スケール可能です。
 
 #### 日次キャッシュ更新
@@ -941,7 +936,7 @@ sequenceDiagram
 
 **Cloud Run — Pub/Sub push**
 
-Cloud Run のマルチインスタンスモデルでは SIGHUP を特定プロセスへ確実に届けられないため、代わりに Pub/Sub push で `/internal/reload` エンドポイントを呼び出します。サーバーはバックグラウンドで GCS から新しい `cache.db` を再ダウンロードします。
+Cloud Run のマルチインスタンスモデルでは SIGHUP を特定プロセスへ確実に届けられないため、代わりに Pub/Sub push で `/internal/reload` エンドポイントを呼び出します。サーバーは ACK を返す前に GCS から新しい `cache.db` を**同期的に再ダウンロード**します（リクエストベース課金は CPU をリクエスト間で絞るため、push リクエスト中の CPU で DL を完走させる必要がある）。push subscription の ack deadline は DL 時間より長くする必要があります。[`ops/pubsub/setup.md`](ops/pubsub/setup.md) 参照。
 
 ```mermaid
 sequenceDiagram
@@ -955,10 +950,10 @@ sequenceDiagram
     G->>PS: GCS オブジェクト通知
     PS->>CR: POST /internal/reload<br/>（Google 署名 OIDC トークン）
     CR->>CR: OIDC トークン検証<br/>（PUBSUB_INVOKER_SA）
-    CR-->>PS: 200 OK（即時 ACK）
-    CR->>G: 新しい cache.db を /tmp にダウンロード
+    CR->>G: 新しい cache.db を /tmp にダウンロード<br/>（リクエスト中に同期実行）
     G-->>CR: 約 3 GiB
     CR->>C: request_reload()<br/>（次のクエリ時に遅延再接続）
+    CR-->>PS: 200 OK（reload 後に ACK）
 ```
 
 `PUBSUB_INVOKER_SA` には Pub/Sub が OIDC トークンの署名に使うサービスアカウントのメールアドレスを設定します。`PUBSUB_AUDIENCE` はデフォルトでリクエスト URL になるため、通常は設定不要です。
