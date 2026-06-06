@@ -244,7 +244,7 @@ class TestDownloadCacheDbFromGcs:
         server_module._download_cache_db_from_gcs()
 
         assert (tmp_path / "cache.db").exists()
-        assert not (tmp_path / ".cache.db.download").exists()
+        assert not (tmp_path / ".cache.db.reload").exists()
         assert (tmp_path / "cache.db").read_bytes() == b"fake-db-content"
 
     def test_not_found_raises_runtime_error(self, tmp_path, monkeypatch, mock_google_cloud_storage):
@@ -260,7 +260,7 @@ class TestDownloadCacheDbFromGcs:
         with pytest.raises(RuntimeError, match="not found"):
             server_module._download_cache_db_from_gcs()
 
-        assert not (tmp_path / ".cache.db.download").exists()
+        assert not (tmp_path / ".cache.db.reload").exists()
 
 
 # ---------------------------------------------------------------------------

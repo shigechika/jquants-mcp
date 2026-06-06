@@ -914,26 +914,21 @@ Cloud Run deployments depend on two managed stores, not an in-container SQLite s
 ```mermaid
 sequenceDiagram
     participant E as entrypoint.sh
-    participant M as MCP server
-    participant D as cache.db downloader
     participant G as GCS
+    participant M as MCP server
 
-    E->>M: start (no cache.db yet)
+    E->>G: download cache.db to /tmp (synchronous)
+    Note right of E: runs in the startup window,<br/>where CPU is fully allocated
+    G-->>E: ~3 GiB
+    E->>M: start (cache.db already present)
     activate M
-    Note right of M: serve requests via<br/>J-Quants API fallback
-    E->>D: spawn background job
-    activate D
-    D->>G: gcloud storage cp cache.db /tmp
-    G-->>D: ~3 GiB (1-2 min)
-    D->>M: SIGHUP
-    deactivate D
-    Note right of M: reload cache.db,<br/>switch to Tier 1 cache
+    Note right of M: serve from Tier 1 cache<br/>(live J-Quants API only if the<br/>download was skipped/failed)
     deactivate M
 ```
 
 Notes:
-- `cache.db` is ~3 GiB and takes 1–2 minutes to download. Requests during that window hit the live J-Quants API, so they work but are slower and count against rate limits.
-- During the cold-start window `cache_status` returns a minimal payload (`db_path` + `plan` only). A full payload with row counts and `db_size_mb` indicates the cache is loaded.
+- `cache.db` (~3 GiB) is downloaded **synchronously during container startup**, before the server binds the port. Under Cloud Run request-based billing the CPU is throttled to ~0 between requests, so a download started *after* the server is ready would be starved and never finish; the startup window has full CPU (plus `--cpu-boost`). The trade-off is a longer cold start — the first request after a scale-to-zero waits for the download.
+- If the download fails, startup continues and the server serves via the live J-Quants API (slower, counts against rate limits). `cache_status` then returns a minimal payload (`db_path` + `plan` only) until a cache is loaded.
 - Firestore is strongly consistent, so multiple Cloud Run instances can run concurrently without data races. There is no `maxScale: 1` restriction — scale as needed.
 
 #### Daily cache refresh
@@ -942,7 +937,7 @@ After startup, `cache.db` is refreshed daily by the publisher. The mechanism dif
 
 **Cloud Run — Pub/Sub push**
 
-SIGHUP cannot reliably target a specific process across Cloud Run's multi-instance model. Instead, the publisher triggers a reload via a Pub/Sub push to the `/internal/reload` endpoint, which re-downloads `cache.db` from GCS in the background.
+SIGHUP cannot reliably target a specific process across Cloud Run's multi-instance model. Instead, the publisher triggers a reload via a Pub/Sub push to the `/internal/reload` endpoint, which re-downloads `cache.db` from GCS synchronously before acknowledging — so the download runs under the push request's allocated CPU (request-based billing throttles CPU between requests). The push subscription's ack deadline must exceed the download time; see [`ops/pubsub/setup.md`](ops/pubsub/setup.md).
 
 ```mermaid
 sequenceDiagram
@@ -956,10 +951,10 @@ sequenceDiagram
     G->>PS: GCS object notification
     PS->>CR: POST /internal/reload<br/>(Google-signed OIDC token)
     CR->>CR: verify OIDC token<br/>(PUBSUB_INVOKER_SA)
-    CR-->>PS: 200 OK (immediate ACK)
-    CR->>G: download new cache.db to /tmp
+    CR->>G: download new cache.db to /tmp<br/>(synchronous, during the request)
     G-->>CR: ~3 GiB
     CR->>C: request_reload()<br/>(lazy reconnect on next query)
+    CR-->>PS: 200 OK (ACK after reload)
 ```
 
 `PUBSUB_INVOKER_SA` must be the service account email that Pub/Sub uses to sign the OIDC token. `PUBSUB_AUDIENCE` defaults to the incoming request URL and normally does not need to be set.

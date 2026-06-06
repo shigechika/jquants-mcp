@@ -306,7 +306,10 @@ def _download_cache_db_from_gcs() -> None:
 
     cache_dir = Path(os.environ.get("JQUANTS_CACHE_DIR", "/tmp"))
     local_path = cache_dir / "cache.db"
-    tmp_path = cache_dir / ".cache.db.download"
+    # Distinct from gcs_sync.py's ".cache.db.download" temp name so the
+    # Pub/Sub reload download can never collide with the entrypoint's
+    # startup download (they target the same cache.db / cache_dir).
+    tmp_path = cache_dir / ".cache.db.reload"
 
     client = gcs.Client()
     bucket = client.bucket(bucket_name)
