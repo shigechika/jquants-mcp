@@ -81,6 +81,12 @@ jobs:
 
       - name: Deploy to Cloud Run
         if: steps.gate.outputs.should_deploy == 'true'
+        # NOTE: `gcloud run deploy` merges with the existing service config —
+        # flags that are omitted retain their previous value. To change a
+        # setting you must pass its explicit form, not just drop the opposite
+        # flag. `--cpu-throttling` is therefore stated explicitly: dropping a
+        # prior `--no-cpu-throttling` alone would leave the service on
+        # instance-based billing (CPU always allocated). Keep this flag here.
         run: |
           gcloud run deploy ${{ vars.CLOUDRUN_SERVICE }} \
             --project ${{ vars.GCP_PROJECT }} \
@@ -90,6 +96,7 @@ jobs:
             --execution-environment gen2 \
             --memory 6Gi \
             --cpu 2 \
+            --cpu-throttling \
             --timeout 1800 \
             --clear-volumes --clear-volume-mounts \
             --cpu-boost \
