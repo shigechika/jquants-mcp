@@ -19,6 +19,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import gcs_sync
 
+from jquants_mcp.cache.gcs_download import stream_download_zst
+
 
 @pytest.fixture()
 def mock_google_storage(monkeypatch):
@@ -182,23 +184,31 @@ def _zst_stream_blob(payload: bytes):
 class TestZstCacheDownload:
     """download_cache_db prefers cache.db.zst, falls back to uncompressed."""
 
-    def test_download_zst_to_round_trip(self, tmp_path, mock_google_storage):
+    def test_stream_download_zst_round_trip(self, tmp_path, mock_google_storage):
         payload = b"sqlite-bytes" * 5000
         bucket = MagicMock()
         bucket.blob.return_value = _zst_stream_blob(payload)
         dest = tmp_path / ".cache.db.download"
 
-        assert gcs_sync._download_zst_to(bucket, "p/cache.db.zst", dest) is True
+        assert stream_download_zst(bucket, "p/cache.db.zst", dest) is True
         assert dest.read_bytes() == payload
 
-    def test_download_zst_to_false_when_missing(self, tmp_path, mock_google_storage):
+    def test_stream_download_zst_false_when_missing(self, tmp_path, mock_google_storage):
         NotFound = sys.modules["google.cloud.exceptions"].NotFound
         bucket = MagicMock()
         bucket.blob.return_value.open.side_effect = NotFound("no zst")
         dest = tmp_path / ".cache.db.download"
 
-        assert gcs_sync._download_zst_to(bucket, "p/cache.db.zst", dest) is False
+        assert stream_download_zst(bucket, "p/cache.db.zst", dest) is False
         assert not dest.exists()
+
+    def test_stream_download_zst_false_when_zstandard_missing(self, tmp_path, monkeypatch):
+        # `import zstandard` raises -> the helper returns False without touching GCS.
+        monkeypatch.setitem(sys.modules, "zstandard", None)
+        bucket = MagicMock()
+
+        assert stream_download_zst(bucket, "p/cache.db.zst", tmp_path / "out") is False
+        bucket.blob.assert_not_called()
 
     def test_cache_db_prefers_zst(self, tmp_path, monkeypatch, mock_google_storage):
         monkeypatch.setenv("GCS_BUCKET", "test-bucket")

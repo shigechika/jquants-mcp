@@ -266,22 +266,6 @@ class TestDownloadCacheDbFromGcs:
 
         assert not (tmp_path / ".cache.db.reload").exists()
 
-    def test_stream_download_zst_round_trip(self, tmp_path, mock_google_cloud_storage):
-        import io
-
-        import zstandard
-
-        original = b"sqlite-reload-bytes" * 4000
-        compressed = zstandard.ZstdCompressor().compress(original)
-        bucket = MagicMock()
-        cm = bucket.blob.return_value.open.return_value
-        cm.__enter__.return_value = io.BytesIO(compressed)
-        cm.__exit__.return_value = False
-        dest = tmp_path / ".cache.db.reload"
-
-        assert server_module._stream_download_zst(bucket, "p/cache.db.zst", dest) is True
-        assert dest.read_bytes() == original
-
     def test_prefers_zst_when_present(self, tmp_path, monkeypatch, mock_google_cloud_storage):
         import io
 

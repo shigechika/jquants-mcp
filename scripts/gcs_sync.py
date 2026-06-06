@@ -126,47 +126,6 @@ def download_files(file_list: list[str] | None = None) -> int:
     return failures
 
 
-def _download_zst_to(gcs_bucket, zst_blob_name: str, dest: Path) -> bool:
-    """Stream-download a zstd object from GCS and decompress it to ``dest``.
-
-    Streaming (GCS read -> zstd decompress -> file) keeps memory bounded: the
-    full compressed object is never held in RAM or staged on disk, so the tmpfs
-    peak is just the decompressed output (matching the uncompressed path).
-
-    Returns:
-        True on success. False when zstandard is unavailable, the object is
-        missing, or decompression fails — in every False case the caller falls
-        back to the uncompressed object, so a missing/old ``.zst`` never breaks
-        startup.
-    """
-    try:
-        import zstandard
-    except ImportError:
-        logger.info("zstandard not installed; falling back to uncompressed cache.db")
-        return False
-
-    from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
-
-    blob = gcs_bucket.blob(zst_blob_name)
-    try:
-        dctx = zstandard.ZstdDecompressor()
-        with blob.open("rb") as src, open(dest, "wb") as out:
-            dctx.copy_stream(src, out)
-        return True
-    except NotFound:
-        logger.info("%s not found; falling back to uncompressed cache.db", zst_blob_name)
-        dest.unlink(missing_ok=True)
-        return False
-    except Exception as e:
-        logger.warning(
-            "zstd download/decompress of %s failed (%s); falling back to uncompressed",
-            zst_blob_name,
-            e,
-        )
-        dest.unlink(missing_ok=True)
-        return False
-
-
 def download_cache_db() -> int:
     """Download cache.db from GCS, preferring the zstd-compressed object.
 
@@ -183,6 +142,8 @@ def download_cache_db() -> int:
     from google.cloud import storage  # type: ignore[import-untyped]
     from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
 
+    from jquants_mcp.cache.gcs_download import stream_download_zst
+
     bucket, prefix, cache_dir = _get_config()
     client = storage.Client()
     gcs_bucket = client.bucket(bucket)
@@ -191,7 +152,7 @@ def download_cache_db() -> int:
     tmp_path = cache_dir / ".cache.db.download"
 
     # 1. Preferred: compressed cache.db.zst, stream-decompressed.
-    if _download_zst_to(gcs_bucket, f"{prefix}cache.db.zst", tmp_path):
+    if stream_download_zst(gcs_bucket, f"{prefix}cache.db.zst", tmp_path):
         tmp_path.rename(local_path)
         size_mb = local_path.stat().st_size / 1024 / 1024
         logger.info(
