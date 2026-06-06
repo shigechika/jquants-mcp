@@ -44,9 +44,6 @@ logger = logging.getLogger("gcs_sync")
 # Nothing currently needs to be downloaded on Cloud Run startup.
 _DOWNLOAD_FILES: list[str] = []
 
-# Cache file to download in background at startup
-_CACHE_FILES = ["cache.db"]
-
 # Files to upload to GCS (daemon / --upload)
 # cache.db is excluded here: it is owned by the self-hosted publisher
 # (see scripts/daily_fetch.py + scripts/gcs_export_cache.py) which pushes
@@ -127,6 +124,64 @@ def download_files(file_list: list[str] | None = None) -> int:
             tmp_path.unlink(missing_ok=True)
             failures += 1
     return failures
+
+
+def download_cache_db() -> int:
+    """Download cache.db from GCS, preferring the zstd-compressed object.
+
+    Tries ``<prefix>cache.db.zst`` (stream-decompressed — far faster to transfer)
+    and falls back to the uncompressed ``<prefix>cache.db`` when the compressed
+    object is missing or zstandard is unavailable. This lets the publisher and
+    Cloud Run roll out independently: until the publisher writes ``.zst`` the
+    fallback keeps startup working unchanged.
+
+    Returns:
+        The number of failures (0 on success or a first-run missing object, 1 on
+        a genuine download failure) so ``--init-cache`` can map it to the alert.
+    """
+    from google.cloud import storage  # type: ignore[import-untyped]
+    from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
+
+    from jquants_mcp.cache.gcs_download import stream_download_zst
+
+    bucket, prefix, cache_dir = _get_config()
+    client = storage.Client()
+    gcs_bucket = client.bucket(bucket)
+
+    local_path = cache_dir / "cache.db"
+    tmp_path = cache_dir / ".cache.db.download"
+
+    # 1. Preferred: compressed cache.db.zst, stream-decompressed.
+    if stream_download_zst(gcs_bucket, f"{prefix}cache.db.zst", tmp_path):
+        tmp_path.rename(local_path)
+        size_mb = local_path.stat().st_size / 1024 / 1024
+        logger.info(
+            "Downloaded gs://%s/%scache.db.zst -> %s (%.1f MB decompressed)",
+            bucket,
+            prefix,
+            local_path,
+            size_mb,
+        )
+        return 0
+
+    # 2. Fallback: uncompressed cache.db.
+    blob = gcs_bucket.blob(f"{prefix}cache.db")
+    try:
+        blob.download_to_filename(str(tmp_path))
+        tmp_path.rename(local_path)
+        size_mb = local_path.stat().st_size / 1024 / 1024
+        logger.info(
+            "Downloaded gs://%s/%scache.db -> %s (%.1f MB)", bucket, prefix, local_path, size_mb
+        )
+        return 0
+    except NotFound:
+        logger.info("gs://%s/%scache.db not found, skipping (first run?)", bucket, prefix)
+        tmp_path.unlink(missing_ok=True)
+        return 0
+    except Exception as e:
+        logger.warning("Failed to download cache.db: %s", e)
+        tmp_path.unlink(missing_ok=True)
+        return 1
 
 
 def _checkpoint_sqlite(db_path: Path) -> None:
@@ -250,7 +305,7 @@ def main() -> None:
     # (entrypoint.sh, cron) can detect them. The daemon stays resilient and
     # ignores the return value (it retries on the next tick).
     if args.init_cache:
-        failures = download_files(_CACHE_FILES)
+        failures = download_cache_db()
         if failures:
             # Emit the exact phrase the Cloud Monitoring policy
             # (ops/alerts/05-cache-db-download-fail.yaml) greps for, so a

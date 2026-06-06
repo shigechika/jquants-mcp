@@ -24,6 +24,10 @@ Documentation = "https://github.com/shigechika/jquants-mcp/tree/main/docs"
 cloud-run = [
     "google-cloud-storage>=2.0.0",
     "google-cloud-firestore>=2.0.0",
+    # cache.db is published to GCS zstd-compressed; the Cloud Run startup copy
+    # and the Pub/Sub reload stream-decompress it (falling back to the
+    # uncompressed object when absent). See scripts/gcs_sync.py / server.py.
+    "zstandard>=0.21.0",
 ]
 [project.scripts]
 jquants-mcp = "jquants_mcp.cli:main"
@@ -35,6 +39,8 @@ dev = [
     "respx>=0.22.0",
     "mcp>=1.16.0",
     "ruff>=0.1.0",
+    # Exercises the real zstd round-trip in cache.db compress/decompress tests.
+    "zstandard>=0.21.0",
 ]
 docs = [
     "mkdocs-material>=9.5",

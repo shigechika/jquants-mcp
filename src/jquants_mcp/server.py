@@ -285,8 +285,10 @@ def _verify_pubsub_oidc_token(token: str, expected_email: str, audience: str) ->
 def _download_cache_db_from_gcs() -> None:
     """Download cache.db from GCS to the local cache directory (blocking).
 
-    Uses atomic write: downloads to ``.cache.db.download`` then renames to
-    ``cache.db`` to prevent the MCP server from reading a half-written file.
+    Prefers the zstd-compressed ``cache.db.zst`` (stream-decompressed) and falls
+    back to the uncompressed ``cache.db`` when it is absent. Uses atomic write:
+    downloads to ``.cache.db.reload`` then renames to ``cache.db`` to prevent the
+    MCP server from reading a half-written file.
 
     Raises:
         RuntimeError: When ``GCS_BUCKET`` is not set or the object is not found.
@@ -311,11 +313,21 @@ def _download_cache_db_from_gcs() -> None:
     # startup download (they target the same cache.db / cache_dir).
     tmp_path = cache_dir / ".cache.db.reload"
 
+    from .cache.gcs_download import stream_download_zst
+
     client = gcs.Client()
     bucket = client.bucket(bucket_name)
+
+    # 1. Preferred: compressed cache.db.zst, stream-decompressed.
+    if stream_download_zst(bucket, f"{prefix}cache.db.zst", tmp_path):
+        tmp_path.rename(local_path)
+        size_mb = local_path.stat().st_size / 1024 / 1024
+        logger.info("Downloaded+decompressed cache.db.zst from GCS (%.1f MB)", size_mb)
+        return
+
+    # 2. Fallback: uncompressed cache.db.
     blob_name = f"{prefix}cache.db"
     blob = bucket.blob(blob_name)
-
     logger.info("Downloading gs://%s/%s ...", bucket_name, blob_name)
     try:
         blob.download_to_filename(str(tmp_path))
