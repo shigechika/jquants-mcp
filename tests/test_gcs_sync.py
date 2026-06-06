@@ -158,3 +158,48 @@ class TestInitCacheFailureAlert:
         with caplog.at_level("ERROR"):
             gcs_sync.main()
         assert "cache.db download failed" not in caplog.text
+
+
+class TestSlicedDownload:
+    """_download_blob_to prefers concurrent chunks, falls back to single-stream."""
+
+    def test_uses_concurrent_when_it_writes_the_file(self, tmp_path, mock_google_storage):
+        from google.cloud.storage import transfer_manager  # the injected mock
+
+        dest = tmp_path / "cache.db"
+        transfer_manager.download_chunks_concurrently.side_effect = lambda blob, filename, **kw: (
+            Path(filename).write_bytes(b"sliced")
+        )
+        blob = MagicMock()
+
+        gcs_sync._download_blob_to(blob, dest)
+
+        assert dest.read_bytes() == b"sliced"
+        blob.download_to_filename.assert_not_called()
+
+    def test_falls_back_when_concurrent_raises(self, tmp_path, mock_google_storage):
+        from google.cloud.storage import transfer_manager
+
+        dest = tmp_path / "cache.db"
+        transfer_manager.download_chunks_concurrently.side_effect = RuntimeError("boom")
+        blob = MagicMock()
+        blob.download_to_filename.side_effect = lambda p: Path(p).write_bytes(b"single")
+
+        gcs_sync._download_blob_to(blob, dest)
+
+        assert dest.read_bytes() == b"single"
+        blob.download_to_filename.assert_called_once()
+
+    def test_falls_back_when_concurrent_writes_nothing(self, tmp_path, mock_google_storage):
+        from google.cloud.storage import transfer_manager
+
+        dest = tmp_path / "cache.db"
+        # Returns without creating the file -> the dest.exists() guard forces fallback.
+        transfer_manager.download_chunks_concurrently.return_value = None
+        blob = MagicMock()
+        blob.download_to_filename.side_effect = lambda p: Path(p).write_bytes(b"single")
+
+        gcs_sync._download_blob_to(blob, dest)
+
+        assert dest.read_bytes() == b"single"
+        blob.download_to_filename.assert_called_once()
