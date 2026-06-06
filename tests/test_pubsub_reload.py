@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 import time
@@ -331,18 +330,35 @@ class TestReloadCacheBackground:
 
 
 class TestHandlePubsubReload:
-    async def test_no_sa_configured_schedules_reload(self, mock_env, monkeypatch):
-        """Without PUBSUB_INVOKER_SA, accepts any request and schedules reload."""
+    async def test_no_sa_configured_reloads(self, mock_env, monkeypatch):
+        """Without PUBSUB_INVOKER_SA, accepts any request and reloads."""
         monkeypatch.delenv("PUBSUB_INVOKER_SA", raising=False)
         monkeypatch.delenv("GCS_BUCKET", raising=False)
 
         req = _mock_request()
         response = await server_module._handle_pubsub_reload(req)
-        await asyncio.sleep(0)  # drain event loop so background task completes
 
         assert response.status_code == 200
         body = json.loads(response.body)
-        assert body["status"] == "reload scheduled"
+        assert body["status"] == "reloaded"
+
+    async def test_reload_runs_synchronously_before_ack(self, mock_env, monkeypatch):
+        """The download must complete *before* the 200 is returned.
+
+        Under request-based billing a detached background task would be
+        CPU-starved once this handler returns, so the reload must be awaited
+        inline. We assert the reload coroutine has already been awaited by the
+        time the handler returns — without any event-loop draining.
+        """
+        monkeypatch.delenv("PUBSUB_INVOKER_SA", raising=False)
+
+        reload_mock = AsyncMock()
+        with patch.object(server_module, "_reload_cache_background", new=reload_mock):
+            response = await server_module._handle_pubsub_reload(_mock_request())
+
+        # No `await asyncio.sleep(0)` drain: a create_task would still be pending.
+        reload_mock.assert_awaited_once()
+        assert response.status_code == 200
 
     async def test_missing_bearer_returns_401(self, mock_env, monkeypatch):
         """With PUBSUB_INVOKER_SA set but no Authorization header → 401."""
@@ -381,7 +397,6 @@ class TestHandlePubsubReload:
             patch.object(server_module, "_reload_cache_background", new=AsyncMock()),
         ):
             response = await server_module._handle_pubsub_reload(req)
-        await asyncio.sleep(0)
 
         assert response.status_code == 200
 
@@ -405,7 +420,6 @@ class TestHandlePubsubReload:
             patch.object(server_module, "_reload_cache_background", new=AsyncMock()),
         ):
             response = await server_module._handle_pubsub_reload(req)
-        await asyncio.sleep(0)
 
         assert response.status_code == 200
         assert captured_audience == ["https://jquants-mcp.example.com/internal/reload"]

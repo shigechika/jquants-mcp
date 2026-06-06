@@ -88,10 +88,24 @@ gcloud pubsub subscriptions create jquants-mcp-cache-updated-push \
   --topic=${TOPIC} \
   --push-endpoint=${PUSH_URL} \
   --push-auth-service-account=${PUBSUB_SA} \
-  --ack-deadline=30 \
+  --ack-deadline=180 \
   --message-retention-duration=6h \
   --project=${PROJECT}
 ```
+
+> **Ack deadline must exceed the cache.db download time.** The `/internal/reload`
+> handler downloads the new `cache.db` (~2.8 GB, typically 30–90 s) *synchronously*
+> before acknowledging, so the work runs under the active push request's CPU. This
+> is required under Cloud Run request-based billing (the default; CPU is throttled
+> between requests), where a detached background download would be CPU-starved and
+> could die at scale-to-zero. Keep `--ack-deadline` comfortably above the download
+> time (180 s here; the push maximum is 600 s). To raise it on an existing
+> subscription:
+>
+> ```bash
+> gcloud pubsub subscriptions update jquants-mcp-cache-updated-push \
+>   --ack-deadline=180 --project=${PROJECT}
+> ```
 
 ## Step 6 — Configure Cloud Run environment variables
 

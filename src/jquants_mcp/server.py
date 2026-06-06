@@ -432,8 +432,14 @@ async def _handle_pubsub_reload(request: Request) -> Response:
     the Google-signed OIDC token delivered in the ``Authorization`` header.
     The audience must match ``PUBSUB_AUDIENCE`` (or defaults to the request URL).
 
-    Returns 200 immediately so Pub/Sub acknowledges within the 10-second
-    deadline. The actual download runs in a background asyncio task.
+    The cache.db download runs synchronously, before the 200 is returned, so
+    the work happens while this push request is still active. Under request-based
+    billing (CPU throttled between requests) a detached background task would be
+    CPU-starved the instant the handler returned and could die at scale-to-zero,
+    leaving a freshly published cache.db unloaded. The push subscription's ack
+    deadline must therefore exceed the download time
+    (see ops/pubsub/setup.md: ``--ack-deadline=180``); the ``_reload_in_progress``
+    guard dedups any Pub/Sub redelivery that a slow download might trigger.
     """
     expected_sa = os.environ.get("PUBSUB_INVOKER_SA", "")
     if expected_sa:
@@ -463,9 +469,11 @@ async def _handle_pubsub_reload(request: Request) -> Response:
     else:
         logger.debug("PUBSUB_INVOKER_SA not set; skipping OIDC verification")
 
-    asyncio.create_task(_reload_cache_background())
+    # Await the download here (rather than a detached create_task) so it runs
+    # under the allocated CPU of this active push request — see the docstring.
+    await _reload_cache_background()
     return Response(
-        content='{"status":"reload scheduled"}',
+        content='{"status":"reloaded"}',
         status_code=200,
         media_type="application/json",
     )
