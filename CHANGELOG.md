@@ -5,6 +5,27 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.46.0](https://github.com/shigechika/jquants-mcp/compare/v0.45.1...v0.46.0) (2026-06-06)
+
+
+### Features
+
+* **cloudrun:** publish cache.db.zst (zstd) for faster cold start ([#462](https://github.com/shigechika/jquants-mcp/issues/462)) ([7312ecc](https://github.com/shigechika/jquants-mcp/commit/7312eccd1360e3d271f2146ceb3aed1eea7e8e16))
+* **cloudrun:** support zstd-compressed cache.db.zst with fallback ([#461](https://github.com/shigechika/jquants-mcp/issues/461)) ([e757449](https://github.com/shigechika/jquants-mcp/commit/e75744991b92aadfd9090aa2d46c7318bbd9ef6d))
+* **cloudrun:** switch to request-based billing to cut idle cost ([#454](https://github.com/shigechika/jquants-mcp/issues/454)) ([fdf2046](https://github.com/shigechika/jquants-mcp/commit/fdf20469772b8b16ded3de54b7bd715dc35fd02b))
+
+
+### Bug Fixes
+
+* **cloudrun:** download cache.db synchronously at startup ([#457](https://github.com/shigechika/jquants-mcp/issues/457)) ([4d6894f](https://github.com/shigechika/jquants-mcp/commit/4d6894fa8292e669e5de8e732086c6eecfd14dba))
+* **cloudrun:** raise memory to 8 GiB to survive the 2x reload tmpfs peak ([#458](https://github.com/shigechika/jquants-mcp/issues/458)) ([852349a](https://github.com/shigechika/jquants-mcp/commit/852349a8f5c5620df1fb4f79c20fb8f8d15dfab4))
+* **cloudrun:** set --cpu-throttling explicitly to switch billing mode ([#456](https://github.com/shigechika/jquants-mcp/issues/456)) ([82393a3](https://github.com/shigechika/jquants-mcp/commit/82393a3db87484289473637a90ba2c8258f59793))
+
+
+### Performance Improvements
+
+* **cloudrun:** sliced parallel download for cache.db to cut cold start ([#459](https://github.com/shigechika/jquants-mcp/issues/459)) ([4088a9e](https://github.com/shigechika/jquants-mcp/commit/4088a9e27bd3a74a19853ef1a7818df24bce8540))
+
 ## [0.45.1](https://github.com/shigechika/jquants-mcp/compare/v0.45.0...v0.45.1) (2026-05-31)
 
 
