@@ -42,6 +42,11 @@ logger = logging.getLogger("gcs_export_cache")
 
 _TIER1_TABLE_NAMES = list(TIER1_TABLES.keys())
 
+# zstd compression level for cache.db.zst. Level 10 with all cores is a good
+# balance for the daily publish: ~2-3x smaller (so the Cloud Run cold-start
+# download transfers far fewer bytes) without a slow compression step.
+_ZSTD_LEVEL = 10
+
 
 def _get_source_path() -> Path:
     """Return the path to the source cache.db."""
@@ -173,8 +178,44 @@ def _ensure_user_version(db_path: Path) -> None:
     conn.close()
 
 
+def _compress_to_zst(db_path: Path) -> Path:
+    """Stream-compress ``db_path`` to a sibling ``.zst`` file and return its path.
+
+    Streaming keeps memory flat regardless of DB size; ``threads=-1`` uses all
+    cores and ``write_checksum`` adds a frame checksum so a corrupt transfer is
+    caught at decompression time.
+    """
+    import zstandard
+
+    zst_path = Path(f"{db_path}.zst")
+    cctx = zstandard.ZstdCompressor(level=_ZSTD_LEVEL, threads=-1, write_checksum=True)
+    with open(db_path, "rb") as src, open(zst_path, "wb") as dst:
+        cctx.copy_stream(src, dst)
+    return zst_path
+
+
+def _upload_blob_atomic(bucket, local_path: Path, blob_name: str) -> None:
+    """Upload ``local_path`` to ``blob_name`` via a temp object + server-side rename.
+
+    A crash mid-upload leaves the previous live object untouched instead of
+    exposing a half-written object to the Cloud Run startup copy.
+    """
+    upload_name = f"{blob_name}.uploading"
+    upload_blob = bucket.blob(upload_name)
+    size_gb = local_path.stat().st_size / (1024**3)
+    logger.info("Uploading %.2f GB to gs://%s ...", size_gb, blob_name)
+    upload_blob.upload_from_filename(str(local_path))
+    bucket.rename_blob(upload_blob, blob_name)
+    logger.info("Upload complete: gs://%s", blob_name)
+
+
 def _upload_to_gcs(db_path: Path) -> None:
-    """Upload the export DB to GCS."""
+    """Upload the export DB to GCS as cache.db.zst (preferred) and cache.db.
+
+    The Cloud Run downloader prefers the compressed object; the uncompressed
+    cache.db is kept for a backward-compatible rollback of the downloader and
+    can be dropped once .zst is the only consumer.
+    """
     from google.cloud import storage  # type: ignore[import-untyped]
 
     bucket_name = os.environ.get("GCS_BUCKET", "")
@@ -186,20 +227,23 @@ def _upload_to_gcs(db_path: Path) -> None:
     if prefix and not prefix.endswith("/"):
         prefix += "/"
 
-    blob_name = f"{prefix}cache.db"
-    # Upload to a temporary object first, then server-side rename onto the live
-    # name. A crash mid-upload leaves the previous cache.db untouched instead of
-    # exposing a half-written object to the Cloud Run startup copy.
-    upload_name = f"{blob_name}.uploading"
     client = storage.Client()
     bucket = client.bucket(bucket_name)
-    upload_blob = bucket.blob(upload_name)
 
-    size_gb = db_path.stat().st_size / (1024**3)
-    logger.info("Uploading %.1f GB to gs://%s/%s ...", size_gb, bucket_name, upload_name)
-    upload_blob.upload_from_filename(str(db_path))
-    bucket.rename_blob(upload_blob, blob_name)
-    logger.info("Upload complete: gs://%s/%s", bucket_name, blob_name)
+    # 1. Compressed object (preferred by the Cloud Run downloader).
+    start = time.time()
+    zst_path = _compress_to_zst(db_path)
+    try:
+        ratio = db_path.stat().st_size / max(zst_path.stat().st_size, 1)
+        logger.info(
+            "Compressed cache.db -> .zst in %.0fs (%.2fx smaller)", time.time() - start, ratio
+        )
+        _upload_blob_atomic(bucket, zst_path, f"{prefix}cache.db.zst")
+    finally:
+        zst_path.unlink(missing_ok=True)
+
+    # 2. Uncompressed object (rollback fallback for the downloader).
+    _upload_blob_atomic(bucket, db_path, f"{prefix}cache.db")
 
 
 def main() -> None:

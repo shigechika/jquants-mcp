@@ -917,9 +917,10 @@ sequenceDiagram
     participant G as GCS
     participant M as MCP server
 
-    E->>G: download cache.db to /tmp (synchronous)
+    E->>G: download cache.db.zst to /tmp (synchronous)
     Note right of E: runs in the startup window,<br/>where CPU is fully allocated
-    G-->>E: ~3 GiB
+    G-->>E: ~1.2 GiB compressed
+    Note right of E: stream-decompressed to ~3 GiB;<br/>falls back to uncompressed cache.db
     E->>M: start (cache.db already present)
     activate M
     Note right of M: serve from Tier 1 cache<br/>(live J-Quants API only if the<br/>download was skipped/failed)
@@ -927,7 +928,7 @@ sequenceDiagram
 ```
 
 Notes:
-- `cache.db` (~3 GiB) is downloaded **synchronously during container startup**, before the server binds the port. Under Cloud Run request-based billing the CPU is throttled to ~0 between requests, so a download started *after* the server is ready would be starved and never finish; the startup window has full CPU (plus `--cpu-boost`). The trade-off is a longer cold start — the first request after a scale-to-zero waits for the download.
+- `cache.db` is downloaded **synchronously during container startup**, before the server binds the port. It is published zstd-compressed as `cache.db.zst` (~1.2 GiB on the wire, stream-decompressed to ~3 GiB) because the Cloud Run instance's GCS read bandwidth (~60 MB/s) is the bottleneck; the downloader falls back to the uncompressed `cache.db` when `.zst` is absent. Under Cloud Run request-based billing the CPU is throttled to ~0 between requests, so a download started *after* the server is ready would be starved and never finish; the startup window has full CPU (plus `--cpu-boost`). The trade-off is a longer cold start — the first request after a scale-to-zero waits for the download.
 - If the download fails, startup continues and the server serves via the live J-Quants API (slower, counts against rate limits). `cache_status` then returns a minimal payload (`db_path` + `plan` only) until a cache is loaded.
 - Firestore is strongly consistent, so multiple Cloud Run instances can run concurrently without data races. There is no `maxScale: 1` restriction — scale as needed.
 
@@ -951,7 +952,7 @@ sequenceDiagram
     G->>PS: GCS object notification
     PS->>CR: POST /internal/reload<br/>(Google-signed OIDC token)
     CR->>CR: verify OIDC token<br/>(PUBSUB_INVOKER_SA)
-    CR->>G: download new cache.db to /tmp<br/>(synchronous, during the request)
+    CR->>G: download new cache.db.zst to /tmp<br/>(synchronous, during the request)
     G-->>CR: ~3 GiB
     CR->>C: request_reload()<br/>(lazy reconnect on next query)
     CR-->>PS: 200 OK (ACK after reload)
