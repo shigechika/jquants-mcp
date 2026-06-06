@@ -328,18 +328,23 @@ def _download_cache_db_from_gcs() -> None:
     logger.info("Downloaded cache.db from GCS (%.1f MB)", size_mb)
 
 
-async def _reload_cache_background() -> None:
-    """Background task: download cache.db from GCS then request lazy reload.
+async def _reload_cache_background() -> bool:
+    """Download cache.db from GCS then request a lazy reload.
 
-    Returns immediately if another reload is already in progress.
-    When ``GCS_BUCKET`` is not set (local dev), skips the download and
-    just flips the lazy-reconnect flag — behaves like SIGHUP.
+    When ``GCS_BUCKET`` is not set (local dev), skips the download and just
+    flips the lazy-reconnect flag — behaves like SIGHUP.
+
+    Returns:
+        True when the reload succeeded, or was skipped because another reload
+        is already in progress (a duplicate Pub/Sub delivery). False when the
+        download or reconnect failed — the caller maps False to a non-2xx so
+        Pub/Sub redelivers instead of dropping the published snapshot.
     """
     global _reload_in_progress, _last_reload_at
 
     if _reload_in_progress:
         logger.info("Pub/Sub reload: already in progress, ignoring duplicate request")
-        return
+        return True
 
     _reload_in_progress = True
     try:
@@ -352,8 +357,10 @@ async def _reload_cache_background() -> None:
         _get_cache().request_reload()
         _last_reload_at = time.time()
         logger.info("Cache reload scheduled (last_reload_at=%.3f)", _last_reload_at)
+        return True
     except Exception as exc:
-        logger.error("Cache reload background task failed: %s", exc)
+        logger.error("Cache reload failed: %s", exc)
+        return False
     finally:
         _reload_in_progress = False
 
@@ -432,8 +439,18 @@ async def _handle_pubsub_reload(request: Request) -> Response:
     the Google-signed OIDC token delivered in the ``Authorization`` header.
     The audience must match ``PUBSUB_AUDIENCE`` (or defaults to the request URL).
 
-    Returns 200 immediately so Pub/Sub acknowledges within the 10-second
-    deadline. The actual download runs in a background asyncio task.
+    The cache.db download runs synchronously, before the 200 is returned, so
+    the work happens while this push request is still active. Under request-based
+    billing (CPU throttled between requests) a detached background task would be
+    CPU-starved the instant the handler returned and could die at scale-to-zero,
+    leaving a freshly published cache.db unloaded. The push subscription's ack
+    deadline must therefore exceed the download time
+    (see ops/pubsub/setup.md: ``--ack-deadline=180``); the ``_reload_in_progress``
+    guard dedups any Pub/Sub redelivery that a slow download might trigger.
+
+    On a download/reconnect failure the handler returns 500 so Pub/Sub redelivers
+    (bounded by the subscription's message-retention) rather than dropping the
+    published snapshot and waiting for the next cold-start re-download.
     """
     expected_sa = os.environ.get("PUBSUB_INVOKER_SA", "")
     if expected_sa:
@@ -463,9 +480,16 @@ async def _handle_pubsub_reload(request: Request) -> Response:
     else:
         logger.debug("PUBSUB_INVOKER_SA not set; skipping OIDC verification")
 
-    asyncio.create_task(_reload_cache_background())
+    # Await the download here (rather than a detached create_task) so it runs
+    # under the allocated CPU of this active push request — see the docstring.
+    if not await _reload_cache_background():
+        return Response(
+            content='{"status":"reload failed"}',
+            status_code=500,
+            media_type="application/json",
+        )
     return Response(
-        content='{"status":"reload scheduled"}',
+        content='{"status":"reloaded"}',
         status_code=200,
         media_type="application/json",
     )

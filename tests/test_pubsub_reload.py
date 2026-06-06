@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 import time
@@ -276,8 +275,9 @@ class TestReloadCacheBackground:
         cache = mock_env["cache"]
 
         with patch.object(cache, "request_reload") as mock_reload:
-            await server_module._reload_cache_background()
+            result = await server_module._reload_cache_background()
 
+        assert result is True
         mock_reload.assert_called_once()
         assert server_module._last_reload_at is not None
         assert server_module._reload_in_progress is False
@@ -291,8 +291,9 @@ class TestReloadCacheBackground:
             patch.object(server_module, "_download_cache_db_from_gcs") as mock_dl,
             patch.object(cache, "request_reload") as mock_reload,
         ):
-            await server_module._reload_cache_background()
+            result = await server_module._reload_cache_background()
 
+        assert result is True
         mock_dl.assert_called_once()
         mock_reload.assert_called_once()
         assert server_module._last_reload_at is not None
@@ -304,8 +305,10 @@ class TestReloadCacheBackground:
         cache = mock_env["cache"]
 
         with patch.object(cache, "request_reload") as mock_reload:
-            await server_module._reload_cache_background()
+            result = await server_module._reload_cache_background()
 
+        # A duplicate (already-in-progress) reload acks True so Pub/Sub stops.
+        assert result is True
         mock_reload.assert_not_called()
         # Flag must remain True since we didn't enter the try block
         assert server_module._reload_in_progress is True
@@ -319,8 +322,10 @@ class TestReloadCacheBackground:
             "_download_cache_db_from_gcs",
             side_effect=RuntimeError("GCS unavailable"),
         ):
-            await server_module._reload_cache_background()
+            result = await server_module._reload_cache_background()
 
+        # A failed download returns False so the caller can 500 → Pub/Sub retry.
+        assert result is False
         assert server_module._reload_in_progress is False
         assert server_module._last_reload_at is None
 
@@ -331,18 +336,47 @@ class TestReloadCacheBackground:
 
 
 class TestHandlePubsubReload:
-    async def test_no_sa_configured_schedules_reload(self, mock_env, monkeypatch):
-        """Without PUBSUB_INVOKER_SA, accepts any request and schedules reload."""
+    async def test_no_sa_configured_reloads(self, mock_env, monkeypatch):
+        """Without PUBSUB_INVOKER_SA, accepts any request and reloads."""
         monkeypatch.delenv("PUBSUB_INVOKER_SA", raising=False)
         monkeypatch.delenv("GCS_BUCKET", raising=False)
 
         req = _mock_request()
         response = await server_module._handle_pubsub_reload(req)
-        await asyncio.sleep(0)  # drain event loop so background task completes
 
         assert response.status_code == 200
         body = json.loads(response.body)
-        assert body["status"] == "reload scheduled"
+        assert body["status"] == "reloaded"
+
+    async def test_reload_runs_synchronously_before_ack(self, mock_env, monkeypatch):
+        """The download must complete *before* the 200 is returned.
+
+        Under request-based billing a detached background task would be
+        CPU-starved once this handler returns, so the reload must be awaited
+        inline. We assert the reload coroutine has already been awaited by the
+        time the handler returns — without any event-loop draining.
+        """
+        monkeypatch.delenv("PUBSUB_INVOKER_SA", raising=False)
+
+        reload_mock = AsyncMock(return_value=True)
+        with patch.object(server_module, "_reload_cache_background", new=reload_mock):
+            response = await server_module._handle_pubsub_reload(_mock_request())
+
+        # No `await asyncio.sleep(0)` drain: a create_task would still be pending.
+        reload_mock.assert_awaited_once()
+        assert response.status_code == 200
+
+    async def test_reload_failure_returns_500(self, mock_env, monkeypatch):
+        """A failed reload returns 500 so Pub/Sub redelivers the snapshot."""
+        monkeypatch.delenv("PUBSUB_INVOKER_SA", raising=False)
+
+        with patch.object(
+            server_module, "_reload_cache_background", new=AsyncMock(return_value=False)
+        ):
+            response = await server_module._handle_pubsub_reload(_mock_request())
+
+        assert response.status_code == 500
+        assert json.loads(response.body)["status"] == "reload failed"
 
     async def test_missing_bearer_returns_401(self, mock_env, monkeypatch):
         """With PUBSUB_INVOKER_SA set but no Authorization header → 401."""
@@ -381,7 +415,6 @@ class TestHandlePubsubReload:
             patch.object(server_module, "_reload_cache_background", new=AsyncMock()),
         ):
             response = await server_module._handle_pubsub_reload(req)
-        await asyncio.sleep(0)
 
         assert response.status_code == 200
 
@@ -405,7 +438,6 @@ class TestHandlePubsubReload:
             patch.object(server_module, "_reload_cache_background", new=AsyncMock()),
         ):
             response = await server_module._handle_pubsub_reload(req)
-        await asyncio.sleep(0)
 
         assert response.status_code == 200
         assert captured_audience == ["https://jquants-mcp.example.com/internal/reload"]

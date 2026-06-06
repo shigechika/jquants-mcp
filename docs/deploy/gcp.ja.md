@@ -235,8 +235,8 @@ gcloud run deploy ${SERVICE} \
   --execution-environment gen2 \
   --memory 4Gi \
   --cpu 1 \
-  --no-cpu-throttling \
   --cpu-boost \
+  --max-instances 3 \
   --clear-volumes --clear-volume-mounts \
   --set-env-vars "..." \
   --set-secrets "..."
