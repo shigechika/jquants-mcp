@@ -13,6 +13,7 @@ Exposed tools:
 - ``get_top_turnover_value`` — top stocks by turnover value (売買代金ランキング)
 - ``get_sector_performance`` — sector-level average percentage change (業種別騰落率)
 - ``get_dividend_yield_ranking`` — top stocks by dividend yield (高配当利回りランキング)
+- ``get_valuation_ranking`` — top stocks by PER/PBR valuation multiple (バリュエーションランキング)
 - ``get_market_briefing`` — composite daily briefing aggregating the above plus
   TOPIX change and screener summaries (相場ブリーフィング)
 """
@@ -1050,6 +1051,167 @@ def register(
                 "include_trailing": include_trailing,
                 "market": market,
                 "sector": sector,
+            },
+            "items": items[:n],
+        }
+        cache.put_response(cache_key, result, ttl_seconds=3600)
+        return result
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def get_valuation_ranking(
+        metric: str = "per",
+        n: int = 20,
+        ascending: bool = True,
+        min_value: float | None = None,
+        max_value: float | None = None,
+        market: str | None = None,
+        sector: str | None = None,
+        disc_months: int = 18,
+    ) -> dict[str, Any]:
+        """Rank listed stocks by PER or PBR valuation multiple (バリュエーションランキング). All plans.
+
+        Use for 割安株, PER/PBRランキング, 低PER, 低PBR, バリュー株スクリーニング,
+        cheapest stocks by PER/PBR. Default = 20 cheapest by PER (ascending).
+        PER excludes net-loss stocks (EPS≤0); PBR excludes negative-book (BPS≤0).
+        For sector medians use get_sector_briefing; for one stock use get_stock_briefing;
+        for dividend yield use get_dividend_yield_ranking.
+
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+
+        Args:
+            metric: Ranking metric — "per" (default) or "pbr". Both ratios are returned per item.
+            n: Stocks to return (1–100, default 20).
+            ascending: True (default) = cheapest first; False = most expensive first.
+            min_value: Minimum metric value filter (default null).
+            max_value: Maximum metric value filter (default null).
+            market: "prime" / "standard" / "growth" / "tokyo_pro" (default all).
+            sector: S33 sector code filter (default all).
+            disc_months: Max FY-disclosure age in months (default 18) — drops stale financials.
+        """
+        errors = collect_errors(
+            _validate_n(n),
+            _validate_disc_months(disc_months),
+            _validate_market(market),
+        )
+        if metric not in ("per", "pbr"):
+            errors.append("metric must be 'per' or 'pbr'")
+        if min_value is not None and min_value < 0:
+            errors.append("min_value must be >= 0")
+        if max_value is not None and max_value < 0:
+            errors.append("max_value must be >= 0")
+        if min_value is not None and max_value is not None and max_value < min_value:
+            errors.append("max_value must be >= min_value")
+        if errors:
+            return make_validation_error_response(errors)
+
+        cache: CacheStore = get_cache()
+
+        cache_key = make_cache_key(
+            "tool:get_valuation_ranking",
+            {
+                "metric": metric,
+                "n": n,
+                "ascending": ascending,
+                "min_value": min_value,
+                "max_value": max_value,
+                "market": market,
+                "sector": sector,
+                "disc_months": disc_months,
+            },
+        )
+        cached = cache.get_response(cache_key)
+        if cached is not None:
+            return cached
+
+        price_date = cache.get_latest_equities_date()
+        if price_date is None:
+            return _cache_not_ready_error("latest", None)
+
+        try:
+            close_map = cache.get_latest_close_map()
+            fins_map = cache.get_all_latest_fy_fins()
+        except TOOL_API_ERRORS as e:
+            return format_api_error(e)
+        if not fins_map:
+            return _cache_not_ready_error("latest", price_date)
+
+        name_map = cache.get_name_map()
+        sector_map = cache.get_sector_map()
+
+        # Split factor per code (disc_date -> cumulative AdjFactor after it) so the
+        # raw EPS/BPS align with the split-adjusted close (AdjC). Mirrors
+        # get_sector_briefing / get_dividend_yield_ranking.
+        code_disc_dates: dict[str, str] = {}
+        for code, row in fins_map.items():
+            disc = str(row.get("DiscDate") or row.get("disc_date") or "")[:10]
+            if disc:
+                code_disc_dates[code] = disc
+        split_factors = cache.get_split_factors_after(code_disc_dates)
+
+        # disc_months cutoff: drop stale FY disclosures (31 days/month over-estimates
+        # so a borderline disclosure is consistently excluded — same as the yield tool).
+        cutoff_date = (
+            datetime.strptime(price_date, "%Y-%m-%d") - timedelta(days=disc_months * 31)
+        ).strftime("%Y-%m-%d")
+
+        mkt_code: str | None = str(_MARKET_CODE_MAP[market]) if market is not None else None
+
+        items: list[dict[str, Any]] = []
+        for code, fins_row in fins_map.items():
+            close = close_map.get(code)
+            if close is None or close <= 0:
+                continue
+            disc = code_disc_dates.get(code, "")
+            if not disc or disc < cutoff_date:
+                continue
+
+            info = sector_map.get(code, {})
+            if mkt_code is not None and info.get("mkt") != mkt_code:
+                continue
+            if sector is not None and info.get("s33") != str(sector):
+                continue
+
+            factor = split_factors.get(code, 1.0)
+            eps_raw = _as_float(fins_row.get("EPS"))
+            bps_raw = _as_float(fins_row.get("BPS"))
+            eps_adj = eps_raw * factor if eps_raw is not None else None
+            bps_adj = bps_raw * factor if bps_raw is not None else None
+            per = round(close / eps_adj, 2) if eps_adj is not None and eps_adj > 0 else None
+            pbr = round(close / bps_adj, 2) if bps_adj is not None and bps_adj > 0 else None
+
+            value = per if metric == "per" else pbr
+            if value is None:  # net-loss (PER) or negative book (PBR) — not rankable
+                continue
+            if min_value is not None and value < min_value:
+                continue
+            if max_value is not None and value > max_value:
+                continue
+
+            items.append(
+                {
+                    "code": display_code(code),
+                    "name": name_map.get(code),
+                    "market": info.get("mkt_name") or info.get("mkt", ""),
+                    "sector": info.get("s33_name", ""),
+                    "close": close,
+                    "per": per,
+                    "pbr": pbr,
+                    "disc_date": disc,
+                }
+            )
+
+        items.sort(key=lambda x: x[metric], reverse=not ascending)
+        result: dict[str, Any] = {
+            "price_date": price_date,
+            "metric": metric,
+            "count": min(len(items), n),
+            "filters": {
+                "min_value": min_value,
+                "max_value": max_value,
+                "market": market,
+                "sector": sector,
+                "disc_months": disc_months,
+                "ascending": ascending,
             },
             "items": items[:n],
         }

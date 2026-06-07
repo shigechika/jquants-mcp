@@ -30,7 +30,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ## Features
 
-- **52 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 10 offline screener, 1 technical indicators, 1 single-stock summary, 2 cache-only equity search + earnings calendar, 2 chart tools (JSON, no optional dependencies), and 5 server utilities
+- **53 MCP tools** — 22 J-Quants API v2 endpoints, 10 market overview + valuation, 10 offline screener, 1 technical indicators, 1 single-stock summary, 2 cache-only equity search + earnings calendar, 2 chart tools (JSON, no optional dependencies), and 5 server utilities
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -648,7 +648,7 @@ On first use, Claude Desktop opens a browser window for GitHub OAuth. After auth
 | `get_bulk_list` | `/bulk/list` | Light+ | List downloadable CSV files |
 | `get_bulk_download_url` | `/bulk/get` | Light+ | Get signed download URL |
 
-### Market Overview & Valuation (9 tools)
+### Market Overview & Valuation (10 tools)
 
 Cross-sectional cache-only tools that scan all listed equities. No extra API calls, useful for "what's the overall market doing today?" and sector valuation queries.
 
@@ -662,6 +662,7 @@ Cross-sectional cache-only tools that scan all listed equities. No extra API cal
 | `get_sector_performance` | Sector-level average daily change (業種別騰落率) grouped by TSE 33 sectors (default) or 17 sectors (`sector_type="s17"`). |
 | `get_sector_briefing` | Sector-level median PER, PBR, and ROE (業種別ブリーフィング) aggregated from the most recent FY financials. Split-adjusted. Sorted by PER ascending (cheapest first). |
 | `get_dividend_yield_ranking` | High dividend yield stock ranking (高配当利回りランキング). Joins `DivAnn` from `fins_summary` with `AdjC` to compute yield_pct = DivAnn / AdjC × 100. Skips interim reports with empty DivAnn. |
+| `get_valuation_ranking` | PER/PBR valuation ranking (バリュエーションランキング). Joins latest-FY `EPS`/`BPS` with `AdjC` (split-adjusted) across all stocks; default 20 cheapest by PER. Excludes net-loss (EPS≤0, PER) / negative-book (BPS≤0, PBR). `metric`, `min_value`/`max_value`, `market`, `sector`, `disc_months` filters. |
 | `get_market_briefing` | Composite daily briefing (相場ブリーフィング) — advance/decline + 25-day ADR + sector top/bottom + top movers + top turnover + screener highlights + TOPIX change in one call. |
 
 ### Screener (10 tools)
