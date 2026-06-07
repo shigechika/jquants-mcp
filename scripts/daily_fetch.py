@@ -47,6 +47,7 @@ from jquants_mcp.cache.schema import (  # noqa: E402
     SCREENER_RESULTS_DDL,
     SCREENER_RESULTS_INDEX_DDL,
     TIER1_TABLES,
+    ensure_cross_section_indexes,
     generate_ddl,
     migrate_add_fins_indexes,
     migrate_drop_plan,
@@ -182,6 +183,7 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     conn.commit()
     migrate_drop_plan(conn)
     migrate_add_fins_indexes(conn)
+    ensure_cross_section_indexes(conn)
 
 
 def _sanitize_row(row_data: dict) -> dict:

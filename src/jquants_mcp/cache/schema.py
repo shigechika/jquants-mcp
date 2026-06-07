@@ -32,6 +32,7 @@ import sqlite3
 __all__ = [
     "ALL_TABLE_NAMES",
     "BULK_TABLES",
+    "CROSS_SECTION_INDEX_DDL",
     "FINS_INDEX_DDL",
     "RESPONSE_CACHE_DDL",
     "SCREENER_RESULTS_DDL",
@@ -41,6 +42,7 @@ __all__ = [
     "all_bulk_ddl",
     "all_ddl",
     "all_tier1_ddl",
+    "ensure_cross_section_indexes",
     "generate_ddl",
     "migrate_add_fins_indexes",
     "migrate_drop_plan",
@@ -217,6 +219,39 @@ FINS_INDEX_DDL: tuple[str, ...] = (
     "WHERE COALESCE(NULLIF(json_extract(data, '$.NxFDivAnn'), ''), "
     "NULLIF(json_extract(data, '$.FDivAnn'), '')) IS NOT NULL",
 )
+
+# ----------------------------------------------------------------
+# Cross-section date indexes (mirror idx_ebd_date for the other tables)
+# ----------------------------------------------------------------
+# These tables have a composite PK whose date is the 2nd column, so a date-only
+# filter (WHERE date >= cutoff / latest-snapshot scan in markets._get_latest_
+# tier1_snapshot) cannot use the PK and full-scans. A single-column date index
+# fixes it (and unlocks by-date cross-sections). Plain CREATE INDEX IF NOT
+# EXISTS — idempotent, no migration/version needed.
+CROSS_SECTION_INDEX_DDL: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS idx_mmi_date ON markets_margin_interest(date)",
+    "CREATE INDEX IF NOT EXISTS idx_mma_date ON markets_margin_alert(date)",
+    "CREATE INDEX IF NOT EXISTS idx_msr_date ON markets_short_ratio(date)",
+    "CREATE INDEX IF NOT EXISTS idx_mbd_date ON markets_breakdown(date)",
+    "CREATE INDEX IF NOT EXISTS idx_eec_date ON equities_earnings_calendar(date)",
+)
+
+
+def ensure_cross_section_indexes(conn: sqlite3.Connection) -> None:
+    """Create the cross-section date indexes (idempotent; no version bump).
+
+    Shared by store._init_tables, daily_fetch.py and gcs_export_cache.py so the
+    indexes ship inside cache.db.zst. Tables that do not exist yet are skipped
+    (CREATE INDEX on a missing table would raise).
+    """
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    for ddl in CROSS_SECTION_INDEX_DDL:
+        # "... ON <table>(date)" -> extract <table> to skip if absent.
+        table = ddl.split(" ON ", 1)[1].split("(", 1)[0].strip()
+        if table in tables:
+            conn.execute(ddl)
+    conn.commit()
+
 
 # ----------------------------------------------------------------
 # Derived constants

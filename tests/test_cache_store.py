@@ -1692,3 +1692,69 @@ class TestMigrateAddFinsIndexes:
             "NULLIF(json_extract(data,'$.FDivAnn'),'')) IS NOT NULL GROUP BY code"
         )
         conn.close()
+
+
+class TestCrossSectionIndexes:
+    """schema.ensure_cross_section_indexes adds single-column date indexes."""
+
+    def _make_tables(self, db_path: Path, tables: list[str]) -> sqlite3.Connection:
+        from jquants_mcp.cache.schema import TIER1_TABLES, generate_ddl
+
+        conn = sqlite3.connect(str(db_path))
+        for name in tables:
+            conn.execute(generate_ddl(name, TIER1_TABLES[name]))
+        conn.commit()
+        return conn
+
+    def test_creates_date_indexes(self, tmp_path: Path):
+        from jquants_mcp.cache.schema import ensure_cross_section_indexes
+
+        conn = self._make_tables(
+            tmp_path / "c.db",
+            [
+                "markets_margin_interest",
+                "markets_margin_alert",
+                "markets_short_ratio",
+                "markets_breakdown",
+                "equities_earnings_calendar",
+            ],
+        )
+        ensure_cross_section_indexes(conn)
+        idx = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        assert {
+            "idx_mmi_date",
+            "idx_mma_date",
+            "idx_msr_date",
+            "idx_mbd_date",
+            "idx_eec_date",
+        } <= idx
+        conn.close()
+
+    def test_date_index_is_used(self, tmp_path: Path):
+        """EXPLAIN QUERY PLAN: a date-only filter hits the single-column index."""
+        from jquants_mcp.cache.schema import ensure_cross_section_indexes
+
+        conn = self._make_tables(tmp_path / "c.db", ["markets_margin_interest"])
+        ensure_cross_section_indexes(conn)
+        plan = " ".join(
+            str(r[-1])
+            for r in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT data FROM markets_margin_interest WHERE date >= ?",
+                ("2025-01-01",),
+            )
+        )
+        assert "idx_mmi_date" in plan
+        conn.close()
+
+    def test_skips_missing_tables_and_idempotent(self, tmp_path: Path):
+        from jquants_mcp.cache.schema import ensure_cross_section_indexes
+
+        # Only one of the five target tables exists; the rest must be skipped
+        # silently (CREATE INDEX on a missing table would raise).
+        conn = self._make_tables(tmp_path / "c.db", ["markets_short_ratio"])
+        ensure_cross_section_indexes(conn)
+        ensure_cross_section_indexes(conn)  # second run must not raise
+        idx = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        assert "idx_msr_date" in idx
+        assert "idx_mmi_date" not in idx  # table absent -> index skipped
+        conn.close()
