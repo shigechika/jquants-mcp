@@ -48,6 +48,7 @@ from jquants_mcp.cache.schema import (  # noqa: E402
     SCREENER_RESULTS_INDEX_DDL,
     TIER1_TABLES,
     generate_ddl,
+    migrate_add_fins_indexes,
     migrate_drop_plan,
 )
 from jquants_mcp.cache import screener_compute  # noqa: E402  # stdlib-only
@@ -180,6 +181,7 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     conn.execute(SCREENER_RESULTS_INDEX_DDL)
     conn.commit()
     migrate_drop_plan(conn)
+    migrate_add_fins_indexes(conn)
 
 
 def _sanitize_row(row_data: dict) -> dict:

@@ -32,6 +32,7 @@ import sqlite3
 __all__ = [
     "ALL_TABLE_NAMES",
     "BULK_TABLES",
+    "FINS_INDEX_DDL",
     "RESPONSE_CACHE_DDL",
     "SCREENER_RESULTS_DDL",
     "SCREENER_RESULTS_INDEX_DDL",
@@ -41,6 +42,7 @@ __all__ = [
     "all_ddl",
     "all_tier1_ddl",
     "generate_ddl",
+    "migrate_add_fins_indexes",
     "migrate_drop_plan",
 ]
 
@@ -171,6 +173,50 @@ SCREENER_RESULTS_INDEX_DDL = (
 # The composite PK (code, date) requires a full index scan for MAX(date) across
 # all codes; this single-column index lets SQLite resolve it in O(log n).
 EBD_DATE_INDEX_DDL = "CREATE INDEX IF NOT EXISTS idx_ebd_date ON equities_bars_daily(date)"
+
+# ----------------------------------------------------------------
+# fins_summary FY / dividend indexes (user_version 4)
+# ----------------------------------------------------------------
+# The cross-sectional financials readers (get_div_ann_map, get_all_latest_fy_fins,
+# get_forward_div_ann_map) filter/group on fields inside the JSON ``data`` blob,
+# so without these they FULL-SCAN fins_summary and run json_extract per row.
+# Two VIRTUAL generated columns precompute the FY-document flags — the index
+# materialises the value, and VIRTUAL keeps the table small AND is addable via
+# ALTER (a STORED generated column is not). Partial indexes cover only matching
+# rows. All four indexes were verified to be used via EXPLAIN QUERY PLAN.
+_FINS_IS_FY_DDL = (
+    "ALTER TABLE fins_summary ADD COLUMN is_fy INTEGER GENERATED ALWAYS AS ("
+    "CASE WHEN json_extract(data, '$.CurPerType') = 'FY'"
+    " OR json_extract(data, '$.TypeOfCurrentPeriod') = 'FY'"
+    " OR json_extract(data, '$.DocType') LIKE 'FYFinancial%'"
+    " OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%'"
+    " THEN 1 ELSE 0 END) VIRTUAL"
+)
+# Annual-RESULTS only (DocType LIKE 'FYFinancial%'). Distinct from is_fy because
+# DividendForecastRevision rows carry CurPerType='FY' but are NOT results filings;
+# get_forward_div_ann_map's fy_latest CTE must exclude them.
+_FINS_IS_FY_RESULTS_DDL = (
+    "ALTER TABLE fins_summary ADD COLUMN is_fy_results INTEGER GENERATED ALWAYS AS ("
+    "CASE WHEN json_extract(data, '$.DocType') LIKE 'FYFinancial%'"
+    " OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%'"
+    " THEN 1 ELSE 0 END) VIRTUAL"
+)
+# Each WHERE must MATCH the reader's predicate verbatim (SQLite only uses a
+# partial/expression index on an identical expression). The two FY indexes
+# require the readers to filter on the generated column (is_fy=1 / is_fy_results=1).
+FINS_INDEX_DDL: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS idx_fs_is_fy "
+    "ON fins_summary(code, substr(disc_date, 1, 10)) WHERE is_fy = 1",
+    "CREATE INDEX IF NOT EXISTS idx_fs_fy_results "
+    "ON fins_summary(code, substr(disc_date, 1, 10)) WHERE is_fy_results = 1",
+    "CREATE INDEX IF NOT EXISTS idx_fs_divann "
+    "ON fins_summary(code, substr(disc_date, 1, 10)) "
+    "WHERE json_extract(data, '$.DivAnn') IS NOT NULL AND json_extract(data, '$.DivAnn') != ''",
+    "CREATE INDEX IF NOT EXISTS idx_fs_fwddiv "
+    "ON fins_summary(code, substr(disc_date, 1, 10)) "
+    "WHERE COALESCE(NULLIF(json_extract(data, '$.NxFDivAnn'), ''), "
+    "NULLIF(json_extract(data, '$.FDivAnn'), '')) IS NOT NULL",
+)
 
 # ----------------------------------------------------------------
 # Derived constants
@@ -352,3 +398,43 @@ def migrate_drop_plan(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA user_version = 2")
     conn.commit()
     logger.info("Migration: plan removal complete (user_version=2)")
+
+
+def migrate_add_fins_indexes(conn: sqlite3.Connection) -> None:
+    """Add fins_summary FY/dividend generated columns and partial indexes.
+
+    The cross-sectional financials readers (get_div_ann_map, get_all_latest_fy_fins,
+    get_forward_div_ann_map) filter and group on JSON-blob fields, so without
+    indexes they full-scan fins_summary with a per-row json_extract. This adds two
+    VIRTUAL generated columns (``is_fy``, ``is_fy_results``) and four partial
+    indexes that turn those scans into index seeks (verified with EXPLAIN QUERY
+    PLAN). The FY readers must filter on the generated columns (``is_fy=1`` /
+    ``is_fy_results=1``) to hit the indexes; the dividend indexes match the
+    readers' verbatim ``json_extract`` predicates and need no query change.
+
+    Idempotent — skipped at ``user_version >= 4``. Mirrored by store._init_tables,
+    daily_fetch.py and gcs_export_cache.py so the publisher build ships the
+    indexes inside cache.db.zst. Stdlib-only (mirrors ``migrate_drop_plan``).
+    """
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version >= 4:
+        return
+
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "fins_summary" not in tables:
+        # Caller has not created the Tier 1 tables yet; nothing to migrate.
+        return
+
+    # table_xinfo (not table_info) lists generated columns, so a partial-failure
+    # retry at user_version < 4 doesn't re-ALTER an already-present is_fy column.
+    cols = {r[1] for r in conn.execute("PRAGMA table_xinfo(fins_summary)")}
+    if "is_fy" not in cols:
+        conn.execute(_FINS_IS_FY_DDL)
+    if "is_fy_results" not in cols:
+        conn.execute(_FINS_IS_FY_RESULTS_DDL)
+    for ddl in FINS_INDEX_DDL:
+        conn.execute(ddl)
+
+    conn.execute("PRAGMA user_version = 4")
+    conn.commit()
+    logger.info("Migration: added fins_summary FY/dividend indexes (user_version=4)")

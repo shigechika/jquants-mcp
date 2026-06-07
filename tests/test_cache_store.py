@@ -1588,3 +1588,107 @@ class TestLatestReadersPlanGate:
         val, disc = cache.get_forward_div_ann_map()["12340"]
         assert val == 111.0 and disc == entitled  # embargoed recent forecast excluded
         cache.close()
+
+
+class TestMigrateAddFinsIndexes:
+    """schema.migrate_add_fins_indexes adds is_fy/is_fy_results + FY/dividend indexes."""
+
+    def _make_fins(self, db_path: Path) -> sqlite3.Connection:
+        import json
+
+        from jquants_mcp.cache.schema import TIER1_TABLES, generate_ddl
+
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(generate_ddl("fins_summary", TIER1_TABLES["fins_summary"]))
+        rows = [
+            (
+                "7203",
+                "2025-05-10",
+                {
+                    "DocType": "FYFinancialStatements_JP",
+                    "CurPerType": "FY",
+                    "DivAnn": "75",
+                    "NxFDivAnn": "80",
+                },
+            ),
+            ("7203", "2025-08-05", {"DocType": "1QFinancialStatements_JP", "DivAnn": ""}),
+            (
+                "9999",
+                "2025-02-14",
+                {"DocType": "DividendForecastRevision", "CurPerType": "FY", "DivAnn": "30"},
+            ),
+        ]
+        for code, dd, d in rows:
+            conn.execute(
+                "INSERT INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+                (code, dd, json.dumps(d), 0.0),
+            )
+        conn.commit()
+        return conn
+
+    def test_adds_columns_indexes_and_bumps_version(self, tmp_path: Path):
+        from jquants_mcp.cache.schema import migrate_add_fins_indexes
+
+        conn = self._make_fins(tmp_path / "c.db")
+        migrate_add_fins_indexes(conn)
+
+        # table_xinfo lists generated columns (table_info does not).
+        cols = {r[1] for r in conn.execute("PRAGMA table_xinfo(fins_summary)")}
+        assert {"is_fy", "is_fy_results"} <= cols
+        idx = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        assert {"idx_fs_is_fy", "idx_fs_fy_results", "idx_fs_divann", "idx_fs_fwddiv"} <= idx
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        conn.close()
+
+    def test_generated_columns_compute_fy_flags(self, tmp_path: Path):
+        from jquants_mcp.cache.schema import migrate_add_fins_indexes
+
+        conn = self._make_fins(tmp_path / "c.db")
+        migrate_add_fins_indexes(conn)
+        got = {
+            f"{r[0]}|{r[1]}": (r[2], r[3])
+            for r in conn.execute("SELECT code, disc_date, is_fy, is_fy_results FROM fins_summary")
+        }
+        assert got["7203|2025-05-10"] == (1, 1)  # FY results filing
+        assert got["7203|2025-08-05"] == (0, 0)  # quarterly
+        # DividendForecastRevision: CurPerType='FY' -> is_fy=1, but NOT a results filing.
+        assert got["9999|2025-02-14"] == (1, 0)
+        conn.close()
+
+    def test_idempotent(self, tmp_path: Path):
+        from jquants_mcp.cache.schema import migrate_add_fins_indexes
+
+        conn = self._make_fins(tmp_path / "c.db")
+        migrate_add_fins_indexes(conn)
+        migrate_add_fins_indexes(conn)  # second run must not raise (columns already exist)
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        conn.close()
+
+    def test_indexes_are_used_by_the_readers(self, tmp_path: Path):
+        """EXPLAIN QUERY PLAN: the readers' predicates hit the partial indexes."""
+        from jquants_mcp.cache.schema import migrate_add_fins_indexes
+
+        conn = self._make_fins(tmp_path / "c.db")
+        migrate_add_fins_indexes(conn)
+
+        def plan(sql: str) -> str:
+            return " ".join(str(r[-1]) for r in conn.execute("EXPLAIN QUERY PLAN " + sql))
+
+        assert "idx_fs_is_fy" in plan(
+            "SELECT code, MAX(substr(disc_date,1,10)) FROM fins_summary WHERE is_fy=1 GROUP BY code"
+        )
+        assert "idx_fs_fy_results" in plan(
+            "SELECT code, MAX(substr(disc_date,1,10)) FROM fins_summary "
+            "WHERE is_fy_results=1 GROUP BY code"
+        )
+        assert "idx_fs_divann" in plan(
+            "SELECT code, MAX(substr(disc_date,1,10)) FROM fins_summary "
+            "WHERE json_extract(data,'$.DivAnn') IS NOT NULL "
+            "AND json_extract(data,'$.DivAnn') != '' GROUP BY code"
+        )
+        assert "idx_fs_fwddiv" in plan(
+            "SELECT code, MAX(substr(disc_date,1,10)) FROM fins_summary "
+            "WHERE COALESCE(NULLIF(json_extract(data,'$.NxFDivAnn'),''), "
+            "NULLIF(json_extract(data,'$.FDivAnn'),'')) IS NOT NULL GROUP BY code"
+        )
+        conn.close()
