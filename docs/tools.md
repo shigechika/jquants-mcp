@@ -24,6 +24,7 @@ What's the market doing today, and which sectors look cheap?
 | "Turnover value ranking" (yen-based, institutional flow) | `get_top_turnover_value` |
 | "Sector performance today" (TSE 33 sectors or 17 sectors) | `get_sector_performance` |
 | "Sector PER/PBR/ROE — which sectors look cheap?" | `get_sector_briefing` |
+| "Cheapest stocks by PER / PBR" | `get_valuation_ranking` |
 | "High dividend yield ranking" | `get_dividend_yield_ranking` |
 | "Today's market briefing" (one-call composite — advance/decline + ADR + sectors + rankings + TOPIX change + screener highlights + distribution-day + follow-through-day signal) | `get_market_briefing` |
 

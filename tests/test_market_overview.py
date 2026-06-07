@@ -3006,3 +3006,187 @@ class TestGetMarketBriefingNotableStocks:
         ns = data["highlights"]["notable_stocks"]
         assert ns["overbought"] == []
         assert ns["oversold"] == []
+
+
+def _insert_fins_fy(
+    conn: sqlite3.Connection,
+    code: str,
+    disc_date: str,
+    eps: float | None,
+    bps: float | None,
+) -> None:
+    """Insert an FY financial-summary row carrying EPS/BPS for valuation tests."""
+    data: dict = {
+        "Code": code,
+        "DiscDate": disc_date,
+        "CurPerType": "FY",
+        "DocType": "FYFinancialStatements_Consolidated_IFRS",
+    }
+    if eps is not None:
+        data["EPS"] = eps
+    if bps is not None:
+        data["BPS"] = bps
+    conn.execute(
+        "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+        (code, disc_date, json.dumps(data), 0.0),
+    )
+
+
+def _insert_val_master(
+    conn: sqlite3.Connection, code: str, name: str, mkt: str, mkt_name: str
+) -> None:
+    """Insert an equities_master row with market segment for valuation tests."""
+    data = {
+        "Code": code,
+        "Date": "2026-05-01",
+        "CoName": name,
+        "Mkt": mkt,
+        "MktNm": mkt_name,
+        "S33": "0050",
+        "S33Nm": "水産・農林業",
+    }
+    conn.execute(
+        "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+        (code, "2026-05-01", json.dumps(data), 0.0),
+    )
+
+
+class TestGetValuationRanking:
+    """Tests for get_valuation_ranking tool."""
+
+    @pytest.fixture()
+    def val_cache(self, tmp_path):
+        """Cache with FY fins + latest close on 2026-05-02 for five stocks.
+
+        close / EPS / BPS chosen for clean ratios:
+          13010 prime    close=1000 EPS=100 PER=10.0  BPS=500  PBR=2.0
+          13020 prime    close=3000 EPS=100 PER=30.0  BPS=1000 PBR=3.0
+          13030 standard close=500  EPS=100 PER=5.0   BPS=200  PBR=2.5
+          13040 prime    close=2000 EPS=-50 PER=None  BPS=2000 PBR=1.0  (net loss)
+          13050 growth   close=1500 EPS=100 PER=15.0  BPS=-100 PBR=None (neg book)
+          13060 prime    close=1000 EPS=100 PER=10.0  BPS=500  PBR=2.0  (STALE disc 2024-01-01)
+        """
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn.execute(
+            "CREATE TABLE fins_summary "
+            "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+            "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+        )
+        rows = [
+            ("13010", 1000.0, 100.0, 500.0, "プライムA", "111", "プライム"),
+            ("13020", 3000.0, 100.0, 1000.0, "プライムB", "111", "プライム"),
+            ("13030", 500.0, 100.0, 200.0, "スタンダードC", "112", "スタンダード"),
+            ("13040", 2000.0, -50.0, 2000.0, "プライムD", "111", "プライム"),
+            ("13050", 1500.0, 100.0, -100.0, "グロースE", "113", "グロース"),
+        ]
+        for code, close, eps, bps, name, mkt, mkt_name in rows:
+            _insert_bar(conn, code, "2026-05-02", close)
+            _insert_fins_fy(conn, code, "2026-03-31", eps, bps)
+            _insert_val_master(conn, code, name, mkt, mkt_name)
+        # Stale FY disclosure: should be dropped by the default disc_months=18.
+        _insert_bar(conn, "13060", "2026-05-02", 1000.0)
+        _insert_fins_fy(conn, "13060", "2024-01-01", 100.0, 500.0)
+        _insert_val_master(conn, "13060", "古いF", "111", "プライム")
+        conn.commit()
+        conn.close()
+        return cache
+
+    @pytest.fixture()
+    def mock_val_server(self, val_cache):
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", val_cache),
+            patch.object(server_module, "_client", None),
+        ):
+            yield server_module.mcp
+
+    @pytest.mark.asyncio
+    async def test_per_ranking_default(self, mock_val_server):
+        result = await mock_val_server.call_tool("get_valuation_ranking", {})
+        data = _call(result)
+        assert data["metric"] == "per"
+        assert data["price_date"] == "2026-05-02"
+        # net-loss (13040) and stale (13060) excluded; ascending = cheapest first.
+        assert [i["code"] for i in data["items"]] == ["1303", "1301", "1305", "1302"]
+        assert data["count"] == 4
+        by_code = {i["code"]: i for i in data["items"]}
+        assert by_code["1303"]["per"] == 5.0
+        assert by_code["1301"]["per"] == 10.0
+        # both ratios + name surfaced
+        assert by_code["1301"]["pbr"] == 2.0
+        assert by_code["1301"]["name"] == "プライムA"
+
+    @pytest.mark.asyncio
+    async def test_pbr_ranking(self, mock_val_server):
+        result = await mock_val_server.call_tool("get_valuation_ranking", {"metric": "pbr"})
+        data = _call(result)
+        # negative-book (13050) excluded; 13060 stale; ascending by PBR.
+        assert [i["code"] for i in data["items"]] == ["1304", "1301", "1303", "1302"]
+        by_code = {i["code"]: i for i in data["items"]}
+        assert by_code["1304"]["pbr"] == 1.0
+        assert by_code["1303"]["pbr"] == 2.5
+
+    @pytest.mark.asyncio
+    async def test_descending(self, mock_val_server):
+        result = await mock_val_server.call_tool(
+            "get_valuation_ranking", {"metric": "per", "ascending": False}
+        )
+        data = _call(result)
+        assert [i["code"] for i in data["items"]] == ["1302", "1305", "1301", "1303"]
+
+    @pytest.mark.asyncio
+    async def test_min_max_value_filter(self, mock_val_server):
+        result = await mock_val_server.call_tool(
+            "get_valuation_ranking", {"metric": "per", "min_value": 8, "max_value": 20}
+        )
+        data = _call(result)
+        assert [i["code"] for i in data["items"]] == ["1301", "1305"]  # PER 10, 15
+
+    @pytest.mark.asyncio
+    async def test_market_filter(self, mock_val_server):
+        result = await mock_val_server.call_tool(
+            "get_valuation_ranking", {"metric": "per", "market": "standard"}
+        )
+        data = _call(result)
+        assert [i["code"] for i in data["items"]] == ["1303"]  # only the standard-market stock
+
+    @pytest.mark.asyncio
+    async def test_n_limit(self, mock_val_server):
+        result = await mock_val_server.call_tool("get_valuation_ranking", {"n": 2})
+        data = _call(result)
+        assert data["count"] == 2
+        assert [i["code"] for i in data["items"]] == ["1303", "1301"]
+
+    @pytest.mark.asyncio
+    async def test_disc_months_staleness(self, mock_val_server):
+        # Default disc_months=18 drops the 2024-01-01 disclosure (13060)...
+        default = _call(await mock_val_server.call_tool("get_valuation_ranking", {}))
+        assert "1306" not in {i["code"] for i in default["items"]}
+        # ...but a wide window keeps it.
+        wide = _call(await mock_val_server.call_tool("get_valuation_ranking", {"disc_months": 120}))
+        assert "1306" in {i["code"] for i in wide["items"]}
+
+    @pytest.mark.asyncio
+    async def test_invalid_metric(self, mock_val_server):
+        result = await mock_val_server.call_tool("get_valuation_ranking", {"metric": "roe"})
+        data = _call(result)
+        assert data.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_invalid_n(self, mock_val_server):
+        result = await mock_val_server.call_tool("get_valuation_ranking", {"n": 0})
+        data = _call(result)
+        assert data.get("error") is True
+
+    @pytest.mark.asyncio
+    async def test_cache_not_ready(self, tmp_path):
+        empty = _make_cache(tmp_path)
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", empty),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool("get_valuation_ranking", {})
+        data = _call(result)
+        assert data["error_type"] == "CacheNotReady"
