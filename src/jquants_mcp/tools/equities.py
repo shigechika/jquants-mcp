@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from datetime import date as date_cls
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastmcp import FastMCP
@@ -36,6 +38,16 @@ def _normalize_earnings_records(records: list[dict[str, Any]]) -> list[dict[str,
         if raw is not None:
             rec["Date"] = str(raw)[:10]
     return records
+
+
+def _parse_iso_date(value: str | None) -> date_cls | None:
+    """Parse ``YYYYMMDD`` or ``YYYY-MM-DD`` into a date; None on empty/invalid."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value.replace("-", ""), "%Y%m%d").date()
+    except ValueError:
+        return None
 
 
 def register(
@@ -322,6 +334,81 @@ def register(
             return result
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def get_earnings_this_week(
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        """Companies reporting earnings in a date window, grouped by day (今週の決算予定). All plans.
+
+        Use for 今週決算がある銘柄, 直近の決算スケジュール, この期間に決算発表する会社一覧,
+        決算前スクリーニング, earnings this week. Default window = today .. today+7d.
+        Enriches each company with its name and 33-sector from the equities master.
+        For a single stock's next earnings date use get_equities_earnings_calendar(code=...).
+
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+
+        Args:
+            date_from: Window start inclusive (YYYYMMDD or YYYY-MM-DD). Defaults to today.
+            date_to:   Window end inclusive (YYYYMMDD or YYYY-MM-DD). Defaults to date_from + 7 days.
+        """
+        errors = collect_errors(
+            validate_date(date_from, "date_from"),
+            validate_date(date_to, "date_to"),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+
+        start = _parse_iso_date(date_from) or date_cls.today()
+        end = _parse_iso_date(date_to) or (start + timedelta(days=7))
+        if end < start:
+            return make_validation_error_response(["`date_to` must be on or after `date_from`."])
+
+        f_iso, t_iso = start.isoformat(), end.isoformat()
+        cache: CacheStore = get_cache()
+
+        records = cache.get_earnings_in_range(f_iso, t_iso)
+        # Enrich with canonical name/sector from the master (fields in the
+        # calendar row itself are the field-normalized short names CoName /
+        # SectorNm / FQ / FY; fall back to the master when absent).
+        name_map = cache.get_name_map() if records else {}
+        sector_map = cache.get_sector_map() if records else {}
+
+        by_date: dict[str, list[dict[str, Any]]] = {}
+        total = 0
+        for rec in records:
+            raw_code = str(rec.get("Code") or "")
+            if not raw_code:
+                continue
+            day = str(rec.get("Date") or "")[:10]
+            info = sector_map.get(raw_code, {})
+            by_date.setdefault(day, []).append(
+                {
+                    "code": display_code(raw_code),
+                    "name": rec.get("CoName") or name_map.get(raw_code) or None,
+                    "sector": rec.get("SectorNm") or info.get("s33_name") or None,
+                    "market": info.get("mkt_name") or rec.get("Section") or None,
+                    "fiscal_quarter": rec.get("FQ"),
+                    "fiscal_year_end": rec.get("FY"),
+                }
+            )
+            total += 1
+
+        days = [
+            {
+                "date": day,
+                "count": len(by_date[day]),
+                "companies": sorted(by_date[day], key=lambda r: r["code"]),
+            }
+            for day in sorted(by_date)
+        ]
+        return {
+            "count": total,
+            "date_from": f_iso,
+            "date_to": t_iso,
+            "days": days,
+        }
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def search_equities(name: str) -> dict[str, Any]:

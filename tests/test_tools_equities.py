@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -323,6 +324,104 @@ class TestGetEquitiesEarningsCalendar:
 def _seed_master(cache: CacheStore, rows: list[dict]) -> None:
     """Seed equities_master Tier 1 rows."""
     cache.put_rows("equities_master", rows, key_columns=["Code", "Date"])
+
+
+class TestGetEarningsThisWeek:
+    def _seed_calendar(self, cache: CacheStore, records: list[dict]) -> None:
+        cache.put_rows("equities_earnings_calendar", records, key_columns=["Code", "Date"])
+
+    async def test_groups_by_date_and_enriches(self, mock_env):
+        cache = mock_env["cache"]
+        self._seed_calendar(
+            cache,
+            [
+                # two on day 1 (seeded out of code order to verify per-day sort)
+                {
+                    "Code": "99830",
+                    "Date": "2026-06-09",
+                    "CoName": "ファーストリテイリング",
+                    "FQ": "3Q",
+                },
+                {"Code": "72030", "Date": "2026-06-09", "CoName": "トヨタ自動車", "FQ": "FY"},
+                {"Code": "67580", "Date": "2026-06-12", "CoName": "ソニーグループ", "FQ": "FY"},
+            ],
+        )
+        # master supplies sector/market for the enrichment join (calendar rows
+        # here intentionally omit SectorNm/Section to exercise the fallback).
+        _seed_master(
+            cache,
+            [
+                {"Code": "72030", "Date": "2026-06-05", "S33Nm": "輸送用機器", "MktNm": "プライム"},
+            ],
+        )
+        result = await _call("get_earnings_this_week", date_from="2026-06-09", date_to="2026-06-12")
+        assert result["count"] == 3
+        assert result["date_from"] == "2026-06-09"
+        assert result["date_to"] == "2026-06-12"
+        assert [d["date"] for d in result["days"]] == ["2026-06-09", "2026-06-12"]
+
+        day1 = result["days"][0]
+        assert day1["count"] == 2
+        # within a day, sorted by display code ("7203" < "9983")
+        assert [c["code"] for c in day1["companies"]] == ["7203", "9983"]
+        toyota = day1["companies"][0]
+        assert toyota["name"] == "トヨタ自動車"  # from the calendar row
+        assert toyota["sector"] == "輸送用機器"  # from the master fallback
+        assert toyota["market"] == "プライム"
+        assert toyota["fiscal_quarter"] == "FY"
+
+    async def test_default_window_is_today_plus_7(self, mock_env):
+        cache = mock_env["cache"]
+        in_window = (date.today() + timedelta(days=2)).isoformat()
+        out_window = (date.today() + timedelta(days=10)).isoformat()
+        self._seed_calendar(
+            cache,
+            [
+                {"Code": "72030", "Date": in_window, "CoName": "トヨタ自動車", "FQ": "FY"},
+                {"Code": "67580", "Date": out_window, "CoName": "ソニーグループ", "FQ": "FY"},
+            ],
+        )
+        result = await _call("get_earnings_this_week")
+        assert result["count"] == 1
+        codes = {c["code"] for day in result["days"] for c in day["companies"]}
+        assert codes == {"7203"}
+
+    async def test_boundaries_inclusive(self, mock_env):
+        cache = mock_env["cache"]
+        self._seed_calendar(
+            cache,
+            [
+                {"Code": "72030", "Date": "2026-06-09", "CoName": "A", "FQ": "FY"},
+                {"Code": "67580", "Date": "2026-06-12", "CoName": "B", "FQ": "FY"},
+                {"Code": "65010", "Date": "2026-06-20", "CoName": "C", "FQ": "1Q"},
+            ],
+        )
+        result = await _call("get_earnings_this_week", date_from="2026-06-09", date_to="2026-06-12")
+        codes = {c["code"] for day in result["days"] for c in day["companies"]}
+        assert codes == {"7203", "6758"}  # 2026-06-20 excluded
+
+    async def test_yyyymmdd_format_accepted(self, mock_env):
+        cache = mock_env["cache"]
+        self._seed_calendar(
+            cache, [{"Code": "72030", "Date": "2026-06-09", "CoName": "A", "FQ": "FY"}]
+        )
+        result = await _call("get_earnings_this_week", date_from="20260609", date_to="20260612")
+        assert result["count"] == 1
+
+    async def test_empty_when_no_data(self, mock_env):
+        result = await _call("get_earnings_this_week", date_from="2026-06-09", date_to="2026-06-12")
+        assert result["count"] == 0
+        assert result["days"] == []
+
+    async def test_date_to_before_date_from_errors(self, mock_env):
+        result = await _call("get_earnings_this_week", date_from="2026-06-12", date_to="2026-06-09")
+        assert result.get("error") is True
+        assert result.get("error_type") == "ValidationError"
+
+    async def test_invalid_date_format_errors(self, mock_env):
+        result = await _call("get_earnings_this_week", date_from="2026/06/09")
+        assert result.get("error") is True
+        assert result.get("error_type") == "ValidationError"
 
 
 class TestSearchEquities:

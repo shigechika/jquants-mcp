@@ -30,7 +30,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ## Features
 
-- **51 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 10 offline screener, 1 technical indicators, 1 single-stock summary, 1 cache-only equity search, 2 chart tools (JSON, no optional dependencies), and 5 server utilities
+- **52 MCP tools** — 22 J-Quants API v2 endpoints, 9 market overview + valuation, 10 offline screener, 1 technical indicators, 1 single-stock summary, 2 cache-only equity search + earnings calendar, 2 chart tools (JSON, no optional dependencies), and 5 server utilities
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -594,7 +594,7 @@ On first use, Claude Desktop opens a browser window for GitHub OAuth. After auth
 
 ## Available Tools
 
-### Equities (7 tools)
+### Equities (8 tools)
 
 | Tool | Endpoint | Plan | Description |
 |---|---|---|---|
@@ -603,7 +603,8 @@ On first use, Claude Desktop opens a browser window for GitHub OAuth. After auth
 | `get_equities_bars_minute` | `/equities/bars/minute` | Light+ | Minute-level stock prices |
 | `get_equities_bars_daily_am` | `/equities/bars/daily/am` | Premium | Morning session prices |
 | `get_equities_investor_types` | `/equities/investor-types` | Light+ | Trading by investor type |
-| `get_equities_earnings_calendar` | `/equities/earnings-calendar` | Free+ | Earnings schedule |
+| `get_equities_earnings_calendar` | `/equities/earnings-calendar` | Free+ | Earnings schedule (single date or by code) |
+| `get_earnings_this_week` | (cache only) | Free+ | Companies reporting earnings in a date window, grouped by day (default today..+7d) |
 | `search_equities` | (cache only) | Free+ | Reverse lookup by company name (e.g. `"住友商事"` → `8053`) |
 
 ### Financials (3 tools)

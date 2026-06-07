@@ -1758,3 +1758,57 @@ class TestCrossSectionIndexes:
         assert "idx_msr_date" in idx
         assert "idx_mmi_date" not in idx  # table absent -> index skipped
         conn.close()
+
+
+class TestGetEarningsInRange:
+    """CacheStore.get_earnings_in_range cross-section reader over the date index."""
+
+    def _seed(self, cache: CacheStore) -> None:
+        cache.put_rows(
+            "equities_earnings_calendar",
+            [
+                {"Code": "72030", "Date": "2026-06-09", "CoName": "トヨタ自動車", "FQ": "FY"},
+                {
+                    "Code": "99830",
+                    "Date": "2026-06-09",
+                    "CoName": "ファーストリテイリング",
+                    "FQ": "3Q",
+                },
+                {"Code": "67580", "Date": "2026-06-12", "CoName": "ソニーグループ", "FQ": "FY"},
+                {"Code": "65010", "Date": "2026-06-20", "CoName": "日立製作所", "FQ": "1Q"},
+            ],
+            key_columns=["Code", "Date"],
+        )
+
+    def test_returns_full_records_in_range_sorted(self, cache_store: CacheStore):
+        self._seed(cache_store)
+        recs = cache_store.get_earnings_in_range("2026-06-09", "2026-06-12")
+        # 2026-06-20 excluded; sorted by (date, code).
+        assert [(r["Date"], r["Code"]) for r in recs] == [
+            ("2026-06-09", "72030"),
+            ("2026-06-09", "99830"),
+            ("2026-06-12", "67580"),
+        ]
+        assert recs[0]["CoName"] == "トヨタ自動車"  # full blob, not just the date
+
+    def test_boundaries_are_inclusive(self, cache_store: CacheStore):
+        self._seed(cache_store)
+        recs = cache_store.get_earnings_in_range("2026-06-12", "2026-06-20")
+        assert {r["Code"] for r in recs} == {"67580", "65010"}
+
+    def test_empty_range_returns_empty(self, cache_store: CacheStore):
+        self._seed(cache_store)
+        assert cache_store.get_earnings_in_range("2026-07-01", "2026-07-31") == []
+
+    def test_uses_idx_eec_date(self, cache_store: CacheStore):
+        self._seed(cache_store)
+        conn = cache_store._ensure_connection()
+        plan = " ".join(
+            str(r[-1])
+            for r in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT data FROM equities_earnings_calendar "
+                "WHERE date >= ? AND date <= ? ORDER BY date, code",
+                ("2026-06-09", "2026-06-12"),
+            )
+        )
+        assert "idx_eec_date" in plan
