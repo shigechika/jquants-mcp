@@ -5,6 +5,25 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.47.0](https://github.com/shigechika/jquants-mcp/compare/v0.46.0...v0.47.0) (2026-06-07)
+
+
+### Features
+
+* **tools:** add get_earnings_this_week cross-section earnings calendar ([#467](https://github.com/shigechika/jquants-mcp/issues/467)) ([7cf0daf](https://github.com/shigechika/jquants-mcp/commit/7cf0daf945ddbe926d5982d194ed160f722bd5d8))
+* **tools:** add get_valuation_ranking PER/PBR cross-section ranking ([#468](https://github.com/shigechika/jquants-mcp/issues/468)) ([5ebc8d6](https://github.com/shigechika/jquants-mcp/commit/5ebc8d6c16c2608180dce925570b70b8b4dc03db))
+
+
+### Bug Fixes
+
+* **cloudrun:** include bucket name in gcs_export upload log ([#463](https://github.com/shigechika/jquants-mcp/issues/463)) ([6933923](https://github.com/shigechika/jquants-mcp/commit/693392381f945b40d859ae0c7eb67df7aec719e4))
+
+
+### Performance Improvements
+
+* **cache:** add cross-section date indexes to markets/earnings tables ([#466](https://github.com/shigechika/jquants-mcp/issues/466)) ([b5c0006](https://github.com/shigechika/jquants-mcp/commit/b5c00064ec242b1ca7302f269ea2516bdd1fc6aa))
+* **cache:** index fins_summary FY/dividend readers (kill full scans) ([#465](https://github.com/shigechika/jquants-mcp/issues/465)) ([5dfa32a](https://github.com/shigechika/jquants-mcp/commit/5dfa32af4488e8f85d152eea69f139838a7badd5))
+
 ## [0.46.0](https://github.com/shigechika/jquants-mcp/compare/v0.45.1...v0.46.0) (2026-06-06)
 
 
