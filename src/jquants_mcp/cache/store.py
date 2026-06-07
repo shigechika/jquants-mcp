@@ -688,6 +688,46 @@ class CacheStore:
             return []
         return [str(row[0]) for row in rows]
 
+    def get_earnings_in_range(self, date_from: str, date_to: str) -> list[dict[str, Any]]:
+        """Return full earnings-calendar records announced within a date range.
+
+        Cross-sectional read over ``equities_earnings_calendar`` — a date-only
+        filter that the single-column ``idx_eec_date`` index resolves with a
+        range scan (the composite PK ``(code, date)`` leads with ``code`` and
+        cannot seek a date-only predicate). Returns the raw stored records
+        (the JSON ``data`` blob, field-normalized short names such as ``CoName``
+        / ``SectorNm`` / ``FQ`` / ``FY``), sorted by ``(date, code)``. Empty list
+        when the table is missing, the range has no entries, or the connection
+        is unavailable.
+
+        The table is plan-agnostic (no ``plan`` column) and holds only forward
+        near-term announcements, so no plan date clamping is applied — mirroring
+        ``get_earnings_dates``.
+
+        Args:
+            date_from: Start date inclusive (YYYY-MM-DD).
+            date_to:   End date inclusive (YYYY-MM-DD).
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT data FROM equities_earnings_calendar "
+                "WHERE date >= ? AND date <= ? "
+                "ORDER BY date, code",
+                (date_from, date_to),
+            ).fetchall()
+        except Exception:
+            return []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                out.append(json.loads(row["data"]))
+            except (TypeError, ValueError):
+                continue
+        return out
+
     def get_div_ann_map(self) -> dict[str, tuple[float, str]]:
         """Return a mapping of 5-digit code to (annual dividend per share, disclosure date).
 
