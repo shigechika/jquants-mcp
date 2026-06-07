@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.48.0](https://github.com/shigechika/jquants-mcp/compare/v0.47.0...v0.48.0) (2026-06-07)
+
+
+### Features
+
+* **tools:** add get_earnings_results_this_week + idx_fs_disc_date ([#469](https://github.com/shigechika/jquants-mcp/issues/469)) ([96154f5](https://github.com/shigechika/jquants-mcp/commit/96154f5434529f44a40be8684796990d6979cd45))
+
 ## [0.47.0](https://github.com/shigechika/jquants-mcp/compare/v0.46.0...v0.47.0) (2026-06-07)
 
 
