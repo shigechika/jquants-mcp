@@ -32,7 +32,10 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
-from jquants_mcp.cache.schema import TIER1_TABLES  # noqa: E402
+from jquants_mcp.cache.schema import (  # noqa: E402
+    TIER1_TABLES,
+    migrate_add_fins_indexes,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -148,6 +151,21 @@ def _trim_by_date(db_path: Path, retention_years: int) -> dict[str, int]:
     conn.commit()
     conn.close()
     return deleted
+
+
+def _ensure_fins_indexes(db_path: Path) -> None:
+    """Build the fins_summary FY/dividend indexes into the export DB.
+
+    Guarantees the shipped cache.db (compressed to cache.db.zst) carries the
+    indexes regardless of the source DB's state. Run BEFORE VACUUM so the fresh
+    index pages are packed tightly (better zstd ratio). Idempotent.
+    """
+    logger.info("Ensuring fins_summary indexes...")
+    conn = sqlite3.connect(str(db_path))
+    try:
+        migrate_add_fins_indexes(conn)
+    finally:
+        conn.close()
 
 
 def _vacuum(db_path: Path) -> None:
@@ -301,6 +319,10 @@ def main() -> None:
             total_date_deleted,
             time.time() - start,
         )
+
+        # Build fins_summary FY/dividend indexes BEFORE VACUUM so their pages
+        # are packed tightly (better zstd ratio) and ship inside cache.db.zst.
+        _ensure_fins_indexes(export_path)
 
         # VACUUM
         start = time.time()

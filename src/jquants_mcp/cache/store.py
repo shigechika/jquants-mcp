@@ -20,6 +20,7 @@ from jquants_mcp.cache.schema import (
     TIER1_KEY_COLUMNS as _TIER1_KEY_COLUMNS,
     TIER1_TABLES as _TIER1_TABLES,
     generate_ddl,
+    migrate_add_fins_indexes,
     migrate_drop_plan,
 )
 from jquants_mcp.cache.screener_compute import (
@@ -418,6 +419,7 @@ class CacheStore:
         self._migrate_normalize_fields()
         self._migrate_drop_plan()
         self._migrate_normalize_calendar_dates()
+        self._migrate_add_fins_indexes()
 
     def _migrate_drop_plan(self) -> None:
         """Drop the legacy plan column (delegates to the shared schema migration).
@@ -429,6 +431,17 @@ class CacheStore:
         """
         assert self._conn is not None
         migrate_drop_plan(self._conn)
+
+    def _migrate_add_fins_indexes(self) -> None:
+        """Add fins_summary FY/dividend generated columns + indexes.
+
+        Delegates to ``schema.migrate_add_fins_indexes`` (shared with
+        daily_fetch.py and gcs_export_cache.py) so the readers that filter on
+        ``is_fy`` / ``is_fy_results`` and the dividend predicates seek an index
+        instead of full-scanning the blob.
+        """
+        assert self._conn is not None
+        migrate_add_fins_indexes(self._conn)
 
     def _migrate_normalize_calendar_dates(self) -> None:
         """Remove timestamp-suffix duplicates from markets_calendar.date.
@@ -812,8 +825,10 @@ class CacheStore:
                 "WITH fy_latest AS ("
                 "  SELECT code, MAX(substr(disc_date, 1, 10)) AS fy_md "
                 "  FROM fins_summary "
-                "  WHERE (json_extract(data, '$.DocType') LIKE 'FYFinancial%' "
-                "     OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%')"
+                # is_fy_results = annual-RESULTS only (DocType LIKE 'FYFinancial%'),
+                # excluding DividendForecastRevision rows that share CurPerType='FY'.
+                # Filtering on the generated column uses idx_fs_fy_results.
+                "  WHERE is_fy_results = 1"
                 f"{bound_clause}"
                 "  GROUP BY code"
                 ") "
@@ -1268,13 +1283,9 @@ class CacheStore:
             return None
         try:
             row = conn.execute(
-                "SELECT data FROM fins_summary WHERE code = ? "
-                "AND ("
-                "  json_extract(data, '$.CurPerType') = 'FY' "
-                "  OR json_extract(data, '$.TypeOfCurrentPeriod') = 'FY' "
-                "  OR json_extract(data, '$.DocType') LIKE 'FYFinancial%' "
-                "  OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%'"
-                ") ORDER BY substr(disc_date, 1, 10) DESC, length(disc_date) ASC LIMIT 1",
+                # is_fy generated column (same 4-way FY test) → idx_fs_is_fy.
+                "SELECT data FROM fins_summary WHERE code = ? AND is_fy = 1 "
+                "ORDER BY substr(disc_date, 1, 10) DESC, length(disc_date) ASC LIMIT 1",
                 (code,),
             ).fetchone()
         except Exception:
@@ -1331,12 +1342,10 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return {}
-        _fy_cond = (
-            "  json_extract(data, '$.CurPerType') = 'FY'"
-            "  OR json_extract(data, '$.TypeOfCurrentPeriod') = 'FY'"
-            "  OR json_extract(data, '$.DocType') LIKE 'FYFinancial%'"
-            "  OR json_extract(data, '$.TypeOfDocument') LIKE 'FYFinancial%'"
-        )
+        # Filter on the is_fy generated column (schema.migrate_add_fins_indexes)
+        # so the partial index idx_fs_is_fy is used instead of a full scan; the
+        # column encodes the same 4-way FY test inline-OR'd here before.
+        _fy_cond = "is_fy = 1"
         # Clamp the upper bound to the plan window so a lower-tier plan's "latest
         # FY" is the latest disclosure within its entitled window.
         plan_min, plan_max = self._plan_bounds()
