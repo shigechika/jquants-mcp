@@ -228,12 +228,20 @@ FINS_INDEX_DDL: tuple[str, ...] = (
 # tier1_snapshot) cannot use the PK and full-scans. A single-column date index
 # fixes it (and unlocks by-date cross-sections). Plain CREATE INDEX IF NOT
 # EXISTS — idempotent, no migration/version needed.
+#
+# idx_fs_disc_date is the same idea for fins_summary (PK = (code, disc_date)):
+# a by-disclosure-date cross-section (get_fins_disclosures_in_range, used by
+# get_earnings_results_this_week). disc_date may carry a 19-char timestamp, so
+# the index keys substr(disc_date, 1, 10) — the query MUST filter on the same
+# expression for the index to be used. code is the 2nd index column so the
+# ORDER BY date, code is served without a separate sort.
 CROSS_SECTION_INDEX_DDL: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_mmi_date ON markets_margin_interest(date)",
     "CREATE INDEX IF NOT EXISTS idx_mma_date ON markets_margin_alert(date)",
     "CREATE INDEX IF NOT EXISTS idx_msr_date ON markets_short_ratio(date)",
     "CREATE INDEX IF NOT EXISTS idx_mbd_date ON markets_breakdown(date)",
     "CREATE INDEX IF NOT EXISTS idx_eec_date ON equities_earnings_calendar(date)",
+    "CREATE INDEX IF NOT EXISTS idx_fs_disc_date ON fins_summary(substr(disc_date, 1, 10), code)",
 )
 
 

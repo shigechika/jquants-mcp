@@ -1428,6 +1428,55 @@ class CacheStore:
                 continue
         return result
 
+    def get_fins_disclosures_in_range(self, date_from: str, date_to: str) -> list[dict[str, Any]]:
+        """Return full fins_summary records disclosed within a date range.
+
+        Cross-sectional read over ``fins_summary`` by disclosure date — the
+        index ``idx_fs_disc_date ON fins_summary(substr(disc_date,1,10), code)``
+        resolves the range with a seek (the composite PK ``(code, disc_date)``
+        leads with ``code`` and cannot seek a date-only predicate). The filter
+        keys ``substr(disc_date, 1, 10)`` to match the index expression and to
+        tolerate a 19-char timestamp in ``disc_date``; results are ordered by
+        ``(disc_date, code)``.
+
+        Unlike the earnings *calendar* (plan-agnostic, near-term schedule), the
+        actual financial *results* carry plan retention — so the range is clamped
+        to ``_plan_bounds()``. A Free user (12-week delay) therefore sees nothing
+        for the current week, matching the embargo applied elsewhere.
+
+        Args:
+            date_from: Start date inclusive (YYYY-MM-DD).
+            date_to:   End date inclusive (YYYY-MM-DD).
+
+        Returns an empty list when the table is missing, the (clamped) range is
+        empty, or the connection is unavailable.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return []
+        # Clamp to the effective plan window (embargo + retention).
+        plan_min, plan_max = self._plan_bounds()
+        lo = max(date_from, plan_min) if plan_min else date_from
+        hi = min(date_to, plan_max) if plan_max else date_to
+        if lo > hi:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT data FROM fins_summary "
+                "WHERE substr(disc_date, 1, 10) >= ? AND substr(disc_date, 1, 10) <= ? "
+                "ORDER BY substr(disc_date, 1, 10), code",
+                (lo, hi),
+            ).fetchall()
+        except Exception:
+            return []
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                out.append(json.loads(row["data"]))
+            except (TypeError, ValueError):
+                continue
+        return out
+
     def get_all_latest_margin_interest(self) -> dict[str, dict]:
         """Return the most recent markets_margin_interest row for every code.
 

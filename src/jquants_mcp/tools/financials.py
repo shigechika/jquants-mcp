@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import date as date_cls
+from datetime import datetime, timedelta
 from typing import Any
 
 from fastmcp import FastMCP
@@ -13,9 +15,11 @@ from ..exceptions import (
     TOOL_API_ERRORS,
     format_api_error,
 )
-from ..tool_annotations import READ_ONLY_API
+from ..tool_annotations import READ_ONLY_API, READ_ONLY_CACHE
 from ..validators import (
     collect_errors,
+    display_code,
+    float_or_none,
     make_validation_error_response,
     validate_code,
     validate_date,
@@ -67,6 +71,16 @@ def _annotate_fiscal_period(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for row in rows:
         row["FiscalPeriod"] = _derive_fiscal_period(row)
     return rows
+
+
+def _parse_iso_date(value: str | None) -> date_cls | None:
+    """Parse ``YYYYMMDD`` or ``YYYY-MM-DD`` into a date; None on empty/invalid."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value.replace("-", ""), "%Y%m%d").date()
+    except ValueError:
+        return None
 
 
 def _apply_split_adjustment(
@@ -279,6 +293,103 @@ def register(
             return result
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
+
+    @mcp.tool(annotations=READ_ONLY_CACHE)
+    async def get_earnings_results_this_week(
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        """Earnings results actually disclosed in a date window, grouped by day (今週の決算実績). All plans.
+
+        Use for 今週発表された決算, 直近の決算結果, この期間に出た決算の中身, 決算実績一覧,
+        earnings results this week. Default window = today-7d .. today (results are
+        disclosed in the past). Each filing carries headline P&L (売上/営業利益/純利益/EPS),
+        annual dividend, and — for quarterly filings — progress vs the full-year forecast.
+        For the upcoming SCHEDULE use get_earnings_this_week; for one stock's full
+        financials use get_fins_summary.
+
+        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+        Note: Free plan results are delayed 12 weeks, so the recent window is empty for Free.
+
+        Args:
+            date_from: Window start inclusive (YYYYMMDD or YYYY-MM-DD). Defaults to date_to - 7 days.
+            date_to:   Window end inclusive (YYYYMMDD or YYYY-MM-DD). Defaults to today.
+        """
+        errors = collect_errors(
+            validate_date(date_from, "date_from"),
+            validate_date(date_to, "date_to"),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+
+        end = _parse_iso_date(date_to) or date_cls.today()
+        start = _parse_iso_date(date_from) or (end - timedelta(days=7))
+        if end < start:
+            return make_validation_error_response(["`date_to` must be on or after `date_from`."])
+
+        f_iso, t_iso = start.isoformat(), end.isoformat()
+        cache: CacheStore = get_cache()
+
+        records = cache.get_fins_disclosures_in_range(f_iso, t_iso)
+        name_map = cache.get_name_map() if records else {}
+        sector_map = cache.get_sector_map() if records else {}
+
+        by_date: dict[str, list[dict[str, Any]]] = {}
+        total = 0
+        for rec in records:
+            # Only actual financial statements (1Q/2Q/3Q/FY/Other); forecast and
+            # dividend revisions return None here and are skipped.
+            fp = _derive_fiscal_period(rec)
+            if fp is None:
+                continue
+            raw_code = str(rec.get("Code") or "")
+            if not raw_code:
+                continue
+            day = str(rec.get("DiscDate") or rec.get("disc_date") or "")[:10]
+            if not day:
+                continue
+            info = sector_map.get(raw_code, {})
+
+            net_profit = float_or_none(rec.get("NP"))
+            # Quarterly filings carry the full-year forecast (FNP); progress = how
+            # much of the forecast the cumulative actual has reached.
+            fcast_np = float_or_none(rec.get("FNP"))
+            progress = None
+            if fp in ("1Q", "2Q", "3Q") and net_profit is not None and fcast_np not in (None, 0):
+                progress = round(net_profit / fcast_np * 100, 1)
+
+            by_date.setdefault(day, []).append(
+                {
+                    "code": display_code(raw_code),
+                    "name": name_map.get(raw_code),
+                    "sector": info.get("s33_name") or None,
+                    "market": info.get("mkt_name") or None,
+                    "fiscal_period": fp,
+                    "fiscal_year_end": str(rec.get("CurFYEn") or "")[:10] or None,
+                    "sales": float_or_none(rec.get("Sales")),
+                    "operating_profit": float_or_none(rec.get("OP")),
+                    "net_profit": net_profit,
+                    "eps": float_or_none(rec.get("EPS")),
+                    "div_ann": float_or_none(rec.get("DivAnn")),
+                    "forecast_progress_pct": progress,
+                }
+            )
+            total += 1
+
+        days = [
+            {
+                "date": day,
+                "count": len(by_date[day]),
+                "companies": sorted(by_date[day], key=lambda r: r["code"]),
+            }
+            for day in sorted(by_date)
+        ]
+        return {
+            "count": total,
+            "date_from": f_iso,
+            "date_to": t_iso,
+            "days": days,
+        }
 
 
 # ------------------------------------------------------------------
