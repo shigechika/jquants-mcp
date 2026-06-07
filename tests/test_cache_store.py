@@ -1812,3 +1812,76 @@ class TestGetEarningsInRange:
             )
         )
         assert "idx_eec_date" in plan
+
+
+class TestGetFinsDisclosuresInRange:
+    """CacheStore.get_fins_disclosures_in_range — by-disclosure-date cross-section."""
+
+    def _seed(self, cache: CacheStore) -> None:
+        cache.put_rows(
+            "fins_summary",
+            [
+                {"Code": "72030", "DiscDate": "2026-05-08", "Sales": "1", "CurPerType": "FY"},
+                {"Code": "67580", "DiscDate": "2026-05-08", "Sales": "2", "CurPerType": "FY"},
+                {"Code": "99830", "DiscDate": "2026-05-11", "Sales": "3", "CurPerType": "3Q"},
+                {"Code": "65010", "DiscDate": "2026-05-20", "Sales": "4", "CurPerType": "1Q"},
+            ],
+            key_columns=["Code", "DiscDate"],
+        )
+
+    def test_returns_full_records_in_range_sorted(self, cache_store: CacheStore):
+        self._seed(cache_store)
+        recs = cache_store.get_fins_disclosures_in_range("2026-05-08", "2026-05-11")
+        # 2026-05-20 excluded; sorted by (disc_date, code).
+        assert [(r["DiscDate"], r["Code"]) for r in recs] == [
+            ("2026-05-08", "67580"),
+            ("2026-05-08", "72030"),
+            ("2026-05-11", "99830"),
+        ]
+        assert recs[0]["Sales"] == "2"  # full blob, not just the date
+
+    def test_boundaries_are_inclusive(self, cache_store: CacheStore):
+        self._seed(cache_store)
+        recs = cache_store.get_fins_disclosures_in_range("2026-05-11", "2026-05-20")
+        assert {r["Code"] for r in recs} == {"99830", "65010"}
+
+    def test_empty_range_returns_empty(self, cache_store: CacheStore):
+        self._seed(cache_store)
+        assert cache_store.get_fins_disclosures_in_range("2026-06-01", "2026-06-30") == []
+
+    def test_uses_idx_fs_disc_date(self, cache_store: CacheStore):
+        self._seed(cache_store)
+        conn = cache_store._ensure_connection()
+        plan = " ".join(
+            str(r[-1])
+            for r in conn.execute(
+                "EXPLAIN QUERY PLAN SELECT data FROM fins_summary "
+                "WHERE substr(disc_date, 1, 10) >= ? AND substr(disc_date, 1, 10) <= ? "
+                "ORDER BY substr(disc_date, 1, 10), code",
+                ("2026-05-08", "2026-05-11"),
+            )
+        )
+        assert "idx_fs_disc_date" in plan
+
+    def test_clamps_to_plan_embargo(self, tmp_cache_dir):
+        """Free plan (12-week delay) must clamp out a recent disclosure."""
+        cache = CacheStore(tmp_cache_dir / "free.db", default_plan="free")
+        recent = (date.today() - timedelta(days=3)).isoformat()
+        old = (date.today() - timedelta(days=200)).isoformat()
+        cache.put_rows(
+            "fins_summary",
+            [
+                {"Code": "72030", "DiscDate": recent, "Sales": "1", "CurPerType": "FY"},
+                {"Code": "67580", "DiscDate": old, "Sales": "2", "CurPerType": "FY"},
+            ],
+            key_columns=["Code", "DiscDate"],
+        )
+        # Query a wide window covering both; Free embargo (~84d) drops `recent`.
+        recs = cache.get_fins_disclosures_in_range(
+            (date.today() - timedelta(days=365)).isoformat(),
+            date.today().isoformat(),
+        )
+        codes = {r["Code"] for r in recs}
+        assert "67580" in codes  # ~200 days old: visible
+        assert "72030" not in codes  # 3 days old: embargoed
+        cache.close()

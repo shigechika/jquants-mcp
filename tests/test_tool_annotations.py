@@ -38,6 +38,7 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     "get_fins_summary": READ_ONLY_API,
     "get_fins_details": READ_ONLY_API,
     "get_fins_dividend": READ_ONLY_API,
+    "get_earnings_results_this_week": READ_ONLY_CACHE,
     # tools/indices.py
     "get_indices_bars_daily": READ_ONLY_API,
     "get_indices_bars_daily_topix": READ_ONLY_API,

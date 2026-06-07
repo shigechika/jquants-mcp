@@ -30,7 +30,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ## Features
 
-- **53 MCP tools** — 22 J-Quants API v2 endpoints, 10 market overview + valuation, 10 offline screener, 1 technical indicators, 1 single-stock summary, 2 cache-only equity search + earnings calendar, 2 chart tools (JSON, no optional dependencies), and 5 server utilities
+- **54 MCP tools** — 22 J-Quants API v2 endpoints, 10 market overview + valuation, 10 offline screener, 1 technical indicators, 1 single-stock summary, 3 cache-only equity search + earnings (schedule + results), 2 chart tools (JSON, no optional dependencies), and 5 server utilities
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -607,13 +607,14 @@ On first use, Claude Desktop opens a browser window for GitHub OAuth. After auth
 | `get_earnings_this_week` | (cache only) | Free+ | Companies reporting earnings in a date window, grouped by day (default today..+7d) |
 | `search_equities` | (cache only) | Free+ | Reverse lookup by company name (e.g. `"住友商事"` → `8053`) |
 
-### Financials (3 tools)
+### Financials (4 tools)
 
 | Tool | Endpoint | Plan | Description |
 |---|---|---|---|
 | `get_fins_summary` | `/fins/summary` | Free+ | Financial summary (quarterly) |
 | `get_fins_details` | `/fins/details` | Premium | Detailed statements (BS/PL/CF) |
 | `get_fins_dividend` | `/fins/dividend` | Premium | Cash dividend data |
+| `get_earnings_results_this_week` | (cache only) | Free+ | Earnings results disclosed in a date window (default last 7d), grouped by day with headline P&L + forecast progress |
 
 ### Indices (2 tools)
 

@@ -159,7 +159,8 @@ Add `mode="price"` if you want the raw split-adjusted close instead.
 
 | Question | Tool |
 |---|---|
-| "Earnings announcements this week" | `get_earnings_this_week` |
+| "Earnings announcements this week" (upcoming schedule) | `get_earnings_this_week` |
+| "Earnings results disclosed this week" (actual numbers) | `get_earnings_results_this_week` |
 | "Next earnings date for one stock" | `get_equities_earnings_calendar` |
 | "Public holidays next week" | `get_markets_calendar` |
 | "Listed equities master list" | `get_equities_master` |

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -611,3 +612,142 @@ class TestFinsSummaryFyDateNormalization:
         assert row["CurFYSt"] == "2025-04-01"
         assert row["NxtFYEn"] == "2027-03-31"
         assert row["NxtFYSt"] == "2026-04-01"
+
+
+def _seed_fins(cache: CacheStore, rows: list[dict]) -> None:
+    cache.put_rows("fins_summary", rows, key_columns=["Code", "DiscDate"])
+
+
+def _seed_master_fin(cache: CacheStore, rows: list[dict]) -> None:
+    cache.put_rows("equities_master", rows, key_columns=["Code", "Date"])
+
+
+class TestGetEarningsResultsThisWeek:
+    async def test_groups_shapes_and_skips_revisions(self, mock_env):
+        cache = mock_env["cache"]
+        _seed_fins(
+            cache,
+            [
+                # FY results (Toyota) — progress is null for FY
+                {
+                    "Code": "72030",
+                    "DiscDate": "2026-05-08",
+                    "DocType": "FYFinancialStatements_Consolidated_IFRS",
+                    "CurPerType": "FY",
+                    "Sales": "50684952000000",
+                    "OP": "3766216000000",
+                    "NP": "3848098000000",
+                    "EPS": "295.25",
+                    "DivAnn": "95.0",
+                    "CurFYEn": "2026-03-31",
+                },
+                # 1Q results (Sony) — progress = NP/FNP*100 = 25.0
+                {
+                    "Code": "67580",
+                    "DiscDate": "2026-05-08",
+                    "DocType": "1QFinancialStatements_Consolidated_IFRS",
+                    "CurPerType": "1Q",
+                    "NP": "1000",
+                    "FNP": "4000",
+                    "EPS": "10.0",
+                },
+                # Dividend forecast revision — no fiscal period → must be skipped
+                {
+                    "Code": "99830",
+                    "DiscDate": "2026-05-09",
+                    "DocType": "DividendForecastRevision",
+                    "DivAnn": "50",
+                },
+            ],
+        )
+        _seed_master_fin(
+            cache,
+            [
+                {
+                    "Code": "72030",
+                    "Date": "2026-05-01",
+                    "CoName": "トヨタ自動車",
+                    "S33Nm": "輸送用機器",
+                    "MktNm": "プライム",
+                },
+                {
+                    "Code": "67580",
+                    "Date": "2026-05-01",
+                    "CoName": "ソニーグループ",
+                    "S33Nm": "電気機器",
+                    "MktNm": "プライム",
+                },
+            ],
+        )
+        result = await _call(
+            "get_earnings_results_this_week", date_from="2026-05-08", date_to="2026-05-09"
+        )
+        # revision (2026-05-09) skipped → only the 2026-05-08 group, 2 companies
+        assert result["count"] == 2
+        assert [d["date"] for d in result["days"]] == ["2026-05-08"]
+        companies = result["days"][0]["companies"]
+        assert [c["code"] for c in companies] == ["6758", "7203"]  # sorted by code
+
+        sony, toyota = companies[0], companies[1]
+        assert sony["fiscal_period"] == "1Q"
+        assert sony["forecast_progress_pct"] == 25.0
+        assert sony["net_profit"] == 1000.0
+        assert toyota["fiscal_period"] == "FY"
+        assert toyota["forecast_progress_pct"] is None  # FY has no progress
+        assert toyota["sales"] == 50684952000000.0
+        assert toyota["eps"] == 295.25
+        assert toyota["div_ann"] == 95.0
+        assert toyota["fiscal_year_end"] == "2026-03-31"
+        assert toyota["name"] == "トヨタ自動車"
+        assert toyota["sector"] == "輸送用機器"
+        assert toyota["market"] == "プライム"
+
+    async def test_default_window_is_last_7_days(self, mock_env):
+        cache = mock_env["cache"]
+        in_window = (date.today() - timedelta(days=2)).isoformat()
+        out_window = (date.today() - timedelta(days=20)).isoformat()
+        _seed_fins(
+            cache,
+            [
+                {"Code": "72030", "DiscDate": in_window, "CurPerType": "FY", "NP": "1"},
+                {"Code": "67580", "DiscDate": out_window, "CurPerType": "FY", "NP": "2"},
+            ],
+        )
+        result = await _call("get_earnings_results_this_week")
+        codes = {c["code"] for d in result["days"] for c in d["companies"]}
+        assert codes == {"7203"}
+
+    async def test_boundaries_inclusive(self, mock_env):
+        cache = mock_env["cache"]
+        _seed_fins(
+            cache,
+            [
+                {"Code": "72030", "DiscDate": "2026-05-08", "CurPerType": "FY", "NP": "1"},
+                {"Code": "67580", "DiscDate": "2026-05-11", "CurPerType": "FY", "NP": "2"},
+                {"Code": "65010", "DiscDate": "2026-05-20", "CurPerType": "1Q", "NP": "3"},
+            ],
+        )
+        result = await _call(
+            "get_earnings_results_this_week", date_from="2026-05-08", date_to="2026-05-11"
+        )
+        codes = {c["code"] for d in result["days"] for c in d["companies"]}
+        assert codes == {"7203", "6758"}  # 2026-05-20 excluded
+
+    async def test_empty_when_no_data(self, mock_env):
+        result = await _call(
+            "get_earnings_results_this_week", date_from="2026-05-08", date_to="2026-05-11"
+        )
+        assert result["count"] == 0
+        assert result["days"] == []
+
+    async def test_date_to_before_date_from_errors(self, mock_env):
+        result = await _call(
+            "get_earnings_results_this_week", date_from="2026-05-11", date_to="2026-05-08"
+        )
+        assert result.get("error") is True
+        assert result.get("error_type") == "ValidationError"
+
+    async def test_invalid_date_format_errors(self, mock_env):
+        result = await _call("get_earnings_results_this_week", date_from="2026/05/08")
+        assert result.get("error") is True
+        assert result.get("error_type") == "ValidationError"
