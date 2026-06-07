@@ -19,6 +19,7 @@ from jquants_mcp.cache.schema import (
     SCREENER_RESULTS_INDEX_DDL as _SCREENER_RESULTS_INDEX_DDL,
     TIER1_KEY_COLUMNS as _TIER1_KEY_COLUMNS,
     TIER1_TABLES as _TIER1_TABLES,
+    ensure_cross_section_indexes,
     generate_ddl,
     migrate_add_fins_indexes,
     migrate_drop_plan,
@@ -420,6 +421,7 @@ class CacheStore:
         self._migrate_drop_plan()
         self._migrate_normalize_calendar_dates()
         self._migrate_add_fins_indexes()
+        ensure_cross_section_indexes(conn)
 
     def _migrate_drop_plan(self) -> None:
         """Drop the legacy plan column (delegates to the shared schema migration).
