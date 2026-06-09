@@ -78,7 +78,7 @@ uv run ruff format src/ tests/  # Format
 - Cloud Run: cache.db is downloaded from GCS at startup (`entrypoint.sh`), not gcsfuse-mounted
 - Cloud Run GCS daemon uploads only users.db and oauth_state.db (not cache.db — owned by self-hosted server)
 - gcsfuse is NOT viable for large SQLite DBs (>100 MB) due to random read latency — see `docs/gcsfuse-postmortem.md`
-- Cloud Run: 1 vCPU + 4Gi memory (cache.db ~2.7 GB after 5-year trim + VACUUM)
+- Cloud Run: 2 vCPU + 8Gi memory (cache.db ~2.7 GB after 5-year trim + VACUUM; reload briefly holds ~2x cache.db in /tmp tmpfs, 6Gi caused SIGBUS)
 - Always research technology compatibility BEFORE implementing (e.g., "gcsfuse sqlite" would have revealed issues immediately)
 
 ## Cache Plan Scoping
