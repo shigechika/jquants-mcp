@@ -20,7 +20,7 @@ jobs:
           - os: windows-latest
             python-version: "3.12"
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # hatch-vcs needs full history for version
       - uses: astral-sh/setup-uv@v7
@@ -35,7 +35,7 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # hatch-vcs derives version from git tag
       - uses: astral-sh/setup-uv@v7
@@ -79,7 +79,7 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Patch server.json version from tag
         run: |
