@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.48.1](https://github.com/shigechika/jquants-mcp/compare/v0.48.0...v0.48.1) (2026-06-09)
+
+
+### Documentation
+
+* update Cloud Run sizing in CLAUDE.md to 2 vCPU + 8Gi ([#471](https://github.com/shigechika/jquants-mcp/issues/471)) ([4e43bb4](https://github.com/shigechika/jquants-mcp/commit/4e43bb4feb6b9bcde3a8f876934ef95b32772457))
+
 ## [0.48.0](https://github.com/shigechika/jquants-mcp/compare/v0.47.0...v0.48.0) (2026-06-07)
 
 
