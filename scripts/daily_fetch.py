@@ -50,6 +50,7 @@ from jquants_mcp.cache.schema import (  # noqa: E402
     ensure_cross_section_indexes,
     generate_ddl,
     migrate_add_fins_indexes,
+migrate_split_fins_pk,
     migrate_drop_plan,
 )
 from jquants_mcp.cache import screener_compute  # noqa: E402  # stdlib-only
@@ -183,6 +184,7 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     conn.commit()
     migrate_drop_plan(conn)
     migrate_add_fins_indexes(conn)
+    migrate_split_fins_pk(conn)
     ensure_cross_section_indexes(conn)
 
 
@@ -308,20 +310,21 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan:
             data_dict = _sanitize_row(r.to_dict())
             code = str(r.get("Code", ""))
             disc_date = str(r.get("DiscDate", date_iso))[:10]
-            # Annual results produce two API rows on the same disc_date:
-            #   FYFinancialStatements  : NxFDivAnn=<next-FY forecast>, FDivAnn=''
-            #   DividendForecastRevision: FDivAnn=<trailing actual>,    NxFDivAnn=''
-            # INSERT OR REPLACE deletes then re-inserts, so whichever arrives second
-            # wins and the other's field is lost.  Carry NxFDivAnn forward so the
-            # next-FY forecast survives even when the revision row is processed last.
-            # Most non-annual filings also lack NxFDivAnn, so a SELECT fires for
-            # the majority of rows on any given day; this is acceptable for a
-            # background script.
+            # doc_type is part of the PK since issue #473 so the same-day
+            # FYFinancialStatements + DividendForecastRevision now coexist
+            # instead of one overwriting the other. Not date-normalised
+            # (doc_type can contain 'T', e.g. "REITFinancial...").
+            doc_type = str(data_dict.get("DocType")
+                           or data_dict.get("TypeOfDocument") or "")
+            # Carry NxFDivAnn forward across re-fetches of the SAME filing
+            # (matched on the full PK) so a later fetch that drops the field
+            # does not lose the next-FY forecast.
             nx = data_dict.get("NxFDivAnn")
             if nx is None or nx == "":
                 existing = conn.execute(
-                    "SELECT data FROM fins_summary WHERE code=? AND disc_date=? LIMIT 1",
-                    (code, disc_date),
+                    "SELECT data FROM fins_summary "
+                    "WHERE code=? AND disc_date=? AND doc_type=? LIMIT 1",
+                    (code, disc_date, doc_type),
                 ).fetchone()
                 if existing:
                     existing_data = json.loads(existing[0])
@@ -331,8 +334,8 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan:
             data_json = json.dumps(data_dict, ensure_ascii=False, default=str)
             conn.execute(
                 "INSERT OR REPLACE INTO fins_summary "
-                "(code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
-                (code, disc_date, data_json, now),
+                "(code, disc_date, doc_type, data, fetched_at) VALUES (?, ?, ?, ?, ?)",
+                (code, disc_date, doc_type, data_json, now),
             )
             count += 1
 
