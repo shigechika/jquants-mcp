@@ -1589,6 +1589,176 @@ class TestLatestReadersPlanGate:
         assert val == 111.0 and disc == entitled  # embargoed recent forecast excluded
         cache.close()
 
+    def test_latest_bars_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "equities_bars_daily",
+            [
+                {"Code": "12340", "Date": recent, "AdjC": 999.0, "C": 999.0, "AdjFactor": 1.0},
+                {"Code": "12340", "Date": entitled, "AdjC": 111.0, "C": 111.0, "AdjFactor": 1.0},
+            ],
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        bars = cache.get_latest_bars("12340", n=2)
+        # Only the entitled row is returned — the embargoed recent bar is excluded.
+        assert [b.get("Date") for b in bars] == [entitled]
+        cache.close()
+
+    def test_latest_bars_premium_sees_recent(self, tmp_path: Path):
+        cache = CacheStore(tmp_path / "prem.db", default_plan="premium")
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        cache.put_rows(
+            "equities_bars_daily",
+            [{"Code": "12340", "Date": recent, "AdjC": 999.0, "C": 999.0, "AdjFactor": 1.0}],
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        bars = cache.get_latest_bars("12340", n=2)
+        assert [b.get("Date") for b in bars] == [recent]
+        cache.close()
+
+    def test_latest_fins_row_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "fins_summary",
+            [
+                {
+                    "Code": "12340",
+                    "DiscDate": recent,
+                    "DocType": "FYFinancialStatements_x",
+                    "EPS": 9,
+                },
+                {
+                    "Code": "12340",
+                    "DiscDate": entitled,
+                    "DocType": "FYFinancialStatements_x",
+                    "EPS": 1,
+                },
+            ],
+            key_columns=["Code", "DiscDate"],
+        )
+        row = cache.get_latest_fins_row("12340")
+        assert row is not None
+        assert row.get("EPS") == 1  # entitled row, not the embargoed recent one
+        cache.close()
+
+    def test_latest_margin_interest_row_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "markets_margin_interest",
+            [
+                {"Code": "12340", "Date": recent, "LongVol": 999},
+                {"Code": "12340", "Date": entitled, "LongVol": 111},
+            ],
+            key_columns=["Code", "Date"],
+        )
+        row = cache.get_latest_margin_interest_row("12340")
+        assert row is not None
+        assert row.get("LongVol") == 111
+        cache.close()
+
+    def test_all_latest_short_ratio_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "markets_short_ratio",
+            [
+                {"S33": "7050", "Date": recent, "ShrtWithResVa": 999},
+                {"S33": "7050", "Date": entitled, "ShrtWithResVa": 111},
+            ],
+            key_columns=["S33", "Date"],
+        )
+        result = cache.get_all_latest_short_ratio()
+        assert result.get("7050", {}).get("ShrtWithResVa") == 111
+        cache.close()
+
+    def test_latest_short_ratio_row_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "markets_short_ratio",
+            [
+                {"S33": "7050", "Date": recent, "ShrtWithResVa": 999},
+                {"S33": "7050", "Date": entitled, "ShrtWithResVa": 111},
+            ],
+            key_columns=["S33", "Date"],
+        )
+        row = cache.get_latest_short_ratio_row("7050")
+        assert row is not None
+        assert row.get("ShrtWithResVa") == 111
+        cache.close()
+
+    def test_fy_dividend_history_respects_embargo(self, tmp_path: Path):
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "fins_summary",
+            [
+                {
+                    "Code": "12340",
+                    "DiscDate": recent,
+                    "DocType": "FYFinancialStatements_x",
+                    "CurFYEn": "2026-03-31",
+                    "DivAnn": 999,
+                },
+                {
+                    "Code": "12340",
+                    "DiscDate": entitled,
+                    "DocType": "FYFinancialStatements_x",
+                    "CurFYEn": "2025-03-31",
+                    "DivAnn": 111,
+                },
+            ],
+            key_columns=["Code", "DiscDate"],
+        )
+        history = cache.get_fy_dividend_history()
+        fy_ends = [e["fy_end"] for e in history.get("12340", [])]
+        # Embargoed recent disclosure is excluded even with no as_of_date filter.
+        assert fy_ends == ["2025-03-31"]
+        cache.close()
+
+    def test_fy_dividend_history_as_of_date_cannot_exceed_embargo(self, tmp_path: Path):
+        """An explicit as_of_date inside the embargo window is still clamped to plan_max."""
+        cache = self._free_cache(tmp_path)
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        entitled = (date.today() - timedelta(weeks=20)).isoformat()
+        cache.put_rows(
+            "fins_summary",
+            [
+                {
+                    "Code": "12340",
+                    "DiscDate": recent,
+                    "DocType": "FYFinancialStatements_x",
+                    "CurFYEn": "2026-03-31",
+                    "DivAnn": 999,
+                },
+                {
+                    "Code": "12340",
+                    "DiscDate": entitled,
+                    "DocType": "FYFinancialStatements_x",
+                    "CurFYEn": "2025-03-31",
+                    "DivAnn": 111,
+                },
+            ],
+            key_columns=["Code", "DiscDate"],
+        )
+        # Caller passes today as as_of_date, which is inside the embargo — the
+        # plan's 12-week delay must still win over the looser caller-supplied bound.
+        history = cache.get_fy_dividend_history(as_of_date=date.today().isoformat())
+        fy_ends = [e["fy_end"] for e in history.get("12340", [])]
+        assert fy_ends == ["2025-03-31"]
+        cache.close()
+
 
 class TestMigrateAddFinsIndexes:
     """schema.migrate_add_fins_indexes adds is_fy/is_fy_results + FY/dividend indexes."""

@@ -1259,10 +1259,17 @@ def register(
         if latest and norm_date > latest:
             return _cache_not_ready_error(norm_date, latest)
 
-        # Tier 2 response cache: same params within 1h reuse the composite result.
+        # Tier 2 response cache: same params within 1h reuse the composite
+        # result. `plan` is part of the key so a briefing computed under one
+        # user's plan is never served to a different plan's embargo window.
         cache_key = make_cache_key(
             "tool:get_market_briefing",
-            {"date": norm_date, "sector_type": sector_type, "n": n},
+            {
+                "date": norm_date,
+                "sector_type": sector_type,
+                "n": n,
+                "plan": cache.effective_plan(),
+            },
         )
         cached = cache.get_response(cache_key)
         if cached is not None:
