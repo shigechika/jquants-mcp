@@ -162,23 +162,42 @@ async def test_detect_plan_auth_error_propagates():
 
 
 @pytest.mark.asyncio
-async def test_detect_plan_non_plan_error_continues():
-    """Non-plan errors (e.g. network) are skipped; detection continues to next probe."""
+async def test_detect_plan_non_plan_error_propagates():
+    """A non-plan probe error (e.g. network timeout, 5xx) must propagate
+    instead of being conflated with a genuine 403 plan restriction —
+    otherwise a transient API blip during registration would silently
+    downgrade a paying user's stored plan to "free" (regression for the
+    detect_plan transient-error fix)."""
     call_count = 0
 
     async def side_effect(path, *args, **kwargs):
         nonlocal call_count
         call_count += 1
-        if "details" in path:
-            raise OSError("network error")
-        if "short-ratio" in path:
-            raise PlanRestrictionError("forbidden", status_code=403)
-        return {"data": []}
+        raise OSError("network error")
 
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(side_effect=side_effect)
 
-    result = await detect_plan(mock_client)
+    with pytest.raises(OSError):
+        await detect_plan(mock_client)
 
-    assert result == "light"
-    assert call_count == 3
+    # Must abort on the first ambiguous failure rather than continuing to
+    # probe lower tiers and eventually returning a false "free" result.
+    assert call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_detect_plan_non_plan_error_after_genuine_restriction_propagates():
+    """A non-plan error on a later probe also propagates, even after an
+    earlier probe correctly returned a genuine 403."""
+
+    async def side_effect(path, *args, **kwargs):
+        if "details" in path:
+            raise PlanRestrictionError("forbidden", status_code=403)
+        raise OSError("network error")
+
+    mock_client = AsyncMock()
+    mock_client.get = AsyncMock(side_effect=side_effect)
+
+    with pytest.raises(OSError):
+        await detect_plan(mock_client)

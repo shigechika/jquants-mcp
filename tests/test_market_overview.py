@@ -245,6 +245,30 @@ class TestDetectPriceChange:
         data = _call(result)
         assert data["error_type"] == "CacheNotReady"
 
+    @pytest.mark.asyncio
+    async def test_embargoed_date_returns_no_trading_data_error(self, tmp_path):
+        """When the plan clamp empties today_rows for a resolved session date,
+        the tool must surface NoTradingData instead of a fabricated
+        zero-movement summary (regression for the plan-clamp empty-rows fix).
+        """
+        free_cache = CacheStore(tmp_path / "free.db", default_plan="free")
+        today = (date.today() - timedelta(weeks=2)).isoformat()  # embargoed for Free
+        yesterday = (date.today() - timedelta(weeks=2, days=1)).isoformat()
+        free_cache.put_rows(
+            "equities_bars_daily",
+            [
+                {"Code": "13010", "Date": yesterday, "AdjC": 100.0, "C": 100.0, "AdjFactor": 1.0},
+                {"Code": "13010", "Date": today, "AdjC": 110.0, "C": 110.0, "AdjFactor": 1.0},
+            ],
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        with patch.object(server_module, "_cache", free_cache):
+            result = await server_module.mcp.call_tool("detect_price_change", {"date": today})
+        free_cache.close()
+        data = _call(result)
+        assert data["error_type"] == "NoTradingData"
+
 
 # ---------------------------------------------------------------------------
 # get_advance_decline_ratio
@@ -379,6 +403,29 @@ class TestGetTopMovers:
         data = _call(result)
         # Only 3 stocks in fixture — result should have at most 3
         assert len(data["items"]) <= 3
+
+    @pytest.mark.asyncio
+    async def test_embargoed_date_returns_no_trading_data_error(self, tmp_path):
+        """When the plan clamp empties today_rows for a resolved session date,
+        the tool must surface NoTradingData instead of a fabricated empty
+        items list (regression for the plan-clamp empty-rows fix)."""
+        free_cache = CacheStore(tmp_path / "free.db", default_plan="free")
+        today = (date.today() - timedelta(weeks=2)).isoformat()  # embargoed for Free
+        yesterday = (date.today() - timedelta(weeks=2, days=1)).isoformat()
+        free_cache.put_rows(
+            "equities_bars_daily",
+            [
+                {"Code": "13010", "Date": yesterday, "AdjC": 100.0, "C": 100.0, "AdjFactor": 1.0},
+                {"Code": "13010", "Date": today, "AdjC": 110.0, "C": 110.0, "AdjFactor": 1.0},
+            ],
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        with patch.object(server_module, "_cache", free_cache):
+            result = await server_module.mcp.call_tool("get_top_movers", {"date": today})
+        free_cache.close()
+        data = _call(result)
+        assert data["error_type"] == "NoTradingData"
 
 
 # ---------------------------------------------------------------------------
@@ -797,6 +844,29 @@ class TestGetSectorPerformance:
         sectors = {s["code"]: s for s in data["sectors"]}
         assert list(sectors) == ["7050"]
         assert sectors["7050"]["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_embargoed_date_returns_no_trading_data_error(self, tmp_path):
+        """When the plan clamp empties today_rows for a resolved session date,
+        the tool must surface NoTradingData instead of a fabricated empty
+        sectors list (regression for the plan-clamp empty-rows fix)."""
+        free_cache = CacheStore(tmp_path / "free.db", default_plan="free")
+        today = (date.today() - timedelta(weeks=2)).isoformat()  # embargoed for Free
+        yesterday = (date.today() - timedelta(weeks=2, days=1)).isoformat()
+        free_cache.put_rows(
+            "equities_bars_daily",
+            [
+                {"Code": "13010", "Date": yesterday, "AdjC": 100.0, "C": 100.0, "AdjFactor": 1.0},
+                {"Code": "13010", "Date": today, "AdjC": 110.0, "C": 110.0, "AdjFactor": 1.0},
+            ],
+            key_columns=["Code", "Date"],
+            adj_factor_key="AdjFactor",
+        )
+        with patch.object(server_module, "_cache", free_cache):
+            result = await server_module.mcp.call_tool("get_sector_performance", {"date": today})
+        free_cache.close()
+        data = _call(result)
+        assert data["error_type"] == "NoTradingData"
 
 
 # ---------------------------------------------------------------------------

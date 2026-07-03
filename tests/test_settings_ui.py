@@ -51,13 +51,16 @@ def _mock_request(form_data: dict | None = None, csrf: bool = False):
     return req
 
 
-def _mock_user_db(existing_user: User | None = None, delete_result: bool = True):
+def _mock_user_db(
+    existing_user: User | None = None, delete_result: bool = True, corrupted_key: bool = False
+):
     """モック UserStore。"""
     db = MagicMock()
     db.get_user.return_value = existing_user
     db.save_user.return_value = None
     db.delete_user.return_value = delete_result
     db.update_plan.return_value = None
+    db.has_corrupted_key.return_value = corrupted_key
     return db
 
 
@@ -107,6 +110,20 @@ class TestHandleSettingsGet:
         body = resp.body.decode()
         assert "API key is registered" in body
         assert "Update API Key" in body
+
+    async def test_corrupted_key_shows_actionable_message(self):
+        """復号失敗（get_user()=None かつ has_corrupted_key()=True）のとき、
+        「未登録」ではなく再登録を促す actionable メッセージを表示する
+        （regression for the corrupted-key /settings display fix）。"""
+        token = _mock_token()
+        user_db = _mock_user_db(existing_user=None, corrupted_key=True)
+        with patch("fastmcp.server.dependencies.get_access_token", return_value=token):
+            resp = await handle_settings_get(_mock_request(), lambda: user_db)
+        assert resp.status_code == 200
+        body = resp.body.decode()
+        assert "No API key registered yet" not in body
+        assert "could not be decrypted" in body
+        assert "Re-register API Key" in body
 
 
 # ---- POST /settings ----

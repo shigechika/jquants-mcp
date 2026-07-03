@@ -547,12 +547,18 @@ async def _get_calendar_with_cache(
 ) -> dict[str, Any]:
     """Retrieve market calendar with Tier 1 cache."""
     try:
-        # Fetch existing data from the cache
+        # markets_calendar is a plan-agnostic reference table (trading-day
+        # schedule, not embargoed data) — see get_trading_date_today, which
+        # bypasses plan restriction for the same table. plan="premium"
+        # resolves to an unrestricted date window (_plan_date_bounds), so a
+        # non-Premium plan still gets cache hits and the API-failure
+        # fallback below instead of a spurious clamped-empty miss.
         cached_data = cache.get_rows(
             "markets_calendar",
             key_filter={},
             date_from=date_from,
             date_to=date_to,
+            plan="premium",
         )
 
         # Check which dates are already cached
@@ -561,6 +567,7 @@ async def _get_calendar_with_cache(
             key_filter={},
             date_from=date_from,
             date_to=date_to,
+            plan="premium",
         )
 
         params: dict[str, Any] = {}
@@ -580,8 +587,18 @@ async def _get_calendar_with_cache(
                 return {"count": len(filtered), "data": filtered, "source": "cache"}
             params["from"] = latest_cached
 
-        # The calendar endpoint has no pagination
-        response = await client.get("/markets/calendar", params)
+        # The calendar endpoint has no pagination. Fall back to the cache on
+        # API failure, mirroring _get_with_tier1_cache's fallback — without
+        # this, a transient API error would return a hard error even when
+        # the requested range is already sitting in the local cache.
+        try:
+            response = await client.get("/markets/calendar", params)
+        except APIError:
+            if cached_data:
+                logger.info("カレンダーAPI失敗、キャッシュデータを返却 (%d件)", len(cached_data))
+                filtered = _filter_hol_div(cached_data, hol_div)
+                return {"count": len(filtered), "data": filtered, "source": "cache"}
+            raise
         api_data = response.get("data", [])
 
         if api_data:

@@ -61,7 +61,11 @@ function onSignIn(response) {{
 
 
 def form_html(
-    registered_plan: str | None, csrf_token: str = "", *, user_email: str | None = None
+    registered_plan: str | None,
+    csrf_token: str = "",
+    *,
+    user_email: str | None = None,
+    corrupted_key: bool = False,
 ) -> str:
     """Generate the /settings API key registration form page."""
     csrf_field = f'<input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">'
@@ -70,17 +74,30 @@ def form_html(
         if user_email
         else ""
     )
+    delete_form = (
+        '<hr style="margin-top:24px">'
+        '<form method="post" action="/settings/delete"'
+        " onsubmit=\"return confirm('Delete your registered API key?')\">"
+        f"{csrf_field}"
+        '<button type="submit" class="danger">Delete API Key</button>'
+        "</form>"
+    )
     if registered_plan is not None:
         status_html = '<div class="status">API key is registered.</div>'
         button_label = "Update API Key"
-        delete_section = (
-            '<hr style="margin-top:24px">'
-            '<form method="post" action="/settings/delete"'
-            " onsubmit=\"return confirm('Delete your registered API key?')\">"
-            f"{csrf_field}"
-            '<button type="submit" class="danger">Delete API Key</button>'
-            "</form>"
+        delete_section = delete_form
+    elif corrupted_key:
+        # Row exists but decryption failed (e.g. MCP_ENCRYPTION_KEY rotated
+        # without MCP_ENCRYPTION_KEY_PREVIOUS) — surface this distinctly
+        # from "never registered" so the user knows to re-register, mirroring
+        # the DecryptionError message the MCP tool-call path already raises.
+        status_html = (
+            '<div class="error">Your stored API key could not be decrypted '
+            "(corrupted data or an encryption key rotation issue). "
+            "Please re-register your key below.</div>"
         )
+        button_label = "Re-register API Key"
+        delete_section = delete_form
     else:
         status_html = '<div class="status">No API key registered yet.</div>'
         button_label = "Register API Key"

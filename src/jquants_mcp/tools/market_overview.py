@@ -537,6 +537,16 @@ def register(
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
+        if not today_rows:
+            return {
+                "error": True,
+                "error_type": "NoTradingData",
+                "message": (
+                    f"No trading data found for {today_date}. It may be a holiday, "
+                    "non-trading day, or outside your plan's data window."
+                ),
+            }
+
         prev_close_map = _rows_to_close_map(prev_rows)
         summary = _compute_advance_decline_summary(today_rows, prev_close_map)
 
@@ -668,6 +678,16 @@ def register(
             )
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
+
+        if not today_rows:
+            return {
+                "error": True,
+                "error_type": "NoTradingData",
+                "message": (
+                    f"No trading data found for {today_date}. It may be a holiday, "
+                    "non-trading day, or outside your plan's data window."
+                ),
+            }
 
         prev_close_map = _rows_to_close_map(prev_rows)
         name_map = cache.get_name_map()
@@ -846,6 +866,16 @@ def register(
             )
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
+
+        if not today_rows:
+            return {
+                "error": True,
+                "error_type": "NoTradingData",
+                "message": (
+                    f"No trading data found for {today_date}. It may be a holiday, "
+                    "non-trading day, or outside your plan's data window."
+                ),
+            }
 
         prev_close_map = _rows_to_close_map(prev_rows)
         sector_map = cache.get_sector_map()
