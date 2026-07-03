@@ -22,7 +22,7 @@ from jquants_mcp.cache.schema import (
     ensure_cross_section_indexes,
     generate_ddl,
     migrate_add_fins_indexes,
-migrate_split_fins_pk,
+    migrate_split_fins_pk,
     migrate_drop_plan,
 )
 from jquants_mcp.cache.screener_compute import (
@@ -1173,7 +1173,7 @@ class CacheStore:
             # 'T' (e.g. "REITFinancialStatements...") which the date normaliser
             # would truncate.
             if len(db_cols) > len(key_values):
-                for extra_col in db_cols[len(key_values):]:
+                for extra_col in db_cols[len(key_values) :]:
                     if extra_col == "doc_type":
                         key_values.append(
                             str(row.get("DocType") or row.get("TypeOfDocument") or "")
