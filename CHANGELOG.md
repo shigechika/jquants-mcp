@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.49.1](https://github.com/shigechika/jquants-mcp/compare/v0.49.0...v0.49.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* **cache:** apply per-user plan clamping to latest-row readers and Tier2 briefing cache keys ([#478](https://github.com/shigechika/jquants-mcp/issues/478)) ([5b0b6be](https://github.com/shigechika/jquants-mcp/commit/5b0b6be6e3f750eaea013b24f162984d670a1404))
+
 ## [0.49.0](https://github.com/shigechika/jquants-mcp/compare/v0.48.1...v0.49.0) (2026-07-03)
 
 
