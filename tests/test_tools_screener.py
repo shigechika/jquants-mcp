@@ -2267,6 +2267,59 @@ class TestDetectConsecutiveDividendIncrease:
         codes = [item["code"] for item in result["data"]]
         assert "1301" not in codes  # live calc shows only 5y streak
 
+    async def test_live_compute_excludes_embargoed_disclosure_for_free_plan(self, tmp_path):
+        """The live-compute fallback (screener_results cache miss) must not
+        see a Free-plan-embargoed FY disclosure (regression for the
+        get_fy_dividend_history plan-scoping fix).
+
+        Uses a standalone ``default_plan="free"`` cache rather than
+        ``request_context.set_current_plan`` — the single-user path this
+        test exercises has no OAuth token, so ``PlanContextMiddleware``
+        always resolves the per-request plan to ``None`` and falls back to
+        the cache's own ``default_plan`` (see ``_resolve_current_plan``).
+        """
+        free_cache = CacheStore(tmp_path / "free.db", default_plan="free")
+        _seed_master(free_cache, "13010", "花王")
+        recent = (date.today() - timedelta(weeks=2)).isoformat()  # embargoed for Free
+        # 4 years of increasing dividends; the most recent disclosure is
+        # embargoed under the Free plan's 12-week delay.
+        for y, disc in [(2020, "2021-06-20"), (2021, "2022-06-20"), (2022, "2023-06-20")]:
+            _seed_fins_summary(
+                free_cache,
+                "13010",
+                disc,
+                "FYFinancialStatements",
+                f"{y}-03-31",
+                float(10 + (y - 2020)),
+            )
+        _seed_fins_summary(free_cache, "13010", recent, "FYFinancialStatements", "2023-03-31", 40.0)
+
+        # screener_results cache is empty (no daily_fetch precompute), so this
+        # exercises the live cache.get_fy_dividend_history() fallback directly.
+        with patch.object(server_module, "_cache", free_cache):
+            result = await _call("detect_consecutive_dividend_increase", min_years=3)
+        free_cache.close()
+
+        codes = [item["code"] for item in result["data"]]
+        # With the embargoed 4th year excluded, only 3 entries remain
+        # (<= min_years=3), so the streak requirement is not met.
+        assert "1301" not in codes
+
+    async def test_live_compute_includes_recent_disclosure_for_premium_plan(self, mock_env):
+        """Sanity check: the same data set qualifies under Premium (no embargo)."""
+        cache = mock_env["cache"]
+        _seed_master(cache, "13010", "花王")
+        recent = (date.today() - timedelta(weeks=2)).isoformat()
+        for y, disc in [(2020, "2021-06-20"), (2021, "2022-06-20"), (2022, "2023-06-20")]:
+            _seed_fins_summary(
+                cache, "13010", disc, "FYFinancialStatements", f"{y}-03-31", float(10 + (y - 2020))
+            )
+        _seed_fins_summary(cache, "13010", recent, "FYFinancialStatements", "2023-03-31", 40.0)
+
+        result = await _call("detect_consecutive_dividend_increase", min_years=3)
+        codes = [item["code"] for item in result["data"]]
+        assert "1301" in codes
+
 
 class TestComputeConsecutiveDivSnapshot:
     """screener_compute.compute_consecutive_div_snapshot の純粋関数テスト。"""
@@ -2406,7 +2459,10 @@ class TestFyEndTimestampStrip:
         conn.commit()
         conn.close()
 
-        cache = CacheStore(db)
+        # default_plan="standard" so the disc_date is not clamped out by the
+        # Free-plan embargo — this test is about timestamp normalisation, not
+        # plan scoping (covered separately by TestLatestReadersPlanGate).
+        cache = CacheStore(db, default_plan="standard")
         history = cache.get_fy_dividend_history()
         assert "13010" in history
         assert history["13010"][0]["fy_end"] == "2026-03-31"

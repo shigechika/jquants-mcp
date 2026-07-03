@@ -230,6 +230,16 @@ class CacheStore:
 
         return get_current_plan() or self._default_plan
 
+    def effective_plan(self) -> str:
+        """Public accessor for the current request's effective plan.
+
+        Intended for tools that build a Tier2 ``response_cache`` key: mixing
+        this into the key prevents a response computed under one user's plan
+        from being served to a different plan within the TTL window (see
+        ``get_market_briefing`` / ``get_stock_briefing``).
+        """
+        return self._effective_plan()
+
     def _plan_bounds(self) -> tuple[str | None, str | None]:
         """Return (min_date, max_date) ISO strings for the effective plan.
 
@@ -1324,10 +1334,23 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return []
+        # Clamp to the plan window so a lower-tier plan's "latest" bar is the
+        # latest session within its entitled window, not today's unembargoed bar.
+        plan_min, plan_max = self._plan_bounds()
+        conds = ["code = ?"]
+        params: list[Any] = [code]
+        if plan_max:
+            conds.append("date <= ?")
+            params.append(plan_max)
+        if plan_min:
+            conds.append("date >= ?")
+            params.append(plan_min)
+        params.append(n)
         try:
             rows = conn.execute(
-                "SELECT data FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT ?",
-                (code, n),
+                f"SELECT data FROM equities_bars_daily WHERE {' AND '.join(conds)} "
+                "ORDER BY date DESC LIMIT ?",
+                tuple(params),
             ).fetchall()
         except Exception:
             return []
@@ -1351,6 +1374,17 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return None
+        # Clamp to the plan window so a lower-tier plan's "latest FY" is the
+        # latest disclosure within its entitled window, not an embargoed one.
+        plan_min, plan_max = self._plan_bounds()
+        conds = ["code = ?", "is_fy = 1"]
+        params: list[Any] = [code]
+        if plan_max:
+            conds.append("substr(disc_date, 1, 10) <= ?")
+            params.append(plan_max)
+        if plan_min:
+            conds.append("substr(disc_date, 1, 10) >= ?")
+            params.append(plan_min)
         try:
             row = conn.execute(
                 # is_fy generated column (same 4-way FY test) → idx_fs_is_fy.
@@ -1358,10 +1392,10 @@ class CacheStore:
                 # a same-day DividendForecastRevision (both carry is_fy=1). Since
                 # issue #473 both can coexist for one (code, disc_date), so without
                 # this tiebreaker the revision (no Sales/OP/EPS actuals) could win.
-                "SELECT data FROM fins_summary WHERE code = ? AND is_fy = 1 "
+                f"SELECT data FROM fins_summary WHERE {' AND '.join(conds)} "
                 "ORDER BY substr(disc_date, 1, 10) DESC, is_fy_results DESC, "
                 "length(disc_date) ASC LIMIT 1",
-                (code,),
+                tuple(params),
             ).fetchone()
         except Exception:
             return None
@@ -1381,10 +1415,22 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return None
+        # Clamp to the plan window so a lower-tier plan does not see an
+        # embargoed / out-of-retention margin row via "latest".
+        plan_min, plan_max = self._plan_bounds()
+        conds = ["code = ?"]
+        params: list[Any] = [code]
+        if plan_max:
+            conds.append("date <= ?")
+            params.append(plan_max)
+        if plan_min:
+            conds.append("date >= ?")
+            params.append(plan_min)
         try:
             row = conn.execute(
-                "SELECT data FROM markets_margin_interest WHERE code = ? ORDER BY date DESC LIMIT 1",
-                (code,),
+                f"SELECT data FROM markets_margin_interest WHERE {' AND '.join(conds)} "
+                "ORDER BY date DESC LIMIT 1",
+                tuple(params),
             ).fetchone()
         except Exception:
             return None
@@ -1585,14 +1631,26 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return {}
+        # Restrict the per-sector MAX(date) to the plan window so a
+        # lower-tier plan does not see embargoed / out-of-retention rows.
+        plan_min, plan_max = self._plan_bounds()
+        conds: list[str] = []
+        params: list[str] = []
+        if plan_max:
+            conds.append("date <= ?")
+            params.append(plan_max)
+        if plan_min:
+            conds.append("date >= ?")
+            params.append(plan_min)
+        inner_where = ("WHERE " + " AND ".join(conds) + " ") if conds else ""
         sql = (
             "SELECT m.s33, m.data FROM markets_short_ratio m "
             "INNER JOIN ("
-            "  SELECT s33, MAX(date) AS max_date FROM markets_short_ratio GROUP BY s33"
+            f"  SELECT s33, MAX(date) AS max_date FROM markets_short_ratio {inner_where}GROUP BY s33"
             ") latest ON m.s33 = latest.s33 AND m.date = latest.max_date"
         )
         try:
-            rows = conn.execute(sql).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         except Exception:
             return {}
         result: dict[str, dict] = {}
@@ -1628,12 +1686,22 @@ class CacheStore:
         # on (s33, date) usable, unlike a per-row CAST in the WHERE clause.
         candidates = {s33_code, norm, norm.zfill(4)}
         placeholders = ",".join("?" * len(candidates))
+        # Clamp to the plan window so a lower-tier plan does not see an
+        # embargoed / out-of-retention short-ratio row via "latest".
+        plan_min, plan_max = self._plan_bounds()
+        conds = [f"s33 IN ({placeholders})"]
+        params: list[str] = list(candidates)
+        if plan_max:
+            conds.append("date <= ?")
+            params.append(plan_max)
+        if plan_min:
+            conds.append("date >= ?")
+            params.append(plan_min)
         try:
             row = conn.execute(
-                "SELECT data FROM markets_short_ratio"
-                f" WHERE s33 IN ({placeholders})"
-                " ORDER BY date DESC LIMIT 1",
-                tuple(candidates),
+                f"SELECT data FROM markets_short_ratio WHERE {' AND '.join(conds)} "
+                "ORDER BY date DESC LIMIT 1",
+                tuple(params),
             ).fetchone()
         except Exception:
             return None
@@ -1733,11 +1801,23 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return {}
-        date_filter = ""
-        params: tuple | tuple[str] = ()
-        if as_of_date:
-            date_filter = "  AND substr(disc_date, 1, 10) <= ?"
-            params = (as_of_date,)
+        # Clamp the upper bound to the plan window (and enforce the lower
+        # bound) so a lower-tier plan's dividend history matches its
+        # entitled window, not the caller-supplied as_of_date alone.
+        plan_min, plan_max = self._plan_bounds()
+        upper = as_of_date
+        if plan_max and (upper is None or upper > plan_max):
+            upper = plan_max
+        conds: list[str] = []
+        params_list: list[str] = []
+        if upper:
+            conds.append("substr(disc_date, 1, 10) <= ?")
+            params_list.append(upper)
+        if plan_min:
+            conds.append("substr(disc_date, 1, 10) >= ?")
+            params_list.append(plan_min)
+        date_filter = ("    AND " + " AND ".join(conds)) if conds else ""
+        params: tuple[str, ...] = tuple(params_list)
         sql = (
             "WITH ranked AS ("
             "  SELECT code,"

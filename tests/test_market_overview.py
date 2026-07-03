@@ -50,7 +50,7 @@ def _make_cache(tmp_path: Path) -> CacheStore:
     conn.close()
     settings = Settings()
     settings.jquants_plan = "premium"
-    return CacheStore(db_path, settings)
+    return CacheStore(db_path, default_plan=settings.jquants_plan)
 
 
 def _insert_master(
@@ -845,8 +845,13 @@ class TestGetMarketBriefing:
         # real J-Quants API key from the developer's home dir; the briefing
         # tool's own _call_json swallows the resulting failure and returns
         # topix_change_pct=None.
+        # `jquants_plan="premium"` avoids triggering _ensure_plan_detected's
+        # auto-detection (which would probe the API via the reconstructed
+        # `_client`, fail, and mutate `_cache.default_plan` mid-test).
         with (
-            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(
+                server_module, "_settings", Settings(jquants_api_key="", jquants_plan="premium")
+            ),
             patch.object(server_module, "_cache", briefing_cache),
             patch.object(server_module, "_client", None),
         ):
@@ -921,6 +926,28 @@ class TestGetMarketBriefing:
             "get_market_briefing", {"date": "2026-05-02", "n": 3}
         )
         assert _call(first) == _call(second)
+
+    @pytest.mark.asyncio
+    async def test_response_cache_not_reused_across_plans(self, mock_briefing, briefing_cache):
+        """A response cached under the pre-fix (plan-agnostic) key shape must
+        not leak to a differently-planned request (regression for the
+        get_market_briefing Tier2 cache-key plan-scoping fix)."""
+        from jquants_mcp.cache.store import make_cache_key
+        from jquants_mcp.request_context import reset_current_plan, set_current_plan
+
+        # Simulates a response cached by the old code, whose key omitted plan.
+        stale_key = make_cache_key(
+            "tool:get_market_briefing",
+            {"date": "2026-05-02", "sector_type": "s33", "n": 5},
+        )
+        briefing_cache.put_response(stale_key, {"sentinel": "cross-plan-leak"}, ttl_seconds=3600)
+
+        token = set_current_plan("free")
+        try:
+            result = await mock_briefing.call_tool("get_market_briefing", {"date": "2026-05-02"})
+        finally:
+            reset_current_plan(token)
+        assert _call(result) != {"sentinel": "cross-plan-leak"}
 
     @pytest.mark.asyncio
     async def test_equities_bars_daily_fetched_once(self, briefing_cache):

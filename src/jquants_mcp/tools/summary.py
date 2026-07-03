@@ -62,7 +62,11 @@ def register(
         out_code = display_code(cache_code)
         cache: CacheStore = get_cache()
 
-        cache_key = make_cache_key("get_stock_briefing", {"code": out_code})
+        # `plan` is part of the key so a briefing computed under one user's
+        # plan is never served to a different plan's embargo window.
+        cache_key = make_cache_key(
+            "get_stock_briefing", {"code": out_code, "plan": cache.effective_plan()}
+        )
         cached = cache.get_response(cache_key)
         if cached is not None:
             return cached

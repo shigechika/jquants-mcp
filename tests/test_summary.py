@@ -286,6 +286,25 @@ class TestGetStockBriefing:
         # yield = round(20 / 1050 * 100, 2) = 1.90
         assert val["dividend_yield_pct"] == pytest.approx(round(20 / 1050 * 100, 2), rel=1e-6)
 
+    async def test_response_cache_not_reused_across_plans(self, mock_env):
+        """A response cached under the pre-fix (plan-agnostic) key shape must
+        not leak to a differently-planned request (regression for the
+        get_stock_briefing Tier2 cache-key plan-scoping fix)."""
+        from jquants_mcp.cache.store import make_cache_key
+        from jquants_mcp.request_context import reset_current_plan, set_current_plan
+
+        cache = mock_env["cache"]
+        # Simulates a response cached by the old code, whose key omitted plan.
+        stale_key = make_cache_key("get_stock_briefing", {"code": "1301"})
+        cache.put_response(stale_key, {"sentinel": "cross-plan-leak"}, ttl_seconds=3600)
+
+        token = set_current_plan("free")
+        try:
+            result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"})
+        finally:
+            reset_current_plan(token)
+        assert _call(result) != {"sentinel": "cross-plan-leak"}
+
     async def test_per_null_when_eps_negative(self, tmp_path):
         """PER must be null when the company is in a net-loss period (EPS <= 0)."""
         cache = _make_cache(tmp_path)
