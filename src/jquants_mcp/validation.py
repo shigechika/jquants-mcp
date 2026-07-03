@@ -76,7 +76,8 @@ async def detect_plan(client: JQuantsClient) -> str:
     """Detect the user's actual J-Quants plan by probing plan-restricted endpoints.
 
     Tests endpoints from highest plan to lowest. Returns the first plan whose
-    endpoint responds with 200, or "free" if all probes are restricted.
+    endpoint responds with 200, or "free" if every probe comes back with a
+    genuine plan restriction (HTTP 403).
 
     Args:
         client: JQuantsClient instance to use for probing.
@@ -86,6 +87,13 @@ async def detect_plan(client: JQuantsClient) -> str:
 
     Raises:
         AuthenticationError: If the API key itself is invalid.
+        Exception: Any other probe failure (network timeout, 5xx, rate limit,
+            etc.) propagates instead of being treated as a plan restriction.
+            Only PlanRestrictionError (a definitive 403) is evidence that a
+            plan tier is unavailable — conflating a transient error with that
+            would let a temporary API blip silently downgrade a paying
+            user's stored plan to "free" (callers must not persist a result
+            derived from a probe that never got a definitive answer).
     """
     for plan, endpoint, params in _PLAN_PROBE_ENDPOINTS:
         try:
@@ -97,7 +105,4 @@ async def detect_plan(client: JQuantsClient) -> str:
             continue
         except AuthenticationError:
             raise
-        except Exception as e:
-            logger.debug("Plan detection: %s probe failed with non-plan error: %s", endpoint, e)
-            continue
     return "free"

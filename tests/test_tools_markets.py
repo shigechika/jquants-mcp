@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -552,3 +553,55 @@ class TestGetMarketsCalendar:
         ):
             result = await _call("get_markets_calendar")
             assert result["error"] is True
+
+    async def test_free_plan_uses_cache_for_recent_dates(self, tmp_path):
+        """markets_calendar reads must not be plan-clamped — a recent date
+        range already cached is served from cache even for a Free-plan user
+        (regression for the markets_calendar plan-clamp fix)."""
+        settings = Settings(
+            jquants_api_key="test-key",
+            jquants_plan="free",
+            jquants_cache_dir=str(tmp_path),
+            max_retries=1,
+            retry_base_delay=0.01,
+        )
+        client = JQuantsClient(settings)
+        cache = CacheStore(tmp_path / "free.db", default_plan="free")
+        recent = (date.today() - timedelta(weeks=2)).isoformat()  # embargoed under Free
+        cache.put_rows("markets_calendar", [{"Date": recent, "HolDiv": "0"}], key_columns=["Date"])
+
+        mock_fn = AsyncMock(side_effect=AssertionError("API must not be called on a cache hit"))
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_client", client),
+            patch.object(server_module, "_cache", cache),
+            patch.object(client, "get", mock_fn),
+        ):
+            result = await _call("get_markets_calendar", date_from=recent, date_to=recent)
+        cache.close()
+        assert result["count"] == 1
+        assert result["source"] == "cache"
+
+    async def test_api_error_falls_back_to_cache(self, mock_env):
+        """On API failure, calendar data already in the cache must be
+        returned instead of a hard error (regression for the missing
+        APIError fallback in _get_calendar_with_cache)."""
+        cache = mock_env["cache"]
+        cache.put_rows(
+            "markets_calendar", [{"Date": "2024-01-04", "HolDiv": "0"}], key_columns=["Date"]
+        )
+        with patch.object(
+            mock_env["client"],
+            "get",
+            new_callable=AsyncMock,
+            side_effect=APIError("テストエラー", status_code=500),
+        ):
+            # Range not fully covered by the cached date, so the tool must
+            # attempt the API call (and fall back) rather than early-return
+            # on a full cache hit.
+            result = await _call(
+                "get_markets_calendar", date_from="2024-01-01", date_to="2024-01-10"
+            )
+        assert result.get("error") is not True
+        assert result["source"] == "cache"
+        assert result["count"] == 1

@@ -132,12 +132,26 @@ class FirestoreUserStore:
         return True
 
     def update_last_validated(self, user_id: str) -> None:
+        from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
+
         now = int(time.time())
-        self._doc(user_id).update({"last_validated_at": now})
+        try:
+            self._doc(user_id).update({"last_validated_at": now})
+        except NotFound:
+            # Document was concurrently deleted (e.g. delete_api_key raced
+            # this call) — no-op, matching the SQLite UserStore's UPDATE
+            # ... WHERE user_id = ? on a missing row (0 rows affected).
+            logger.info("update_last_validated: user %s no longer exists", user_id)
 
     def update_plan(self, user_id: str, plan: str) -> None:
+        from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
+
         now = int(time.time())
-        self._doc(user_id).update({"plan": plan, "updated_at": now})
+        try:
+            self._doc(user_id).update({"plan": plan, "updated_at": now})
+        except NotFound:
+            logger.info("update_plan: user %s no longer exists", user_id)
+            return
         logger.info("Updated plan for user %s to %s", user_id, plan)
 
     def list_users(self) -> list[str]:

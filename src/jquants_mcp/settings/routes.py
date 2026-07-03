@@ -67,9 +67,20 @@ async def handle_settings_get(request: Request, get_user_db_fn, settings=None) -
 
     user = user_db.get_user(user_id)
     registered_plan = user.plan if user is not None else None
+    # A row can exist with an undecryptable key (e.g. MCP_ENCRYPTION_KEY
+    # rotated without the previous key) — get_user() returns None in that
+    # case indistinguishably from "never registered" unless checked here.
+    corrupted_key = user is None and user_db.has_corrupted_key(user_id)
     csrf_token = get_or_create_csrf_token(request)
     is_dev = os.environ.get("JQUANTS_ENV") == "development"
-    response = HTMLResponse(form_html(registered_plan, csrf_token, user_email=display_email))
+    response = HTMLResponse(
+        form_html(
+            registered_plan,
+            csrf_token,
+            user_email=display_email,
+            corrupted_key=corrupted_key,
+        )
+    )
     response.set_cookie(
         key=_CSRF_COOKIE,
         value=csrf_token,
