@@ -22,6 +22,7 @@ from jquants_mcp.cache.schema import (
     ensure_cross_section_indexes,
     generate_ddl,
     migrate_add_fins_indexes,
+    migrate_split_fins_pk,
     migrate_drop_plan,
 )
 from jquants_mcp.cache.screener_compute import (
@@ -421,6 +422,7 @@ class CacheStore:
         self._migrate_drop_plan()
         self._migrate_normalize_calendar_dates()
         self._migrate_add_fins_indexes()
+        self._migrate_split_fins_pk()
         ensure_cross_section_indexes(conn)
 
     def _migrate_drop_plan(self) -> None:
@@ -444,6 +446,17 @@ class CacheStore:
         """
         assert self._conn is not None
         migrate_add_fins_indexes(self._conn)
+
+    def _migrate_split_fins_pk(self) -> None:
+        """Add doc_type to fins_summary's PRIMARY KEY (issue #473).
+
+        Delegates to ``schema.migrate_split_fins_pk`` (shared with daily_fetch.py
+        and gcs_export_cache.py). Runs after ``_migrate_add_fins_indexes`` because
+        it re-creates the FY/dividend generated columns and indexes on the rebuilt
+        table.
+        """
+        assert self._conn is not None
+        migrate_split_fins_pk(self._conn)
 
     def _migrate_normalize_calendar_dates(self) -> None:
         """Remove timestamp-suffix duplicates from markets_calendar.date.
@@ -1150,8 +1163,23 @@ class CacheStore:
             _TIER1_TABLES[table].get("extra_columns", "")
         )
 
+        db_cols = _key_col_names(table)
+
         for row in rows:
             key_values = [_normalize_date_value(str(row.get(k, ""))) for k in key_columns]
+            # Schema key columns the caller did not supply (e.g. fins_summary's
+            # doc_type, part of the PK since issue #473). Extract them from the
+            # record WITHOUT date-normalisation — doc_type strings can contain
+            # 'T' (e.g. "REITFinancialStatements...") which the date normaliser
+            # would truncate.
+            if len(db_cols) > len(key_values):
+                for extra_col in db_cols[len(key_values) :]:
+                    if extra_col == "doc_type":
+                        key_values.append(
+                            str(row.get("DocType") or row.get("TypeOfDocument") or "")
+                        )
+                    else:
+                        key_values.append("")
             data_json = json.dumps(row, ensure_ascii=False)
 
             if has_adj:
@@ -1326,8 +1354,13 @@ class CacheStore:
         try:
             row = conn.execute(
                 # is_fy generated column (same 4-way FY test) → idx_fs_is_fy.
+                # is_fy_results DESC prefers the actual FYFinancialStatements over
+                # a same-day DividendForecastRevision (both carry is_fy=1). Since
+                # issue #473 both can coexist for one (code, disc_date), so without
+                # this tiebreaker the revision (no Sales/OP/EPS actuals) could win.
                 "SELECT data FROM fins_summary WHERE code = ? AND is_fy = 1 "
-                "ORDER BY substr(disc_date, 1, 10) DESC, length(disc_date) ASC LIMIT 1",
+                "ORDER BY substr(disc_date, 1, 10) DESC, is_fy_results DESC, "
+                "length(disc_date) ASC LIMIT 1",
                 (code,),
             ).fetchone()
         except Exception:

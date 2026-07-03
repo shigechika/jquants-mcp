@@ -46,6 +46,7 @@ __all__ = [
     "generate_ddl",
     "migrate_add_fins_indexes",
     "migrate_drop_plan",
+    "migrate_split_fins_pk",
 ]
 
 logger = logging.getLogger(__name__)
@@ -66,9 +67,16 @@ TIER1_TABLES: dict[str, dict[str, str]] = {
         "primary_key": "code, date",
         "extra_columns": "",
     },
+    # doc_type is part of the PK so same-day multi-document filings coexist
+    # (本決算 + 予想修正 の同日開示。issue #473). It is a real column
+    # (SQLite generated columns cannot be part of a PRIMARY KEY) populated
+    # from the record's DocType/TypeOfDocument; DEFAULT '' keeps legacy
+    # 4-value inserts working (external writers that do not yet supply it).
     "fins_summary": {
-        "key_columns": "code TEXT NOT NULL, disc_date TEXT NOT NULL",
-        "primary_key": "code, disc_date",
+        "key_columns": (
+            "code TEXT NOT NULL, disc_date TEXT NOT NULL, doc_type TEXT NOT NULL DEFAULT ''"
+        ),
+        "primary_key": "code, disc_date, doc_type",
         "extra_columns": "",
     },
     "indices_bars_daily_topix": {
@@ -481,3 +489,88 @@ def migrate_add_fins_indexes(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA user_version = 4")
     conn.commit()
     logger.info("Migration: added fins_summary FY/dividend indexes (user_version=4)")
+
+
+# doc_type extraction expression, shared by the migration and the write path.
+FINS_DOC_TYPE_SQL = (
+    "COALESCE(json_extract(data, '$.DocType'), json_extract(data, '$.TypeOfDocument'), '')"
+)
+
+
+def migrate_split_fins_pk(conn: sqlite3.Connection) -> None:
+    """Add ``doc_type`` to fins_summary's PRIMARY KEY (issue #473, user_version 5).
+
+    The old PK ``(code, disc_date)`` held only one filing per stock per day,
+    so a company disclosing its annual results AND a forecast revision on the
+    same day lost one of them (the results record vanished when the revision
+    won). This rebuilds fins_summary with PK ``(code, disc_date, doc_type)``,
+    doc_type extracted from the data blob's ``DocType`` / ``TypeOfDocument``.
+
+    Idempotent — skipped at ``user_version >= 5`` and when ``doc_type`` is
+    already part of the PK (fresh DBs create it that way from TIER1_TABLES).
+    Runs AFTER ``migrate_add_fins_indexes`` (it re-creates the FY/dividend
+    generated columns and indexes that lived on the dropped table). Stdlib-only
+    so the server (store._init_tables), daily_fetch and gcs_export_cache run
+    the same migration.
+
+    NOTE: this splits the KEY only. The previously-displaced records must be
+    re-fetched (date-based) after the migration to actually repopulate them.
+    """
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version >= 5:
+        return
+
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "fins_summary" not in tables:
+        conn.execute("PRAGMA user_version = 5")
+        conn.commit()
+        return
+
+    pk_cols = [c[1] for c in conn.execute("PRAGMA table_info(fins_summary)") if c[5] > 0]
+    if "doc_type" in pk_cols:
+        conn.execute("PRAGMA user_version = 5")
+        conn.commit()
+        return
+
+    logger.info("Migration: adding doc_type to fins_summary PRIMARY KEY (issue #473)")
+    schema = TIER1_TABLES["fins_summary"]
+    conn.execute(
+        "CREATE TABLE fins_summary_v2 (\n"
+        f"    {schema['key_columns']},\n"
+        "    data TEXT NOT NULL,\n"
+        "    fetched_at REAL NOT NULL,\n"
+        f"    PRIMARY KEY ({schema['primary_key']})\n"
+        ")"
+    )
+    old_count = conn.execute("SELECT COUNT(*) FROM fins_summary").fetchone()[0]
+    # Defensive: a non-standard fins_summary may lack fetched_at (e.g. minimal
+    # tables built in tests / hand-made DBs). Default it rather than crashing
+    # the whole connection init on "no such column".
+    existing_cols = {c[1] for c in conn.execute("PRAGMA table_info(fins_summary)")}
+    fetched_expr = "fetched_at" if "fetched_at" in existing_cols else "0.0"
+    conn.execute(
+        "INSERT OR IGNORE INTO fins_summary_v2 (code, disc_date, doc_type, data, fetched_at) "
+        f"SELECT code, disc_date, {FINS_DOC_TYPE_SQL}, data, {fetched_expr} FROM fins_summary"
+    )
+    new_count = conn.execute("SELECT COUNT(*) FROM fins_summary_v2").fetchone()[0]
+    conn.execute("DROP TABLE fins_summary")
+    conn.execute("ALTER TABLE fins_summary_v2 RENAME TO fins_summary")
+
+    # Re-create the FY/dividend generated columns + indexes dropped with the
+    # old table (same DDL as migrate_add_fins_indexes) plus the disc_date index.
+    conn.execute(_FINS_IS_FY_DDL)
+    conn.execute(_FINS_IS_FY_RESULTS_DDL)
+    for ddl in FINS_INDEX_DDL:
+        conn.execute(ddl)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fs_disc_date "
+        "ON fins_summary(substr(disc_date, 1, 10), code)"
+    )
+
+    conn.execute("PRAGMA user_version = 5")
+    conn.commit()
+    logger.info(
+        "Migration: fins_summary PK split done (%d -> %d rows, user_version=5)",
+        old_count,
+        new_count,
+    )

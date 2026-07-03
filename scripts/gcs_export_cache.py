@@ -36,6 +36,7 @@ from jquants_mcp.cache.schema import (  # noqa: E402
     TIER1_TABLES,
     ensure_cross_section_indexes,
     migrate_add_fins_indexes,
+migrate_split_fins_pk,
 )
 
 logging.basicConfig(
@@ -166,6 +167,7 @@ def _ensure_indexes(db_path: Path) -> None:
     conn = sqlite3.connect(str(db_path))
     try:
         migrate_add_fins_indexes(conn)
+        migrate_split_fins_pk(conn)
         ensure_cross_section_indexes(conn)
     finally:
         conn.close()
