@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.49.0](https://github.com/shigechika/jquants-mcp/compare/v0.48.1...v0.49.0) (2026-07-03)
+
+
+### Features
+
+* **cache:** split fins_summary primary key to `(code, disc_date, doc_type)` so same-day multi-document filings (annual results + dividend/earnings forecast revision, or multiple quarterly reports) coexist instead of one overwriting another ([#473](https://github.com/shigechika/jquants-mcp/issues/473)) ([#475](https://github.com/shigechika/jquants-mcp/pull/475))
+
 ## [0.48.1](https://github.com/shigechika/jquants-mcp/compare/v0.48.0...v0.48.1) (2026-06-09)
 
 
