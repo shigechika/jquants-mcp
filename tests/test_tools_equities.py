@@ -593,6 +593,10 @@ class TestSearchEquities:
         assert codes == sorted(codes)
 
     async def test_includes_optional_fields_when_present(self, mock_env):
+        """market/sector must be read from the actual stored field names
+        (MktNm/S33Nm, matching get_sector_map) — not the long-form names
+        that never appear in real equities_master data (regression for the
+        search_equities market/sector field-name fix)."""
         cache = mock_env["cache"]
         _seed_master(
             cache,
@@ -602,8 +606,10 @@ class TestSearchEquities:
                     "Date": "2026-01-04",
                     "CoName": "トヨタ自動車",
                     "CoNameEn": "Toyota Motor",
-                    "MarketCodeName": "プライム",
-                    "Sector33CodeName": "輸送用機器",
+                    "Mkt": 111,
+                    "MktNm": "プライム",
+                    "S33": "3700",
+                    "S33Nm": "輸送用機器",
                 }
             ],
         )
