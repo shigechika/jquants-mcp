@@ -76,7 +76,7 @@ Run these MCP tool calls the day of upgrade (substitute today's date):
 
 These tools are cache-only; they use margin_interest data once it's cached:
 
-- `get_market_briefing()` — check `margin_ratio_*` fields
+- `get_market_briefing(date="<today>")` — check `margin_ratio_*` fields
 - `get_stock_briefing(code="<code>")` — `margin_interest.ratio` field should be non-null
 - `get_sector_briefing()` — `margin_ratio_median` should be non-null
 

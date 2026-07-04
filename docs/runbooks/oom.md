@@ -26,9 +26,11 @@ gcloud run revisions list --service=jquants-mcp \
 
 ## Root cause options
 
-1. **cache.db bloat** — GCS snapshot grew past load-test headroom
-   (~3.9 GiB peak at 6 GiB ceiling). Check `gcloud storage ls -l
-   gs://${BUCKET}/cache.db`.
+1. **cache.db bloat** — GCS snapshot grew past load-test headroom. A cache
+   reload transiently holds ~2× `cache.db` in tmpfs (old + new snapshot), so
+   the real ceiling to watch is `2 × cache.db` against the current 8 GiB
+   limit (see `docs/cloud-run-memory-sizing.md` for the SIGBUS incident that
+   set this). Check `gcloud storage ls -l gs://${BUCKET}/cache.db`.
 2. **Response-cache runaway** — Tier2 entries piling up. `cache_clear(table="response_cache")`.
 3. **Recent deploy regression** — new code allocating more. Rollback.
 4. **True memory leak** — container memory rising over time, not

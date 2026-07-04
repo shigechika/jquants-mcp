@@ -1,6 +1,6 @@
 # J-Quants MCP Server Comparison
 
-Survey date: 2026-03-28 — Comparing four known J-Quants MCP server projects.
+Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 
 ## Capability Overview
 
@@ -21,13 +21,13 @@ Survey date: 2026-03-28 — Comparing four known J-Quants MCP server projects.
 | Developer | JPX (Japan Exchange Group) | cygkichi (individual) | umicho (individual) | shigechika (individual) |
 | Framework | Python | Python | Python | Python (FastMCP v3) |
 | License | MIT | MIT | Unknown | MIT |
-| Last Updated | 2026-03-09 (v0.9.0) | Unknown | Unknown | 2026-03-28 (active) |
+| Last Updated | 2026-03-09 (v0.9.0) | Unknown | Unknown | 2026-07-04 (active) |
 
 ## Tools & API Endpoint Coverage
 
 | Endpoint | JPX Official | cygkichi | umicho | **jquants-mcp** |
 |---|:---:|:---:|:---:|:---:|
-| **Total tools** | 4 (doc tools) | 3 | Unknown | **27** |
+| **Total tools** | 4 (doc tools) | 3 | Unknown | **54** |
 | Equities master | — | search_company | Unknown | `get_equities_master` |
 | Daily bars | — | Yes | Yes | Yes + AM close |
 | Minute bars | — | No | Unknown | Yes |
@@ -90,7 +90,7 @@ Survey date: 2026-03-28 — Comparing four known J-Quants MCP server projects.
 
 | Item | JPX Official | cygkichi | umicho | **jquants-mcp** |
 |---|:---:|:---:|:---:|:---:|
-| Test count | Some (unknown) | None | Some (pytest) | **306 tests** |
+| Test count | Some (unknown) | None | Some (pytest) | **1,200+ tests** |
 | Linter | Ruff | Unknown | Unknown | Ruff |
 | CI/CD | GitHub Actions | No | Unknown | **GitHub Actions** (lint + test on Python 3.10–3.13) |
 | Python requirement | 3.10+ | Unknown | Unknown | 3.10+ |
@@ -102,7 +102,7 @@ Survey date: 2026-03-28 — Comparing four known J-Quants MCP server projects.
 | **JPX Official** | Official backing from JPX; V1→V2 migration support; code generation |
 | **cygkichi** | Minimal setup; free plan focus |
 | **umicho** | Registered on LobeHub MCP registry; V2 endpoint support |
-| **jquants-mcp** | Production-grade architecture; 2-tier cache (3.5 GB proven); multi-user OAuth; AES-256-GCM encryption; audit logging; Cloud Run deployment; 306 automated tests |
+| **jquants-mcp** | Production-grade architecture; 2-tier cache (3.5 GB proven); multi-user OAuth; AES-256-GCM encryption; audit logging; Cloud Run deployment; 1,200+ automated tests |
 
 ## Summary
 
@@ -112,7 +112,7 @@ Survey date: 2026-03-28 — Comparing four known J-Quants MCP server projects.
 
 **umicho/j-quants-api-mcp** claims V2 API support, but details are unclear. Registered on the LobeHub MCP registry (distribution advantage), but the GitHub repository is not publicly available.
 
-**shigechika/jquants-mcp** is the only project with multi-user OAuth, cloud deployment, encryption, audit logging, and a 2-tier cache. With 27 tools covering nearly all J-Quants API v2 endpoints and 306 automated tests, it operates at a fundamentally different level.
+**shigechika/jquants-mcp** is the only project with multi-user OAuth, cloud deployment, encryption, audit logging, and a 2-tier cache. With 54 tools covering nearly all J-Quants API v2 endpoints and 1,200+ automated tests, it operates at a fundamentally different level.
 
 ## Positioning
 
@@ -122,4 +122,4 @@ Future differentiation opportunities: MCP registry listings (LobeHub, etc.), cus
 
 ---
 
-*Generated with Claude — 2026-03-28*
+*Generated with Claude — 2026-03-28, refreshed 2026-07-04*
