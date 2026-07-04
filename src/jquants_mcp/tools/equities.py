@@ -463,7 +463,7 @@ def register(
             # field and left these keys permanently absent from the output.
             market = row.get("MktNm") or row.get("Mkt")
             if market:
-                entry["market"] = market
+                entry["market"] = str(market)
             sector = row.get("S33Nm")
             if sector:
                 entry["sector"] = sector
