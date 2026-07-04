@@ -138,7 +138,7 @@ Side-by-side return comparison for up to 10 codes:
 
 > Compare year-to-date returns for the five major trading houses (8001 8002 8031 8053 8058)
 
-Claude calls `render_comparison_chart` with `mode="return_pct"` (the default),
+Claude calls `get_comparison_chart_data` with `mode="return_pct"` (the default),
 producing a return chart with each series normalised to 0% at the first bar.
 Add `mode="price"` if you want the raw split-adjusted close instead.
 
@@ -173,6 +173,6 @@ Add `mode="price"` if you want the raw split-adjusted close instead.
 | "Cache statistics" | `cache_status` |
 | "Clear the cache" | `cache_clear` |
 
-The full list of 47 tools (with endpoints, plan requirements, and parameter
+The full list of 54 tools (with endpoints, plan requirements, and parameter
 tables) is on the
 [Available Tools section of the GitHub README](https://github.com/shigechika/jquants-mcp#available-tools).

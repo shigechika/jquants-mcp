@@ -3,7 +3,7 @@
 **Talk through Japanese stocks with Claude — backed by the [J-Quants API v2](https://jpx-jquants.com/).**
 
 jquants-mcp is a Japanese-equities-focused [MCP (Model Context Protocol)](https://modelcontextprotocol.io/)
-server. It gives Claude — Desktop, CLI, or mobile — 47 specialist tools and
+server. It gives Claude — Desktop, CLI, or mobile — 54 specialist tools and
 a local SQLite cache, turning it into a hands-on companion for your stock
 research rather than a one-off query tool.
 

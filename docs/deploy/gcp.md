@@ -289,11 +289,11 @@ gcloud run services describe "${SERVICE}" --region "${REGION}" \
 Note the URL, e.g. `https://jquants-mcp-abc123-uw.a.run.app`.
 
 Update in this order:
-1. Set `OAUTH_BASE_URL` in `cd.yml` to this URL
+1. Set the `OAUTH_BASE_URL` repo Variable to this URL: `gh variable set OAUTH_BASE_URL --body "<URL>"`
 2. Update the OAuth client redirect URIs (Google + GitHub) to `<URL>/oauth/callback`
-3. Commit + push → CD redeploys automatically
+3. Re-run the CD workflow (`gh workflow run cd.yml`) to pick up the new variable
 
-## 14. Smoke test
+## 13. Smoke test
 
 The server does not expose a plain HTTP health endpoint — authentication is required, and the MCP protocol expects a POST handshake. Three checks:
 
@@ -313,9 +313,9 @@ gcloud run services logs read "${SERVICE}" --region "${REGION}" --limit=50 \
   | grep -E "SIGHUP handler installed|Initializing .* OAuth"
 ```
 
-Full functional validation comes from connecting a Claude client — see [step 16](#16-connect-from-claude-clients).
+Full functional validation comes from connecting a Claude client — see [step 15](#15-connect-from-claude-clients).
 
-## 15. Custom domain (optional)
+## 14. Custom domain (optional)
 
 ### Cloud DNS
 
@@ -363,7 +363,7 @@ Cloud Run provisions a TLS cert automatically. DNS + cert propagation takes 15�
 
 Once the domain works, update `OAUTH_BASE_URL` and the OAuth redirect URIs to the custom domain. Redeploy.
 
-## 16. Connect from Claude clients
+## 15. Connect from Claude clients
 
 ### Claude Desktop (Connectors UI)
 
@@ -392,7 +392,7 @@ claude mcp add jquants-mcp \
 
 `mcp-stdio --oauth` drives the OAuth 2.1 flow in your browser and caches the token locally.
 
-## 17. Allowlist customization
+## 16. Allowlist customization
 
 The `JQUANTS_ALLOWED_EMAILS` secret controls who can sign in.
 
@@ -411,7 +411,7 @@ echo -n "you@example.com,family@example.com" | \
 gh workflow run cd.yml
 ```
 
-## 18. Monitoring and alerts
+## 17. Monitoring and alerts
 
 The repo ships with alert policies in [`ops/alerts/`](../../ops/alerts/). They expect a notification channel called `ops-email`:
 
@@ -430,7 +430,7 @@ for f in ops/alerts/*.yaml; do
 done
 ```
 
-## 19. Upgrade (keep your fork in sync)
+## 18. Upgrade (keep your fork in sync)
 
 Occasionally pull upstream changes:
 

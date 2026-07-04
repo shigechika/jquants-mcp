@@ -314,6 +314,17 @@ The post-deploy smoke test for this issue would have been more convincing
 if `cache_status` returned an explicit "cache not yet loaded" indicator.
 Filed as a future polish.
 
+> **Correction (request-based-billing change, 2026-06-06):** the download is
+> no longer asynchronous. Under request-based billing CPU is throttled to
+> near-zero between requests, so a background download starves and never
+> completes. `entrypoint.sh` now runs `gcs_sync.py --init-cache`
+> **synchronously, before the server starts** — the full CPU allocation
+> during the startup window is what lets the download actually finish. There
+> is no longer a live-API-fallback window at cold start, and no SIGHUP is
+> involved in this path (SIGHUP is still installed for the unrelated
+> manually-triggered reload case). See PR #457 for the incident that
+> motivated this change.
+
 ## Future considerations
 
 - **When to revisit:** if `cache.db` grows above ~3 GiB (bump to 6 GiB),
@@ -332,7 +343,8 @@ Filed as a future polish.
 - [`scripts/load_test.py`](../scripts/load_test.py)
 - [`scripts/collect_metrics.py`](../scripts/collect_metrics.py)
 - [`.github/workflows/cd.yml`](../.github/workflows/cd.yml) — single source
-  of truth for the `--memory 6Gi --cpu 2` setting
+  of truth for the `--memory 8Gi --cpu 2` setting (current, per the
+  request-based-billing correction above)
 - [`docs/gcsfuse-postmortem.md`](gcsfuse-postmortem.md) — the previous
   sizing-related incident that motivated the startup-copy architecture
 - Issue [#72](https://github.com/shigechika/jquants-mcp/issues/72),

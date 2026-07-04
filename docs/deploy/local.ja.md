@@ -1,27 +1,147 @@
-# セルフホスト HTTP デプロイ
+# セルフホストデプロイ
 
-jquants-mcp を自分で管理するホストで動かし、Streamable HTTP + TLS 経由で他の端末（ラップトップ・モバイル）から接続します。
+jquants-mcp を自分で管理するホストで動かし、Claude Desktop / Claude Code から接続します。
 
+OAuth マルチユーザーデプロイは代わりに [gcp.ja.md](gcp.ja.md) を参照。
+
+---
+
+## Option A: Docker（Python 不要）
+
+Docker がインストール済みなら、これがローカル MCP サーバーを最速で立ち上げる方法です。
+Python も TLS 証明書も GCS アカウントも不要です。
+
+### 前提条件
+
+- Docker Desktop（macOS / Windows）または Docker Engine（Linux）
+- J-Quants アカウントと API キー
+
+### 1. サーバーを起動
+
+```bash
+JQUANTS_API_KEY=xxx docker compose up -d
+# → MCP エンドポイント: http://localhost:8080/mcp
+```
+
+サーバーは `127.0.0.1:8080` のみで待ち受けます。
+キャッシュデータは Docker named volume（`jquants-mcp_cache`）に保存され、再起動後も維持されます。
+
+Bearer トークン認証を追加する場合（`mcp-stdio` を使わない場合に推奨）:
+
+```bash
+JQUANTS_API_KEY=xxx MCP_BEARER_TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(32))") \
+  docker compose up -d
+```
+
+### 2. Claude Desktop から接続（stdio）
+
+Claude Desktop のセッションごとに新しいコンテナが起動します。
+Claude Desktop の MCP 設定（macOS では `~/Library/Application Support/Claude/claude_desktop_config.json`）を編集:
+
+```json
+{
+  "mcpServers": {
+    "jquants": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--entrypoint", "jquants-mcp",
+        "-e", "JQUANTS_API_KEY=xxx",
+        "-e", "JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp",
+        "-v", "jquants-mcp_cache:/home/appuser/.cache/jquants-mcp",
+        "ghcr.io/shigechika/jquants-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+TLS も Bearer トークンも不要です。セッション終了時にコンテナは終了します。
+named volume `jquants-mcp_cache` は compose スタックと共有されるため、
+`docker compose exec ... daily_fetch.py --all` で投入したキャッシュは stdio セッションからも利用できます。
+
+### 3. Claude Code から接続（HTTP）
+
+```bash
+claude mcp add jquants-mcp --transport http http://localhost:8080/mcp
+```
+
+`MCP_BEARER_TOKEN` を設定した場合:
+
+```bash
+claude mcp add jquants-mcp --transport http http://localhost:8080/mcp \
+  --header "Authorization: Bearer <TOKEN>"
+```
+
+Claude Code には一部の HTTP トランスポートで `Authorization` ヘッダーが落ちるバグがあります
+（[claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)）。
+該当する場合は [mcp-stdio](https://pypi.org/project/mcp-stdio/) をプロキシとして使用してください:
+
+```bash
+claude mcp add jquants-mcp --env MCP_BEARER_TOKEN=<TOKEN> \
+  -- uvx mcp-stdio http://localhost:8080/mcp
+```
+
+### 4. キャッシュを投入（初回のみ）
+
+コンテナは空のキャッシュ DB で起動します。
+フル履歴取得を実行してください（J-Quants プランによって 1〜3 時間程度）:
+
+```bash
+docker compose exec jquants-mcp python /app/scripts/daily_fetch.py --all
+```
+
+**自動日次更新:** `ENABLE_DAILY_FETCH=true` を設定すると、平日 17:30 JST（08:30 UTC）に
+コンテナ内で差分更新が自動実行されます:
+
+```bash
+JQUANTS_API_KEY=xxx ENABLE_DAILY_FETCH=true docker compose up -d
+```
+
+これはコンテナ内で MCP サーバーと並行して [supercronic](https://github.com/aptible/supercronic) を起動します。
+ホスト側の cron や launchd 設定は不要です。
+
+**手動更新**（`ENABLE_DAILY_FETCH` を使わない場合）:
+
+```bash
+docker compose exec jquants-mcp python /app/scripts/daily_fetch.py
+```
+
+### 5. よく使うコマンド
+
+```bash
+docker compose logs -f          # ログを追跡
+docker compose stop             # 正常停止
+docker compose pull             # 最新イメージへ更新
+docker compose down -v          # 停止してキャッシュ volume を削除（データ消失注意！）
+```
+
+---
+
+## Option B: Python インストール（TLS + リモートアクセス）
+
+この方法では、TLS 付きの公開ドメインでサーバーを公開できるため、
+ラップトップ・モバイルなどローカルネットワーク外の端末からも接続できます。
+
+このガイドは以下を前提とします:
 - 単一ユーザー、または Bearer トークンを共有する少数の信頼ユーザー向け
-- TLS 証明書を取得できるドメインが必要
+- ホストに向けた TLS 証明書を取得できること
 - ホストが常時稼働していること（cron / launchd / systemd でプロセス管理）
 
-OAuth マルチユーザーデプロイは [gcp.ja.md](gcp.ja.md) を参照。
-
-## 前提条件
+### 前提条件
 
 - Python 3.10+ が使える Linux または macOS ホスト
 - ホストに向いているドメイン名（IPv4 または IPv6）。IPv6 DDNS の例は [shigechika/macos-ddns6](https://github.com/shigechika/macos-ddns6) を参照
 - TLS 証明書。[acme.sh](https://github.com/acmesh-official/acme.sh) の DNS-01 チャレンジが IPv6 専用ホストやワイルドカード証明書に対応しておりおすすめ
 - J-Quants アカウントと API キー
 
-## 1. インストール
+### 1. インストール
 
 ```bash
 uv tool install jquants-mcp      # または: pipx install jquants-mcp
 ```
 
-## 2. 設定
+### 2. 設定
 
 `~/.config/jquants-mcp/config.ini` に記載する方法:
 
@@ -43,7 +163,7 @@ Bearer トークンの生成:
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-## 3. 起動
+### 3. 起動
 
 ```bash
 jquants-mcp --transport streamable-http --host 0.0.0.0 --port 8080
@@ -77,9 +197,9 @@ WantedBy=multi-user.target
 sudo systemctl enable --now jquants-mcp
 ```
 
-## 4. Claude クライアントから接続
+### 4. Claude クライアントから接続
 
-### Claude Code / Claude Desktop（mcp-stdio 経由）
+#### Claude Code / Claude Desktop（mcp-stdio 経由）
 
 Claude Code には HTTP トランスポートで `Authorization` ヘッダーが落ちるバグがあります（[claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)）。[mcp-stdio](https://pypi.org/project/mcp-stdio/) をプロキシとして使用してください:
 
@@ -91,7 +211,7 @@ claude mcp add jquants-mcp --env MCP_BEARER_TOKEN=<TOKEN> \
 
 Claude Desktop の場合は MCP 設定で同じ env 付きで `mcp-stdio` を起動します。
 
-### Claude Code（直接 HTTP）
+#### Claude Code（直接 HTTP）
 
 ヘッダーバグ修正後は直接 HTTP トランスポートが使えるようになります:
 
@@ -101,15 +221,17 @@ claude mcp add jquants-mcp \
   --header "Authorization: Bearer <TOKEN>"
 ```
 
-## 5. 運用
+### 5. 運用
 
 - ログ: `journalctl -u jquants-mcp -f`（systemd）または `/tmp/jquants-mcp.err.log`（launchd デフォルト）
 - キャッシュ DB: `~/.cache/jquants-mcp/cache.db` — 取得データが増えると数 GB になります（[Caching](../../README.md#caching) 参照）
 - キャッシュ投入: `jquants-mcp daily-fetch` または `uv run scripts/daily_fetch.py` を cron / launchd タイマーで毎日実行
 
+---
+
 ## Cloud Run への移行タイミング
 
-以下の場合は [gcp.ja.md](gcp.ja.md) に移行を検討:
+以下の場合は [gcp.ja.md](gcp.ja.md) への移行を検討:
 
 - 自分以外のユーザーに各自の J-Quants アカウントで使わせたい
 - Bearer トークン共有ではなく OAuth ログインが欲しい
