@@ -625,3 +625,21 @@ class TestSearchEquities:
         )
         result = await _call("search_equities", name="トヨタ")
         assert result["data"][0]["code"] == "7203"
+
+    async def test_free_plan_finds_recently_dated_code(self, tmp_path):
+        """search_equities must not be plan-clamped — a code whose only
+        cached equities_master snapshot is inside the Free-plan embargo
+        window must still be found (regression for the reference-table
+        plan-clamp fix; mirrors get_name_map/get_sector_map)."""
+        free_cache = CacheStore(tmp_path / "free.db", default_plan="free")
+        recent = (date.today() - timedelta(weeks=2)).isoformat()  # embargoed for Free
+        free_cache.put_rows(
+            "equities_master",
+            [{"Code": "72030", "Date": recent, "CoName": "トヨタ自動車"}],
+            key_columns=["Code", "Date"],
+        )
+        with patch.object(server_module, "_cache", free_cache):
+            result = await _call("search_equities", name="トヨタ")
+        free_cache.close()
+        assert result["count"] == 1
+        assert result["data"][0]["code"] == "7203"

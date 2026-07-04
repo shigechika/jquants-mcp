@@ -684,6 +684,36 @@ class CacheStore:
             }
         return result
 
+    def get_all_equities_master_rows(self) -> list[dict[str, Any]]:
+        """Return the latest equities_master row (raw JSON) for every code.
+
+        Note: intentionally bypasses ``_build_where_clause`` / plan-based date
+        restrictions, for the same reason as ``get_name_map``/``get_sector_map``
+        — ``equities_master`` is a reference table; plan gating on the latest
+        snapshot would incorrectly suppress a code whose only cached row falls
+        inside a lower-tier plan's embargo/retention window (e.g. a recent
+        listing). Used by ``search_equities``.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return []
+        try:
+            rows = conn.execute(
+                "SELECT e.data FROM equities_master e "
+                "JOIN (SELECT code, MAX(date) AS max_date "
+                "      FROM equities_master GROUP BY code) AS m "
+                "ON e.code = m.code AND e.date = m.max_date"
+            ).fetchall()
+        except Exception:
+            return []
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                result.append(json.loads(row["data"]))
+            except Exception:
+                continue
+        return result
+
     def get_earnings_dates(self, code: str, date_from: str, date_to: str) -> list[str]:
         """Return sorted earnings announcement dates for a stock within a date range.
 

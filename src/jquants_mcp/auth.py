@@ -153,9 +153,24 @@ def create_auth_provider(settings: Settings) -> OAuthProvider | TokenVerifier | 
     if provider_type == "google":
         if settings.google_client_id and settings.google_client_secret and settings.oauth_base_url:
             return _create_google_provider(settings)
-        logger.debug(
-            "Google OAuth selected but missing credentials "
-            "(google_client_id, google_client_secret, oauth_base_url)"
+        # Fail loudly instead of silently falling through to GitHub OAuth
+        # below: an operator who explicitly set oauth_provider=google is
+        # relying on Google-verified identities (e.g. an allowlist keyed on
+        # Google account emails), and a silent fallback to a different
+        # provider would let untrusted identities in without any error.
+        missing = [
+            name
+            for name, value in (
+                ("google_client_id", settings.google_client_id),
+                ("google_client_secret", settings.google_client_secret),
+                ("oauth_base_url", settings.oauth_base_url),
+            )
+            if not value
+        ]
+        raise ValueError(
+            "oauth_provider=google was explicitly configured but required "
+            f"setting(s) are missing: {', '.join(missing)}. Set them, or "
+            "change oauth_provider to use a different provider."
         )
 
     # GitHub OAuth (default)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
@@ -119,6 +120,17 @@ class TestDetectPriceLimit:
         assert result["count"] == 1
         assert result["data"][0]["limit_high_touched"] is False
         assert result["data"][0]["limit_low_touched"] is False
+
+    async def test_code_filter_returns_error_when_no_row_found(self, mock_env):
+        """When code is given but no cached bar exists for that date, the
+        tool must surface an explicit error instead of silently returning
+        count=0 (regression for the detect_price_limit docstring-guarantee
+        fix — the docstring promises the code's row is always present)."""
+        _seed(mock_env["cache"], [_bar("27800", "2026-04-01")])
+        # A different code with no cached bar on this date.
+        result = await _call("detect_price_limit", date="2026-04-01", code="99990")
+        assert result.get("error") is True
+        assert result.get("error_type") == "NoTradingData"
 
     async def test_validation_error_on_bad_date(self, mock_env):
         result = await _call("detect_price_limit", date="2026/04/01")
@@ -763,6 +775,35 @@ class TestPlanContextMiddlewareE2E:
         # falls through to a live compute that has no data → empty.
         assert res_prem["count"] == 2
         assert res_free.get("count", 0) == 0
+
+
+class TestPlanCacheEviction:
+    """_evict_expired_plan_cache_entries() prunes expired _plan_cache entries.
+
+    Without this, _plan_cache grows without bound on a long-running
+    multi-user deployment — every distinct authenticated user adds an entry
+    that is never removed, unlike the _user_clients pool which
+    _evict_stale_clients() actively prunes (regression for the _plan_cache
+    unbounded-growth fix)."""
+
+    def test_removes_only_expired_entries(self):
+        now = time.monotonic()
+        server_module._plan_cache["expired-user"] = ("free", now - 1)
+        server_module._plan_cache["fresh-user"] = ("premium", now + 60)
+
+        server_module._evict_expired_plan_cache_entries()
+
+        assert "expired-user" not in server_module._plan_cache
+        assert "fresh-user" in server_module._plan_cache
+
+    def test_noop_when_nothing_expired(self):
+        now = time.monotonic()
+        server_module._plan_cache["a"] = ("light", now + 60)
+        server_module._plan_cache["b"] = ("standard", now + 120)
+
+        server_module._evict_expired_plan_cache_entries()
+
+        assert set(server_module._plan_cache) == {"a", "b"}
 
 
 class TestScreenerResultPlanDateGate:

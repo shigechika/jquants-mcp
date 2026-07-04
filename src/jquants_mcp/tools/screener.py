@@ -232,6 +232,22 @@ def register(
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
+        if code is not None and not rows:
+            # The docstring promises `code`'s row is always present in the
+            # output — surface the absence explicitly (plan-restricted date,
+            # no trade that day, or an invalid/delisted code) instead of
+            # silently falling through to an empty result indistinguishable
+            # from "traded normally without hitting the limit".
+            return {
+                "error": True,
+                "error_type": "NoTradingData",
+                "message": (
+                    f"No cached bar found for {display_code(normalize_code(code))} on "
+                    f"{norm_date}. It may be outside your plan's data window, the stock "
+                    "may not have traded that day, or the code may be invalid/delisted."
+                ),
+            }
+
         name_map = cache.get_name_map() if detail else {}
         matches: list[dict[str, Any]] = []
         for row in rows:
