@@ -90,7 +90,7 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 
 | Item | JPX Official | cygkichi | umicho | **jquants-mcp** |
 |---|:---:|:---:|:---:|:---:|
-| Test count | Some (unknown) | None | Some (pytest) | **1,232 tests** |
+| Test count | Some (unknown) | None | Some (pytest) | **1,200+ tests** |
 | Linter | Ruff | Unknown | Unknown | Ruff |
 | CI/CD | GitHub Actions | No | Unknown | **GitHub Actions** (lint + test on Python 3.10–3.13) |
 | Python requirement | 3.10+ | Unknown | Unknown | 3.10+ |
@@ -102,7 +102,7 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 | **JPX Official** | Official backing from JPX; V1→V2 migration support; code generation |
 | **cygkichi** | Minimal setup; free plan focus |
 | **umicho** | Registered on LobeHub MCP registry; V2 endpoint support |
-| **jquants-mcp** | Production-grade architecture; 2-tier cache (3.5 GB proven); multi-user OAuth; AES-256-GCM encryption; audit logging; Cloud Run deployment; 1,232 automated tests |
+| **jquants-mcp** | Production-grade architecture; 2-tier cache (3.5 GB proven); multi-user OAuth; AES-256-GCM encryption; audit logging; Cloud Run deployment; 1,200+ automated tests |
 
 ## Summary
 
@@ -112,7 +112,7 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 
 **umicho/j-quants-api-mcp** claims V2 API support, but details are unclear. Registered on the LobeHub MCP registry (distribution advantage), but the GitHub repository is not publicly available.
 
-**shigechika/jquants-mcp** is the only project with multi-user OAuth, cloud deployment, encryption, audit logging, and a 2-tier cache. With 54 tools covering nearly all J-Quants API v2 endpoints and 1,232 automated tests, it operates at a fundamentally different level.
+**shigechika/jquants-mcp** is the only project with multi-user OAuth, cloud deployment, encryption, audit logging, and a 2-tier cache. With 54 tools covering nearly all J-Quants API v2 endpoints and 1,200+ automated tests, it operates at a fundamentally different level.
 
 ## Positioning
 

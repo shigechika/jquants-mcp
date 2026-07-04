@@ -349,3 +349,5 @@ Filed as a future polish.
   sizing-related incident that motivated the startup-copy architecture
 - Issue [#72](https://github.com/shigechika/jquants-mcp/issues/72),
   PR [#73](https://github.com/shigechika/jquants-mcp/pull/73)
+- PR [#457](https://github.com/shigechika/jquants-mcp/pull/457) — synchronous
+  cache.db download under request-based billing (the correction in gotcha #5 above)
