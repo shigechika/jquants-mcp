@@ -27,7 +27,7 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Need the parent commit so git diff can compare HEAD~1
           # for workflow_run-triggered runs.
