@@ -620,6 +620,22 @@ async def _evict_stale_clients() -> None:
         logger.info("Evicted stale client for user %s (idle >%ds)", uid, _STALE_CLIENT_TTL)
 
 
+def _evict_expired_plan_cache_entries() -> None:
+    """Remove expired entries from ``_plan_cache``.
+
+    Without this, ``_plan_cache`` grows without bound on a long-running
+    multi-user deployment: every distinct authenticated user who ever calls a
+    tool adds an entry via ``_resolve_current_plan()``, and an expired entry
+    is only overwritten (never removed) the next time that same user calls
+    again — a one-off visitor's entry lives for the process lifetime.
+    Unlike ``_user_clients``, which ``_evict_stale_clients()`` actively prunes.
+    """
+    now = time.monotonic()
+    expired = [uid for uid, (_, expiry) in _plan_cache.items() if expiry <= now]
+    for uid in expired:
+        _plan_cache.pop(uid, None)
+
+
 async def _validate_user_client(
     user_db: Any,
     client: JQuantsClient,
@@ -705,10 +721,11 @@ async def _get_user_client() -> JQuantsClient:
     if user_db is None:
         return _get_client()
 
-    # Periodically evict stale clients.
+    # Periodically evict stale clients and expired plan-cache entries.
     now_mono = time.monotonic()
     if now_mono - _last_cleanup > _CLEANUP_INTERVAL:
         await _evict_stale_clients()
+        _evict_expired_plan_cache_entries()
         _last_cleanup = now_mono
 
     from .exceptions import DecryptionError

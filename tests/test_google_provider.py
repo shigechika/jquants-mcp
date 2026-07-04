@@ -83,10 +83,12 @@ def test_create_auth_provider_google_oauth():
         assert kwargs["required_scopes"] == ["openid", "email", "profile"]
 
 
-def test_create_auth_provider_google_incomplete_fallback_to_bearer():
-    """Incomplete Google OAuth falls back to GitHub then Bearer."""
-    from jquants_mcp.auth import BearerTokenVerifier
-
+def test_create_auth_provider_google_incomplete_raises():
+    """An explicit oauth_provider=google with incomplete credentials must
+    fail loudly instead of silently falling through to GitHub/Bearer —
+    an operator relying on Google-verified identities should not end up
+    running a different provider without any error (regression for the
+    silent-OAuth-fallback fix)."""
     settings = Settings(
         oauth_provider="google",
         google_client_id="test.apps.googleusercontent.com",
@@ -94,8 +96,23 @@ def test_create_auth_provider_google_incomplete_fallback_to_bearer():
         oauth_base_url="https://mcp.example.com",
         bearer_token="fallback-token",
     )
-    result = create_auth_provider(settings)
-    assert isinstance(result, BearerTokenVerifier)
+    with pytest.raises(ValueError, match="google_client_secret"):
+        create_auth_provider(settings)
+
+
+def test_create_auth_provider_google_incomplete_does_not_fall_back_to_github():
+    """Even with valid GitHub credentials present, an incomplete Google
+    config must not silently activate GitHub OAuth instead."""
+    settings = Settings(
+        oauth_provider="google",
+        google_client_id="",  # missing
+        google_client_secret="",  # missing
+        oauth_base_url="https://mcp.example.com",
+        github_client_id="gh-client-id",
+        github_client_secret="gh-client-secret",
+    )
+    with pytest.raises(ValueError, match="oauth_provider=google"):
+        create_auth_provider(settings)
 
 
 def test_create_auth_provider_google_https_required(monkeypatch):

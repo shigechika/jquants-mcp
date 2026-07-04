@@ -435,21 +435,18 @@ def register(
 
         cache: CacheStore = get_cache()
 
-        rows = cache.get_rows("equities_master", key_filter={})
+        # Plan-agnostic read (mirrors get_name_map/get_sector_map): equities_master
+        # is a reference table, so plan gating would incorrectly suppress a code
+        # whose only cached row falls inside a lower-tier plan's embargo/retention
+        # window. Already deduplicated to the latest row per code.
+        rows = cache.get_all_equities_master_rows()
 
-        # Deduplicate: keep the most recent row per code.
-        latest_by_code: dict[str, dict[str, Any]] = {}
+        query_lower = query.lower()
+        matches: list[dict[str, Any]] = []
         for row in rows:
             code = str(row.get("Code") or "")
             if not code:
                 continue
-            prev = latest_by_code.get(code)
-            if prev is None or (row.get("Date") or "") > (prev.get("Date") or ""):
-                latest_by_code[code] = row
-
-        query_lower = query.lower()
-        matches: list[dict[str, Any]] = []
-        for code, row in latest_by_code.items():
             coname = str(row.get("CoName") or "")
             coname_en = str(row.get("CoNameEn") or "")
             if query_lower not in coname.lower() and query_lower not in coname_en.lower():
