@@ -457,10 +457,14 @@ def register(
             }
             if coname_en:
                 entry["name_en"] = coname_en
-            market = row.get("MarketCodeName") or row.get("MarketCode")
+            # equities_master stores the normalised short field names (see
+            # get_sector_map): MktNm/Mkt for market, S33Nm for sector — not
+            # the long-form names used below, which never matched any stored
+            # field and left these keys permanently absent from the output.
+            market = row.get("MktNm") or row.get("Mkt")
             if market:
-                entry["market"] = market
-            sector = row.get("Sector33CodeName")
+                entry["market"] = str(market)
+            sector = row.get("S33Nm")
             if sector:
                 entry["sector"] = sector
             matches.append(entry)
