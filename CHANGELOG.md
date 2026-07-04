@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.49.3](https://github.com/shigechika/jquants-mcp/compare/v0.49.2...v0.49.3) (2026-07-04)
+
+
+### Bug Fixes
+
+* **tools:** search_equities market/sector fields were reading wrong keys ([#484](https://github.com/shigechika/jquants-mcp/issues/484)) ([342cede](https://github.com/shigechika/jquants-mcp/commit/342cede1304340fd53593c07ba87c247f2416e6b))
+
 ## [0.49.2](https://github.com/shigechika/jquants-mcp/compare/v0.49.1...v0.49.2) (2026-07-04)
 
 
