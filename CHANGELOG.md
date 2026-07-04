@@ -5,6 +5,19 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.49.2](https://github.com/shigechika/jquants-mcp/compare/v0.49.1...v0.49.2) (2026-07-04)
+
+
+### Bug Fixes
+
+* address 5 LOW-severity findings from the full-branch review ([#482](https://github.com/shigechika/jquants-mcp/issues/482)) ([bfe12a5](https://github.com/shigechika/jquants-mcp/commit/bfe12a5009b699fe1b96f1d950d961fe31cffaa1))
+* address 5 MEDIUM-severity findings from the full-branch review ([#480](https://github.com/shigechika/jquants-mcp/issues/480)) ([c17fc92](https://github.com/shigechika/jquants-mcp/commit/c17fc9231d33d142ab9aed3f6246950e5e4dbc91))
+
+
+### Documentation
+
+* fix documentation drift found by a full docs-freshness audit ([#483](https://github.com/shigechika/jquants-mcp/issues/483)) ([a8bb0a0](https://github.com/shigechika/jquants-mcp/commit/a8bb0a060544f78f7d22c742d2c6ba401f64305d))
+
 ## [0.49.1](https://github.com/shigechika/jquants-mcp/compare/v0.49.0...v0.49.1) (2026-07-03)
 
 
