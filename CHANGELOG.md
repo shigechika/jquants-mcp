@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.49.4](https://github.com/shigechika/jquants-mcp/compare/v0.49.3...v0.49.4) (2026-07-06)
+
+
+### Documentation
+
+* add repository custom instructions for Copilot code review ([#486](https://github.com/shigechika/jquants-mcp/issues/486)) ([dc19bc8](https://github.com/shigechika/jquants-mcp/commit/dc19bc81714adf936870abab143199a34f424338))
+
 ## [0.49.3](https://github.com/shigechika/jquants-mcp/compare/v0.49.2...v0.49.3) (2026-07-04)
 
 
