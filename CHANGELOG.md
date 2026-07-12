@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.49.5](https://github.com/shigechika/jquants-mcp/compare/v0.49.4...v0.49.5) (2026-07-12)
+
+
+### Documentation
+
+* reflect Firestore migration; add settings/auth review surfaces ([#501](https://github.com/shigechika/jquants-mcp/issues/501)) ([2c5bdfb](https://github.com/shigechika/jquants-mcp/commit/2c5bdfb6a656b40549029b064b2a1322c0270089))
+
 ## [0.49.4](https://github.com/shigechika/jquants-mcp/compare/v0.49.3...v0.49.4) (2026-07-06)
 
 
