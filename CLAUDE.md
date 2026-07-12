@@ -32,7 +32,7 @@ uv run ruff format src/ tests/  # Format
 - `scripts/` — Operational scripts
   - `daily_fetch.py` — Daily data fetch (cron / scheduled-task companion for cache population)
   - `bulk_fetch_all.py` — Historical data bulk fetch via J-Quants Bulk API
-  - `gcs_sync.py` — GCS auth DB sync for Cloud Run (users.db + oauth_state.db)
+  - `gcs_sync.py` — Cloud Run cache.db startup download from GCS (`--init-cache`). Auth DBs are **no longer synced here**: `users.db`/`oauth_state.db` moved to Firestore on Cloud Run, so `_DOWNLOAD_FILES`/`_UPLOAD_FILES` are empty and `--init`/`--daemon` are auth-DB no-ops
   - `gcs_export_cache.py` — Export cache.db to GCS (used by the daily publisher)
   - `rotate_encryption_key.py` — Re-encrypt user API keys during MCP_ENCRYPTION_KEY rotation
   - `collect_metrics.py` / `load_test.py` — Cloud Run sizing helpers
@@ -76,7 +76,7 @@ uv run ruff format src/ tests/  # Format
 - CD workflow declares ALL env vars and secrets — never use manual `gcloud run services update` (it gets overwritten by next CD deploy)
 - `gcloud storage cp` with parallel composite upload corrupts SQLite files — use `parallel_composite_upload_enabled=False`
 - Cloud Run: cache.db is downloaded from GCS at startup (`entrypoint.sh`), not gcsfuse-mounted
-- Cloud Run GCS daemon uploads only users.db and oauth_state.db (not cache.db — owned by self-hosted server)
+- Cloud Run user/OAuth data lives in **Firestore** (`FirestoreUserStore` in `db/users_firestore.py`; OAuth client store via `FirestoreStore`; selected at `server.py:559-566`), not in GCS-synced SQLite — so the `gcs_sync` daemon uploads nothing (`_UPLOAD_FILES` is empty; see `docs/runbooks/firestore-*.md`). cache.db is still GCS-downloaded at startup and owned by the self-hosted server
 - gcsfuse is NOT viable for large SQLite DBs (>100 MB) due to random read latency — see `docs/gcsfuse-postmortem.md`
 - Cloud Run: 2 vCPU + 8Gi memory (cache.db ~2.7 GB after 5-year trim + VACUUM; reload briefly holds ~2x cache.db in /tmp tmpfs, 6Gi caused SIGBUS)
 - Always research technology compatibility BEFORE implementing (e.g., "gcsfuse sqlite" would have revealed issues immediately)
@@ -84,8 +84,10 @@ uv run ruff format src/ tests/  # Format
 ## Cache Plan Scoping
 
 - Tier 1 cache data is **plan-agnostic** — there is no `plan` column. The legacy
-  column was dropped by the `_migrate_drop_plan` migration (`PRAGMA user_version=2`),
-  mirrored in both `cache/store.py` and `daily_fetch.py`. Do NOT add `plan` to INSERTs.
+  column was dropped by the `migrate_drop_plan` migration (`PRAGMA user_version=2`),
+  now shared in `cache/schema.py` and called from both `cache/store.py` and
+  `daily_fetch.py` (the hand-mirrored copies were removed — they produced
+  structurally-degraded tables). Do NOT add `plan` to INSERTs.
 - Plan-based date restriction is enforced **at query time**: `_build_where_clause`
   (row queries) and `_plan_bounds` (latest-aggregate readers) clamp the date range to
   `_plan_date_bounds(_effective_plan())`. The stored rows are not tagged by plan; only
