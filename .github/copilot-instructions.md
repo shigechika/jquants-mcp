@@ -83,7 +83,7 @@ corresponding Secret Manager reference, should be flagged.
 
 Tools in `server.py` return plain `dict[str, Any]` (e.g. `register_api_key`,
 `health_check`) or other JSON-serializable values. The `fastmcp` package used
-here (verified in the vendored `fastmcp.tools.tool.FunctionTool.convert_result`)
+here (`FunctionTool.convert_result`, in `fastmcp.tools.function_tool`; the older `fastmcp.tools.tool` import path still resolves as an alias)
 automatically converts a raw return value into the MCP `content` +
 `structuredContent` envelope — manual `{"content": [...], "isError": ...}`
 construction is unnecessary and inconsistent with the rest of the codebase.
@@ -138,6 +138,44 @@ documented design and should be flagged.
   with a test in the corresponding `test_auth.py` / `test_allowlist*.py` /
   `test_crypto.py` file, not just incidental coverage from an unrelated tool
   test.
+
+## 7. `/settings` Web UI is an authenticated write surface
+
+`settings/` serves a browser UI that registers/deletes per-user J-Quants API
+keys, so its auth properties are load-bearing — treat a weakening of any as a
+security regression, not a style nit:
+
+- **Signed sessions.** `settings/session.py` signs the session cookie with
+  HMAC-SHA256 (`sign_session`/`parse_session`, `hmac.compare_digest`) and a
+  24h TTL. The session cookie is `httponly=True` / `samesite=lax` /
+  `secure=not is_dev`; the CSRF cookie is intentionally `httponly=False` /
+  `samesite=strict`. Flag a diff that flips these, drops the constant-time
+  compare, or weakens the signing-key handling.
+- **Double-submit CSRF.** State-changing routes validate the form token
+  against the CSRF cookie (`validate_csrf`); a mutating route that skips it is
+  a bug.
+- **Email allowlist on BOTH identity paths.** `resolve_user_id` enforces the
+  email allowlist for the cookie identity *and* the OAuth-token identity — a
+  diff that gates only one path lets an authenticated-but-not-allowlisted user
+  write/delete keys.
+
+## 8. Three invariants that read as harmless refactors
+
+- **`TOOL_API_ERRORS`, not the base class.** Tool handlers catch the
+  `TOOL_API_ERRORS` tuple (`exceptions.py`), which deliberately includes
+  `DecryptionError` but **excludes** the `JQuantsDatMCPError` base
+  (Authentication/RateLimit/Validation are surfaced differently). Flag a new
+  tool that broadens to `except JQuantsDatMCPError`, or hand-copies a narrower
+  tuple that drops `DecryptionError` — both break a test-enforced design.
+- **Open-redirect guard.** `auth.py`'s `_ALLOWED_CLIENT_REDIRECT_URIS` is what
+  keeps FastMCP validating OAuth client redirect URIs; without it (or with a
+  wildcard host added) FastMCP accepts any URI — an open-redirect /
+  client-confusion risk. Scrutinize any widening.
+- **Alert-phrase lockstep.** Some Cloud Monitoring policies in `ops/alerts/`
+  grep exact log-message phrases (e.g. the cache-stale / cache-download-fail
+  phrases pinned by tests). Rewording such a log line silently disables its
+  alert — this already killed an alert once (PR #443). Keep the log text and
+  the `ops/alerts/*.yaml` phrase in sync.
 
 # Out of scope for review comments
 
