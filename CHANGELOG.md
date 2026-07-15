@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.50.0](https://github.com/shigechika/jquants-mcp/compare/v0.49.5...v0.50.0) (2026-07-15)
+
+
+### Features
+
+* **tools:** add get_value_stock_screen combined value screen ([#505](https://github.com/shigechika/jquants-mcp/issues/505)) ([65975e3](https://github.com/shigechika/jquants-mcp/commit/65975e3c8182003f6a268e232a045902c49b6053))
+
 ## [0.49.5](https://github.com/shigechika/jquants-mcp/compare/v0.49.4...v0.49.5) (2026-07-12)
 
 
