@@ -172,10 +172,11 @@ Queries outside the plan's date range return an error — do not retry with the 
 - `get_indices_bars_daily` — other indices (standard+)
 
 ### Screener (fast)
-Cross-sectional screeners hit a nightly pre-built cache (~0.01 s on default
-params). The 52w/YTD detectors (and their `_range` variants) are limited to the
-last 52 weeks — older dates return `OutOfCacheRange` immediately; do not retry.
-The other screeners accept any date within your plan's window.
+The 52w/YTD detectors and `detect_consecutive_dividend_increase` hit a nightly
+pre-built cache (~0.01 s on default params); the other screeners compute from
+the cached daily bars. The 52w/YTD detectors (and their `_range` variants) are
+limited to the last 52 weeks — older dates return `OutOfCacheRange` immediately;
+do not retry. The other screeners accept any date within your plan's window.
 
 - `detect_52w_high_low` / `detect_ytd_high_low` — fresh high/low breakouts on a date.
   These list stocks that SET a new high/low that day. There is no plain
@@ -201,7 +202,9 @@ a working API key there), as does `get_technical_indicators`.
 - `detail=False` (default): summary counts only — prefer this on mobile and whenever you only need totals.
 - `detail=True`: full per-stock `data` array.
 
-When a specific stock `code` is provided, the cache is bypassed for correctness (IPO edge cases).
+A `code=` argument bypasses the pre-built cross-sectional payload (so newly-listed
+stocks are not dropped) — the tool then computes from cached daily bars, with the
+API fallbacks noted above where applicable.
 
 ### Charts
 - `get_candlestick_data` — OHLCV + indicator data as JSON for React artifact rendering
