@@ -36,7 +36,8 @@ from jquants_mcp.cache.schema import (  # noqa: E402
     TIER1_TABLES,
     ensure_cross_section_indexes,
     migrate_add_fins_indexes,
-migrate_split_fins_pk,
+    migrate_add_fwdnp_index,
+    migrate_split_fins_pk,
 )
 
 logging.basicConfig(
@@ -168,6 +169,7 @@ def _ensure_indexes(db_path: Path) -> None:
     try:
         migrate_add_fins_indexes(conn)
         migrate_split_fins_pk(conn)
+        migrate_add_fwdnp_index(conn)
         ensure_cross_section_indexes(conn)
     finally:
         conn.close()

@@ -22,6 +22,7 @@ from jquants_mcp.cache.schema import (
     ensure_cross_section_indexes,
     generate_ddl,
     migrate_add_fins_indexes,
+    migrate_add_fwdnp_index,
     migrate_split_fins_pk,
     migrate_drop_plan,
 )
@@ -433,6 +434,7 @@ class CacheStore:
         self._migrate_normalize_calendar_dates()
         self._migrate_add_fins_indexes()
         self._migrate_split_fins_pk()
+        self._migrate_add_fwdnp_index()
         ensure_cross_section_indexes(conn)
 
     def _migrate_drop_plan(self) -> None:
@@ -467,6 +469,17 @@ class CacheStore:
         """
         assert self._conn is not None
         migrate_split_fins_pk(self._conn)
+
+    def _migrate_add_fwdnp_index(self) -> None:
+        """Add the forward net-profit partial index (idx_fs_fwdnp).
+
+        Delegates to ``schema.migrate_add_fwdnp_index`` (shared with
+        daily_fetch.py and gcs_export_cache.py) so ``get_forward_np_map``'s
+        latest-forecast subquery seeks an index instead of full-scanning
+        fins_summary. Runs after ``_migrate_split_fins_pk``.
+        """
+        assert self._conn is not None
+        migrate_add_fwdnp_index(self._conn)
 
     def _migrate_normalize_calendar_dates(self) -> None:
         """Remove timestamp-suffix duplicates from markets_calendar.date.
@@ -875,6 +888,92 @@ class CacheStore:
         codes present in this map — even when val==0.
         Returns an empty dict when the table is missing or the connection is unavailable.
         """
+        # nx_only_on_fy_date=False keeps the long-standing dividend behavior:
+        # on the annual-results date a same-day DividendForecastRevision row's
+        # FDivAnn can still win when the FY row carries no NxFDivAnn.
+        # Tightening that would change existing tool outputs (see the profit
+        # twin get_forward_np_map, which does enforce it).
+        return self._forward_guidance_map(
+            "NxFDivAnn",
+            "FDivAnn",
+            as_of_date=as_of_date,
+            require_non_negative=True,
+            nx_only_on_fy_date=False,
+        )
+
+    def get_forward_np_map(
+        self,
+        as_of_date: str | None = None,
+    ) -> dict[str, tuple[float, str]]:
+        """Return forward net-profit forecast per code: NxFNp > FNP.
+
+        Profit twin of get_forward_div_ann_map.  Picks the most recent
+        disclosure per code where FNP or NxFNp is non-empty, with NxFNp taking
+        priority.  NxFNp is only present in annual (FY) earnings filings and
+        always represents the NEXT fiscal year forecast; on those rows FNP is
+        empty.  At mid-year filings NxFNp is absent, so FNP (the current-FY
+        forecast, revised quarterly) is used as the fallback.  NP/FNP/NxFNp are
+        absolute company-level amounts and never need split adjustment.
+
+        On the annual-results date itself only NxFNp counts
+        (nx_only_on_fy_date=True): a same-day forecast-revision row's FNP
+        targets the fiscal year that was just reported, so treating it as
+        forward guidance would compare a forecast against its own actual.
+
+        Args:
+            as_of_date: Upper bound for disc_date (YYYY-MM-DD).  When supplied,
+                only disclosures on or before this date are considered, which
+                prevents lookahead bias in back-tests.  Defaults to all data.
+
+        Returns {code: (forecast_np, disc_date)} for codes with forward
+        guidance.  Unlike the dividend map, negative values are kept — a loss
+        forecast is valid guidance (callers compare against the FY actual).
+        Returns an empty dict when the table is missing or the connection is unavailable.
+        """
+        return self._forward_guidance_map(
+            "NxFNp",
+            "FNP",
+            as_of_date=as_of_date,
+            require_non_negative=False,
+            nx_only_on_fy_date=True,
+        )
+
+    def _forward_guidance_map(
+        self,
+        nx_field: str,
+        fallback_field: str,
+        *,
+        as_of_date: str | None,
+        require_non_negative: bool,
+        nx_only_on_fy_date: bool,
+    ) -> dict[str, tuple[float, str]]:
+        """Shared engine for the forward guidance maps (dividend / net profit).
+
+        Picks, per code, the most recent disclosure where ``nx_field`` or
+        ``fallback_field`` is non-empty, with the NX (next-FY) field taking
+        priority.  Field names are trusted literals supplied by the two public
+        wrappers — never caller input.
+
+        Annual results generate TWO rows on the same disc_date:
+          FYFinancialStatements: NxF*=<next-FY forecast>, F*=''
+          revision document:     F*=<value for the just-ended FY>, NxF*=''
+        Selecting MAX(NxF*) and MAX(F*) separately and preferring NxF*
+        resolves the pair correctly; MAX(COALESCE(NxF*, F*)) would be wrong
+        (it can pick the larger, non-forward value).  At mid-year filings only
+        one row exists with F*, so the fallback applies as intended.
+        GROUP BY + HAVING (rather than a bare WHERE on the alias) keeps the
+        query valid standard SQL regardless of SQLite alias scoping.
+
+        The fy_latest CTE guards against stale mid-year fallbacks: if a newer
+        FYFinancialStatements row exists but has no guidance (NxF*='' and
+        F*=''), the subquery would fall back to an older Q-report's F* that
+        belongs to a completed fiscal year.  The HAVING condition
+        ``fl.fy_md <= m.md`` rejects those results (240+ codes affected in
+        real data).  Revision rows are intentionally excluded from fy_latest
+        because they share CurPerType='FY' but are NOT annual results filings.
+        With ``nx_only_on_fy_date`` the same-day case is additionally dropped
+        when only the fallback field is present on the fy_latest date.
+        """
         conn = self._ensure_connection()
         if conn is None:
             return {}
@@ -896,71 +995,58 @@ class CacheStore:
             _bound_params.append(plan_min)
         # The bound is interpolated twice (fy_latest CTE + subquery m).
         params = tuple(_bound_params * 2)
+        nx = f"json_extract(f.data, '$.{nx_field}')"
+        fb = f"json_extract(f.data, '$.{fallback_field}')"
         try:
-            # Annual results generate TWO rows on the same disc_date:
-            #   FYFinancialStatements: NxFDivAnn=<next-FY forecast>, FDivAnn=''
-            #   DividendForecastRevision: FDivAnn=<trailing actual>, NxFDivAnn=''
-            # COALESCE(MAX(NxFDivAnn), MAX(FDivAnn)) aggregates them correctly:
-            #   MAX(NxFDivAnn) = next-FY forecast (non-null wins), so COALESCE returns it.
-            # MAX(COALESCE(NxFDivAnn, FDivAnn)) would be wrong: MAX(38, 180) = 180 (trailing).
-            # At mid-year filings only one row exists with FDivAnn; MAX(NxFDivAnn)=null so
-            # COALESCE falls back to MAX(FDivAnn) (current-FY forecast) as intended.
-            # GROUP BY + HAVING (rather than a bare WHERE on the alias) is used so
-            # the query remains valid standard SQL regardless of SQLite alias scoping.
-            #
-            # fy_latest CTE guards against stale mid-year FDivAnn: if a newer
-            # FYFinancialStatements row exists but has no div forecast (NxFDivAnn=''
-            # and FDivAnn=''), the subquery would fall back to an older Q-report's
-            # FDivAnn that belongs to a completed fiscal year.  The HAVING condition
-            # `fl.fy_md <= m.md` rejects those results (240+ codes affected in
-            # real data).  DividendForecastRevision rows are intentionally excluded
-            # from fy_latest because they share CurPerType='FY' but are NOT annual
-            # results filings.
+            # The inner subquery's COALESCE predicate matches the partial
+            # indexes idx_fs_fwddiv / idx_fs_fwdnp; the fy_latest CTE filter on
+            # the generated column matches idx_fs_fy_results.
             rows = conn.execute(
                 "WITH fy_latest AS ("
                 "  SELECT code, MAX(substr(disc_date, 1, 10)) AS fy_md "
                 "  FROM fins_summary "
-                # is_fy_results = annual-RESULTS only (DocType LIKE 'FYFinancial%'),
-                # excluding DividendForecastRevision rows that share CurPerType='FY'.
-                # Filtering on the generated column uses idx_fs_fy_results.
                 "  WHERE is_fy_results = 1"
                 f"{bound_clause}"
                 "  GROUP BY code"
                 ") "
                 "SELECT f.code, "
-                "  COALESCE("
-                "    MAX(CAST(NULLIF(json_extract(f.data, '$.NxFDivAnn'), '') AS REAL)),"
-                "    MAX(CAST(NULLIF(json_extract(f.data, '$.FDivAnn'), '') AS REAL))"
-                "  ) AS div_fwd, m.md "
+                f"  MAX(CAST(NULLIF({nx}, '') AS REAL)) AS nx_val, "
+                f"  MAX(CAST(NULLIF({fb}, '') AS REAL)) AS fb_val, "
+                "  m.md, fl.fy_md "
                 "FROM fins_summary f "
                 "JOIN ("
                 "  SELECT code, MAX(substr(disc_date, 1, 10)) AS md "
                 "  FROM fins_summary "
                 "  WHERE COALESCE("
-                "    NULLIF(json_extract(data, '$.NxFDivAnn'), ''), "
-                "    NULLIF(json_extract(data, '$.FDivAnn'), '')"
+                f"    NULLIF(json_extract(data, '$.{nx_field}'), ''), "
+                f"    NULLIF(json_extract(data, '$.{fallback_field}'), '')"
                 "  ) IS NOT NULL "
                 f"{bound_clause}"
                 "  GROUP BY code"
                 ") m ON f.code = m.code AND substr(f.disc_date, 1, 10) = m.md "
                 "LEFT JOIN fy_latest fl ON f.code = fl.code "
                 "GROUP BY f.code, m.md "
-                "HAVING div_fwd IS NOT NULL "
+                "HAVING COALESCE(nx_val, fb_val) IS NOT NULL "
                 "  AND (fl.fy_md IS NULL OR fl.fy_md <= m.md)",
                 params,
             ).fetchall()
         except Exception:
             return {}
         result: dict[str, tuple[float, str]] = {}
-        for row in rows:
-            code = str(row[0] or "")
-            disc_date = str(row[2] or "")
+        for code_raw, nx_val, fb_val, md, fy_md in rows:
+            code = str(code_raw or "")
+            disc_date = str(md or "")
             try:
-                val = float(row[1])
+                val = float(nx_val if nx_val is not None else fb_val)
             except (TypeError, ValueError):
                 continue
-            if code and val >= 0 and disc_date:
-                result[code] = (val, disc_date)
+            if not code or not disc_date:
+                continue
+            if require_non_negative and val < 0:
+                continue
+            if nx_only_on_fy_date and nx_val is None and str(fy_md or "") == disc_date:
+                continue
+            result[code] = (val, disc_date)
         return result
 
     def get_split_factors_after(self, code_disc_dates: dict[str, str]) -> dict[str, float]:
@@ -1474,6 +1560,7 @@ class CacheStore:
     def get_all_latest_fy_fins(
         self,
         as_of_date: str | None = None,
+        results_only: bool = False,
     ) -> dict[str, dict]:
         """Return the most recent FY financial-summary row for every code in fins_summary.
 
@@ -1485,6 +1572,13 @@ class CacheStore:
             as_of_date: Upper bound for disc_date (YYYY-MM-DD).  When supplied,
                 only disclosures on or before this date are considered, which
                 prevents lookahead bias in back-tests.  Defaults to all data.
+            results_only: When True, restrict to annual-RESULTS filings
+                (is_fy_results = 1, i.e. DocType LIKE 'FYFinancial%').  The
+                default False also matches forecast/dividend-revision documents
+                that share CurPerType='FY' but carry no EPS/BPS/NP — when such
+                a revision is a code's newest FY-flagged disclosure, that code's
+                row lacks those fields.  Pass True when the caller needs the
+                actual statement figures.
 
         Returns:
             Mapping of 5-digit code to raw JSON dict (as stored in the cache).
@@ -1493,10 +1587,11 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return {}
-        # Filter on the is_fy generated column (schema.migrate_add_fins_indexes)
-        # so the partial index idx_fs_is_fy is used instead of a full scan; the
-        # column encodes the same 4-way FY test inline-OR'd here before.
-        _fy_cond = "is_fy = 1"
+        # Filter on the is_fy / is_fy_results generated columns
+        # (schema.migrate_add_fins_indexes) so the partial indexes idx_fs_is_fy /
+        # idx_fs_fy_results are used instead of a full scan; is_fy encodes the
+        # same 4-way FY test inline-OR'd here before.
+        _fy_cond = "is_fy_results = 1" if results_only else "is_fy = 1"
         # Clamp the upper bound to the plan window so a lower-tier plan's "latest
         # FY" is the latest disclosure within its entitled window.
         plan_min, plan_max = self._plan_bounds()

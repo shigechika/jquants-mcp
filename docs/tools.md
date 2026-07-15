@@ -26,7 +26,8 @@ What's the market doing today, and which sectors look cheap?
 | "Sector PER/PBR/ROE — which sectors look cheap?" | `get_sector_briefing` |
 | "Cheapest stocks by PER / PBR" | `get_valuation_ranking` |
 | "High dividend yield ranking" | `get_dividend_yield_ranking` |
-| "Today's market briefing" (one-call composite — advance/decline + ADR + sectors + rankings + TOPIX change + screener highlights + distribution-day + follow-through-day signal) | `get_market_briefing` |
+| "Value stocks near their 52-week low" (年安・割安・高配当・好決算 — near 52w low + PER/PBR caps + dividend yield floor + profit-increase forecast, all at once) | `get_value_stock_screen` |
+| "Today's market briefing" (one-call composite — advance/decline + ADR + sectors + rankings + TOPIX change + screener highlights + value screen + distribution-day + follow-through-day signal) | `get_market_briefing` |
 
 These all run against the local cache — no API call, no rate limit.
 
@@ -173,6 +174,6 @@ Add `mode="price"` if you want the raw split-adjusted close instead.
 | "Cache statistics" | `cache_status` |
 | "Clear the cache" | `cache_clear` |
 
-The full list of 54 tools (with endpoints, plan requirements, and parameter
+The full list of 55 tools (with endpoints, plan requirements, and parameter
 tables) is on the
 [Available Tools section of the GitHub README](https://github.com/shigechika/jquants-mcp#available-tools).

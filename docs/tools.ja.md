@@ -26,7 +26,8 @@ jquants-mcp で Claude に何ができるか、ユースケース別ツアー。
 | 「業種別 PER/PBR/ROE」（セクターブリーフィング、割安業種探し） | `get_sector_briefing` |
 | 「PER/PBR が割安な銘柄ランキング」（赤字・債務超過は除外） | `get_valuation_ranking` |
 | 「高配当利回りランキング」（`DivAnn / AdjC × 100`、中間報告の空配当はスキップ） | `get_dividend_yield_ranking` |
-| 「今日の相場ブリーフィング」（値上がり/値下がり + 騰落レシオ + 33業種別 + ランキング + TOPIX 変化率 + screener ハイライト + ディストリビューションデイ・フォロースルーデイ判定を 1 コールで） | `get_market_briefing` |
+| 「年安・割安・高配当・好決算銘柄」（52 週安値圏 + PER/PBR 上限 + 予想配当利回り下限 + 増益予想を一括判定） | `get_value_stock_screen` |
+| 「今日の相場ブリーフィング」（値上がり/値下がり + 騰落レシオ + 33業種別 + ランキング + TOPIX 変化率 + screener ハイライト + バリュースクリーン + ディストリビューションデイ・フォロースルーデイ判定を 1 コールで） | `get_market_briefing` |
 
 すべてローカルキャッシュ上で動作 — API コール無し、レート制限無し。
 
@@ -160,6 +161,6 @@ Claude が `get_comparison_chart_data` を `mode="return_pct"`（デフォルト
 | 「キャッシュの状況」 | `cache_status` |
 | 「キャッシュをクリアして」 | `cache_clear` |
 
-54 ツールの完全な一覧（エンドポイント / プラン要件 / パラメータ表）は
+55 ツールの完全な一覧（エンドポイント / プラン要件 / パラメータ表）は
 [GitHub README の Available Tools](https://github.com/shigechika/jquants-mcp#available-tools)
 にまとまっています。
