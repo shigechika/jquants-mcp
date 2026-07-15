@@ -27,7 +27,7 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 
 | Endpoint | JPX Official | cygkichi | umicho | **jquants-mcp** |
 |---|:---:|:---:|:---:|:---:|
-| **Total tools** | 4 (doc tools) | 3 | Unknown | **54** |
+| **Total tools** | 4 (doc tools) | 3 | Unknown | **55** |
 | Equities master | — | search_company | Unknown | `get_equities_master` |
 | Daily bars | — | Yes | Yes | Yes + AM close |
 | Minute bars | — | No | Unknown | Yes |
@@ -112,7 +112,7 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 
 **umicho/j-quants-api-mcp** claims V2 API support, but details are unclear. Registered on the LobeHub MCP registry (distribution advantage), but the GitHub repository is not publicly available.
 
-**shigechika/jquants-mcp** is the only project with multi-user OAuth, cloud deployment, encryption, audit logging, and a 2-tier cache. With 54 tools covering nearly all J-Quants API v2 endpoints and 1,200+ automated tests, it operates at a fundamentally different level.
+**shigechika/jquants-mcp** is the only project with multi-user OAuth, cloud deployment, encryption, audit logging, and a 2-tier cache. With 55 tools covering nearly all J-Quants API v2 endpoints and 1,200+ automated tests, it operates at a fundamentally different level.
 
 ## Positioning
 

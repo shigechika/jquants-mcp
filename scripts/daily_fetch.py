@@ -50,7 +50,8 @@ from jquants_mcp.cache.schema import (  # noqa: E402
     ensure_cross_section_indexes,
     generate_ddl,
     migrate_add_fins_indexes,
-migrate_split_fins_pk,
+    migrate_add_fwdnp_index,
+    migrate_split_fins_pk,
     migrate_drop_plan,
 )
 from jquants_mcp.cache import screener_compute  # noqa: E402  # stdlib-only
@@ -185,6 +186,7 @@ def _ensure_tables(conn: sqlite3.Connection) -> None:
     migrate_drop_plan(conn)
     migrate_add_fins_indexes(conn)
     migrate_split_fins_pk(conn)
+    migrate_add_fwdnp_index(conn)
     ensure_cross_section_indexes(conn)
 
 
@@ -314,8 +316,7 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan:
             # FYFinancialStatements + DividendForecastRevision now coexist
             # instead of one overwriting the other. Not date-normalised
             # (doc_type can contain 'T', e.g. "REITFinancial...").
-            doc_type = str(data_dict.get("DocType")
-                           or data_dict.get("TypeOfDocument") or "")
+            doc_type = str(data_dict.get("DocType") or data_dict.get("TypeOfDocument") or "")
             # Carry NxFDivAnn forward across re-fetches of the SAME filing
             # (matched on the full PK) so a later fetch that drops the field
             # does not lose the next-FY forecast.

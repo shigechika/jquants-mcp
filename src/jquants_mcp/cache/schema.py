@@ -34,6 +34,7 @@ __all__ = [
     "BULK_TABLES",
     "CROSS_SECTION_INDEX_DDL",
     "FINS_INDEX_DDL",
+    "FWD_NP_INDEX_DDL",
     "RESPONSE_CACHE_DDL",
     "SCREENER_RESULTS_DDL",
     "SCREENER_RESULTS_INDEX_DDL",
@@ -45,6 +46,7 @@ __all__ = [
     "ensure_cross_section_indexes",
     "generate_ddl",
     "migrate_add_fins_indexes",
+    "migrate_add_fwdnp_index",
     "migrate_drop_plan",
     "migrate_split_fins_pk",
 ]
@@ -574,3 +576,40 @@ def migrate_split_fins_pk(conn: sqlite3.Connection) -> None:
         old_count,
         new_count,
     )
+
+
+# Forward net-profit guidance index (user_version 6). Mirrors idx_fs_fwddiv:
+# get_forward_np_map's latest-forecast subquery filters on this exact COALESCE
+# predicate, and without a matching partial index it full-scans fins_summary
+# with two json_extract calls per row (verified with EXPLAIN QUERY PLAN).
+FWD_NP_INDEX_DDL = (
+    "CREATE INDEX IF NOT EXISTS idx_fs_fwdnp "
+    "ON fins_summary(code, substr(disc_date, 1, 10)) "
+    "WHERE COALESCE(NULLIF(json_extract(data, '$.NxFNp'), ''), "
+    "NULLIF(json_extract(data, '$.FNP'), '')) IS NOT NULL"
+)
+
+
+def migrate_add_fwdnp_index(conn: sqlite3.Connection) -> None:
+    """Add the forward net-profit partial index (idx_fs_fwdnp).
+
+    ``get_forward_np_map`` (the profit twin of ``get_forward_div_ann_map``)
+    needs the same kind of partial index as idx_fs_fwddiv or its per-code
+    latest-forecast subquery full-scans fins_summary.
+
+    Idempotent — skipped at ``user_version >= 6``. Mirrored by
+    store._init_tables, daily_fetch.py and gcs_export_cache.py, same as the
+    other fins migrations. Runs AFTER ``migrate_split_fins_pk`` so the index
+    lands on the rebuilt table.
+    """
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    if version >= 6:
+        return
+
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "fins_summary" in tables:
+        conn.execute(FWD_NP_INDEX_DDL)
+
+    conn.execute("PRAGMA user_version = 6")
+    conn.commit()
+    logger.info("Migration: added fins_summary forward-NP index (user_version=6)")

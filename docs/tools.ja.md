@@ -161,6 +161,6 @@ Claude が `get_comparison_chart_data` を `mode="return_pct"`（デフォルト
 | 「キャッシュの状況」 | `cache_status` |
 | 「キャッシュをクリアして」 | `cache_clear` |
 
-54 ツールの完全な一覧（エンドポイント / プラン要件 / パラメータ表）は
+55 ツールの完全な一覧（エンドポイント / プラン要件 / パラメータ表）は
 [GitHub README の Available Tools](https://github.com/shigechika/jquants-mcp#available-tools)
 にまとまっています。

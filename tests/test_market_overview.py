@@ -3874,6 +3874,58 @@ class TestGetValueStockScreen:
         second = await mock_value_screen_server.call_tool("get_value_stock_screen", {})
         assert _call(first) == _call(second)
 
+    @pytest.mark.asyncio
+    async def test_response_cache_survives_data_change(self, tmp_path):
+        """The second call is served from the Tier2 cache, not recomputed.
+
+        Deleting every fins_summary row between the calls would make a
+        recompute return CacheNotReady, so an identical second payload proves
+        the cache hit.
+        """
+        cache, conn = _vs_make_cache(tmp_path)
+        _vs_insert_history(conn, "13010", _vs_sessions())
+        _vs_insert_master(conn, "13010", "A")
+        _vs_insert_fins(conn, "13010")
+        conn.commit()
+        conn.close()
+        first = await _vs_run(cache, {})
+        assert first["count"] == 1
+        conn2 = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn2.execute("DELETE FROM fins_summary")
+        conn2.commit()
+        conn2.close()
+        second = await _vs_run(cache, {})
+        assert second == first
+
+    @pytest.mark.asyncio
+    async def test_cache_shared_across_n(self, tmp_path):
+        """`n` is not part of the Tier2 key: the full match list is cached once.
+
+        The n=1 call caches the full two-match list; deleting the fins rows
+        before the n=20 call proves the second result (both matches) came from
+        that shared cache entry, not a recompute.
+        """
+        cache, conn = _vs_make_cache(tmp_path)
+        sessions = _vs_sessions()
+        _vs_insert_history(conn, "13010", sessions)
+        _vs_insert_master(conn, "13010", "A")
+        _vs_insert_fins(conn, "13010", nxfdivann="40")
+        _vs_insert_history(conn, "13020", sessions)
+        _vs_insert_master(conn, "13020", "B")
+        _vs_insert_fins(conn, "13020", nxfdivann="50")
+        conn.commit()
+        conn.close()
+        small = await _vs_run(cache, {"n": 1})
+        assert small["count"] == 1
+        assert small["total_matches"] == 2
+        conn2 = sqlite3.connect(str(tmp_path / "cache.db"))
+        conn2.execute("DELETE FROM fins_summary")
+        conn2.commit()
+        conn2.close()
+        large = await _vs_run(cache, {"n": 20})
+        assert large["count"] == 2
+        assert [item["code"] for item in large["items"]] == ["1302", "1301"]
+
 
 class TestGetMarketBriefingValueScreen:
     """get_market_briefing surfaces the value_screen section when it is available."""

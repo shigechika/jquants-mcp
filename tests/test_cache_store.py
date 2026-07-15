@@ -1458,6 +1458,40 @@ class TestGetForwardNpMap:
         assert result.get("12340") == (600.0, "2026-05-01")
         store.close()
 
+    def test_same_day_fallback_without_nx_dropped(self, tmp_path: Path) -> None:
+        """On the FY-results date, a fallback-only FNP is not forward guidance.
+
+        FY row with no next-FY forecast (NxFNp='') plus a same-day revision row
+        whose FNP targets the just-reported fiscal year: returning that FNP
+        would compare a forecast against its own actual, so the code is absent.
+        (The dividend map deliberately keeps the legacy fallback here.)
+        """
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(
+            conn,
+            "12340",
+            "2026-05-01",
+            "FYFinancialStatements_Consolidated_IFRS",
+            "FY",
+            fnp="",
+            nx_fnp="",
+            np="500",
+        )
+        self._insert(
+            conn,
+            "12340",
+            "2026-05-01",
+            "EarnForecastRevision",
+            "FY",
+            fnp="580",
+            nx_fnp="",
+        )
+        conn.commit()
+
+        assert "12340" not in store.get_forward_np_map()
+        store.close()
+
 
 class TestGetAllLatestFyFinsResultsOnly:
     """get_all_latest_fy_fins: results_only filters to annual-RESULTS filings."""
@@ -2181,6 +2215,73 @@ class TestMigrateAddFinsIndexes:
             "WHERE COALESCE(NULLIF(json_extract(data,'$.NxFDivAnn'),''), "
             "NULLIF(json_extract(data,'$.FDivAnn'),'')) IS NOT NULL GROUP BY code"
         )
+        conn.close()
+
+
+class TestMigrateAddFwdNpIndex:
+    """schema.migrate_add_fwdnp_index adds the forward net-profit partial index."""
+
+    def _make_migrated(self, tmp_path: Path) -> sqlite3.Connection:
+        import json
+
+        from jquants_mcp.cache.schema import (
+            TIER1_TABLES,
+            generate_ddl,
+            migrate_add_fins_indexes,
+            migrate_add_fwdnp_index,
+        )
+
+        conn = sqlite3.connect(str(tmp_path / "c.db"))
+        conn.execute(generate_ddl("fins_summary", TIER1_TABLES["fins_summary"]))
+        conn.execute(
+            "INSERT INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+            (
+                "7203",
+                "2025-05-10",
+                json.dumps(
+                    {
+                        "DocType": "FYFinancialStatements_JP",
+                        "CurPerType": "FY",
+                        "NP": "500",
+                        "NxFNp": "600",
+                    }
+                ),
+                0.0,
+            ),
+        )
+        conn.commit()
+        migrate_add_fins_indexes(conn)
+        migrate_add_fwdnp_index(conn)
+        return conn
+
+    def test_adds_index_and_bumps_version(self, tmp_path: Path):
+        conn = self._make_migrated(tmp_path)
+        idx = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
+        assert "idx_fs_fwdnp" in idx
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+        conn.close()
+
+    def test_idempotent(self, tmp_path: Path):
+        from jquants_mcp.cache.schema import migrate_add_fwdnp_index
+
+        conn = self._make_migrated(tmp_path)
+        migrate_add_fwdnp_index(conn)  # second run must not raise
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+        conn.close()
+
+    def test_index_is_used_by_the_reader(self, tmp_path: Path):
+        """EXPLAIN QUERY PLAN: get_forward_np_map's subquery predicate hits idx_fs_fwdnp."""
+        conn = self._make_migrated(tmp_path)
+        plan = " ".join(
+            str(r[-1])
+            for r in conn.execute(
+                "EXPLAIN QUERY PLAN "
+                "SELECT code, MAX(substr(disc_date,1,10)) FROM fins_summary "
+                "WHERE COALESCE(NULLIF(json_extract(data,'$.NxFNp'),''), "
+                "NULLIF(json_extract(data,'$.FNP'),'')) IS NOT NULL GROUP BY code"
+            )
+        )
+        assert "idx_fs_fwdnp" in plan
         conn.close()
 
 

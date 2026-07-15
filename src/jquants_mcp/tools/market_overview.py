@@ -23,6 +23,7 @@ Exposed tools:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import statistics
 from datetime import datetime, timedelta
@@ -139,6 +140,47 @@ def _get_session_dates(cache: CacheStore, end_date: str, count: int) -> list[str
     return dates[-count:] if len(dates) >= count else dates
 
 
+def _resolve_screen_date(
+    cache: CacheStore, date: str | None
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Resolve an optional ``date`` argument to a cached trading session.
+
+    Shared by the cross-sectional ranking/screen tools: ``None`` resolves to
+    the latest cached session; an explicit date beyond the latest cache (or an
+    empty cache) yields a CacheNotReady error; a holiday or weekend clamps to
+    the most recent prior session. The 5-session lookup keeps the clamp
+    working across long holiday gaps (Golden Week, year-end) that the
+    single-session window's 3-day pad cannot bridge.
+
+    Returns (norm_date, None) on success or (None, error_response).
+    """
+    latest = cache.get_latest_equities_date()
+    if date is None:
+        if latest is None:
+            return None, _cache_not_ready_error("latest", None)
+        return latest, None
+    norm_date = _normalize_date(date)
+    if latest and norm_date > latest:
+        return None, _cache_not_ready_error(norm_date, latest)
+    session = _get_session_dates(cache, norm_date, 5)
+    if not session:
+        return None, _cache_not_ready_error(norm_date, latest)
+    return session[-1], None
+
+
+def _disc_cutoff_date(norm_date: str, disc_months: int) -> str:
+    """Staleness cutoff for disclosures: norm_date minus disc_months months.
+
+    Uses 31 days/month intentionally: slightly over-estimates the span so
+    borderline disclosures (e.g. filed on the exact cutoff day) are
+    consistently excluded rather than flickering in/out across month-length
+    differences.
+    """
+    return (datetime.strptime(norm_date, "%Y-%m-%d") - timedelta(days=disc_months * 31)).strftime(
+        "%Y-%m-%d"
+    )
+
+
 def _as_float(v: Any) -> float | None:
     try:
         return float(v) if v not in (None, "", "null") else None
@@ -241,6 +283,20 @@ def _candidate_52w_low_stats(
         "pct_above_52w_low": round((adj_c - low_52w) / low_52w * 100, 2),
         "new_low": bool(row.get("new_low")),
     }
+
+
+def _slice_value_screen(full: dict[str, Any], n: int) -> dict[str, Any]:
+    """Materialize a get_value_stock_screen response for one ``n``.
+
+    The Tier2 payload stores ALL matches — the two-stage screen cost does not
+    depend on n — so different n values (the briefing's n, direct calls) share
+    one cached computation and only this final slice differs.
+    """
+    items = full.get("items", [])
+    out = {key: value for key, value in full.items() if key != "items"}
+    out["count"] = min(len(items), n)
+    out["items"] = items[:n]
+    return out
 
 
 def _compute_notable_stocks(
@@ -1012,20 +1068,10 @@ def register(
 
         cache: CacheStore = get_cache()
 
-        if date is None:
-            latest = cache.get_latest_equities_date()
-            if latest is None:
-                return _cache_not_ready_error("latest", None)
-            norm_date = latest
-        else:
-            norm_date = _normalize_date(date)
-            latest = cache.get_latest_equities_date()
-            if latest and norm_date > latest:
-                return _cache_not_ready_error(norm_date, latest)
-            session = _get_session_dates(cache, norm_date, 1)
-            if not session:
-                return _cache_not_ready_error(norm_date, latest)
-            norm_date = session[-1]
+        norm_date, date_error = _resolve_screen_date(cache, date)
+        if date_error is not None:
+            return date_error
+        assert norm_date is not None
 
         cache_key = make_cache_key(
             "tool:get_dividend_yield_ranking",
@@ -1080,12 +1126,7 @@ def register(
                 trailing_codes.add(code)
 
         # disc_months cutoff: exclude stale disclosures.
-        # Use 31 days/month intentionally: slightly over-estimates so borderline
-        # disclosures (e.g. filed on the exact cutoff day) are consistently excluded
-        # rather than flickering in/out across month-length differences.
-        cutoff_date = (
-            datetime.strptime(norm_date, "%Y-%m-%d") - timedelta(days=disc_months * 31)
-        ).strftime("%Y-%m-%d")
+        cutoff_date = _disc_cutoff_date(norm_date, disc_months)
 
         # market filter: resolve to Mkt integer string
         mkt_code: str | None = str(_MARKET_CODE_MAP[market]) if market is not None else None
@@ -1253,11 +1294,8 @@ def register(
                 code_disc_dates[code] = disc
         split_factors = cache.get_split_factors_after(code_disc_dates)
 
-        # disc_months cutoff: drop stale FY disclosures (31 days/month over-estimates
-        # so a borderline disclosure is consistently excluded — same as the yield tool).
-        cutoff_date = (
-            datetime.strptime(price_date, "%Y-%m-%d") - timedelta(days=disc_months * 31)
-        ).strftime("%Y-%m-%d")
+        # disc_months cutoff: drop stale FY disclosures — same as the yield tool.
+        cutoff_date = _disc_cutoff_date(price_date, disc_months)
 
         mkt_code: str | None = str(_MARKET_CODE_MAP[market]) if market is not None else None
 
@@ -1355,7 +1393,7 @@ def register(
 
         Args:
             n: Stocks to return (1–100, default 20).
-            near_low_pct: Max % distance of close above the 52-week low (default 5.0).
+            near_low_pct: Max % distance of close above the 52-week low (0–100, default 5.0).
             max_per: PER upper bound, exclusive (default 15.0). Net-loss stocks (EPS<=0) never match.
             max_pbr: PBR upper bound, exclusive (default 1.0). Negative-book stocks (BPS<=0) never match.
             min_yield: Minimum forward dividend yield % (default 3.5).
@@ -1381,29 +1419,21 @@ def register(
 
         cache: CacheStore = get_cache()
 
-        if date is None:
-            latest = cache.get_latest_equities_date()
-            if latest is None:
-                return _cache_not_ready_error("latest", None)
-            norm_date = latest
-        else:
-            norm_date = _normalize_date(date)
-            latest = cache.get_latest_equities_date()
-            if latest and norm_date > latest:
-                return _cache_not_ready_error(norm_date, latest)
-            session = _get_session_dates(cache, norm_date, 1)
-            if not session:
-                return _cache_not_ready_error(norm_date, latest)
-            norm_date = session[-1]
+        norm_date, date_error = _resolve_screen_date(cache, date)
+        if date_error is not None:
+            return date_error
+        assert norm_date is not None
 
         # `plan` is part of the key because every input below (fins, forward
         # maps, bar windows) is plan-window clamped — same reasoning as
-        # get_market_briefing.
+        # get_market_briefing. `n` is deliberately NOT part of the key: the
+        # two-stage screen computes the full match list regardless of n, so
+        # the briefing (n=5) and direct calls (n=20) share one cached
+        # computation and only the final slice differs.
         cache_key = make_cache_key(
             "tool:get_value_stock_screen",
             {
                 "date": norm_date,
-                "n": n,
                 "near_low_pct": near_low_pct,
                 "max_per": max_per,
                 "max_pbr": max_pbr,
@@ -1417,7 +1447,7 @@ def register(
         )
         cached = cache.get_response(cache_key)
         if cached is not None:
-            return cached
+            return _slice_value_screen(cached, n)
 
         try:
             bars = cache.get_rows(
@@ -1455,13 +1485,11 @@ def register(
         code_disc_div = {code: disc for code, (_, disc) in fwd_div_map.items()}
         split_factors_div = cache.get_split_factors_after(code_disc_div)
 
-        # disc_months cutoff from norm_date (31 days/month over-estimates so a
-        # borderline disclosure is consistently excluded — same as the siblings).
-        cutoff_date = (
-            datetime.strptime(norm_date, "%Y-%m-%d") - timedelta(days=disc_months * 31)
-        ).strftime("%Y-%m-%d")
+        # disc_months cutoff from norm_date — same convention as the siblings.
+        cutoff_date = _disc_cutoff_date(norm_date, disc_months)
 
         mkt_code: str | None = str(_MARKET_CODE_MAP[market]) if market is not None else None
+        sector_str: str | None = str(sector) if sector is not None else None
 
         # Stage 1: cheap map-based filters over the whole universe. The
         # surviving candidates (realistically a few hundred) then get exact
@@ -1476,7 +1504,7 @@ def register(
             info = sector_map.get(code, {})
             if mkt_code is not None and info.get("mkt") != mkt_code:
                 continue
-            if sector is not None and info.get("s33") != str(sector):
+            if sector_str is not None and info.get("s33") != sector_str:
                 continue
 
             fins_row = fins_map.get(code)
@@ -1560,7 +1588,12 @@ def register(
             norm_date, screener_compute.DEFAULT_FIFTY_TWO_WEEK_SESSIONS
         )
         items: list[dict[str, Any]] = []
-        for code, item in candidates:
+        for idx, (code, item) in enumerate(candidates):
+            if idx and idx % 20 == 0:
+                # Cooperative yield: the per-candidate reads are synchronous
+                # SQLite work; without this the loop would monopolize the
+                # event loop for the whole scan on a Tier-2 cache miss.
+                await asyncio.sleep(0)
             stats = _candidate_52w_low_stats(cache, code, norm_date, range_start)
             if stats is None:
                 continue
@@ -1572,9 +1605,10 @@ def register(
             items.append(item)
 
         items.sort(key=lambda x: (-x["yield_pct"], x["pct_above_52w_low"]))
-        result: dict[str, Any] = {
+        # The cached payload holds the FULL match list; `count` and the n-slice
+        # are materialized per call by _slice_value_screen.
+        full: dict[str, Any] = {
             "date": norm_date,
-            "count": min(len(items), n),
             "total_matches": len(items),
             "criteria": {
                 "near_low_pct": near_low_pct,
@@ -1586,17 +1620,17 @@ def register(
                 "market": market,
                 "sector": sector,
             },
-            "items": items[:n],
+            "items": items,
         }
         if truncated:
-            result["truncated"] = True
+            full["truncated"] = True
         if not items:
-            result["hint"] = (
+            full["hint"] = (
                 "No stock matched all criteria (near 52w low + PER/PBR + yield + "
                 "profit-increase forecast). Try raising near_low_pct or lowering min_yield."
             )
-        cache.put_response(cache_key, result, ttl_seconds=3600)
-        return result
+        cache.put_response(cache_key, full, ttl_seconds=3600)
+        return _slice_value_screen(full, n)
 
     @mcp.tool(annotations=READ_ONLY_CACHE)
     async def get_market_briefing(
@@ -1852,11 +1886,13 @@ def register(
             n=n,
         )
 
-        # 5c. Value stock screen (年安・割安・高配当・好決算) — fail-soft to None.
+        # 5c. Value stock screen — fail-soft to None.
         #     The sub-tool has its own 1h plan-keyed Tier2 cache, so repeated
         #     briefings within the hour do not recompute the per-code 52w lows.
         #     None = screen unavailable; {"count": 0, ...} = genuinely no match.
-        vscreen_raw = await _call_json("get_value_stock_screen", {"date": norm_date, "n": n})
+        #     Pass today_date (the resolved session), not norm_date: a raw
+        #     holiday-gap date could fall outside the sub-tool's session clamp.
+        vscreen_raw = await _call_json("get_value_stock_screen", {"date": today_date, "n": n})
         value_screen: dict[str, Any] | None = None
         if not vscreen_raw.get("error"):
             value_screen = {
