@@ -425,7 +425,7 @@ Install the operational guidance Skill into your Claude Code project:
 npx skills add shigechika/jquants-mcp
 ```
 
-This adds `skills/jquants-mcp-usage/SKILL.md` to your project, giving Claude Code practical tips on cache tiers, plan-based date limits, screener patterns, and safe cache management — without touching the tool definitions.
+This adds `skills/jquants-mcp-usage/SKILL.md` to your project, giving Claude Code the daily workflows (one-call briefings, value screening, single-stock deep dives) plus practical tips on cache tiers, plan-based date limits, screener patterns, and safe cache management — without touching the tool definitions.
 
 ### Claude Desktop
 
