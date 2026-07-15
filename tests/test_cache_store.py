@@ -1252,6 +1252,326 @@ class TestGetAllLatestFyFinsTimestamp:
         store.close()
 
 
+class TestGetForwardNpMap:
+    """get_forward_np_map: forward net-profit forecast selection (NxFNp > FNP)."""
+
+    def _insert(
+        self,
+        conn: sqlite3.Connection,
+        code: str,
+        disc_date: str,
+        doc_type: str,
+        cur_per_type: str,
+        *,
+        fnp: str = "",
+        nx_fnp: str = "",
+        np: str | None = None,
+    ) -> None:
+        import json
+
+        # doc_type is a PRIMARY KEY column (code, disc_date, doc_type); it is set
+        # explicitly so same-day rows with different DocType do not collide, and
+        # the JSON DocType drives the is_fy / is_fy_results generated columns.
+        data: dict[str, object] = {
+            "Code": code,
+            "DiscDate": disc_date[:10],
+            "DocType": doc_type,
+            "CurPerType": cur_per_type,
+            "FNP": fnp,
+            "NxFNp": nx_fnp,
+        }
+        if np is not None:
+            data["NP"] = np
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary"
+            " (code, disc_date, doc_type, data, fetched_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (code, disc_date, doc_type, json.dumps(data), time.time()),
+        )
+
+    def test_fy_row_forecast_used(self, tmp_path: Path) -> None:
+        """A single FY-results row exposes NxFNp as the forward forecast."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(
+            conn,
+            "12340",
+            "2026-05-01",
+            "FYFinancialStatements_Consolidated_IFRS",
+            "FY",
+            fnp="",
+            nx_fnp="600",
+            np="500",
+        )
+        conn.commit()
+
+        result = store.get_forward_np_map()
+        assert result.get("12340") == (600.0, "2026-05-01")
+        store.close()
+
+    def test_newer_quarterly_revision_wins(self, tmp_path: Path) -> None:
+        """A newer quarterly FNP overrides the older FY-results NxFNp."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(
+            conn,
+            "12340",
+            "2026-05-01",
+            "FYFinancialStatements_Consolidated_IFRS",
+            "FY",
+            nx_fnp="600",
+        )
+        self._insert(
+            conn,
+            "12340",
+            "2026-08-01",
+            "3QFinancialStatements_Consolidated_IFRS",
+            "3Q",
+            fnp="650",
+        )
+        conn.commit()
+
+        result = store.get_forward_np_map()
+        assert result.get("12340") == (650.0, "2026-08-01")
+        store.close()
+
+    def test_stale_forecast_rejected_by_fy_guard(self, tmp_path: Path) -> None:
+        """A newer FY-results row without guidance rejects the stale quarterly FNP."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(
+            conn,
+            "12340",
+            "2026-05-01",
+            "3QFinancialStatements_Consolidated_IFRS",
+            "3Q",
+            fnp="650",
+        )
+        self._insert(
+            conn,
+            "12340",
+            "2026-08-01",
+            "FYFinancialStatements_Consolidated_IFRS",
+            "FY",
+            fnp="",
+            nx_fnp="",
+        )
+        conn.commit()
+
+        result = store.get_forward_np_map()
+        assert "12340" not in result
+        store.close()
+
+    def test_negative_forecast_kept(self, tmp_path: Path) -> None:
+        """A loss forecast (negative NxFNp) is retained, unlike the dividend map."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(
+            conn,
+            "12340",
+            "2026-05-01",
+            "FYFinancialStatements_Consolidated_IFRS",
+            "FY",
+            nx_fnp="-100",
+        )
+        conn.commit()
+
+        result = store.get_forward_np_map()
+        assert result.get("12340") == (-100.0, "2026-05-01")
+        store.close()
+
+    def test_empty_strings_absent(self, tmp_path: Path) -> None:
+        """A row with both FNP and NxFNp empty yields no entry."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(
+            conn,
+            "12340",
+            "2026-05-01",
+            "FYFinancialStatements_Consolidated_IFRS",
+            "FY",
+            fnp="",
+            nx_fnp="",
+            np="500",
+        )
+        conn.commit()
+
+        result = store.get_forward_np_map()
+        assert "12340" not in result
+        store.close()
+
+    def test_as_of_date_bound(self, tmp_path: Path) -> None:
+        """as_of_date restricts selection to disclosures on or before the bound."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        # Both quarterly so the fy_latest guard is not involved (deterministic).
+        self._insert(
+            conn,
+            "12340",
+            "2026-01-10",
+            "3QFinancialStatements_Consolidated_IFRS",
+            "3Q",
+            fnp="100",
+        )
+        self._insert(
+            conn,
+            "12340",
+            "2026-03-10",
+            "3QFinancialStatements_Consolidated_IFRS",
+            "3Q",
+            fnp="200",
+        )
+        conn.commit()
+
+        assert store.get_forward_np_map(as_of_date="2026-02-01").get("12340") == (
+            100.0,
+            "2026-01-10",
+        )
+        assert store.get_forward_np_map().get("12340") == (200.0, "2026-03-10")
+        store.close()
+
+    def test_same_day_fy_pair_coalesce(self, tmp_path: Path) -> None:
+        """Same-day FY-results + forecast-revision rows: MAX(NxFNp) wins via COALESCE."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(
+            conn,
+            "12340",
+            "2026-05-01",
+            "FYFinancialStatements_Consolidated_IFRS",
+            "FY",
+            fnp="",
+            nx_fnp="600",
+        )
+        self._insert(
+            conn,
+            "12340",
+            "2026-05-01",
+            "EarnForecastRevision",
+            "FY",
+            fnp="580",
+            nx_fnp="",
+        )
+        conn.commit()
+
+        result = store.get_forward_np_map()
+        assert result.get("12340") == (600.0, "2026-05-01")
+        store.close()
+
+
+class TestGetAllLatestFyFinsResultsOnly:
+    """get_all_latest_fy_fins: results_only filters to annual-RESULTS filings."""
+
+    def _insert(
+        self,
+        conn: sqlite3.Connection,
+        code: str,
+        disc_date: str,
+        doc_type: str,
+        cur_per_type: str,
+        *,
+        eps: str | None = None,
+        sales: str | None = None,
+    ) -> None:
+        import json
+
+        # doc_type PK column mirrors the JSON DocType (which drives is_fy /
+        # is_fy_results) so distinct filings on the same day do not collide.
+        data: dict[str, object] = {
+            "Code": code,
+            "DiscDate": disc_date[:10],
+            "DocType": doc_type,
+            "CurPerType": cur_per_type,
+        }
+        if eps is not None:
+            data["EPS"] = eps
+        if sales is not None:
+            data["Sales"] = sales
+        conn.execute(
+            "INSERT OR REPLACE INTO fins_summary"
+            " (code, disc_date, doc_type, data, fetched_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (code, disc_date, doc_type, json.dumps(data), time.time()),
+        )
+
+    def test_results_only_skips_newer_revision(self, tmp_path: Path) -> None:
+        """Default returns the newest FY-flagged row; results_only returns FY statements."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(
+            conn,
+            "12340",
+            "2026-05-01",
+            "FYFinancialStatements_Consolidated_IFRS",
+            "FY",
+            eps="150.5",
+            sales="1000",
+        )
+        # Newer FY-flagged row (CurPerType='FY' -> is_fy=1) but not a results
+        # filing, so it carries no EPS.
+        self._insert(
+            conn,
+            "12340",
+            "2026-06-01",
+            "DividendForecastRevision",
+            "FY",
+        )
+        conn.commit()
+
+        default = store.get_all_latest_fy_fins()
+        assert default["12340"]["DocType"] == "DividendForecastRevision"
+        assert "EPS" not in default["12340"]
+
+        results = store.get_all_latest_fy_fins(results_only=True)
+        assert results["12340"]["DocType"] == "FYFinancialStatements_Consolidated_IFRS"
+        assert results["12340"]["EPS"] == "150.5"
+        store.close()
+
+    def test_results_only_absent_when_only_revisions(self, tmp_path: Path) -> None:
+        """results_only=True omits codes whose only FY rows are revisions."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(
+            conn,
+            "12340",
+            "2026-06-01",
+            "DividendForecastRevision",
+            "FY",
+        )
+        conn.commit()
+
+        assert "12340" in store.get_all_latest_fy_fins()
+        assert "12340" not in store.get_all_latest_fy_fins(results_only=True)
+        store.close()
+
+    def test_results_only_honors_as_of_date(self, tmp_path: Path) -> None:
+        """results_only=True returns the older FY row when the newer is beyond as_of_date."""
+        store = CacheStore(tmp_path / "cache.db", default_plan="standard")
+        conn = store._ensure_connection()
+        self._insert(
+            conn,
+            "12340",
+            "2026-05-01",
+            "FYFinancialStatements_Consolidated_IFRS",
+            "FY",
+            eps="10",
+        )
+        self._insert(
+            conn,
+            "12340",
+            "2026-08-01",
+            "FYFinancialStatements_Consolidated_IFRS",
+            "FY",
+            eps="20",
+        )
+        conn.commit()
+
+        result = store.get_all_latest_fy_fins(as_of_date="2026-06-01", results_only=True)
+        assert result["12340"]["EPS"] == "10"
+        assert result["12340"]["DiscDate"] == "2026-05-01"
+        store.close()
+
+
 class TestGetSplitEventsByCode:
     """get_split_events_by_code のテスト。"""
 

@@ -963,6 +963,103 @@ class CacheStore:
                 result[code] = (val, disc_date)
         return result
 
+    def get_forward_np_map(
+        self,
+        as_of_date: str | None = None,
+    ) -> dict[str, tuple[float, str]]:
+        """Return forward net-profit forecast per code: NxFNp > FNP.
+
+        Mirrors get_forward_div_ann_map for net profit.  Picks the most recent
+        disclosure per code where FNP or NxFNp is non-empty, with NxFNp taking
+        priority.  NxFNp is only present in annual (FY) earnings filings and
+        always represents the NEXT fiscal year forecast; on those rows FNP is
+        empty.  At mid-year filings NxFNp is absent, so FNP (the current-FY
+        forecast, revised quarterly) is used as the fallback.  NP/FNP/NxFNp are
+        absolute company-level amounts and never need split adjustment.
+
+        Args:
+            as_of_date: Upper bound for disc_date (YYYY-MM-DD).  When supplied,
+                only disclosures on or before this date are considered, which
+                prevents lookahead bias in back-tests.  Defaults to all data.
+
+        Returns {code: (forecast_np, disc_date)} for codes with forward
+        guidance.  Unlike the dividend map, negative values are kept — a loss
+        forecast is valid guidance (callers compare against the FY actual).
+        Returns an empty dict when the table is missing or the connection is unavailable.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return {}
+        # Same bound handling as get_forward_div_ann_map: applied to BOTH the
+        # fy_latest CTE and inner subquery m, folding in the plan window.
+        plan_min, plan_max = self._plan_bounds()
+        upper = as_of_date
+        if plan_max and (upper is None or upper > plan_max):
+            upper = plan_max
+        bound_clause = ""
+        _bound_params: list[str] = []
+        if upper:
+            bound_clause += "  AND substr(disc_date, 1, 10) <= ? "
+            _bound_params.append(upper)
+        if plan_min:
+            bound_clause += "  AND substr(disc_date, 1, 10) >= ? "
+            _bound_params.append(plan_min)
+        # The bound is interpolated twice (fy_latest CTE + subquery m).
+        params = tuple(_bound_params * 2)
+        try:
+            # COALESCE(MAX(NxFNp), MAX(FNP)) resolves same-day row pairs the
+            # same way as the dividend map: at annual results the FY row has
+            # NxFNp=<next-FY forecast>, FNP='', so MAX(NxFNp) wins; at mid-year
+            # filings only FNP exists and COALESCE falls back to it.
+            #
+            # The fy_latest guard rejects stale forecasts: when the newest
+            # FYFinancialStatements row carries no guidance (NxFNp=''), the
+            # subquery would otherwise fall back to an older Q-report's FNP
+            # that targets the already-reported fiscal year.
+            rows = conn.execute(
+                "WITH fy_latest AS ("
+                "  SELECT code, MAX(substr(disc_date, 1, 10)) AS fy_md "
+                "  FROM fins_summary "
+                "  WHERE is_fy_results = 1"
+                f"{bound_clause}"
+                "  GROUP BY code"
+                ") "
+                "SELECT f.code, "
+                "  COALESCE("
+                "    MAX(CAST(NULLIF(json_extract(f.data, '$.NxFNp'), '') AS REAL)),"
+                "    MAX(CAST(NULLIF(json_extract(f.data, '$.FNP'), '') AS REAL))"
+                "  ) AS np_fwd, m.md "
+                "FROM fins_summary f "
+                "JOIN ("
+                "  SELECT code, MAX(substr(disc_date, 1, 10)) AS md "
+                "  FROM fins_summary "
+                "  WHERE COALESCE("
+                "    NULLIF(json_extract(data, '$.NxFNp'), ''), "
+                "    NULLIF(json_extract(data, '$.FNP'), '')"
+                "  ) IS NOT NULL "
+                f"{bound_clause}"
+                "  GROUP BY code"
+                ") m ON f.code = m.code AND substr(f.disc_date, 1, 10) = m.md "
+                "LEFT JOIN fy_latest fl ON f.code = fl.code "
+                "GROUP BY f.code, m.md "
+                "HAVING np_fwd IS NOT NULL "
+                "  AND (fl.fy_md IS NULL OR fl.fy_md <= m.md)",
+                params,
+            ).fetchall()
+        except Exception:
+            return {}
+        result: dict[str, tuple[float, str]] = {}
+        for row in rows:
+            code = str(row[0] or "")
+            disc_date = str(row[2] or "")
+            try:
+                val = float(row[1])
+            except (TypeError, ValueError):
+                continue
+            if code and disc_date:
+                result[code] = (val, disc_date)
+        return result
+
     def get_split_factors_after(self, code_disc_dates: dict[str, str]) -> dict[str, float]:
         """Return cumulative split adjustment factors for multiple codes.
 
@@ -1474,6 +1571,7 @@ class CacheStore:
     def get_all_latest_fy_fins(
         self,
         as_of_date: str | None = None,
+        results_only: bool = False,
     ) -> dict[str, dict]:
         """Return the most recent FY financial-summary row for every code in fins_summary.
 
@@ -1485,6 +1583,13 @@ class CacheStore:
             as_of_date: Upper bound for disc_date (YYYY-MM-DD).  When supplied,
                 only disclosures on or before this date are considered, which
                 prevents lookahead bias in back-tests.  Defaults to all data.
+            results_only: When True, restrict to annual-RESULTS filings
+                (is_fy_results = 1, i.e. DocType LIKE 'FYFinancial%').  The
+                default False also matches forecast/dividend-revision documents
+                that share CurPerType='FY' but carry no EPS/BPS/NP — when such
+                a revision is a code's newest FY-flagged disclosure, that code's
+                row lacks those fields.  Pass True when the caller needs the
+                actual statement figures.
 
         Returns:
             Mapping of 5-digit code to raw JSON dict (as stored in the cache).
@@ -1493,10 +1598,11 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return {}
-        # Filter on the is_fy generated column (schema.migrate_add_fins_indexes)
-        # so the partial index idx_fs_is_fy is used instead of a full scan; the
-        # column encodes the same 4-way FY test inline-OR'd here before.
-        _fy_cond = "is_fy = 1"
+        # Filter on the is_fy / is_fy_results generated columns
+        # (schema.migrate_add_fins_indexes) so the partial indexes idx_fs_is_fy /
+        # idx_fs_fy_results are used instead of a full scan; is_fy encodes the
+        # same 4-way FY test inline-OR'd here before.
+        _fy_cond = "is_fy_results = 1" if results_only else "is_fy = 1"
         # Clamp the upper bound to the plan window so a lower-tier plan's "latest
         # FY" is the latest disclosure within its entitled window.
         plan_min, plan_max = self._plan_bounds()

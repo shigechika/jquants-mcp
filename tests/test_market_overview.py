@@ -70,6 +70,9 @@ def _insert_bar(
     adj_c: float,
     vo: int = 1000,
     c: float | None = None,
+    adj_h: float | None = None,
+    adj_l: float | None = None,
+    adj_factor: float = 1.0,
 ) -> None:
     data = {
         "Code": code,
@@ -81,10 +84,17 @@ def _insert_bar(
         "AdjC": adj_c,
         "Vo": vo,
         "Va": adj_c * vo,
-        "AdjFactor": 1.0,
+        "AdjFactor": adj_factor,
         "UL": 0,
         "LL": 0,
     }
+    # AdjH / AdjL are written only when supplied so existing callers keep their
+    # exact payload; screener_compute.compute_high_low_signals needs both to
+    # emit a 52-week high/low signal for a code.
+    if adj_h is not None:
+        data["AdjH"] = adj_h
+    if adj_l is not None:
+        data["AdjL"] = adj_l
     conn.execute(
         "INSERT OR REPLACE INTO equities_bars_daily (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
         (code, date, json.dumps(data), 0.0),
@@ -966,6 +976,10 @@ class TestGetMarketBriefing:
         assert "trend_signals" in data
         assert "distribution" in data["trend_signals"]
         assert "follow_through" in data["trend_signals"]
+        # value_screen key always present; fail-soft to None because briefing_cache
+        # has no fins_summary rows, so the sub-tool returns CacheNotReady.
+        assert "value_screen" in data
+        assert data["value_screen"] is None
 
     @pytest.mark.asyncio
     async def test_advances_declines_match(self, mock_briefing):
@@ -1040,15 +1054,24 @@ class TestGetMarketBriefing:
         equities_calls = [
             c for c in spy.call_args_list if c.args and c.args[0] == "equities_bars_daily"
         ]
-        # Expected breakdown (total == 4):
+        # Expected breakdown (total == 5):
         #   1  wide ADR fetch from the main computation
         #   3  screener sub-tool reads: detect_ytd_high_low, detect_volume_surge,
         #      detect_price_limit (each issues its own get_rows via mcp.call_tool)
-        # Before this refactor the main path alone issued 5+ redundant reads
+        #   1  value_screen sub-tool: its single-date bars fetch (date_from ==
+        #      date_to == norm_date). It runs behind the mcp.call_tool boundary,
+        #      so it cannot share the briefing's pre-fetched bars; this one read
+        #      (plus per-candidate stage-2 52w reads only when candidates exist)
+        #      is amortized by the sub-tool's own 1h plan-keyed Tier2 cache and is
+        #      accepted intended behavior. Here briefing_cache has no fins_summary
+        #      rows, so it returns CacheNotReady right after that single read.
+        # The invariant still guards the real N+1 regression this test exists for:
+        # per-date/per-code fetch explosions in the briefing's own sections.
+        # Before that refactor the main path alone issued 5+ redundant reads
         # (one per advance/decline, sector, top-movers-up, top-movers-down,
         # top-turnover); grand total was 8+.
-        assert len(equities_calls) == 4, (
-            f"expected exactly 4 get_rows('equities_bars_daily') calls, "
+        assert len(equities_calls) == 5, (
+            f"expected exactly 5 get_rows('equities_bars_daily') calls, "
             f"got {len(equities_calls)}: {[str(c) for c in equities_calls]}"
         )
 
@@ -3287,3 +3310,597 @@ class TestGetValuationRanking:
             result = await server_module.mcp.call_tool("get_valuation_ranking", {})
         data = _call(result)
         assert data["error_type"] == "CacheNotReady"
+
+
+# ---------------------------------------------------------------------------
+# get_value_stock_screen
+# ---------------------------------------------------------------------------
+
+# The latest session shared by every value-screen fixture. A Friday, so the
+# Saturday 2026-05-02 sits between the Friday 2026-05-01 and Monday 2026-05-04
+# sessions and never carries a bar of its own (used by the clamp test).
+_VS_TODAY = "2026-05-08"
+
+
+def _vs_sessions(n: int = 70, end: str = _VS_TODAY) -> list[str]:
+    """Return n weekday (Mon-Fri) session dates ending at end (oldest first).
+
+    The 52-week-low stage needs >= 60 prior sessions, so the default 70 keeps
+    every session in the window — including 2026-05-01, six sessions back — above
+    that floor.
+    """
+    d = date.fromisoformat(end)
+    out: list[str] = []
+    while len(out) < n:
+        if d.weekday() < 5:
+            out.append(d.isoformat())
+        d -= timedelta(days=1)
+    return list(reversed(out))
+
+
+def _vs_make_cache(tmp_path: Path) -> tuple[CacheStore, sqlite3.Connection]:
+    """Create a premium CacheStore plus an open raw connection for seeding.
+
+    fins_summary is created with only the base columns; CacheStore adds the
+    is_fy / is_fy_results generated columns on first connect, which happens
+    lazily when the tool runs — after this connection has been committed and
+    closed. Mirrors the dividend-yield fixtures.
+    """
+    cache = _make_cache(tmp_path)
+    conn = sqlite3.connect(str(tmp_path / "cache.db"))
+    conn.execute(
+        "CREATE TABLE fins_summary "
+        "(code TEXT NOT NULL, disc_date TEXT NOT NULL, "
+        "data TEXT, fetched_at REAL, PRIMARY KEY (code, disc_date))"
+    )
+    return cache, conn
+
+
+def _vs_insert_master(
+    conn: sqlite3.Connection,
+    code: str,
+    name: str,
+    *,
+    mkt: str = "111",
+    mkt_nm: str = "プライム",
+    s33: str = "0050",
+    s33_nm: str = "水産・農林業",
+) -> None:
+    """Insert an equities_master row using the keys get_sector_map reads.
+
+    get_sector_map pulls market/sector from Mkt / MktNm / S33 / S33Nm, so those
+    exact keys are required for the market/sector filters to resolve.
+    """
+    data = {
+        "Code": code,
+        "Date": _VS_TODAY,
+        "CoName": name,
+        "CoNameEn": name + " Co",
+        "Mkt": mkt,
+        "MktNm": mkt_nm,
+        "S33": s33,
+        "S33Nm": s33_nm,
+    }
+    conn.execute(
+        "INSERT OR REPLACE INTO equities_master (code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+        (code, _VS_TODAY, json.dumps(data), 0.0),
+    )
+
+
+def _vs_insert_fins(
+    conn: sqlite3.Connection,
+    code: str,
+    *,
+    disc_date: str = "2026-05-01",
+    doc_type: str = "FYFinancialStatements_Consolidated_IFRS",
+    eps: str | None = "100",
+    bps: str | None = "1300",
+    np: str | None = "500",
+    nxfnp: str | None = "600",
+    fnp: str | None = "",
+    nxfdivann: str | None = "40",
+    fdivann: str | None = "",
+) -> None:
+    """Insert one FY fins_summary row.
+
+    Values are raw J-Quants JSON strings (the tool parses them with _as_float).
+    A field whose value is None is omitted entirely, so an absent forecast is
+    genuinely absent rather than an empty string. DocType 'FYFinancial...' makes
+    the generated is_fy_results column 1 so get_all_latest_fy_fins and the
+    forward maps can see the row.
+    """
+    data: dict = {"Code": code, "DiscDate": disc_date, "DocType": doc_type, "CurPerType": "FY"}
+    for key, val in (
+        ("EPS", eps),
+        ("BPS", bps),
+        ("NP", np),
+        ("NxFNp", nxfnp),
+        ("FNP", fnp),
+        ("NxFDivAnn", nxfdivann),
+        ("FDivAnn", fdivann),
+    ):
+        if val is not None:
+            data[key] = val
+    conn.execute(
+        "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
+        (code, disc_date, json.dumps(data), 0.0),
+    )
+
+
+def _vs_insert_history(
+    conn: sqlite3.Connection,
+    code: str,
+    sessions: list[str],
+    *,
+    prior_c: float = 1000.0,
+    prior_l: float = 990.0,
+    prior_h: float = 1010.0,
+    today_c: float = 1010.0,
+    today_l: float = 1005.0,
+    today_h: float = 1015.0,
+    today_factor: float = 1.0,
+) -> None:
+    """Insert a bar history: every session but the last at prior_*, the last at today_*.
+
+    All bars carry AdjH/AdjL, which compute_high_low_signals needs to emit a
+    52-week signal. today_factor sets the last bar's AdjFactor so
+    get_split_factors_after picks it up (bars at AdjFactor 1.0 are neutral and
+    skipped by the split reader).
+    """
+    for d in sessions[:-1]:
+        _insert_bar(conn, code, d, prior_c, adj_h=prior_h, adj_l=prior_l)
+    _insert_bar(
+        conn,
+        code,
+        sessions[-1],
+        today_c,
+        adj_h=today_h,
+        adj_l=today_l,
+        adj_factor=today_factor,
+    )
+
+
+async def _vs_run(cache: CacheStore, params: dict) -> dict:
+    """Invoke get_value_stock_screen against cache with the server globals patched."""
+    with (
+        patch.object(
+            server_module, "_settings", Settings(jquants_api_key="", jquants_plan="premium")
+        ),
+        patch.object(server_module, "_cache", cache),
+        patch.object(server_module, "_client", None),
+    ):
+        result = await server_module.mcp.call_tool("get_value_stock_screen", params)
+    return _call(result)
+
+
+class TestGetValueStockScreen:
+    """Tests for the get_value_stock_screen tool."""
+
+    @pytest.fixture()
+    def value_screen_cache(self, tmp_path):
+        """One fully-qualifying stock '13010' sitting near its 52-week low.
+
+        prior bars 1000 (low 990 / high 1010); today close 1010 / low 1005 ->
+        low_52w 990, ~2.02% above it; EPS 100 (PER 10.1), BPS 1300 (PBR 0.78),
+        NxFDivAnn 40 (yield ~3.96%), NP 500 with NxFNp 600 (increase forecast).
+        """
+        cache, conn = _vs_make_cache(tmp_path)
+        _vs_insert_history(conn, "13010", _vs_sessions())
+        _vs_insert_master(conn, "13010", "年安割安A")
+        _vs_insert_fins(conn, "13010")
+        conn.commit()
+        conn.close()
+        return cache
+
+    @pytest.fixture()
+    def mock_value_screen_server(self, value_screen_cache):
+        with (
+            patch.object(
+                server_module, "_settings", Settings(jquants_api_key="", jquants_plan="premium")
+            ),
+            patch.object(server_module, "_cache", value_screen_cache),
+            patch.object(server_module, "_client", None),
+        ):
+            yield server_module.mcp
+
+    @pytest.mark.asyncio
+    async def test_all_criteria_match_basic_shape(self, mock_value_screen_server):
+        result = await mock_value_screen_server.call_tool("get_value_stock_screen", {})
+        data = _call(result)
+        assert data["date"] == _VS_TODAY
+        assert data["count"] == 1
+        assert data["total_matches"] == 1
+        # All eight tunables are echoed at their defaults.
+        assert data["criteria"] == {
+            "near_low_pct": 5.0,
+            "max_per": 15.0,
+            "max_pbr": 1.0,
+            "min_yield": 3.5,
+            "require_profit_increase": True,
+            "disc_months": 18,
+            "market": None,
+            "sector": None,
+        }
+        item = data["items"][0]
+        assert item["code"] == "1301"
+        assert item["name"] == "年安割安A"
+        assert item["market"] == "プライム"
+        assert item["sector"] == "水産・農林業"
+        assert item["close"] == pytest.approx(1010.0)
+        assert item["per"] == pytest.approx(10.1)
+        assert item["pbr"] == pytest.approx(0.78)
+        assert item["yield_pct"] == pytest.approx(3.9604)
+        assert item["div_ann"] == pytest.approx(40.0)
+        assert item["fins_disc_date"] == "2026-05-01"
+        assert item["div_disc_date"] == "2026-05-01"
+        assert item["forecast_disc_date"] == "2026-05-01"
+        assert item["net_profit"] == pytest.approx(500.0)
+        assert item["forecast_net_profit"] == pytest.approx(600.0)
+        assert item["profit_change_pct"] == pytest.approx(20.0)
+        assert item["low_52w"] == pytest.approx(990.0)
+        assert item["pct_above_52w_low"] == pytest.approx(2.02)
+        assert item["new_low_52w"] is False
+
+    @pytest.mark.asyncio
+    async def test_far_from_low_excluded(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        # Same fundamentals (close 1010 -> PER/PBR/yield all pass) but the 52-week
+        # low sits far below (prior low 690), so the close is ~46% above it.
+        _vs_insert_history(
+            conn,
+            "13010",
+            _vs_sessions(),
+            prior_c=700.0,
+            prior_l=690.0,
+            prior_h=710.0,
+            today_c=1010.0,
+            today_l=1005.0,
+            today_h=1015.0,
+        )
+        _vs_insert_master(conn, "13010", "遠値A")
+        _vs_insert_fins(conn, "13010")
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 0
+        assert data["total_matches"] == 0
+        assert data["items"] == []
+        assert "hint" in data
+
+    @pytest.mark.asyncio
+    async def test_new_low_touch_included_despite_bounce(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        # today low 980 breaks the prior low 990 (fresh 52-week low) while the
+        # close bounced to 1058 (~8% above the 980 low, past near_low_pct=5) ->
+        # kept via the new_low branch of the OR.
+        _vs_insert_history(
+            conn,
+            "13010",
+            _vs_sessions(),
+            prior_c=1000.0,
+            prior_l=990.0,
+            prior_h=1010.0,
+            today_c=1058.0,
+            today_l=980.0,
+            today_h=1060.0,
+        )
+        _vs_insert_master(conn, "13010", "新安値A")
+        _vs_insert_fins(conn, "13010")
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["new_low_52w"] is True
+        assert item["low_52w"] == pytest.approx(980.0)
+        assert item["pct_above_52w_low"] == pytest.approx(7.96)
+
+    @pytest.mark.asyncio
+    async def test_per_filter(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        today = _vs_sessions()[-1]
+        # All three fail the PER gate before the 52-week-low stage, so a single
+        # today bar (no history) is enough. 60 -> PER 16.83 >= 15; 0 and -50 ->
+        # PER is None (net loss / zero earnings).
+        for code, eps in (("13010", "60"), ("13020", "0"), ("13030", "-50")):
+            _insert_bar(conn, code, today, 1010.0)
+            _vs_insert_master(conn, code, "PER" + code)
+            _vs_insert_fins(conn, code, eps=eps)
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_pbr_filter(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        today = _vs_sessions()[-1]
+        # 1000 -> PBR 1.01 >= 1; -100 -> PBR is None (negative book value).
+        for code, bps in (("13010", "1000"), ("13020", "-100")):
+            _insert_bar(conn, code, today, 1010.0)
+            _vs_insert_master(conn, code, "PBR" + code)
+            _vs_insert_fins(conn, code, bps=bps)
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_yield_filter_and_forward_priority(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        sessions = _vs_sessions()
+        # 13010: both FDivAnn 20 and NxFDivAnn 40 -> uses 40 (forward priority) ->
+        # 3.96% >= 3.5 -> included.
+        _vs_insert_history(conn, "13010", sessions)
+        _vs_insert_master(conn, "13010", "優先配当A")
+        _vs_insert_fins(conn, "13010", fdivann="20", nxfdivann="40")
+        # 13020: no NxFDivAnn, only FDivAnn 20 -> 20/1010 ~ 1.98% < 3.5 -> excluded
+        # at the yield gate, before the 52-week-low stage (one bar suffices).
+        _insert_bar(conn, "13020", sessions[-1], 1010.0)
+        _vs_insert_master(conn, "13020", "低配当B")
+        _vs_insert_fins(conn, "13020", nxfdivann=None, fdivann="20")
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["code"] == "1301"
+        assert item["div_ann"] == pytest.approx(40.0)
+
+    @pytest.mark.asyncio
+    async def test_profit_filter(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        sessions = _vs_sessions()
+        # 13010: forecast 400 < actual 500 (decrease). 13020: no forward NP at all.
+        _vs_insert_history(conn, "13010", sessions)
+        _vs_insert_master(conn, "13010", "減益A")
+        _vs_insert_fins(conn, "13010", np="500", nxfnp="400", fnp="")
+        _vs_insert_history(conn, "13020", sessions)
+        _vs_insert_master(conn, "13020", "予想無B")
+        _vs_insert_fins(conn, "13020", np="500", nxfnp=None, fnp=None)
+        conn.commit()
+        conn.close()
+        # Default require_profit_increase=True excludes both.
+        data = await _vs_run(cache, {})
+        assert data["count"] == 0
+        # With the requirement off, both come back; fields stay populated / None.
+        data2 = await _vs_run(cache, {"require_profit_increase": False})
+        assert data2["count"] == 2
+        by_code = {i["code"]: i for i in data2["items"]}
+        assert by_code["1301"]["forecast_net_profit"] == pytest.approx(400.0)
+        assert by_code["1301"]["profit_change_pct"] == pytest.approx(-20.0)
+        assert by_code["1302"]["forecast_net_profit"] is None
+        assert by_code["1302"]["profit_change_pct"] is None
+        assert by_code["1302"]["net_profit"] == pytest.approx(500.0)
+
+    @pytest.mark.asyncio
+    async def test_turnaround_included(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        # Loss -50 turning to a +10 forecast: the increase requirement holds, but
+        # profit_change_pct is None because the actual base is not positive.
+        _vs_insert_history(conn, "13010", _vs_sessions())
+        _vs_insert_master(conn, "13010", "黒字転換A")
+        _vs_insert_fins(conn, "13010", np="-50", nxfnp="10")
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["net_profit"] == pytest.approx(-50.0)
+        assert item["forecast_net_profit"] == pytest.approx(10.0)
+        assert item["profit_change_pct"] is None
+
+    @pytest.mark.asyncio
+    async def test_reit_excluded(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        today = _vs_sessions()[-1]
+        # Otherwise-qualifying fundamentals, but a REIT DocType is excluded.
+        _insert_bar(conn, "13010", today, 1010.0)
+        _vs_insert_master(conn, "13010", "REIT法人")
+        _vs_insert_fins(conn, "13010", doc_type="FYFinancialStatements_REIT")
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_stale_disclosure_excluded(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        today = _vs_sessions()[-1]
+        # Disclosure far older than 18*31 days before 2026-05-08 -> excluded.
+        _insert_bar(conn, "13010", today, 1010.0)
+        _vs_insert_master(conn, "13010", "旧開示A")
+        _vs_insert_fins(conn, "13010", disc_date="2024-01-01")
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_short_history_excluded(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        # Only ~10 sessions -> fewer than DEFAULT_MIN_PRIOR_SESSIONS (60) priors ->
+        # dropped in stage 2 even though the cheap filters all pass.
+        _vs_insert_history(conn, "13010", _vs_sessions(10))
+        _vs_insert_master(conn, "13010", "短命A")
+        _vs_insert_fins(conn, "13010")
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_split_adjustment(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        # Raw EPS/BPS/NxFDivAnn are 5x pre-split; a post-disclosure bar carries
+        # AdjFactor 0.2, so the split-adjusted PER/PBR/yield land on the baseline
+        # stock's values and the stock is included.
+        _vs_insert_history(conn, "13010", _vs_sessions(), today_factor=0.2)
+        _vs_insert_master(conn, "13010", "分割A")
+        _vs_insert_fins(conn, "13010", eps="500", bps="6500", nxfdivann="200")
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["per"] == pytest.approx(10.1)
+        assert item["pbr"] == pytest.approx(0.78)
+        assert item["yield_pct"] == pytest.approx(3.9604)
+        assert item["div_ann"] == pytest.approx(40.0)
+
+    @pytest.mark.asyncio
+    async def test_sort_yield_desc(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        sessions = _vs_sessions()
+        _vs_insert_history(conn, "13010", sessions)
+        _vs_insert_master(conn, "13010", "利回り低A")
+        _vs_insert_fins(conn, "13010", nxfdivann="40")  # ~3.96%
+        _vs_insert_history(conn, "13020", sessions)
+        _vs_insert_master(conn, "13020", "利回り高B")
+        _vs_insert_fins(conn, "13020", nxfdivann="50")  # ~4.95%
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 2
+        assert data["items"][0]["code"] == "1302"
+        assert data["items"][1]["code"] == "1301"
+
+    @pytest.mark.asyncio
+    async def test_n_truncation(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        sessions = _vs_sessions()
+        _vs_insert_history(conn, "13010", sessions)
+        _vs_insert_master(conn, "13010", "A")
+        _vs_insert_fins(conn, "13010", nxfdivann="40")
+        _vs_insert_history(conn, "13020", sessions)
+        _vs_insert_master(conn, "13020", "B")
+        _vs_insert_fins(conn, "13020", nxfdivann="50")
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {"n": 1})
+        assert data["count"] == 1
+        assert data["total_matches"] == 2
+        assert len(data["items"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_market_and_sector_filter(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        sessions = _vs_sessions()
+        # 13010: prime / S33 0050. 13020: standard / S33 3300.
+        _vs_insert_history(conn, "13010", sessions)
+        _vs_insert_master(conn, "13010", "プライムA", mkt="111", s33="0050")
+        _vs_insert_fins(conn, "13010")
+        _vs_insert_history(conn, "13020", sessions)
+        _vs_insert_master(
+            conn,
+            "13020",
+            "スタンダードB",
+            mkt="112",
+            mkt_nm="スタンダード",
+            s33="3300",
+            s33_nm="銀行業",
+        )
+        _vs_insert_fins(conn, "13020")
+        conn.commit()
+        conn.close()
+        # market filter keeps only the prime-listed stock.
+        market_data = await _vs_run(cache, {"market": "prime"})
+        assert market_data["count"] == 1
+        assert market_data["items"][0]["code"] == "1301"
+        # sector filter keeps only the S33 3300 stock.
+        sector_data = await _vs_run(cache, {"sector": "3300"})
+        assert sector_data["count"] == 1
+        assert sector_data["items"][0]["code"] == "1302"
+
+    @pytest.mark.asyncio
+    async def test_validation_errors(self, mock_value_screen_server):
+        bad_params = [
+            {"near_low_pct": -1},
+            {"max_per": 0},
+            {"max_pbr": -1},
+            {"n": 0},
+            {"market": "nasdaq"},
+            {"date": "bad"},
+        ]
+        for params in bad_params:
+            result = await mock_value_screen_server.call_tool("get_value_stock_screen", params)
+            data = _call(result)
+            assert data["error"] is True, params
+            assert data["error_type"] == "ValidationError", params
+
+    @pytest.mark.asyncio
+    async def test_date_default_and_clamp(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        _vs_insert_history(conn, "13010", _vs_sessions())
+        _vs_insert_master(conn, "13010", "年安割安A")
+        _vs_insert_fins(conn, "13010")
+        conn.commit()
+        conn.close()
+        # Omitting date resolves to the latest session.
+        default_data = await _vs_run(cache, {})
+        assert default_data["date"] == "2026-05-08"
+        assert default_data["count"] == 1
+        assert default_data["items"][0]["code"] == "1301"
+        # Saturday 2026-05-02 clamps back to the Friday 2026-05-01 session and
+        # yields the same payload as asking for the Friday directly.
+        sat_data = await _vs_run(cache, {"date": "2026-05-02"})
+        fri_data = await _vs_run(cache, {"date": "2026-05-01"})
+        assert sat_data["date"] == "2026-05-01"
+        assert sat_data == fri_data
+        # A far-future date is not yet available.
+        future_data = await _vs_run(cache, {"date": "2027-01-01"})
+        assert future_data["error_type"] == "CacheNotReady"
+
+    @pytest.mark.asyncio
+    async def test_empty_result_hint_and_cached(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        _vs_insert_history(conn, "13010", _vs_sessions())
+        _vs_insert_master(conn, "13010", "年安割安A")
+        _vs_insert_fins(conn, "13010")
+        conn.commit()
+        conn.close()
+        # An impossible yield floor -> no matches, hint present.
+        first = await _vs_run(cache, {"min_yield": 50})
+        assert first["count"] == 0
+        assert first["items"] == []
+        assert "hint" in first
+        # A second identical call returns the cached (empty) payload verbatim.
+        second = await _vs_run(cache, {"min_yield": 50})
+        assert second == first
+
+    @pytest.mark.asyncio
+    async def test_response_cache_hit(self, mock_value_screen_server):
+        first = await mock_value_screen_server.call_tool("get_value_stock_screen", {})
+        second = await mock_value_screen_server.call_tool("get_value_stock_screen", {})
+        assert _call(first) == _call(second)
+
+
+class TestGetMarketBriefingValueScreen:
+    """get_market_briefing surfaces the value_screen section when it is available."""
+
+    @pytest.fixture()
+    def briefing_vs_cache(self, tmp_path):
+        cache, conn = _vs_make_cache(tmp_path)
+        _vs_insert_history(conn, "13010", _vs_sessions())
+        _vs_insert_master(conn, "13010", "年安割安A")
+        _vs_insert_fins(conn, "13010")
+        conn.commit()
+        conn.close()
+        return cache
+
+    @pytest.mark.asyncio
+    async def test_value_screen_populated(self, briefing_vs_cache):
+        with (
+            patch.object(
+                server_module, "_settings", Settings(jquants_api_key="", jquants_plan="premium")
+            ),
+            patch.object(server_module, "_cache", briefing_vs_cache),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool("get_market_briefing", {"date": _VS_TODAY})
+        data = _call(result)
+        assert data.get("error") is not True
+        vs = data["value_screen"]
+        assert vs is not None
+        assert vs["count"] >= 1
+        assert "1301" in [item["code"] for item in vs["items"]]
