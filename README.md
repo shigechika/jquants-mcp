@@ -620,16 +620,16 @@ On first use, Claude Desktop opens a browser window for GitHub OAuth. After auth
 
 | Tool | Endpoint | Plan | Description |
 |---|---|---|---|
-| `get_indices_bars_daily` | `/indices/bars/daily` | Free+ | Index daily prices |
-| `get_indices_bars_daily_topix` | `/indices/bars/daily/topix` | Free+ | TOPIX daily prices |
+| `get_indices_bars_daily` | `/indices/bars/daily` | Standard+ | Index daily prices |
+| `get_indices_bars_daily_topix` | `/indices/bars/daily/topix` | Light+ | TOPIX daily prices |
 
 ### Derivatives (3 tools)
 
 | Tool | Endpoint | Plan | Description |
 |---|---|---|---|
-| `get_derivatives_bars_daily_futures` | `/derivatives/bars/daily/futures` | Light+ | Futures daily prices |
-| `get_derivatives_bars_daily_options` | `/derivatives/bars/daily/options` | Light+ | Options daily prices |
-| `get_derivatives_bars_daily_options_225` | `/derivatives/bars/daily/options/225` | Light+ | Nikkei 225 options prices |
+| `get_derivatives_bars_daily_futures` | `/derivatives/bars/daily/futures` | Premium | Futures daily prices |
+| `get_derivatives_bars_daily_options` | `/derivatives/bars/daily/options` | Premium | Options daily prices |
+| `get_derivatives_bars_daily_options_225` | `/derivatives/bars/daily/options/225` | Standard+ | Nikkei 225 options prices |
 
 ### Markets (6 tools)
 
