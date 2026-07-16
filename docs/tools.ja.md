@@ -139,9 +139,9 @@ Claude が `get_comparison_chart_data` を `mode="return_pct"`（デフォルト
 | 質問 | ツール |
 |---|---|
 | 「投資部門別売買代金」（Light プラン以上） | `get_equities_investor_types` |
-| 「業種別空売り比率」（Standard 以上） | `get_markets_short_ratio` |
-| 「信用取引残高」（Standard 以上） | `get_markets_margin_interest` |
-| 「増担保規制銘柄」（Standard 以上） | `get_markets_margin_alert` |
+| 「業種別空売り比率」（Standard プラン以上） | `get_markets_short_ratio` |
+| 「信用取引残高」（Standard プラン以上） | `get_markets_margin_interest` |
+| 「増担保規制銘柄」（Standard プラン以上） | `get_markets_margin_alert` |
 
 ## カレンダー・参照データ
 

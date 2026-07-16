@@ -152,9 +152,9 @@ Add `mode="price"` if you want the raw split-adjusted close instead.
 | Question | Tool |
 |---|---|
 | "Investor-type turnover breakdown" (Light plan and above) | `get_equities_investor_types` |
-| "Short-sale ratio by sector" (Standard and above) | `get_markets_short_ratio` |
-| "Margin trading balance" (Standard and above) | `get_markets_margin_interest` |
-| "Stocks under additional margin requirement" (Standard and above) | `get_markets_margin_alert` |
+| "Short-sale ratio by sector" (Standard plan and above) | `get_markets_short_ratio` |
+| "Margin trading balance" (Standard plan and above) | `get_markets_margin_interest` |
+| "Stocks under additional margin requirement" (Standard plan and above) | `get_markets_margin_alert` |
 
 ## Calendar and reference
 
