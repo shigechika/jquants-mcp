@@ -134,14 +134,14 @@ Claude が `get_comparison_chart_data` を `mode="return_pct"`（デフォルト
 ![5 大商社のリターン比較チャート、ダークモード](screenshots/jquants-mcp-demo7.png){ width="280" }
 </p>
 
-## 投資家ポジショニング（Standard プラン以上）
+## 投資家ポジショニング
 
 | 質問 | ツール |
 |---|---|
-| 「投資部門別売買代金」 | `get_equities_investor_types` |
-| 「業種別空売り比率」 | `get_markets_short_ratio` |
-| 「信用取引残高」 | `get_markets_margin_interest` |
-| 「増担保規制銘柄」 | `get_markets_margin_alert` |
+| 「投資部門別売買代金」（Light プラン以上） | `get_equities_investor_types` |
+| 「業種別空売り比率」（Standard プラン以上） | `get_markets_short_ratio` |
+| 「信用取引残高」（Standard プラン以上） | `get_markets_margin_interest` |
+| 「増担保規制銘柄」（Standard プラン以上） | `get_markets_margin_alert` |
 
 ## カレンダー・参照データ
 

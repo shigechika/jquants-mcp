@@ -5,9 +5,9 @@
 | Plan | What you can do |
 |---|---|
 | **Free** | Daily bars (12-week delay), basic financials, screeners on the cached window |
-| **Light** | Realtime daily bars, minute-level bars, investor flow, derivatives |
-| **Standard** | Margin interest / alert, short ratio, short-sale report |
-| **Premium** | Detailed financials (BS/PL/CF), morning session bars, market breakdown |
+| **Light** | Realtime daily bars, minute-level bars (tick add-on), investor flow, TOPIX bars, bulk downloads |
+| **Standard** | Margin interest / alert, short ratio, short-sale report, index bars, Nikkei 225 options |
+| **Premium** | Detailed financials (BS/PL/CF), dividends, futures / options bars, morning session bars, market breakdown |
 
 The Free plan is enough to try the chart tools, screeners, and the
 market-overview ranking tools. Most retail use cases fit in Light. See

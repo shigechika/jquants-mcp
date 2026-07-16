@@ -147,14 +147,14 @@ Add `mode="price"` if you want the raw split-adjusted close instead.
 ![Return comparison chart for the five major trading houses, dark mode](screenshots/jquants-mcp-demo7.png){ width="280" }
 </p>
 
-## Investor positioning (Standard plan and above)
+## Investor positioning
 
 | Question | Tool |
 |---|---|
-| "Investor-type turnover breakdown" | `get_equities_investor_types` |
-| "Short-sale ratio by sector" | `get_markets_short_ratio` |
-| "Margin trading balance" | `get_markets_margin_interest` |
-| "Stocks under additional margin requirement" | `get_markets_margin_alert` |
+| "Investor-type turnover breakdown" (Light plan and above) | `get_equities_investor_types` |
+| "Short-sale ratio by sector" (Standard plan and above) | `get_markets_short_ratio` |
+| "Margin trading balance" (Standard plan and above) | `get_markets_margin_interest` |
+| "Stocks under additional margin requirement" (Standard plan and above) | `get_markets_margin_alert` |
 
 ## Calendar and reference
 

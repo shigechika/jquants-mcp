@@ -620,16 +620,16 @@ jquants-mcp -t streamable-http --port 8080 \
 
 | ツール名 | エンドポイント | 対応プラン | 説明 |
 |---|---|---|---|
-| `get_indices_bars_daily` | `/indices/bars/daily` | Free+ | 指数四本値 |
-| `get_indices_bars_daily_topix` | `/indices/bars/daily/topix` | Free+ | TOPIX 四本値 |
+| `get_indices_bars_daily` | `/indices/bars/daily` | Standard+ | 指数四本値 |
+| `get_indices_bars_daily_topix` | `/indices/bars/daily/topix` | Light+ | TOPIX 四本値 |
 
 ### デリバティブ (Derivatives) — 3ツール
 
 | ツール名 | エンドポイント | 対応プラン | 説明 |
 |---|---|---|---|
-| `get_derivatives_bars_daily_futures` | `/derivatives/bars/daily/futures` | Light+ | 先物四本値 |
-| `get_derivatives_bars_daily_options` | `/derivatives/bars/daily/options` | Light+ | オプション四本値 |
-| `get_derivatives_bars_daily_options_225` | `/derivatives/bars/daily/options/225` | Light+ | 日経225オプション四本値 |
+| `get_derivatives_bars_daily_futures` | `/derivatives/bars/daily/futures` | Premium | 先物四本値 |
+| `get_derivatives_bars_daily_options` | `/derivatives/bars/daily/options` | Premium | オプション四本値 |
+| `get_derivatives_bars_daily_options_225` | `/derivatives/bars/daily/options/225` | Standard+ | 日経225オプション四本値 |
 
 ### マーケット (Markets) — 6ツール
 
