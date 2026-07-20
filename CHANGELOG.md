@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.50.1](https://github.com/shigechika/jquants-mcp/compare/v0.50.0...v0.50.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* do not embed HTTP response body in LoginError messages ([#514](https://github.com/shigechika/jquants-mcp/issues/514)) ([40a5aa0](https://github.com/shigechika/jquants-mcp/commit/40a5aa0069fb072a31e61362d57bc905796a992e))
+
 ## [0.50.0](https://github.com/shigechika/jquants-mcp/compare/v0.49.5...v0.50.0) (2026-07-15)
 
 
