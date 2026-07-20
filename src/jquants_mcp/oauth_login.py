@@ -126,7 +126,9 @@ def _exchange_code_for_id_token(code: str, verifier: str) -> str:
         timeout=30.0,
     )
     if resp.status_code != 200:
-        raise LoginError(f"Token exchange failed ({resp.status_code}): {resp.text[:400]}")
+        # Do not echo the response body: a token endpoint may return
+        # tokens/credentials, and the message surfaces to stderr via the CLI.
+        raise LoginError(f"Token exchange failed ({resp.status_code})")
     token = resp.json().get("id_token")
     if not token:
         raise LoginError("Token exchange response missing id_token")
@@ -140,7 +142,8 @@ def _post_api_key(base_url: str, id_token: str) -> str:
         timeout=30.0,
     )
     if resp.status_code != 200:
-        raise LoginError(f"/cli/api-key returned {resp.status_code}: {resp.text[:400]}")
+        # Do not echo the response body (may contain the API key on some paths).
+        raise LoginError(f"/cli/api-key returned {resp.status_code}")
     key = resp.json().get("apiKey")
     if not key:
         raise LoginError("/cli/api-key response missing apiKey")
