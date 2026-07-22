@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.51.0](https://github.com/shigechika/jquants-mcp/compare/v0.50.1...v0.51.0) (2026-07-22)
+
+
+### Features
+
+* **tools:** add margin_ratio/margin_date to get_value_stock_screen items ([#520](https://github.com/shigechika/jquants-mcp/issues/520)) ([a22df70](https://github.com/shigechika/jquants-mcp/commit/a22df70171addb67f6c74e62bb493052786ac7f6))
+
 ## [0.50.1](https://github.com/shigechika/jquants-mcp/compare/v0.50.0...v0.50.1) (2026-07-20)
 
 
