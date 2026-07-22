@@ -3482,12 +3482,14 @@ class TestGetValueStockScreen:
 
         prior bars 1000 (low 990 / high 1010); today close 1010 / low 1005 ->
         low_52w 990, ~2.02% above it; EPS 100 (PER 10.1), BPS 1300 (PBR 0.78),
-        NxFDivAnn 40 (yield ~3.96%), NP 500 with NxFNp 600 (increase forecast).
+        NxFDivAnn 40 (yield ~3.96%), NP 500 with NxFNp 600 (increase forecast);
+        margin 10000/4000 -> margin_ratio 2.5.
         """
         cache, conn = _vs_make_cache(tmp_path)
         _vs_insert_history(conn, "13010", _vs_sessions())
         _vs_insert_master(conn, "13010", "年安割安A")
         _vs_insert_fins(conn, "13010")
+        _insert_margin(conn, "13010", "2026-05-07", long_vol=10_000.0, short_vol=4_000.0)
         conn.commit()
         conn.close()
         return cache
@@ -3540,6 +3542,8 @@ class TestGetValueStockScreen:
         assert item["low_52w"] == pytest.approx(990.0)
         assert item["pct_above_52w_low"] == pytest.approx(2.02)
         assert item["new_low_52w"] is False
+        assert item["margin_ratio"] == pytest.approx(2.5)
+        assert item["margin_date"] == "2026-05-07"
 
     @pytest.mark.asyncio
     async def test_far_from_low_excluded(self, tmp_path):
@@ -3566,6 +3570,57 @@ class TestGetValueStockScreen:
         assert data["total_matches"] == 0
         assert data["items"] == []
         assert "hint" in data
+
+    @pytest.mark.asyncio
+    async def test_margin_ratio_null_when_short_zero(self, tmp_path):
+        # A margin row with zero short balance yields a null ratio (division
+        # guard) while margin_date stays populated — mirrors get_stock_briefing.
+        cache, conn = _vs_make_cache(tmp_path)
+        _vs_insert_history(conn, "13010", _vs_sessions())
+        _vs_insert_master(conn, "13010", "売残ゼロA")
+        _vs_insert_fins(conn, "13010")
+        _insert_margin(conn, "13010", "2026-05-07", long_vol=10_000.0, short_vol=0.0)
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["margin_ratio"] is None
+        assert item["margin_date"] == "2026-05-07"
+
+    @pytest.mark.asyncio
+    async def test_margin_fields_null_without_margin_rows(self, tmp_path):
+        # No margin data cached (e.g. Free/Light plan): both keys are present
+        # and null — indexing (not .get) proves key presence.
+        cache, conn = _vs_make_cache(tmp_path)
+        _vs_insert_history(conn, "13010", _vs_sessions())
+        _vs_insert_master(conn, "13010", "信用無A")
+        _vs_insert_fins(conn, "13010")
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["margin_ratio"] is None
+        assert item["margin_date"] is None
+
+    @pytest.mark.asyncio
+    async def test_margin_uses_latest_row(self, tmp_path):
+        # Two weekly margin rows: the newest one must win (per-code MAX(date)
+        # join inside get_all_latest_margin_interest).
+        cache, conn = _vs_make_cache(tmp_path)
+        _vs_insert_history(conn, "13010", _vs_sessions())
+        _vs_insert_master(conn, "13010", "最新行A")
+        _vs_insert_fins(conn, "13010")
+        _insert_margin(conn, "13010", "2026-04-30", long_vol=30_000.0, short_vol=1_000.0)
+        _insert_margin(conn, "13010", "2026-05-07", long_vol=10_000.0, short_vol=4_000.0)
+        conn.commit()
+        conn.close()
+        data = await _vs_run(cache, {})
+        assert data["count"] == 1
+        item = data["items"][0]
+        assert item["margin_ratio"] == pytest.approx(2.5)
+        assert item["margin_date"] == "2026-05-07"
 
     @pytest.mark.asyncio
     async def test_new_low_touch_included_despite_bounce(self, tmp_path):
@@ -3936,6 +3991,7 @@ class TestGetMarketBriefingValueScreen:
         _vs_insert_history(conn, "13010", _vs_sessions())
         _vs_insert_master(conn, "13010", "年安割安A")
         _vs_insert_fins(conn, "13010")
+        _insert_margin(conn, "13010", "2026-05-07", long_vol=10_000.0, short_vol=4_000.0)
         conn.commit()
         conn.close()
         return cache
@@ -3956,3 +4012,7 @@ class TestGetMarketBriefingValueScreen:
         assert vs is not None
         assert vs["count"] >= 1
         assert "1301" in [item["code"] for item in vs["items"]]
+        # New per-item margin fields propagate through the briefing wholesale.
+        vs_item = next(i for i in vs["items"] if i["code"] == "1301")
+        assert vs_item["margin_ratio"] == pytest.approx(2.5)
+        assert vs_item["margin_date"] == "2026-05-07"

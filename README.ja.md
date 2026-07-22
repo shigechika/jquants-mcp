@@ -664,7 +664,7 @@ jquants-mcp -t streamable-http --port 8080 \
 | `get_sector_briefing` | 業種別ブリーフィング（セクター別 PER/PBR/ROE 中央値）。最新 FY 財務データを分割補正して集計。PER 昇順（割安順）で返却。`sector_type="s17"` で17業種に切替可。 |
 | `get_dividend_yield_ranking` | 高配当利回りランキング。`fins_summary` の `DivAnn`（年間配当額）と `AdjC`（調整後終値）から yield_pct = DivAnn / AdjC × 100 を計算。中間報告の空 DivAnn はスキップ |
 | `get_valuation_ranking` | PER/PBR バリュエーションランキング。最新 FY の `EPS`/`BPS` と `AdjC`（分割補正）を全銘柄で結合し、デフォルトは PER 昇順（割安）20 件。赤字（EPS≤0、PER）・債務超過（BPS≤0、PBR）は除外。`metric`・`min_value`/`max_value`・`market`・`sector`・`disc_months` でフィルタ |
-| `get_value_stock_screen` | 年安・割安・高配当・好決算スクリーニング（composite）— 全条件の AND: 52 週安値から `near_low_pct`% 以内（または当日 52 週新安値）+ PER < `max_per` かつ PBR < `max_pbr` + 予想配当利回り ≥ `min_yield`% + 増益予想（`NxFNp`/`FNP` > `NP`）。分割補正済み、REIT 除外、全キャッシュ処理 |
+| `get_value_stock_screen` | 年安・割安・高配当・好決算スクリーニング（composite）— 全条件の AND: 52 週安値から `near_low_pct`% 以内（または当日 52 週新安値）+ PER < `max_per` かつ PBR < `max_pbr` + 予想配当利回り ≥ `min_yield`% + 増益予想（`NxFNp`/`FNP` > `NP`）。分割補正済み、REIT 除外、全キャッシュ処理。各銘柄に `margin_ratio`（信用倍率 = 信用買残/信用売残）と `margin_date` を付与（Standard 以上、なければ null） |
 | `get_market_briefing` | 相場ブリーフィング（composite）— 値上がり/値下がり + 騰落レシオ 25 日 + 業種上位/下位 + 値上がりランキング + 売買代金 + screener ハイライト + バリュースクリーン + TOPIX 変化率を 1 回のコールで取得 |
 
 ### スクリーナー (Screener) — 10ツール
