@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Lint/test only — checkout needs nothing beyond read. Declared explicitly so
+# the jobs no longer depend on the repository's default token permissions.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest

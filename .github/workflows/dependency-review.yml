@@ -1,0 +1,25 @@
+name: dependency-review
+
+# Merge-time gate: fails a PR that introduces dependencies with known
+# vulnerabilities (moderate+). Complements Dependabot alerts, which only
+# detect issues AFTER they land on the default branch. Free on public repos.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # comment-summary-in-pr posts the findings table
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure
