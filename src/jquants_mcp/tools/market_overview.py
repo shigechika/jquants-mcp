@@ -188,6 +188,23 @@ def _as_float(v: Any) -> float | None:
         return None
 
 
+def _margin_ratio_from_row(row: dict | None) -> tuple[float | None, str | None]:
+    """Extract (margin_ratio, margin_date) from a raw markets_margin_interest row.
+
+    Ratio is LongVol/ShrtVol, None when either volume is missing or ShrtVol
+    is not positive — same semantics as get_stock_briefing's margin section.
+    Returned unrounded so the briefing median aggregates raw ratios; per-item
+    consumers round at the call site. Margin volumes are never split-adjusted
+    (the ratio is scale-invariant).
+    """
+    if not row:
+        return None, None
+    long_v = _as_float(row.get("LongVol"))
+    short_v = _as_float(row.get("ShrtVol"))
+    ratio = long_v / short_v if long_v is not None and short_v is not None and short_v > 0 else None
+    return ratio, str(row.get("Date") or "") or None
+
+
 def _calc_short_ratio(row: dict) -> float | None:
     """Compute short-sale ratio (%) from raw /markets/short-ratio API fields.
 
@@ -1388,6 +1405,9 @@ def register(
         get_dividend_yield_ranking for REIT yields). For a single criterion use
         get_valuation_ranking / get_dividend_yield_ranking / detect_52w_high_low.
         Included in get_market_briefing as the value_screen section.
+        Each item also carries margin_ratio (信用倍率 = LongVol/ShrtVol, latest
+        weekly margin interest) and margin_date — null on Free/Light plans or
+        when the stock has no margin data.
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
@@ -1583,6 +1603,12 @@ def register(
             candidates.sort(key=lambda c: c[1]["yield_pct"], reverse=True)
             candidates = candidates[:_MAX_VALUE_SCREEN_CANDIDATES]
 
+        # Latest margin interest for the survivors (Standard+ table; empty dict
+        # on Free/Light or when not cached — both fields stay null). Latest-known
+        # rows, deliberately not as_of-clamped: same convention as the briefing
+        # market median and get_stock_briefing; margin_date carries the as-of.
+        margin_map = cache.get_all_latest_margin_interest() if candidates else {}
+
         # Stage 2: exact 52w-low per candidate via per-code PK-seek bar reads.
         range_start = screener_compute._calendar_window_start_iso(
             norm_date, screener_compute.DEFAULT_FIFTY_TWO_WEEK_SESSIONS
@@ -1602,6 +1628,9 @@ def register(
             item["low_52w"] = round(stats["low_52w"], 2)
             item["pct_above_52w_low"] = stats["pct_above_52w_low"]
             item["new_low_52w"] = stats["new_low"]
+            ratio, margin_date = _margin_ratio_from_row(margin_map.get(code))
+            item["margin_ratio"] = round(ratio, 2) if ratio is not None else None
+            item["margin_date"] = margin_date
             items.append(item)
 
         items.sort(key=lambda x: (-x["yield_pct"], x["pct_above_52w_low"]))
@@ -1780,10 +1809,9 @@ def register(
         margin_map = cache.get_all_latest_margin_interest()
         margin_ratios = []
         for mrow in margin_map.values():
-            long_v = _as_float(mrow.get("LongVol"))
-            short_v = _as_float(mrow.get("ShrtVol"))
-            if long_v is not None and short_v is not None and short_v > 0:
-                margin_ratios.append(long_v / short_v)
+            ratio, _ = _margin_ratio_from_row(mrow)
+            if ratio is not None:
+                margin_ratios.append(ratio)
         market_margin_ratio_median = (
             round(statistics.median(margin_ratios), 2) if margin_ratios else None
         )

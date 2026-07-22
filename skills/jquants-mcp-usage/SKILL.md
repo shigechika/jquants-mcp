@@ -77,6 +77,10 @@ still carry `net_profit` / `forecast_net_profit` so you can judge). `market`
 ("prime" / "standard" / "growth" / "tokyo_pro") and `sector` (S33 code) narrow the
 universe.
 
+Each item also carries `margin_ratio` (信用倍率 = long/short margin balance) +
+`margin_date` for supply-demand context (Standard+; null otherwise) — no
+per-candidate `get_stock_briefing` call needed to judge crowdedness.
+
 ### Single-stock deep dive
 
 ```text
