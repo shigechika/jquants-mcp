@@ -357,10 +357,12 @@ def fetch_earnings_calendar(
     Stored with date-keyed entries to accumulate ~3 months of data (TTL 90 days).
 
     Timing caveat (#523): upstream updates around 19:00 JST. A cron running
-    earlier in the evening captures the list published the PREVIOUS evening,
-    i.e. announcements for the day that is already over — same-day coverage
-    then relies on the tools' cache-miss live fallback. Schedule this fetch
-    after 19:00 JST for proactive accumulation.
+    earlier in the evening captures the list published the PREVIOUS evening —
+    the current day's own announcements, most of which have already been made
+    by then — and the NEXT day's list (published at 19:00) is not captured
+    until the following evening. Same-day morning coverage therefore relies on
+    the tools' cache-miss live fallback. Schedule this fetch after 19:00 JST
+    to accumulate the next day's list proactively.
     """
     df = cli.get_eq_earnings_cal()
 

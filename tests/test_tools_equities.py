@@ -468,8 +468,8 @@ class TestEarningsCalendarLiveFallback:
         assert result["count"] == 0
 
     async def test_refresh_marker_prevents_refetch_storm(self, mock_env):
-        # Empty upstream (weekend/holiday): the short-TTL marker suppresses
-        # a second fetch for the same empty window.
+        # Empty upstream (weekend/holiday): the short-TTL GLOBAL marker
+        # suppresses any further live fetch for 30 minutes.
         with self._mock_api(mock_env, []) as mock_api:
             await _call("get_earnings_this_week")
             await _call("get_earnings_this_week")
@@ -488,6 +488,45 @@ class TestEarningsCalendarLiveFallback:
             result = await _call("get_equities_earnings_calendar", date="2026-05-10")
         mock_api.assert_not_called()
         assert result["count"] == 0
+
+    async def test_this_week_falls_back_when_today_missing_but_window_has_rows(self, mock_env):
+        # The #523 failure mode with a partially-populated window: tomorrow's
+        # rows are cached but today's are not — the fallback must still fire.
+        cache = mock_env["cache"]
+        today = date.today()
+        tomorrow = (today + timedelta(days=1)).isoformat()
+        cache.put_rows(
+            "equities_earnings_calendar",
+            [{"Code": "72030", "Date": tomorrow, "CoName": "トヨタ自動車", "FQ": "FY"}],
+            key_columns=["Code", "Date"],
+        )
+        rows = [{"Code": "40630", "Date": today.isoformat(), "CoName": "信越化学工業", "FQ": "1Q"}]
+        with self._mock_api(mock_env, rows) as mock_api:
+            result = await _call(
+                "get_earnings_this_week",
+                date_from=today.isoformat(),
+                date_to=(today + timedelta(days=7)).isoformat(),
+            )
+        mock_api.assert_awaited_once()
+        assert result["count"] == 2
+        codes = {c["code"] for day in result["days"] for c in day["companies"]}
+        assert codes == {"4063", "7203"}
+
+    async def test_live_fetch_rate_limit_degrades_gracefully(self, mock_env):
+        # RateLimitError is outside TOOL_API_ERRORS; the best-effort side
+        # fetch must swallow it and serve the (empty) cached result.
+        from jquants_mcp.exceptions import RateLimitError
+
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            side_effect=RateLimitError(),
+        ) as mock_api:
+            result = await _call("get_earnings_this_week")
+        mock_api.assert_awaited_once()
+        assert result["count"] == 0
+        assert result["days"] == []
 
 
 class TestSearchEquities:
