@@ -394,7 +394,7 @@ def fetch_split_events_by_code(
 
     Note: equities_bars_daily has no index on ``code`` (only on ``date``),
     so each batch performs a full-table scan.  With ~3800 codes and 5.6M rows
-    this takes ~12s on m1.local — acceptable for a nightly batch.
+    this takes ~12s on the reference self-hosted host (Apple M1) — acceptable for a nightly batch.
     Adding ``CREATE INDEX idx_ebd_code ON equities_bars_daily(code)`` would
     reduce this significantly if latency becomes a concern.
 
