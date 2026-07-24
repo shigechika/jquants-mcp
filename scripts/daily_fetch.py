@@ -355,6 +355,12 @@ def fetch_earnings_calendar(
 
     The API returns earnings announcements for the next business day.
     Stored with date-keyed entries to accumulate ~3 months of data (TTL 90 days).
+
+    Timing caveat (#523): upstream updates around 19:00 JST. A cron running
+    earlier in the evening captures the list published the PREVIOUS evening,
+    i.e. announcements for the day that is already over — same-day coverage
+    then relies on the tools' cache-miss live fallback. Schedule this fetch
+    after 19:00 JST for proactive accumulation.
     """
     df = cli.get_eq_earnings_cal()
 
