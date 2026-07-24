@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.51.1](https://github.com/shigechika/jquants-mcp/compare/v0.51.0...v0.51.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* **tools:** live fallback for same-day earnings-calendar cache misses ([#524](https://github.com/shigechika/jquants-mcp/issues/524)) ([0f90dc6](https://github.com/shigechika/jquants-mcp/commit/0f90dc6bc4480e9162d5baedef52358f826e4f7e))
+
 ## [0.51.0](https://github.com/shigechika/jquants-mcp/compare/v0.50.1...v0.51.0) (2026-07-22)
 
 
