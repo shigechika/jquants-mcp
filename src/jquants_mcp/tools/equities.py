@@ -16,6 +16,8 @@ from ..client import JQuantsClient
 from ..exceptions import (
     TOOL_API_ERRORS,
     APIError,
+    AuthenticationError,
+    RateLimitError,
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_API, READ_ONLY_CACHE
@@ -282,6 +284,8 @@ def register(
         〇〇の次の決算はいつ, days to earnings, 決算前銘柄スクリーニング.
         Pair with get_markets_short_sale_report for 決算またぎ空売り残 / 踏み上げリスク screening.
         Covers March/September fiscal year companies (REITs excluded); ~3 months accumulated.
+        Falls back to one live fetch on a cache miss (code queries always;
+        date queries only for today/future dates, #523).
 
         [Supported plans] Free / Light / Standard / Premium
 
@@ -301,7 +305,10 @@ def register(
         if code is not None:
             if len(code) == 4:
                 code = code + "0"
-            return _search_earnings_by_code(cache, code)
+            result = _search_earnings_by_code(cache, code)
+            if result["count"] == 0 and await _refresh_earnings_calendar_live(client, cache):
+                result = _search_earnings_by_code(cache, code)
+            return result
 
         # Date filter: Tier 1 first, fallback to Tier 2 response cache
         if date is not None:
@@ -316,6 +323,14 @@ def register(
                 recs = cached if isinstance(cached, list) else cached.get("data", [])
                 recs = _normalize_earnings_records(recs)
                 return {"count": len(recs), "data": recs}
+            if norm_date >= date_cls.today().isoformat() and (
+                await _refresh_earnings_calendar_live(client, cache)
+            ):
+                # Upstream only carries near-term announcements, so a live
+                # refresh can only help for today/future dates (#523).
+                t1_rows = _get_earnings_by_date_tier1(cache, norm_date)
+                if t1_rows:
+                    return {"count": len(t1_rows), "data": t1_rows}
             return {"count": 0, "data": [], "message": f"No data for date {date}."}
 
         # No filter: use Tier 2 response cache (latest accumulated data)
@@ -335,7 +350,7 @@ def register(
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
 
-    @mcp.tool(annotations=READ_ONLY_CACHE)
+    @mcp.tool(annotations=READ_ONLY_API)
     async def get_earnings_this_week(
         date_from: str | None = None,
         date_to: str | None = None,
@@ -347,7 +362,9 @@ def register(
         Enriches each company with its name and 33-sector from the equities master.
         For a single stock's next earnings date use get_equities_earnings_calendar(code=...).
 
-        [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
+        [Supported plans] Free / Light / Standard / Premium (cache-first; falls back
+        to one live fetch when the today-or-later part of the window has no cached
+        rows, or today's rows are missing, #523)
 
         Args:
             date_from: Window start inclusive (YYYYMMDD or YYYY-MM-DD). Defaults to today.
@@ -369,6 +386,20 @@ def register(
         cache: CacheStore = get_cache()
 
         records = cache.get_earnings_in_range(f_iso, t_iso)
+        today_iso = date_cls.today().isoformat()
+        if t_iso >= today_iso:
+            # The nightly cron may have run before the upstream 19:00 JST
+            # update, so today's list can be missing even when OTHER days in
+            # the window are already cached (#523) — check the forward part of
+            # the window and today's date specifically, not the whole union.
+            cached_dates = {str(r.get("Date", ""))[:10] for r in records}
+            forward_from = max(f_iso, today_iso)
+            forward_empty = not any(d >= forward_from for d in cached_dates)
+            today_missing = f_iso <= today_iso <= t_iso and today_iso not in cached_dates
+            if forward_empty or today_missing:
+                client: JQuantsClient = await get_client()
+                if await _refresh_earnings_calendar_live(client, cache):
+                    records = cache.get_earnings_in_range(f_iso, t_iso)
         # Enrich with canonical name/sector from the master (fields in the
         # calendar row itself are the field-normalized short names CoName /
         # SectorNm / FQ / FY; fall back to the master when absent).
@@ -471,6 +502,39 @@ def register(
 
         matches.sort(key=lambda r: r["code"])
         return {"count": len(matches), "query": query, "data": matches}
+
+    _EARNINGS_LIVE_REFRESH_TTL_S = 1800
+
+    async def _refresh_earnings_calendar_live(client: JQuantsClient, cache: CacheStore) -> bool:
+        """Fetch the latest earnings calendar and upsert it into the Tier 1 table.
+
+        The upstream dataset is published around 19:00 JST carrying the NEXT
+        business day's announcements, while the nightly ``daily_fetch`` cron may
+        run earlier in the evening — in that case the cache never holds "today's"
+        announcements until after they have happened (#523). This cache-miss
+        fallback closes the gap at query time. A short-TTL global Tier 2 marker
+        suppresses repeat fetches for 30 minutes after a successful — possibly
+        empty — fetch (weekends, holidays); failed fetches set no marker and
+        are retried on the next call.
+
+        Returns True when new records were fetched and upserted.
+        """
+        marker = make_cache_key("/equities/earnings-calendar", {"live_refresh": "1"})
+        if cache.get_response(marker) is not None:
+            return False
+        try:
+            data = await client.get_all_pages("/equities/earnings-calendar")
+        except (*TOOL_API_ERRORS, RateLimitError, AuthenticationError) as e:
+            # Best-effort side fetch: never fail an otherwise cache-served
+            # request. No marker is set, so the next call retries.
+            logger.warning("Live earnings-calendar refresh failed: %s", e)
+            return False
+        cache.put_response(marker, {"refreshed": True}, ttl_seconds=_EARNINGS_LIVE_REFRESH_TTL_S)
+        records = _normalize_earnings_records(data)
+        if not records:
+            return False
+        cache.put_rows("equities_earnings_calendar", records, key_columns=["Code", "Date"])
+        return True
 
     def _search_earnings_by_code(cache: CacheStore, code: str) -> dict[str, Any]:
         """Search accumulated earnings calendar data for a specific stock code.
