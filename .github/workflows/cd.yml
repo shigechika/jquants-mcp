@@ -149,7 +149,7 @@ jobs:
           # 2. Smoke-test the MCP endpoint.
           #    The endpoint is OAuth-protected, so a successful response is 401.
           #    Any 5xx or network failure (reported as 000) means the revision is crashing.
-          #    Assumes OAUTH_BASE_URL has no trailing slash (e.g. https://jquants-mcp.aikawa.jp).
+          #    Assumes OAUTH_BASE_URL has no trailing slash (e.g. https://mcp.example.jp).
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 30 \
             -X POST \
