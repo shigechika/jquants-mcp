@@ -3,14 +3,15 @@
 # Idempotent: updates policies matched by displayName, creates otherwise.
 #
 # Usage:
-#   CHANNEL="projects/aikawa-dx/notificationChannels/<ID>" ./ops/alerts/deploy.sh
+#   CHANNEL="projects/<PROJECT_ID>/notificationChannels/<ID>" ./ops/alerts/deploy.sh
 #
 # Find the channel ID with:
-#   gcloud beta monitoring channels list --project aikawa-dx --format='value(name)'
+#   gcloud beta monitoring channels list --project <PROJECT_ID> --format='value(name)'
 
 set -euo pipefail
 
-PROJECT="${PROJECT:-aikawa-dx}"
+PROJECT="${PROJECT:-$(gcloud config get-value project 2>/dev/null)}"
+[[ -n "$PROJECT" ]] || { echo "PROJECT env var required (or set a gcloud default project)" >&2; exit 1; }
 CHANNEL="${CHANNEL:?CHANNEL env var required (projects/<P>/notificationChannels/<ID>)}"
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
