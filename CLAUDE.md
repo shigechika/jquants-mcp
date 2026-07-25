@@ -12,6 +12,9 @@ uv sync --dev          # Install dependencies
 uv run pytest -v       # Run tests
 uv run ruff check src/ tests/   # Lint
 uv run ruff format src/ tests/  # Format
+
+uv run python scripts/smoke_test.py            # Exercise every tool against real data
+uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one tool
 ```
 
 ## Architecture
@@ -36,6 +39,7 @@ uv run ruff format src/ tests/  # Format
   - `gcs_export_cache.py` — Export cache.db to GCS (used by the daily publisher)
   - `rotate_encryption_key.py` — Re-encrypt user API keys during MCP_ENCRYPTION_KEY rotation
   - `collect_metrics.py` / `load_test.py` — Cloud Run sizing helpers
+  - `smoke_test.py` — Live smoke test: runs **every registered tool** against real data (in-process, or `--url` against a deployment) and fails on empty/stale/error answers. `smoke_harness.py` is the server-agnostic engine; `smoke_probes.py` holds the per-tool specs. Needs a populated cache + API key, so it runs on the host that has them — not in CI. CI enforces only the coverage half (`tests/test_smoke_probes.py`: a new tool without a probe spec fails the build)
   - `entrypoint.sh` — Docker/Cloud Run entrypoint
 - `tests/` — pytest + pytest-asyncio tests (1000+ tests as of 2026-05)
 
