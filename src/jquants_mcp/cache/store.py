@@ -197,6 +197,15 @@ class CacheStore:
         # a short error description.
         self._integrity_status: str = "not-checked"
         self._integrity_thread: threading.Thread | None = None
+        # One sqlite3.Connection is shared by the event loop AND worker threads
+        # (the connection is opened with check_same_thread=False, and FastMCP
+        # runs sync tools such as health_check / cache_status in a thread). The
+        # module's implicit-transaction bookkeeping is not safe under that mix:
+        # two writers racing produce "cannot start a transaction within a
+        # transaction" or "bad parameter or other API misuse" (#537). Every
+        # method that writes — including the readers that prune expired rows —
+        # takes this lock. Re-entrant because guarded methods call each other.
+        self._write_lock = threading.RLock()
         # When True, kick off the background SQLite integrity check at
         # construction time so callers that read ``integrity_status``
         # without first opening a connection (e.g. ``health_check``)
@@ -320,7 +329,19 @@ class CacheStore:
         the database file is missing, corrupt, or still being copied.
         When not ready, retries at most once every ``_RETRY_INTERVAL``
         seconds.
+
+        Serialized: initialization is slow (connect + table creation +
+        migrations) and leaves ``_ready`` False while it runs, so a concurrent
+        caller used to hit the retry throttle and get ``None`` — which callers
+        treat as "cache unavailable" and turn into a dropped write or an empty
+        read, silently. Holding the lock makes the second caller wait for the
+        first to finish instead (#537).
         """
+        with self._write_lock:
+            return self._ensure_connection_locked()
+
+    def _ensure_connection_locked(self) -> sqlite3.Connection | None:
+        """``_ensure_connection`` body; callers must hold ``_write_lock``."""
         # Handle a pending reload request from request_reload()
         if self._needs_reload:
             self._needs_reload = False
@@ -1282,48 +1303,49 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return 0
-        now = time.time()
-        count = 0
+        with self._write_lock:
+            now = time.time()
+            count = 0
 
-        has_adj = bool(adj_factor_key) and "adj_factor" in (
-            _TIER1_TABLES[table].get("extra_columns", "")
-        )
+            has_adj = bool(adj_factor_key) and "adj_factor" in (
+                _TIER1_TABLES[table].get("extra_columns", "")
+            )
 
-        db_cols = _key_col_names(table)
+            db_cols = _key_col_names(table)
 
-        for row in rows:
-            key_values = [_normalize_date_value(str(row.get(k, ""))) for k in key_columns]
-            # Schema key columns the caller did not supply (e.g. fins_summary's
-            # doc_type, part of the PK since issue #473). Extract them from the
-            # record WITHOUT date-normalisation — doc_type strings can contain
-            # 'T' (e.g. "REITFinancialStatements...") which the date normaliser
-            # would truncate.
-            if len(db_cols) > len(key_values):
-                for extra_col in db_cols[len(key_values) :]:
-                    if extra_col == "doc_type":
-                        key_values.append(
-                            str(row.get("DocType") or row.get("TypeOfDocument") or "")
-                        )
-                    else:
-                        key_values.append("")
-            data_json = json.dumps(row, ensure_ascii=False)
+            for row in rows:
+                key_values = [_normalize_date_value(str(row.get(k, ""))) for k in key_columns]
+                # Schema key columns the caller did not supply (e.g. fins_summary's
+                # doc_type, part of the PK since issue #473). Extract them from the
+                # record WITHOUT date-normalisation — doc_type strings can contain
+                # 'T' (e.g. "REITFinancialStatements...") which the date normaliser
+                # would truncate.
+                if len(db_cols) > len(key_values):
+                    for extra_col in db_cols[len(key_values) :]:
+                        if extra_col == "doc_type":
+                            key_values.append(
+                                str(row.get("DocType") or row.get("TypeOfDocument") or "")
+                            )
+                        else:
+                            key_values.append("")
+                data_json = json.dumps(row, ensure_ascii=False)
 
-            if has_adj:
-                adj = row.get(adj_factor_key)
-                col_names = ", ".join(_key_col_names(table)) + ", data, fetched_at, adj_factor"
-                placeholders = ", ".join(["?"] * (len(key_values) + 3))
-                values = key_values + [data_json, now, adj]
-            else:
-                col_names = ", ".join(_key_col_names(table)) + ", data, fetched_at"
-                placeholders = ", ".join(["?"] * (len(key_values) + 2))
-                values = key_values + [data_json, now]
+                if has_adj:
+                    adj = row.get(adj_factor_key)
+                    col_names = ", ".join(_key_col_names(table)) + ", data, fetched_at, adj_factor"
+                    placeholders = ", ".join(["?"] * (len(key_values) + 3))
+                    values = key_values + [data_json, now, adj]
+                else:
+                    col_names = ", ".join(_key_col_names(table)) + ", data, fetched_at"
+                    placeholders = ", ".join(["?"] * (len(key_values) + 2))
+                    values = key_values + [data_json, now]
 
-            sql = f"INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})"
-            conn.execute(sql, values)
-            count += 1
+                sql = f"INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})"
+                conn.execute(sql, values)
+                count += 1
 
-        conn.commit()
-        return count
+            conn.commit()
+            return count
 
     def invalidate_rows(
         self,
@@ -1348,9 +1370,10 @@ class CacheStore:
         params = list(key_filter.values())
 
         sql = f"DELETE FROM {table} WHERE {' AND '.join(conditions)}"
-        cursor = conn.execute(sql, params)
-        conn.commit()
-        return cursor.rowcount
+        with self._write_lock:
+            cursor = conn.execute(sql, params)
+            conn.commit()
+            return cursor.rowcount
 
     def check_adj_factor(
         self,
@@ -1996,21 +2019,23 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return None
-        row = conn.execute(
-            "SELECT data, fetched_at, ttl_seconds FROM response_cache WHERE cache_key = ?",
-            (cache_key,),
-        ).fetchone()
+        # Locked despite being a "get": the expiry path below deletes.
+        with self._write_lock:
+            row = conn.execute(
+                "SELECT data, fetched_at, ttl_seconds FROM response_cache WHERE cache_key = ?",
+                (cache_key,),
+            ).fetchone()
 
-        if row is None:
-            return None
+            if row is None:
+                return None
 
-        age = time.time() - row["fetched_at"]
-        if row["ttl_seconds"] > 0 and age > row["ttl_seconds"]:
-            conn.execute("DELETE FROM response_cache WHERE cache_key = ?", (cache_key,))
-            conn.commit()
-            return None
+            age = time.time() - row["fetched_at"]
+            if row["ttl_seconds"] > 0 and age > row["ttl_seconds"]:
+                conn.execute("DELETE FROM response_cache WHERE cache_key = ?", (cache_key,))
+                conn.commit()
+                return None
 
-        return json.loads(row["data"])
+            return json.loads(row["data"])
 
     def put_response(
         self,
@@ -2025,12 +2050,13 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return
-        conn.execute(
-            "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) "
-            "VALUES (?, ?, ?, ?)",
-            (cache_key, json.dumps(data, ensure_ascii=False), time.time(), ttl_seconds),
-        )
-        conn.commit()
+        with self._write_lock:
+            conn.execute(
+                "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) "
+                "VALUES (?, ?, ?, ?)",
+                (cache_key, json.dumps(data, ensure_ascii=False), time.time(), ttl_seconds),
+            )
+            conn.commit()
 
     # ----------------------------------------------------------------
     # Screener result cache (pre-computed cross-sectional outputs)
@@ -2159,19 +2185,20 @@ class CacheStore:
         conn = self._ensure_connection()
         if conn is None:
             return
-        conn.execute(
-            "INSERT OR REPLACE INTO screener_results "
-            "(tool_name, params_hash, date, payload_json, computed_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (
-                tool_name,
-                params_hash,
-                date,
-                json.dumps(payload, ensure_ascii=False),
-                time.time(),
-            ),
-        )
-        conn.commit()
+        with self._write_lock:
+            conn.execute(
+                "INSERT OR REPLACE INTO screener_results "
+                "(tool_name, params_hash, date, payload_json, computed_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    tool_name,
+                    params_hash,
+                    date,
+                    json.dumps(payload, ensure_ascii=False),
+                    time.time(),
+                ),
+            )
+            conn.commit()
 
     def screener_result_prune(self, retention_weeks: int = _SCREENER_CACHE_LOOKBACK_WEEKS) -> int:
         """Delete ``screener_results`` rows older than ``retention_weeks``.
@@ -2188,13 +2215,14 @@ class CacheStore:
         if conn is None:
             return 0
         cutoff = (date.today() - timedelta(weeks=int(retention_weeks))).isoformat()
-        cursor = conn.execute(
-            "DELETE FROM screener_results WHERE date < ?",
-            (cutoff,),
-        )
-        deleted = cursor.rowcount if cursor.rowcount is not None else 0
-        conn.commit()
-        return deleted
+        with self._write_lock:
+            cursor = conn.execute(
+                "DELETE FROM screener_results WHERE date < ?",
+                (cutoff,),
+            )
+            deleted = cursor.rowcount if cursor.rowcount is not None else 0
+            conn.commit()
+            return deleted
 
     def screener_result_count(self) -> int:
         """Return the row count in ``screener_results`` (0 when not ready)."""
@@ -2320,11 +2348,12 @@ class CacheStore:
         stats["response_cache"] = row["cnt"] if row else 0
 
         # Evict expired entries while we're here
-        conn.execute(
-            "DELETE FROM response_cache WHERE ttl_seconds > 0 AND fetched_at + ttl_seconds <= ?",
-            (now,),
-        )
-        conn.commit()
+        with self._write_lock:
+            conn.execute(
+                "DELETE FROM response_cache WHERE ttl_seconds > 0 AND fetched_at + ttl_seconds <= ?",
+                (now,),
+            )
+            conn.commit()
 
         # Pre-computed screener results
         try:
@@ -2362,12 +2391,13 @@ class CacheStore:
             if table
             else list(_TIER1_TABLES.keys()) + ["response_cache", "screener_results"]
         )
-        for t in tables:
-            cursor = conn.execute(f"DELETE FROM {t}")
-            result[t] = cursor.rowcount
+        with self._write_lock:
+            for t in tables:
+                cursor = conn.execute(f"DELETE FROM {t}")
+                result[t] = cursor.rowcount
 
-        conn.commit()
-        return result
+            conn.commit()
+            return result
 
     def close(self) -> None:
         """Close the database connection."""
