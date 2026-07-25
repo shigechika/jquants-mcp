@@ -68,6 +68,12 @@ jobs:
           bare_host=$(printf '%s' "$ENDPOINT" | sed -E 's#^[a-zA-Z]+://##; s#[/:].*$##')
           if [ -n "$bare_host" ]; then echo "::add-mask::$bare_host"; fi
 
+          # Normalize to the resource ROOT: the v1 route lives directly under
+          # the host, so an Azure AI Foundry *project* URL
+          # (https://host/api/projects/xxx) in the secret must be reduced to
+          # scheme+host — the same pitfall the summarizer hit before.
+          ENDPOINT=$(printf '%s' "$ENDPOINT" | sed -E 's#^([a-zA-Z]+://[^/]+).*#\1#')
+
           # The default run shell is bash with errexit+pipefail, so guard the
           # prompt-building calls too — a transient GitHub API error must
           # degrade the prompt, not fail the job (advisory-only contract).
