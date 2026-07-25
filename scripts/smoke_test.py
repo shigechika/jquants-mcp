@@ -13,6 +13,10 @@ Usage:
     # Against a deployed server (also exercises transport and auth).
     uv run python scripts/smoke_test.py --url https://host:8080/mcp --token "$TOKEN"
 
+    # Against any MCP server over stdio — the mode a sibling server would use,
+    # since it needs no FastMCP-specific hooks (pair it with its own --probes).
+    uv run python scripts/smoke_test.py --stdio "uv run jquants-mcp" --probes smoke_probes
+
     # Iterate on one spec while writing it.
     uv run python scripts/smoke_test.py --only earnings
 
@@ -94,7 +98,29 @@ async def _http_caller(url: str, token: str, insecure: bool) -> tuple[Caller, li
         context.verify_mode = ssl.CERT_NONE
         kwargs["httpx_client_factory"] = lambda **kw: httpx.AsyncClient(**{**kw, "verify": context})
 
-    client = Client(StreamableHttpTransport(**kwargs))
+    return await _client_caller(Client(StreamableHttpTransport(**kwargs)))
+
+
+async def _stdio_caller(command: str) -> tuple[Caller, list[str], Any]:
+    """Speak MCP over stdio to a server launched as a subprocess.
+
+    Transport-level, so it works against any MCP server regardless of which
+    SDK it is built on — the in-process mode above is FastMCP-specific. This
+    is the mode a sibling server would use to reuse this harness.
+    """
+    import shlex
+
+    from fastmcp import Client
+    from fastmcp.client.transports import StdioTransport
+
+    parts = shlex.split(command)
+    if not parts:
+        raise ValueError("--stdio needs a command to launch the server")
+    return await _client_caller(Client(StdioTransport(command=parts[0], args=parts[1:])))
+
+
+async def _client_caller(client: Any) -> tuple[Caller, list[str], Any]:
+    """Enter an MCP client session and expose it as a caller + tool list."""
     await client.__aenter__()
 
     async def call(name: str, args: dict[str, Any]) -> Any:
@@ -131,6 +157,9 @@ async def main_async(args: argparse.Namespace) -> int:
     if args.url:
         call, names, client = await _http_caller(args.url, args.token, args.insecure)
         mode = f"http {args.url}"
+    elif args.stdio:
+        call, names, client = await _stdio_caller(args.stdio)
+        mode = f"stdio {args.stdio.split()[0]}"
     else:
         call, names = await _in_process_caller()
         mode = "in-process"
@@ -181,6 +210,11 @@ async def main_async(args: argparse.Namespace) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", default="", help="MCP endpoint URL (omit to run in-process)")
+    parser.add_argument(
+        "--stdio",
+        default="",
+        help="launch an MCP server over stdio, e.g. --stdio 'uv run my-mcp'",
+    )
     parser.add_argument("--token", default="", help="bearer token for --url")
     parser.add_argument(
         "--insecure", action="store_true", help="skip TLS verification (self-signed certs)"
