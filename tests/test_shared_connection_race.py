@@ -81,21 +81,44 @@ class TestConcurrentWrites:
         assert not errors, f"concurrent put_rows broke the shared connection: {errors[:3]}"
 
 
-class TestNoSyncTools:
-    """Sync tool bodies get run in a worker thread by FastMCP.
+#: Tools deliberately left synchronous. FastMCP runs a sync body in a worker
+#: thread, which is what we want for these: they do blocking work (lazy
+#: initialization with migrations, COUNT(*) over a multi-GB database, bulk
+#: DELETE) that would stall every other request if it ran on the event loop.
+#: Sharing the connection from that thread is safe because CacheStore
+#: serializes its mutating paths — see #537.
+BLOCKING_BY_DESIGN = {"health_check", "cache_status", "cache_clear"}
 
-    That is how an ordinary ``health_check`` ended up touching the shared
-    connection from another thread while a tool wrote through it. Keeping every
-    tool async removes the whole class of failure, so it is pinned here.
+
+class TestSyncToolInventory:
+    """A new sync tool must be a deliberate decision, not an accident.
+
+    Sync means "runs in a worker thread, concurrently with the event loop".
+    That is fine for the blocking-by-design tools above, and a trap for
+    anything that writes: the shared connection is only safe through the
+    store's locked API.
     """
 
-    async def test_every_registered_tool_is_async(self):
+    async def test_only_known_tools_are_sync(self):
         tools = await server_module.mcp.list_tools()
-        sync = sorted(t.name for t in tools if not inspect.iscoroutinefunction(t.fn))
-        assert not sync, (
-            f"tool(s) defined with `def` instead of `async def`: {sync}. "
-            "FastMCP offloads sync tools to a worker thread, which then shares "
-            "the SQLite connection with the event loop (#537)."
+        sync = {t.name for t in tools if not inspect.iscoroutinefunction(t.fn)}
+        unexpected = sorted(sync - BLOCKING_BY_DESIGN)
+        assert not unexpected, (
+            f"new sync tool(s): {unexpected}. FastMCP runs these in a worker thread "
+            "alongside the event loop; make the tool async unless it does blocking "
+            "work, and route all cache access through CacheStore (#537)."
+        )
+
+    async def test_blocking_tools_stay_off_the_event_loop(self):
+        tools = {t.name: t for t in await server_module.mcp.list_tools()}
+        regressed = sorted(
+            name
+            for name in BLOCKING_BY_DESIGN
+            if name in tools and inspect.iscoroutinefunction(tools[name].fn)
+        )
+        assert not regressed, (
+            f"{regressed} became async: their bodies block (migrations, full-table "
+            "counts, bulk delete), so on the event loop they stall every other request."
         )
 
 

@@ -781,13 +781,14 @@ async def _get_user_client() -> JQuantsClient:
 
 
 @mcp.tool(annotations=READ_ONLY_LOCAL)
-async def health_check() -> dict[str, Any]:
+def health_check() -> dict[str, Any]:
     """Check server health, API key configuration, and cache readiness.
 
-    Async on purpose (like every other tool): FastMCP runs a *sync* tool body
-    in a worker thread, which would touch the shared SQLite connection while
-    the event loop writes through it — the race behind #537. Keeping the body
-    on the loop is safe because it only reads local cache metadata.
+    Sync on purpose: FastMCP runs a sync tool body in a worker thread, which
+    keeps this off the event loop — the body can trigger the slow lazy
+    initialization (connect + migrations). Sharing the SQLite connection with
+    the loop from that thread is what caused #537; the store's write lock, not
+    an async signature, is what makes it safe.
 
     Call this at session start to confirm cache.db has finished loading
     before issuing detect_* or cache_status — the first call after server
@@ -843,7 +844,7 @@ async def health_check() -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY_LOCAL)
-async def cache_status() -> dict[str, Any]:
+def cache_status() -> dict[str, Any]:
     """Show database metadata: table row counts, file size, and detected plan.
 
     This tool returns cache metadata — it does NOT query screener signals. To detect
@@ -872,7 +873,7 @@ async def cache_status() -> dict[str, Any]:
 
 
 @mcp.tool(annotations=DESTRUCTIVE_LOCAL)
-async def cache_clear(table: str | None = None) -> dict[str, Any]:
+def cache_clear(table: str | None = None) -> dict[str, Any]:
     """Clear cached data.
 
     Args:
