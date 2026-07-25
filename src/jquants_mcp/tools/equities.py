@@ -12,7 +12,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from ..cache.store import ENDPOINT_TTL, CacheStore, TTL_24H, TTL_90D, make_cache_key
+from ..cache.store import ENDPOINT_TTL, CacheStore, TTL_24H, make_cache_key
 from ..client import JQuantsClient
 from ..exceptions import (
     TOOL_API_ERRORS,
@@ -286,7 +286,8 @@ def register(
         Pair with get_markets_short_sale_report for 決算またぎ空売り残 / 踏み上げリスク screening.
         Covers March/September fiscal year companies (REITs excluded); ~3 months accumulated.
         Falls back to one live fetch on a cache miss (code queries always;
-        date queries only for today/future dates, #523).
+        date queries only for today/future dates, #523; the no-argument query
+        when nothing is scheduled from today onwards, #536).
 
         [Supported plans] Free / Light / Standard / Premium
 
@@ -334,7 +335,28 @@ def register(
                     return {"count": len(t1_rows), "data": t1_rows}
             return {"count": 0, "data": [], "message": f"No data for date {date}."}
 
-        # No filter: use Tier 2 response cache (latest accumulated data)
+        # No filter: Tier 1 first, exactly like the code and date branches.
+        # It used to read the Tier 2 blob straight away, and that blob carries a
+        # 90-day TTL — so this branch could serve a snapshot months older than
+        # the rows already sitting in Tier 1 (#536). Upstream only publishes
+        # near-term announcements; Tier 1 accumulates them, so the union across
+        # a bounded window around today is the freshest and fullest answer.
+        today = date_cls.today()
+        window_from = (today - timedelta(days=_EARNINGS_WINDOW_DAYS)).isoformat()
+        window_to = (today + timedelta(days=_EARNINGS_WINDOW_DAYS)).isoformat()
+
+        t1_rows = _normalize_earnings_records(cache.get_earnings_in_range(window_from, window_to))
+        if not any(str(r.get("Date", ""))[:10] >= today.isoformat() for r in t1_rows):
+            # Nothing scheduled from today onwards is the signature of a stale
+            # calendar, not of a quiet market — refresh before answering.
+            if await _refresh_earnings_calendar_live(client, cache):
+                t1_rows = _normalize_earnings_records(
+                    cache.get_earnings_in_range(window_from, window_to)
+                )
+        if t1_rows:
+            return {"count": len(t1_rows), "data": t1_rows}
+
+        # Tier 1 empty (e.g. before the first daily_fetch after an upgrade).
         cache_key = make_cache_key("/equities/earnings-calendar")
         cached = cache.get_response(cache_key)
         if cached is not None:
@@ -346,7 +368,9 @@ def register(
             data = await client.get_all_pages("/equities/earnings-calendar")
             data = _normalize_earnings_records(data)
             result = {"count": len(data), "data": data}
-            cache.put_response(cache_key, result, ttl_seconds=TTL_90D)
+            # 24h, not 90d: this blob is only a fallback for an empty Tier 1,
+            # and a long TTL is what let it go stale unnoticed.
+            cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
@@ -510,6 +534,10 @@ def register(
     # writes it back. The suppression marker below only helps AFTER the first
     # fetch completes; this covers the window before that (#537).
     _earnings_refresh_lock = asyncio.Lock()
+    # Half-window (days) for the no-filter query. Upstream carries only
+    # near-term announcements; Tier 1 accumulates them, so a bounded window
+    # around today covers the accumulated set without unbounded scans.
+    _EARNINGS_WINDOW_DAYS = 90
 
     async def _refresh_earnings_calendar_live(client: JQuantsClient, cache: CacheStore) -> bool:
         """Fetch the latest earnings calendar and upsert it into the Tier 1 table.

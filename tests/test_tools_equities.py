@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import jquants_mcp.server as server_module
-from jquants_mcp.cache.store import CacheStore
+from jquants_mcp.cache.store import CacheStore, make_cache_key
 from jquants_mcp.config import Settings
 from jquants_mcp.client import JQuantsClient
 from jquants_mcp.exceptions import APIError, PlanRestrictionError
@@ -511,6 +511,71 @@ class TestEarningsCalendarLiveFallback:
         assert result["count"] == 2
         codes = {c["code"] for day in result["days"] for c in day["companies"]}
         assert codes == {"4063", "7203"}
+
+    async def test_no_filter_prefers_tier1_over_the_stale_blob(self, mock_env):
+        """The no-argument query must not serve an old snapshot (#536).
+
+        Production had a 22-hour-old Tier 2 blob (90-day TTL) ending 2026-07-24
+        while Tier 1 already held rows three days newer. The blob won, so the
+        tool answered plausibly and wrongly.
+        """
+        cache = mock_env["cache"]
+        today = date.today()
+        fresh = (today + timedelta(days=2)).isoformat()
+        cache.put_rows(
+            "equities_earnings_calendar",
+            [{"Code": "72030", "Date": fresh, "CoName": "トヨタ自動車", "FQ": "FY"}],
+            key_columns=["Code", "Date"],
+        )
+        # A stale blob of the shape the old code returned unconditionally.
+        cache.put_response(
+            make_cache_key("/equities/earnings-calendar"),
+            {"count": 1, "data": [{"Code": "99990", "Date": "2020-01-01"}]},
+            ttl_seconds=7776000,
+        )
+
+        with self._mock_api(mock_env, []) as mock_api:
+            result = await _call("get_equities_earnings_calendar")
+
+        mock_api.assert_not_called()
+        assert [r["Code"] for r in result["data"]] == ["72030"]
+        assert result["data"][0]["Date"] == fresh
+
+    async def test_no_filter_refreshes_when_nothing_is_scheduled_ahead(self, mock_env):
+        """Only past rows in Tier 1 is the signature of a stale calendar."""
+        cache = mock_env["cache"]
+        today = date.today()
+        cache.put_rows(
+            "equities_earnings_calendar",
+            [
+                {
+                    "Code": "72030",
+                    "Date": (today - timedelta(days=3)).isoformat(),
+                    "CoName": "トヨタ自動車",
+                }
+            ],
+            key_columns=["Code", "Date"],
+        )
+        upstream = [{"Code": "40630", "Date": today.isoformat(), "CoName": "信越化学工業"}]
+
+        with self._mock_api(mock_env, upstream) as mock_api:
+            result = await _call("get_equities_earnings_calendar")
+
+        mock_api.assert_awaited_once()
+        assert {r["Code"] for r in result["data"]} == {"72030", "40630"}
+
+    async def test_no_filter_does_not_refresh_when_future_rows_exist(self, mock_env):
+        cache = mock_env["cache"]
+        ahead = (date.today() + timedelta(days=1)).isoformat()
+        cache.put_rows(
+            "equities_earnings_calendar",
+            [{"Code": "72030", "Date": ahead, "CoName": "トヨタ自動車"}],
+            key_columns=["Code", "Date"],
+        )
+        with self._mock_api(mock_env, []) as mock_api:
+            result = await _call("get_equities_earnings_calendar")
+        mock_api.assert_not_called()
+        assert result["count"] == 1
 
     async def test_live_fetch_rate_limit_degrades_gracefully(self, mock_env):
         # RateLimitError is outside TOOL_API_ERRORS; the best-effort side
