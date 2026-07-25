@@ -17,10 +17,10 @@ Conventions:
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import datetime
 from typing import Any
 
-from smoke_harness import Caller, Probe, SkipProbe
+from smoke_harness import JST, Caller, Probe, SkipProbe
 
 # Liquid, long-listed stocks: their data exists for every historical window,
 # so an empty answer means the tool is broken rather than the code being odd.
@@ -49,7 +49,9 @@ async def reference_date(call: Caller) -> str | None:
         if isinstance(value, list) and value and isinstance(value[0], dict):
             rows = value
             break
-    today = date.today().isoformat()
+    # JST, not the host clock: a UTC machine between 00:00 and 09:00 JST would
+    # otherwise drop the latest trading day and probe a day older than intended.
+    today = datetime.now(JST).date().isoformat()
     business_days = sorted(
         day
         for row in rows
@@ -74,8 +76,8 @@ async def _first_bulk_key(call: Caller) -> dict[str, Any]:
 
 PROBES: dict[str, Probe] = {
     # -- server-local utilities ------------------------------------------
-    "health_check": Probe(require_keys=("plan",), allow_empty=True),
-    "cache_status": Probe(allow_empty=True),
+    "health_check": Probe(require_keys=("status", "plan", "cache_ready"), allow_empty=True),
+    "cache_status": Probe(require_keys=("db_path", "plan"), allow_empty=True),
     "cache_clear": Probe(skip="destructive: would drop cached tables"),
     "register_api_key": Probe(skip="destructive: would overwrite the stored API key"),
     "delete_api_key": Probe(skip="destructive: would remove the stored API key"),
@@ -95,8 +97,10 @@ PROBES: dict[str, Probe] = {
     # a well-formed empty result: the calendar must reach today or beyond, not
     # merely contain rows.
     "get_equities_earnings_calendar": Probe(date_field="Date", fresh_within_days=0),
-    "get_earnings_this_week": Probe(allow_empty=True),
-    "get_earnings_results_this_week": Probe(allow_empty=True),
+    # A quiet week legitimately has no announcements, so these assert the
+    # envelope; freshness is pinned on the calendar probe above instead.
+    "get_earnings_this_week": Probe(require_keys=("count", "days"), allow_empty=True),
+    "get_earnings_results_this_week": Probe(require_keys=("count", "days"), allow_empty=True),
     "search_equities": Probe(args={"name": "トヨタ"}),
     # -- financials -------------------------------------------------------
     "get_fins_summary": Probe(args={"code": TOYOTA}),
@@ -125,7 +129,6 @@ PROBES: dict[str, Probe] = {
     "get_markets_short_sale_report": Probe(
         args={"code": TOYOTA, "disc_date_from": "{t-90}", "disc_date_to": "{t}"},
         allow_plan_restriction=True,
-        allow_empty=True,
     ),
     "get_markets_breakdown": Probe(
         args={"code": TOYOTA, "date_from": "{t-30}", "date_to": "{t}"},
@@ -139,17 +142,31 @@ PROBES: dict[str, Probe] = {
     ),
     # -- bulk -------------------------------------------------------------
     "get_bulk_list": Probe(args={"endpoint": "/equities/master"}, allow_plan_restriction=True),
-    "get_bulk_download_url": Probe(args_factory=_first_bulk_key, allow_empty=True),
+    "get_bulk_download_url": Probe(
+        args_factory=_first_bulk_key,
+        require_keys=("url",),
+        allow_empty=True,
+        allow_plan_restriction=True,
+    ),
     # -- screener / detectors --------------------------------------------
     # Detectors answer "did this happen today?"; an empty answer is a market
-    # observation, so they assert the envelope instead of row counts.
-    "detect_52w_high_low": Probe(args={"date": "{t}"}, allow_empty=True),
-    "detect_52w_high_low_range": Probe(
-        args={"date_from": "{t-14}", "date_to": "{t}"}, allow_empty=True
+    # observation, so they assert the envelope instead of row counts — and the
+    # envelope must be asserted concretely, or a tool returning {} would pass.
+    "detect_52w_high_low": Probe(
+        args={"date": "{t}"}, require_keys=("count", "new_high", "new_low"), allow_empty=True
     ),
-    "detect_ytd_high_low": Probe(args={"date": "{t}"}, allow_empty=True),
+    "detect_52w_high_low_range": Probe(
+        args={"date_from": "{t-14}", "date_to": "{t}"},
+        require_keys=("count", "new_high", "new_low", "date_from", "date_to"),
+        allow_empty=True,
+    ),
+    "detect_ytd_high_low": Probe(
+        args={"date": "{t}"}, require_keys=("count", "new_high", "new_low"), allow_empty=True
+    ),
     "detect_ytd_high_low_range": Probe(
-        args={"date_from": "{t-14}", "date_to": "{t}"}, allow_empty=True
+        args={"date_from": "{t-14}", "date_to": "{t}"},
+        require_keys=("count", "new_high", "new_low", "date_from", "date_to"),
+        allow_empty=True,
     ),
     # Returns a market-wide summary rather than rows, so assert the universe it
     # was computed over: "advances 0 / declines 1" is well-formed and useless.
@@ -159,22 +176,51 @@ PROBES: dict[str, Probe] = {
         require_keys=("advances", "declines", "total"),
         min_values={"total": UNIVERSE_MIN},
     ),
-    "detect_price_limit": Probe(args={"date": "{t}"}, allow_empty=True),
-    "detect_volume_surge": Probe(args={"date": "{t}"}, allow_empty=True, timeout=300),
-    "detect_distribution_days": Probe(args={"date": "{t}"}, allow_empty=True, timeout=300),
+    "detect_price_limit": Probe(
+        args={"date": "{t}"},
+        require_keys=("count", "limit_high", "limit_low"),
+        allow_empty=True,
+    ),
+    "detect_volume_surge": Probe(
+        args={"date": "{t}"},
+        require_keys=("count", "multiplier", "baseline_days"),
+        allow_empty=True,
+        timeout=300,
+    ),
+    "detect_distribution_days": Probe(
+        args={"date": "{t}"},
+        require_keys=("date", "topix_close", "distribution_count", "distribution_days"),
+        allow_empty=True,
+        timeout=300,
+    ),
     "detect_follow_through_day": Probe(
-        args={"rally_start": "{t-60}", "date": "{t}"}, allow_empty=True, timeout=300
+        args={"rally_start": "{t-60}", "date": "{t}"},
+        require_keys=("date", "rally_start", "confirmed", "topix_close"),
+        allow_empty=True,
+        timeout=300,
     ),
     "detect_consecutive_dividend_increase": Probe(
-        args={"min_years": 5}, allow_empty=True, timeout=300
+        args={"min_years": 5},
+        require_keys=("count", "min_years", "data"),
+        allow_empty=True,
+        timeout=300,
     ),
-    "get_value_stock_screen": Probe(allow_empty=True, timeout=300),
+    "get_value_stock_screen": Probe(
+        require_keys=("date", "total_matches", "criteria", "items"),
+        allow_empty=True,
+        timeout=300,
+    ),
     "get_dividend_yield_ranking": Probe(args={"n": 10}, min_rows=10, timeout=300),
     "get_valuation_ranking": Probe(args={"n": 10}, min_rows=10, timeout=300),
     # -- market overview --------------------------------------------------
     # Ask for a fixed N and require it: a short list means a thin trading day in
     # the cache, not a quiet market.
-    "get_advance_decline_ratio": Probe(args={"date": "{t}"}, allow_empty=True, timeout=300),
+    "get_advance_decline_ratio": Probe(
+        args={"date": "{t}"},
+        require_keys=("date", "ratio", "advances_sum", "declines_sum"),
+        allow_empty=True,
+        timeout=300,
+    ),
     "get_top_movers": Probe(args={"date": "{t}", "n": 20}, min_rows=20, timeout=300),
     "get_top_volume": Probe(args={"date": "{t}", "n": 20}, min_rows=20, timeout=300),
     "get_top_turnover_value": Probe(args={"date": "{t}", "n": 20}, min_rows=20, timeout=300),
@@ -182,7 +228,12 @@ PROBES: dict[str, Probe] = {
     # -- briefings (composite readers) ------------------------------------
     "get_market_briefing": Probe(args={"date": "{t}"}, min_rows=17, timeout=300),
     "get_sector_briefing": Probe(min_rows=17, timeout=300),
-    "get_stock_briefing": Probe(args={"code": TOYOTA}, allow_empty=True, timeout=300),
+    "get_stock_briefing": Probe(
+        args={"code": TOYOTA},
+        require_keys=("code", "name", "price", "valuation"),
+        allow_empty=True,
+        timeout=300,
+    ),
     # -- technical / charts -----------------------------------------------
     "get_technical_indicators": Probe(
         args={"code": TOYOTA, "date_from": "{t-90}"}, min_rows=20, timeout=300

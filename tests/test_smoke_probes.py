@@ -52,6 +52,23 @@ def test_probes_are_probe_instances():
         assert isinstance(probe, Probe), f"{name} is not a Probe"
 
 
+def test_empty_allowed_probes_still_assert_something():
+    """``allow_empty`` waives the row count, never the shape.
+
+    Without this, a tool that broke into returning ``{}`` would be reported as
+    OK — the exact blind spot the smoke test exists to close.
+    """
+    offenders = [
+        name
+        for name, probe in smoke_probes.PROBES.items()
+        if probe.allow_empty and not probe.require_keys and not probe.min_values
+    ]
+    assert not offenders, (
+        f"allow_empty probes with nothing to assert: {offenders}. "
+        "Add require_keys (or min_values) naming the envelope a working answer has."
+    )
+
+
 def test_specs_use_date_tokens_rather_than_hardcoded_dates():
     """A hardcoded date rots into 'tested nothing' once it ages out of cache."""
     offenders = []

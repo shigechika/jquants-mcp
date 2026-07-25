@@ -81,7 +81,11 @@ class Probe:
     #: Treat an explicit plan-restriction error as a pass (the tool works; the
     #: subscription does not cover it). Data still passes when cache serves it.
     allow_plan_restriction: bool = False
-    #: Legitimately empty answers (e.g. a detector that finds nothing today).
+    #: Zero rows is an acceptable answer (a detector that found nothing today).
+    #: It does NOT waive structural checks: the payload must still be a
+    #: container, and such a probe is expected to assert something concrete via
+    #: ``require_keys`` / ``min_values`` — otherwise a tool returning ``{}``
+    #: would sail through, which is the blind spot this harness exists to close.
     allow_empty: bool = False
     #: Non-None skips the tool entirely; the string is the reason shown.
     skip: str | None = None
@@ -204,6 +208,9 @@ def evaluate(tool: str, probe: Probe, payload: Any, today: date) -> Result:
         if probe.allow_plan_restriction and kind == "PlanRestrictionError":
             return Result(tool, "RESTRICTED", "plan does not cover this endpoint")
         return Result(tool, "FAIL", f"{kind}: {message}")
+
+    if not isinstance(payload, (dict, list)):
+        return Result(tool, "FAIL", f"payload is not a container: {type(payload).__name__}")
 
     missing = [k for k in probe.require_keys if _dig(payload, k) is None]
     if missing:

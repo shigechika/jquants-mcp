@@ -80,6 +80,20 @@ class TestEvaluate:
         assert sh.evaluate("t", probe, {"data": []}, TODAY).status == "FAIL"
         assert sh.evaluate("t", sh.Probe(allow_empty=True), {"data": []}, TODAY).status == "OK"
 
+    def test_allow_empty_still_enforces_required_keys(self):
+        """Waiving the row count must not waive the shape."""
+        probe = sh.Probe(allow_empty=True, require_keys=("count", "new_high"))
+        assert sh.evaluate("t", probe, {}, TODAY).status == "FAIL"
+        good = {"count": 0, "new_high": [], "new_low": []}
+        assert sh.evaluate("t", probe, good, TODAY).status == "OK"
+
+    def test_non_container_payload_fails_even_when_empty_is_allowed(self):
+        probe = sh.Probe(allow_empty=True)
+        for payload in (None, "plain text", 42):
+            result = sh.evaluate("t", probe, payload, TODAY)
+            assert result.status == "FAIL", f"{payload!r} should not pass"
+            assert "not a container" in result.detail
+
     def test_min_rows_guards_a_thin_universe(self):
         """A cross-sectional tool returning one row is broken, not quiet."""
         probe = sh.Probe(min_rows=100)

@@ -163,7 +163,11 @@ async def main_async(args: argparse.Namespace) -> int:
     # A spec for a tool that no longer exists is dead weight that hides drift.
     stale = sorted(set(probes) - set(names))
     if stale and not args.only:
-        print(f"::warning::probe specs for tools that are no longer registered: {stale}")
+        # stderr: stdout carries the report, and --output json must stay valid.
+        print(
+            f"::warning::probe specs for tools that are no longer registered: {stale}",
+            file=sys.stderr,
+        )
 
     if args.output == "json":
         print(render_json(results, reference, mode))
