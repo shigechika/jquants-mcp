@@ -122,11 +122,18 @@ async def _stdio_caller(command: str) -> tuple[Caller, list[str], Any]:
 async def _client_caller(client: Any) -> tuple[Caller, list[str], Any]:
     """Enter an MCP client session and expose it as a caller + tool list."""
     await client.__aenter__()
+    try:
+        names = [tool.name for tool in await client.list_tools()]
+    except BaseException:
+        # The caller only learns about the client through our return value, so
+        # a failure here would strand the session — and in stdio mode that
+        # means an orphaned server subprocess holding its pipes open.
+        await client.__aexit__(None, None, None)
+        raise
 
     async def call(name: str, args: dict[str, Any]) -> Any:
         return _decode(await client.call_tool(name, args))
 
-    names = [tool.name for tool in await client.list_tools()]
     return call, names, client
 
 
