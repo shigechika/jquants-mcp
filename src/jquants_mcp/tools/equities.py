@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -504,6 +505,11 @@ def register(
         return {"count": len(matches), "query": query, "data": matches}
 
     _EARNINGS_LIVE_REFRESH_TTL_S = 1800
+    # Single-flight gate: three tools share this fallback, so without it a
+    # burst of concurrent requests each fetches the same upstream payload and
+    # writes it back. The suppression marker below only helps AFTER the first
+    # fetch completes; this covers the window before that (#537).
+    _earnings_refresh_lock = asyncio.Lock()
 
     async def _refresh_earnings_calendar_live(client: JQuantsClient, cache: CacheStore) -> bool:
         """Fetch the latest earnings calendar and upsert it into the Tier 1 table.
@@ -522,19 +528,26 @@ def register(
         marker = make_cache_key("/equities/earnings-calendar", {"live_refresh": "1"})
         if cache.get_response(marker) is not None:
             return False
-        try:
-            data = await client.get_all_pages("/equities/earnings-calendar")
-        except (*TOOL_API_ERRORS, RateLimitError, AuthenticationError) as e:
-            # Best-effort side fetch: never fail an otherwise cache-served
-            # request. No marker is set, so the next call retries.
-            logger.warning("Live earnings-calendar refresh failed: %s", e)
-            return False
-        cache.put_response(marker, {"refreshed": True}, ttl_seconds=_EARNINGS_LIVE_REFRESH_TTL_S)
-        records = _normalize_earnings_records(data)
-        if not records:
-            return False
-        cache.put_rows("equities_earnings_calendar", records, key_columns=["Code", "Date"])
-        return True
+        async with _earnings_refresh_lock:
+            # Re-check inside the gate: a caller that queued behind the winner
+            # would otherwise repeat the fetch it was waiting for.
+            if cache.get_response(marker) is not None:
+                return False
+            try:
+                data = await client.get_all_pages("/equities/earnings-calendar")
+            except (*TOOL_API_ERRORS, RateLimitError, AuthenticationError) as e:
+                # Best-effort side fetch: never fail an otherwise cache-served
+                # request. No marker is set, so the next call retries.
+                logger.warning("Live earnings-calendar refresh failed: %s", e)
+                return False
+            cache.put_response(
+                marker, {"refreshed": True}, ttl_seconds=_EARNINGS_LIVE_REFRESH_TTL_S
+            )
+            records = _normalize_earnings_records(data)
+            if not records:
+                return False
+            cache.put_rows("equities_earnings_calendar", records, key_columns=["Code", "Date"])
+            return True
 
     def _search_earnings_by_code(cache: CacheStore, code: str) -> dict[str, Any]:
         """Search accumulated earnings calendar data for a specific stock code.

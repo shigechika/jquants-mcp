@@ -784,6 +784,12 @@ async def _get_user_client() -> JQuantsClient:
 def health_check() -> dict[str, Any]:
     """Check server health, API key configuration, and cache readiness.
 
+    Sync on purpose: FastMCP runs a sync tool body in a worker thread, which
+    keeps this off the event loop — the body can trigger the slow lazy
+    initialization (connect + migrations). Sharing the SQLite connection with
+    the loop from that thread is what caused #537; the store's write lock, not
+    an async signature, is what makes it safe.
+
     Call this at session start to confirm cache.db has finished loading
     before issuing detect_* or cache_status — the first call after server
     start may take 10–60 seconds while the cache initialises lazily.
