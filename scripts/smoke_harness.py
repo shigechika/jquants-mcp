@@ -326,6 +326,14 @@ async def run_probes(
     found"), which is fine for a market-data server and unacceptable for one
     serving personal data — the report is meant to be safe to paste anywhere.
     """
+    if concurrency < 1:
+        # Semaphore(0) parks every probe forever, and the per-probe timeout
+        # cannot save the run because it only starts once the slot is held —
+        # a bounded smoke test that hangs is the one failure mode it must not
+        # have. Negative values raise from the Semaphore itself, after the
+        # caller has already paid for setup.
+        raise ValueError(f"concurrency must be at least 1, got {concurrency}")
+
     semaphore = asyncio.Semaphore(concurrency)
 
     async def one(name: str) -> Result:
