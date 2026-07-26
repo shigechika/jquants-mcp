@@ -89,10 +89,12 @@ class TestEvaluate:
 
     def test_non_container_payload_fails_even_when_empty_is_allowed(self):
         probe = sh.Probe(allow_empty=True)
-        for payload in (None, "plain text", 42):
+        for payload in (None, 42):
             result = sh.evaluate("t", probe, payload, TODAY)
             assert result.status == "FAIL", f"{payload!r} should not pass"
             assert "not a container" in result.detail
+        # A string takes the text path: still a failure, different reason.
+        assert sh.evaluate("t", probe, "plain text", TODAY).status == "FAIL"
 
     def test_min_rows_guards_a_thin_universe(self):
         """A cross-sectional tool returning one row is broken, not quiet."""
@@ -112,6 +114,39 @@ class TestEvaluate:
         assert ok.status == "OK"
         assert thin.status == "FAIL"
         assert "total=1" in thin.detail
+
+    def test_text_payload_needs_an_assertion(self):
+        """Text-answering tools are common outside this repo; silence is not OK."""
+        result = sh.evaluate("t", sh.Probe(), "some output", TODAY)
+        assert result.status == "FAIL"
+        assert "nothing asserted" in result.detail
+
+    def test_text_payload_passes_when_pattern_matches(self):
+        probe = sh.Probe(must_match=(r"^Users: \d+",), min_chars=5)
+        assert sh.evaluate("t", probe, "Users: 4213\nActive: 88", TODAY).status == "OK"
+
+    def test_text_payload_fails_on_missing_pattern(self):
+        probe = sh.Probe(must_match=(r"^Users: \d+",))
+        result = sh.evaluate("t", probe, "no data available", TODAY)
+        assert result.status == "FAIL"
+        assert "missing expected pattern" in result.detail
+
+    def test_forbidden_pattern_catches_a_polite_no_data_answer(self):
+        probe = sh.Probe(min_chars=1, must_not_match=(r"(?i)no (data|results)",))
+        result = sh.evaluate("t", probe, "No data for the requested window.", TODAY)
+        assert result.status == "FAIL"
+        assert "forbidden pattern" in result.detail
+
+    def test_min_chars_catches_a_truncated_answer(self):
+        probe = sh.Probe(min_chars=50)
+        result = sh.evaluate("t", probe, "Report\n", TODAY)
+        assert result.status == "FAIL"
+        assert "chars (want >=" in result.detail
+
+    def test_text_checks_also_apply_to_structured_payloads(self):
+        """The rendered JSON is searched, so a dict tool can assert content too."""
+        probe = sh.Probe(must_match=(r"\"plan\": \"premium\"",), allow_empty=True)
+        assert sh.evaluate("t", probe, {"plan": "premium"}, TODAY).status == "OK"
 
     def test_error_payload_fails(self):
         payload = {"error": True, "error_type": "APIError", "message": "boom"}
@@ -216,6 +251,72 @@ class TestRunProbes:
         results = await self._run(["t"], probes, call)
         assert results[0].status == "FAIL"
         assert "timed out" in results[0].detail
+
+    async def test_redact_details_hides_server_text(self):
+        """Error text quotes the argument that failed; some servers must not echo it."""
+
+        async def call(name, args):
+            raise RuntimeError("User 'alice@example.org' not found")
+
+        probes = {"t": sh.Probe()}
+        leaky = await self._run(["t"], probes, call)
+        assert "alice@example.org" in leaky[0].detail
+
+        redacted = await self._run(["t"], probes, call, redact_details=True)
+        assert redacted[0].status == "FAIL"
+        assert "alice" not in redacted[0].detail
+        assert "RuntimeError" in redacted[0].detail
+
+    def test_redact_details_hides_payload_values_in_check_failures(self):
+        """Redaction covers every detail derived from the payload, not just errors.
+
+        A freshness or min_values failure quotes what it saw, and what it saw
+        is server data — on a server holding personal data that is exactly the
+        thing the report promises not to print.
+        """
+        stale = {"data": [{"Date": "2020-01-01"}]}
+        probe = sh.Probe(date_field="Date", fresh_within_days=0)
+        assert "2020-01-01" in sh.evaluate("t", probe, stale, TODAY).detail
+        redacted = sh.evaluate("t", probe, stale, TODAY, redact_details=True)
+        assert redacted.status == "FAIL"
+        assert "2020" not in redacted.detail
+        assert "stale" in redacted.detail
+
+        thin = {"total": "not-a-number"}
+        probe = sh.Probe(allow_empty=True, min_values={"total": 100})
+        assert "not-a-number" in sh.evaluate("t", probe, thin, TODAY).detail
+        redacted = sh.evaluate("t", probe, thin, TODAY, redact_details=True)
+        assert "not-a-number" not in redacted.detail
+
+    async def test_redact_details_hides_error_payload_message(self):
+        async def call(name, args):
+            return {"error": True, "error_type": "APIError", "message": "user bob is unknown"}
+
+        results = await self._run(["t"], {"t": sh.Probe()}, call, redact_details=True)
+        assert "bob" not in results[0].detail
+        assert "APIError" in results[0].detail
+
+    async def test_args_factory_respects_the_concurrency_bound(self):
+        """Discovery calls hit the server too, so they must queue like the rest."""
+        import asyncio
+
+        live = 0
+        peak = 0
+
+        async def factory(call):
+            nonlocal live, peak
+            live += 1
+            peak = max(peak, live)
+            await asyncio.sleep(0.02)
+            live -= 1
+            return {}
+
+        async def call(name, args):
+            return {"data": [1]}
+
+        probes = {f"t{i}": sh.Probe(args_factory=factory) for i in range(8)}
+        await self._run(list(probes), probes, call, concurrency=2)
+        assert peak <= 2, f"{peak} factories ran at once with concurrency=2"
 
     async def test_failures_sort_first(self):
         async def call(name, args):

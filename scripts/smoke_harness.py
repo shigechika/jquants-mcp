@@ -74,6 +74,15 @@ class Probe:
     #: Dotted path -> minimum numeric value. Catches summary-shaped answers that
     #: are technically well-formed but computed over an empty universe.
     min_values: dict[str, float] = field(default_factory=dict)
+    #: Regexes the rendered payload must contain. The way to assert a tool that
+    #: answers with formatted text rather than rows — common outside this repo.
+    must_match: tuple[str, ...] = ()
+    #: Regexes the payload must NOT contain, for tools whose failure mode is a
+    #: polite "no data" sentence rather than an error.
+    must_not_match: tuple[str, ...] = ()
+    #: Minimum rendered length; a text tool degrading to a header line or an
+    #: empty string is otherwise indistinguishable from a working one.
+    min_chars: int = 0
     #: Field holding a date; combined with fresh_within_days for staleness.
     date_field: str | None = None
     #: Newest date_field value must be >= today - N days (0 = today or later).
@@ -200,14 +209,51 @@ def max_date(payload: Any, field_name: str) -> date | None:
 # Evaluation
 
 
-def evaluate(tool: str, probe: Probe, payload: Any, today: date) -> Result:
-    """Decide whether one payload proves the tool works."""
+def _describe(exc: BaseException, redact: bool) -> str:
+    """Render an exception for the report, optionally without its message."""
+    if redact:
+        return f"{type(exc).__name__} (message redacted)"
+    return f"{type(exc).__name__}: {exc}"
+
+
+def evaluate(
+    tool: str, probe: Probe, payload: Any, today: date, redact_details: bool = False
+) -> Result:
+    """Decide whether one payload proves the tool works.
+
+    ``redact_details`` suppresses server-authored message text in the result,
+    for deployments whose errors quote the data they were asked about.
+    """
     if isinstance(payload, dict) and payload.get("error"):
         kind = payload.get("error_type", "?")
-        message = str(payload.get("message", ""))[:120]
         if probe.allow_plan_restriction and kind == "PlanRestrictionError":
             return Result(tool, "RESTRICTED", "plan does not cover this endpoint")
+        if redact_details:
+            return Result(tool, "FAIL", f"{kind} (message redacted)")
+        message = str(payload.get("message", ""))[:120]
         return Result(tool, "FAIL", f"{kind}: {message}")
+
+    text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+    if len(text) < probe.min_chars:
+        return Result(tool, "FAIL", f"{len(text)} chars (want >= {probe.min_chars})")
+    for pattern in probe.must_match:
+        if not re.search(pattern, text, re.MULTILINE):
+            return Result(tool, "FAIL", f"missing expected pattern: {pattern}")
+    for pattern in probe.must_not_match:
+        if re.search(pattern, text, re.MULTILINE):
+            return Result(tool, "FAIL", f"matched forbidden pattern: {pattern}")
+
+    if isinstance(payload, str):
+        # A text-answering tool: must_match / min_chars above are the contract,
+        # since there are no rows or keys to inspect. Refuse to pass one that
+        # asserts neither — an empty string would otherwise read as success.
+        if not probe.must_match and not probe.min_chars:
+            return Result(
+                tool,
+                "FAIL",
+                "text payload with nothing asserted — set must_match or min_chars",
+            )
+        return Result(tool, "OK")
 
     if not isinstance(payload, (dict, list)):
         return Result(tool, "FAIL", f"payload is not a container: {type(payload).__name__}")
@@ -219,7 +265,9 @@ def evaluate(tool: str, probe: Probe, payload: Any, today: date) -> Result:
     for path, minimum in probe.min_values.items():
         actual = _dig(payload, path)
         if not isinstance(actual, (int, float)):
-            return Result(tool, "FAIL", f"{path} missing or not numeric: {actual!r}")
+            # The value comes from the payload, so it falls under redaction too.
+            shown = "redacted" if redact_details else repr(actual)
+            return Result(tool, "FAIL", f"{path} missing or not numeric: {shown}")
         if actual < minimum:
             return Result(tool, "FAIL", f"{path}={actual:g} (want >= {minimum:g})")
 
@@ -238,10 +286,14 @@ def evaluate(tool: str, probe: Probe, payload: Any, today: date) -> Result:
             )
         floor = today - timedelta(days=probe.fresh_within_days)
         if newest < floor:
+            # The newest date is payload content — a user's last login on one
+            # server, a trade date on another — so redaction covers it. The
+            # floor is computed here, not read from the payload, and stays.
+            observed = "redacted" if redact_details else newest.isoformat()
             return Result(
                 tool,
                 "FAIL",
-                f"stale: newest {probe.date_field}={newest.isoformat()} < {floor.isoformat()}",
+                f"stale: newest {probe.date_field}={observed} < {floor.isoformat()}",
                 rows=rows,
             )
     return Result(tool, "OK", rows=rows)
@@ -259,12 +311,18 @@ async def run_probes(
     today: date,
     concurrency: int = 4,
     show_traceback: bool = False,
+    redact_details: bool = False,
 ) -> list[Result]:
     """Run every registered tool through its probe and collect results.
 
     ``show_traceback`` prints the full exception chain for failures. Server
     frameworks typically re-raise tool errors as a flat message, so the
     original stack is the only way to see where a live failure came from.
+
+    ``redact_details`` keeps server-authored text out of the report. Error
+    messages routinely quote the argument that failed ("User 'alice' not
+    found"), which is fine for a market-data server and unacceptable for one
+    serving personal data — the report is meant to be safe to paste anywhere.
     """
     semaphore = asyncio.Semaphore(concurrency)
 
@@ -282,18 +340,21 @@ async def run_probes(
         # an artefact of the runner and would make every reported duration a
         # function of how many probes ran before it.
         started = time.monotonic()
-        if probe.args_factory is not None:
-            try:
-                args = await asyncio.wait_for(probe.args_factory(call), timeout=probe.timeout)
-            except SkipProbe as exc:
-                return Result(name, "SKIP", str(exc), time.monotonic() - started)
-            except Exception as exc:  # noqa: BLE001 - a broken prerequisite is a finding
-                detail = f"args_factory failed: {type(exc).__name__}: {exc}"
-                return Result(name, "FAIL", detail[:160], time.monotonic() - started)
-        else:
-            args = probe.args
-        args = resolve_tokens(args, reference, today)
         async with semaphore:
+            # Inside the semaphore: a factory makes its own server calls, so
+            # running it outside would let every probe's discovery fire at once
+            # and blow straight through the configured concurrency bound.
+            if probe.args_factory is not None:
+                try:
+                    args = await asyncio.wait_for(probe.args_factory(call), timeout=probe.timeout)
+                except SkipProbe as exc:
+                    return Result(name, "SKIP", str(exc), time.monotonic() - started)
+                except Exception as exc:  # noqa: BLE001 - a broken prerequisite is a finding
+                    detail = f"args_factory failed: {_describe(exc, redact_details)}"
+                    return Result(name, "FAIL", detail[:160], time.monotonic() - started)
+            else:
+                args = probe.args
+            args = resolve_tokens(args, reference, today)
             started = time.monotonic()
             try:
                 payload = await asyncio.wait_for(call(name, args), timeout=probe.timeout)
@@ -308,9 +369,13 @@ async def run_probes(
                 if show_traceback:
                     print(f"--- traceback: {name} ---", file=sys.stderr)
                     traceback.print_exception(exc, file=sys.stderr)
-                detail = f"{type(exc).__name__}: {exc}"
-                return Result(name, "FAIL", detail[:160], time.monotonic() - started)
-        result = evaluate(name, probe, payload, today)
+                return Result(
+                    name,
+                    "FAIL",
+                    _describe(exc, redact_details)[:160],
+                    time.monotonic() - started,
+                )
+        result = evaluate(name, probe, payload, today, redact_details=redact_details)
         result.elapsed = time.monotonic() - started
         return result
 
