@@ -5,6 +5,25 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.52.0](https://github.com/shigechika/jquants-mcp/compare/v0.51.1...v0.52.0) (2026-07-26)
+
+
+### Features
+
+* add stdio transport to the smoke test (fleet reuse) ([#541](https://github.com/shigechika/jquants-mcp/issues/541)) ([fb920e5](https://github.com/shigechika/jquants-mcp/commit/fb920e5dcc64e2b9fe9d8fa996fff66b84071130))
+* live smoke test that exercises every registered tool ([#534](https://github.com/shigechika/jquants-mcp/issues/534)) ([#535](https://github.com/shigechika/jquants-mcp/issues/535)) ([87a377c](https://github.com/shigechika/jquants-mcp/commit/87a377c03b379f6a7c98abfb0e3334170883b737))
+* prepare the smoke harness for reuse on other servers ([#542](https://github.com/shigechika/jquants-mcp/issues/542)) ([4b93e80](https://github.com/shigechika/jquants-mcp/commit/4b93e80ea468600b005f3bc780234d6eb7bafa92))
+
+
+### Bug Fixes
+
+* close two evaluation gaps in the smoke-test engine ([#545](https://github.com/shigechika/jquants-mcp/issues/545)) ([38d38fb](https://github.com/shigechika/jquants-mcp/commit/38d38fb5364e3613db6c08a06f43de7501033c91))
+* merge args_factory output over a probe's static args ([#543](https://github.com/shigechika/jquants-mcp/issues/543)) ([f650caa](https://github.com/shigechika/jquants-mcp/commit/f650caac96f6aa3cf629f9f4bdf47abbdb9d4d7e))
+* print a stack when an args_factory fails and --traceback is on ([#546](https://github.com/shigechika/jquants-mcp/issues/546)) ([d0e3c65](https://github.com/shigechika/jquants-mcp/commit/d0e3c651bae6c008514b68fdd3acdeba0a8691a4))
+* refuse a concurrency below 1 in the smoke-test engine ([#544](https://github.com/shigechika/jquants-mcp/issues/544)) ([be23400](https://github.com/shigechika/jquants-mcp/commit/be234002e5d107ee6345e5825bf25944886bd5a8))
+* serialize the shared SQLite connection and single-flight the earnings refresh ([#539](https://github.com/shigechika/jquants-mcp/issues/539)) ([cfb3f9e](https://github.com/shigechika/jquants-mcp/commit/cfb3f9e32f9da79bd3d938a630123199af370254))
+* serve the no-argument earnings calendar from Tier 1, not a 90-day blob ([#536](https://github.com/shigechika/jquants-mcp/issues/536)) ([#540](https://github.com/shigechika/jquants-mcp/issues/540)) ([9212ec0](https://github.com/shigechika/jquants-mcp/commit/9212ec0025f6893895a68ead2abc4acf0e5c81a0))
+
 ## [0.51.1](https://github.com/shigechika/jquants-mcp/compare/v0.51.0...v0.51.1) (2026-07-24)
 
 
