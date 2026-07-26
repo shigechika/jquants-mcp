@@ -223,6 +223,26 @@ class TestRunProbes:
         results = await self._run(["download_tool"], probes, call)
         assert results[0].status == "OK"
 
+    async def test_args_factory_result_merges_over_static_args(self):
+        """A probe that sets both means "fixed bounds, discovered identifier".
+
+        Replacing rather than merging would silently drop a limit the author
+        wrote down — the kind of loss that only shows up as an unexpectedly
+        expensive call against a live server.
+        """
+        seen = {}
+
+        async def factory(call):
+            return {"host": "discovered"}
+
+        async def call(name, args):
+            seen.update(args)
+            return {"data": [1]}
+
+        probes = {"t": sh.Probe(args={"limit": 5, "host": "placeholder"}, args_factory=factory)}
+        await self._run(["t"], probes, call)
+        assert seen == {"limit": 5, "host": "discovered"}
+
     async def test_args_factory_can_skip(self):
         async def factory(call):
             raise sh.SkipProbe("no key available")
