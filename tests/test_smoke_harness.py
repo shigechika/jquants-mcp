@@ -338,6 +338,16 @@ class TestRunProbes:
         await self._run(list(probes), probes, call, concurrency=2)
         assert peak <= 2, f"{peak} factories ran at once with concurrency=2"
 
+    async def test_a_concurrency_below_one_is_refused(self):
+        """Semaphore(0) would park every probe with no timeout to rescue it."""
+        import pytest
+
+        async def call(name, args):
+            return {"data": [1]}
+
+        with pytest.raises(ValueError, match="at least 1"):
+            await self._run(["t"], {"t": sh.Probe()}, call, concurrency=0)
+
     async def test_failures_sort_first(self):
         async def call(name, args):
             return {"data": []} if name == "bad" else {"data": [1]}
