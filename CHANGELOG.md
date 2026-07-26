@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.52.1](https://github.com/shigechika/jquants-mcp/compare/v0.52.0...v0.52.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* close four gaps a multi-agent review found in the smoke-test engine ([#547](https://github.com/shigechika/jquants-mcp/issues/547)) ([280637e](https://github.com/shigechika/jquants-mcp/commit/280637e75c26d810bf3329e4458165aba428468c))
+
 ## [0.52.0](https://github.com/shigechika/jquants-mcp/compare/v0.51.1...v0.52.0) (2026-07-26)
 
 
