@@ -183,6 +183,10 @@ async def main_async(args: argparse.Namespace) -> int:
             print(f"no registered tool matches --only {args.only!r}", file=sys.stderr)
             return 1
 
+        # redact_details is deliberately left off here: this server answers with
+        # market data, and an error quoting the code or date it was asked about
+        # is exactly what an operator needs. The servers that share this engine
+        # and serve personal data turn it on.
         results = await run_probes(
             selected,
             probes,
