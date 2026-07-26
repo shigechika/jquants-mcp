@@ -358,6 +358,21 @@ class TestRunProbes:
         # the same thing to a grep and the wrong thing to a person.
         assert redacted.detail == "total below the required 100"
 
+    async def test_show_traceback_covers_a_failing_args_factory(self, capsys):
+        """The commonest failure on discovery-heavy servers must print a stack too."""
+
+        async def factory(call):
+            raise RuntimeError("discovery blew up")
+
+        async def call(name, args):
+            return {"data": [1]}
+
+        probes = {"t": sh.Probe(args_factory=factory)}
+        results = await self._run(["t"], probes, call, show_traceback=True)
+
+        assert results[0].status == "FAIL"
+        assert "discovery blew up" in capsys.readouterr().err
+
     async def test_a_concurrency_below_one_is_refused(self):
         """Semaphore(0) would park every probe with no timeout to rescue it."""
         import pytest

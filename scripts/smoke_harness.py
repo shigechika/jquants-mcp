@@ -376,6 +376,14 @@ async def run_probes(
                 except SkipProbe as exc:
                     return Result(name, "SKIP", str(exc), time.monotonic() - started)
                 except Exception as exc:  # noqa: BLE001 - a broken prerequisite is a finding
+                    # Same traceback handling as the tool call below: on
+                    # servers where nearly every probe discovers its arguments,
+                    # a failure here is the most common one there is, and
+                    # --traceback promising a stack everywhere except the
+                    # common case is worse than not promising one.
+                    if show_traceback:
+                        print(f"--- traceback: {name} (args_factory) ---", file=sys.stderr)
+                        traceback.print_exception(type(exc), exc, exc.__traceback__)
                     detail = f"args_factory failed: {_describe(exc, redact_details)}"
                     return Result(name, "FAIL", detail[:160], time.monotonic() - started)
                 # Merged, not replaced: a probe that sets both means "these are
