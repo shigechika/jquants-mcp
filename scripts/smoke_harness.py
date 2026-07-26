@@ -9,6 +9,8 @@ because the cache lacked the requested dates, and the suite stayed green.
 The engine holds no server-specific knowledge. A companion "probes" module
 supplies the per-tool specs (see ``smoke_probes.py`` for this repo's), so the
 same engine can smoke-test any other FastMCP server by swapping that module.
+Its one deployment-wide assumption is the timezone report timestamps are
+rendered in (JST): every server sharing this harness is operated from Japan.
 
 Design notes:
 
@@ -47,7 +49,16 @@ Caller = Callable[[str, dict[str, Any]], Awaitable[Any]]
 
 
 class SkipProbe(Exception):
-    """Raised by an ``args_factory`` when the probe cannot be prepared."""
+    """Raised by an ``args_factory`` when the probe cannot be prepared.
+
+    The message is shown in the report as the skip reason, and — unlike every
+    other detail the engine prints — it is NOT redacted, because it is written
+    by the probe author rather than returned by the server. That is a contract,
+    not an enforcement: on a server whose reports must be safe to paste
+    anywhere, a reason must describe the *situation* ("no group membership to
+    probe with"), never interpolate what was discovered.
+    """
+
 
 
 @dataclass(frozen=True)
@@ -312,6 +323,25 @@ def evaluate(
                 f"stale: newest {probe.date_field}={observed} < {floor.isoformat()}",
                 rows=rows,
             )
+    # Last check, deliberately: a payload that is broken in its own right
+    # should be reported as broken, not as a complaint about the spec. What is
+    # left here is a probe that waived the row count and then asserted nothing
+    # else — which would report every empty or malformed answer as OK. The
+    # allow_empty docstring has always said so; only the text path enforced it.
+    if probe.allow_empty and not (
+        probe.require_keys
+        or probe.min_values
+        or probe.must_match
+        or probe.min_chars
+        or probe.rows_key
+    ):
+        return Result(
+            tool,
+            "FAIL",
+            "allow_empty with nothing asserted — an empty answer would pass unread",
+            rows=rows,
+        )
+
     return Result(tool, "OK", rows=rows)
 
 
@@ -360,11 +390,13 @@ async def run_probes(
             )
         if probe.skip:
             return Result(name, "SKIP", probe.skip)
-        # Timed from here, but reset once the semaphore is held — queue wait is
-        # an artefact of the runner and would make every reported duration a
-        # function of how many probes ran before it.
-        started = time.monotonic()
         async with semaphore:
+            # Timed from here, not from the call to this function: queue wait is
+            # an artefact of the runner and would make every reported duration a
+            # function of how many probes ran before it. Discovery IS counted —
+            # it is work this probe caused, and a factory that polls a job for a
+            # minute should not be reported as an instant probe.
+            started = time.monotonic()
             # Inside the semaphore: a factory makes its own server calls, so
             # running it outside would let every probe's discovery fire at once
             # and blow straight through the configured concurrency bound.
@@ -383,7 +415,7 @@ async def run_probes(
                     # common case is worse than not promising one.
                     if show_traceback:
                         print(f"--- traceback: {name} (args_factory) ---", file=sys.stderr)
-                        traceback.print_exception(type(exc), exc, exc.__traceback__)
+                        traceback.print_exception(exc, file=sys.stderr)
                     detail = f"args_factory failed: {_describe(exc, redact_details)}"
                     return Result(name, "FAIL", detail[:160], time.monotonic() - started)
                 # Merged, not replaced: a probe that sets both means "these are
@@ -393,7 +425,6 @@ async def run_probes(
             else:
                 args = probe.args
             args = resolve_tokens(args, reference, today)
-            started = time.monotonic()
             try:
                 payload = await asyncio.wait_for(call(name, args), timeout=probe.timeout)
             # Both spellings: on Python 3.10 asyncio.TimeoutError is

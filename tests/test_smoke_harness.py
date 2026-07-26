@@ -78,7 +78,19 @@ class TestEvaluate:
     def test_empty_fails_unless_allowed(self):
         probe = sh.Probe()
         assert sh.evaluate("t", probe, {"data": []}, TODAY).status == "FAIL"
-        assert sh.evaluate("t", sh.Probe(allow_empty=True), {"data": []}, TODAY).status == "OK"
+        # allow_empty waives the count — but the probe still has to assert
+        # something, so name the collection whose emptiness is being accepted.
+        allowed = sh.Probe(allow_empty=True, rows_key="data")
+        assert sh.evaluate("t", allowed, {"data": []}, TODAY).status == "OK"
+
+    def test_allow_empty_alone_asserts_nothing_and_is_refused(self):
+        """Waiving the count and asserting nothing else passes every broken tool."""
+        result = sh.evaluate("t", sh.Probe(allow_empty=True), {"data": []}, TODAY)
+        assert result.status == "FAIL"
+        assert "nothing asserted" in result.detail
+        # It is the last thing checked: a payload broken in its own right is
+        # still reported as broken rather than as a complaint about the spec.
+        assert "not a container" in sh.evaluate("t", sh.Probe(allow_empty=True), 42, TODAY).detail
 
     def test_allow_empty_still_enforces_required_keys(self):
         """Waiving the row count must not waive the shape."""
