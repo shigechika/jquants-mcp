@@ -338,6 +338,26 @@ class TestRunProbes:
         await self._run(list(probes), probes, call, concurrency=2)
         assert peak <= 2, f"{peak} factories ran at once with concurrency=2"
 
+    async def test_a_named_rows_key_must_be_a_list_even_when_empty_is_allowed(self):
+        """allow_empty waives the count, not the shape."""
+        probe = sh.Probe(rows_key="events", allow_empty=True, require_keys=("count",))
+        broken = sh.evaluate("t", probe, {"count": 0, "events": "broken"}, TODAY)
+        assert broken.status == "FAIL"
+        assert "not a list" in broken.detail
+
+        assert sh.evaluate("t", probe, {"count": 0, "events": []}, TODAY).status == "OK"
+
+    async def test_min_values_redacts_the_observed_number(self):
+        """The bound is ours; the number the server returned is not."""
+        probe = sh.Probe(allow_empty=True, require_keys=("total",), min_values={"total": 100})
+        payload = {"total": 7}
+        assert "7" in sh.evaluate("t", probe, payload, TODAY).detail
+        redacted = sh.evaluate("t", probe, payload, TODAY, redact_details=True)
+        assert redacted.status == "FAIL"
+        # Exact text, not a substring: a detail that reads "totalbelow it" says
+        # the same thing to a grep and the wrong thing to a person.
+        assert redacted.detail == "total below the required 100"
+
     async def test_a_concurrency_below_one_is_refused(self):
         """Semaphore(0) would park every probe with no timeout to rescue it."""
         import pytest

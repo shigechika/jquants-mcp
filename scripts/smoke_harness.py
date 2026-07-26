@@ -271,7 +271,21 @@ def evaluate(
             shown = "redacted" if redact_details else repr(actual)
             return Result(tool, "FAIL", f"{path} missing or not numeric: {shown}")
         if actual < minimum:
+            # The bound is ours and stays; the observed value came from the
+            # payload — a holding, a headcount — so it is redacted with
+            # everything else the server said.
+            if redact_details:
+                return Result(tool, "FAIL", f"{path} below the required {minimum:g}")
             return Result(tool, "FAIL", f"{path}={actual:g} (want >= {minimum:g})")
+
+    # A named rows_key must resolve to a list even when the probe accepts an
+    # empty one: allow_empty waives the *count*, not the shape. Without this a
+    # tool answering {"events": "broken"} passes every check a probe can make.
+    if probe.rows_key is not None:
+        target = _dig(payload, probe.rows_key)
+        if not isinstance(target, list):
+            kind = type(target).__name__ if target is not None else "missing"
+            return Result(tool, "FAIL", f"{probe.rows_key} is {kind}, not a list")
 
     rows = count_rows(payload, probe.rows_key)
     if not probe.allow_empty:
