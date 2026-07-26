@@ -354,8 +354,9 @@ class TestRunProbes:
         assert "7" in sh.evaluate("t", probe, payload, TODAY).detail
         redacted = sh.evaluate("t", probe, payload, TODAY, redact_details=True)
         assert redacted.status == "FAIL"
-        assert "7" not in redacted.detail
-        assert "100" in redacted.detail
+        # Exact text, not a substring: a detail that reads "totalbelow it" says
+        # the same thing to a grep and the wrong thing to a person.
+        assert redacted.detail == "total below the required 100"
 
     async def test_a_concurrency_below_one_is_refused(self):
         """Semaphore(0) would park every probe with no timeout to rescue it."""

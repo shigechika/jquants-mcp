@@ -274,8 +274,9 @@ def evaluate(
             # The bound is ours and stays; the observed value came from the
             # payload — a holding, a headcount — so it is redacted with
             # everything else the server said.
-            observed = "below it" if redact_details else f"={actual:g}"
-            return Result(tool, "FAIL", f"{path}{observed} (want >= {minimum:g})")
+            if redact_details:
+                return Result(tool, "FAIL", f"{path} below the required {minimum:g}")
+            return Result(tool, "FAIL", f"{path}={actual:g} (want >= {minimum:g})")
 
     # A named rows_key must resolve to a list even when the probe accepts an
     # empty one: allow_empty waives the *count*, not the shape. Without this a
