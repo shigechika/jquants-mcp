@@ -32,6 +32,39 @@ from jquants_mcp.cache.screener_compute import (
 
 logger = logging.getLogger(__name__)
 
+INTEGRITY_OK = "ok"
+INTEGRITY_PENDING = "pending"
+INTEGRITY_NOT_CHECKED = "not-checked"
+#: Prefixes, not values: the produced string is the prefix plus a detail
+#: string, so consumers must use ``startswith`` (or ``integrity_is_failure``).
+INTEGRITY_FAILED_PREFIX = "failed: "
+INTEGRITY_ERROR_PREFIX = "error: "
+
+#: The complete vocabulary of ``CacheStore.integrity_status``. Entries ending
+#: in ": " are prefixes. This tuple is the single source of truth: the
+#: health_check tool's description is pinned against it by
+#: tests/test_health_check.py, because a docstring that promises a value the
+#: code never produces is a lie an LLM will act on — which is exactly the bug
+#: that prompted this (``failed`` was documented, ``failed: <detail>`` was
+#: produced, and ``error: <detail>`` was undocumented entirely).
+INTEGRITY_STATES: tuple[str, ...] = (
+    INTEGRITY_OK,
+    INTEGRITY_PENDING,
+    INTEGRITY_NOT_CHECKED,
+    INTEGRITY_FAILED_PREFIX,
+    INTEGRITY_ERROR_PREFIX,
+)
+
+
+def integrity_is_failure(status: str) -> bool:
+    """Return True when ``status`` reports a failed or errored integrity check.
+
+    The two failure forms carry a detail string, so identity comparison does
+    not work. Callers used to hand-roll the pair of ``startswith`` calls.
+    """
+    return status.startswith((INTEGRITY_FAILED_PREFIX, INTEGRITY_ERROR_PREFIX))
+
+
 # TTL definitions (seconds)
 TTL_NONE = 0  # do not cache
 TTL_6H = 6 * 3600
@@ -195,7 +228,7 @@ class CacheStore:
         # Integrity check state — populated asynchronously after first
         # successful connection. Values: "pending", "ok", "not-checked", or
         # a short error description.
-        self._integrity_status: str = "not-checked"
+        self._integrity_status: str = INTEGRITY_NOT_CHECKED
         self._integrity_thread: threading.Thread | None = None
         # One sqlite3.Connection is shared by the event loop AND worker threads
         # (the connection is opened with check_same_thread=False, and FastMCP
@@ -268,8 +301,10 @@ class CacheStore:
     def integrity_status(self) -> str:
         """Return the result of the background SQLite integrity check.
 
-        Values: ``"not-checked"`` (DB never opened), ``"pending"`` (check
-        running), ``"ok"`` (passed), or a short error description. Surfaced
+        One of ``INTEGRITY_STATES``: ``"not-checked"`` (DB never opened),
+        ``"pending"`` (check running), ``"ok"`` (passed), or one of the two
+        failure forms ``"failed: <detail>"`` / ``"error: <detail>"`` — use
+        ``integrity_is_failure`` rather than comparing. Surfaced
         via ``cache_status`` / ``health_check`` so operators can spot cache
         corruption without waiting for downstream queries to silent-fail.
         """
@@ -285,7 +320,7 @@ class CacheStore:
         """
         if self._integrity_thread is not None and self._integrity_thread.is_alive():
             return
-        self._integrity_status = "pending"
+        self._integrity_status = INTEGRITY_PENDING
 
         def _run() -> None:
             try:
@@ -295,14 +330,14 @@ class CacheStore:
                 finally:
                     probe.close()
                 result = row[0] if row else "unknown"
-                if result == "ok":
-                    self._integrity_status = "ok"
+                if result == INTEGRITY_OK:
+                    self._integrity_status = INTEGRITY_OK
                     logger.info("cache.db integrity check: ok")
                 else:
-                    self._integrity_status = f"failed: {result}"
+                    self._integrity_status = f"{INTEGRITY_FAILED_PREFIX}{result}"
                     logger.warning("cache.db integrity check failed: %s", result)
             except Exception as exc:  # pragma: no cover — defensive
-                self._integrity_status = f"error: {exc}"
+                self._integrity_status = f"{INTEGRITY_ERROR_PREFIX}{exc}"
                 logger.warning("cache.db integrity check errored: %s", exc)
 
         t = threading.Thread(target=_run, name="cache-integrity-check", daemon=True)

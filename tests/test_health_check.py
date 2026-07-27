@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from unittest.mock import MagicMock, patch
 
 import jquants_mcp.server as server_module
+from jquants_mcp.cache import store
 from jquants_mcp.cache.store import CacheStore
 from jquants_mcp.config import Settings
 from jquants_mcp.client import JQuantsClient
@@ -317,3 +319,46 @@ class TestCacheStatus:
             result = await _call("cache_status")
 
         assert result["plan"] == "premium"
+
+
+class TestIntegrityVocabularyIsPinned:
+    """health_check の description を store の語彙に固定する。
+
+    docstring がコードの生成しない値を約束していた（`failed` は素の値としては
+    生成されず、実際は `failed: <detail>`。`error: <detail>` に至っては未記載）。
+    description は LLM がそのまま読むものなので、これは実害のある嘘になる。
+
+    走査ではなく単一ソース化で守る。部分文字列一致は `f"failed: {result}"` の
+    中の `failed` を見つけて元のバグを通してしまい、AST 厳密一致は別モジュール
+    生成や `.lower()` で誤検知を量産するため。
+    """
+
+    @staticmethod
+    def _enumerated(description: str, field: str) -> set[str]:
+        """``field`` (a / b / c) の括弧内をトークン集合として返す。
+
+        規約: ``field`` の直後の括弧には値だけを書く（説明は次の文に書く）。
+        """
+        m = re.search(rf"``{field}``\s*\(([^)]*)\)", description, re.DOTALL)
+        assert m, f"{field} の列挙が description に無い"
+        tokens = set()
+        for raw in m.group(1).split("/"):
+            token = " ".join(raw.split())
+            if not token:
+                continue
+            # "failed: <detail>" → "failed: "（接頭辞は接頭辞として比較する）
+            tokens.add(token.split("<")[0] if "<" in token else token)
+        return tokens
+
+    @pytest.mark.asyncio
+    async def test_cache_integrity_matches_the_store(self):
+        # 登録済みツールの description を読む。LLM が実際に受け取る文字列であり、
+        # 将来 description= を明示指定に変えても追随する。
+        tools = {t.name: t.description for t in await server_module.mcp.list_tools()}
+        enumerated = self._enumerated(tools["health_check"], "cache_integrity")
+        assert enumerated == set(store.INTEGRITY_STATES)
+
+    @pytest.mark.asyncio
+    async def test_status_matches_what_the_tool_can_return(self):
+        tools = {t.name: t.description for t in await server_module.mcp.list_tools()}
+        assert self._enumerated(tools["health_check"], "status") == {"healthy", "degraded"}
