@@ -226,8 +226,8 @@ class CacheStore:
         self._last_retry: float = 0.0
         self._needs_reload: bool = False
         # Integrity check state — populated asynchronously after first
-        # successful connection. Values: "pending", "ok", "not-checked", or
-        # a short error description.
+        # successful connection. The vocabulary lives in INTEGRITY_STATES;
+        # do not restate it here, or this comment becomes the next stale copy.
         self._integrity_status: str = INTEGRITY_NOT_CHECKED
         self._integrity_thread: threading.Thread | None = None
         # One sqlite3.Connection is shared by the event loop AND worker threads
@@ -336,7 +336,10 @@ class CacheStore:
                 else:
                     self._integrity_status = f"{INTEGRITY_FAILED_PREFIX}{result}"
                     logger.warning("cache.db integrity check failed: %s", result)
-            except Exception as exc:  # pragma: no cover — defensive
+            # Not "no cover": test_error_prefix_is_actually_produced drives this
+            # branch on purpose, because INTEGRITY_ERROR_PREFIX is a documented
+            # state and a documented state needs a producer that really runs.
+            except Exception as exc:
                 self._integrity_status = f"{INTEGRITY_ERROR_PREFIX}{exc}"
                 logger.warning("cache.db integrity check errored: %s", exc)
 
