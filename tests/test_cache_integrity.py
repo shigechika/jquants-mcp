@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from jquants_mcp.cache import store
 from jquants_mcp.cache.store import CacheStore
 
 
@@ -104,3 +105,88 @@ def test_integrity_timing(tmp_path: Path) -> None:  # pragma: no cover
     t0 = time.monotonic()
     _wait_for(lambda: store.integrity_status != "pending")
     print(f"quick_check took {time.monotonic() - t0:.3f}s")
+
+
+def test_failed_prefix_is_actually_produced(tmp_path: Path, monkeypatch) -> None:
+    """Actually take the path where quick_check returns something other than ok.
+
+    test_integrity_detects_corruption asserts only `!= "ok"`, and its
+    header-scrambling setup has a branch that returns early when
+    _ensure_connection itself fails — so the producer writing
+    `failed: <detail>` had never run. The docstring promises that prefix, so
+    pin that it is really produced.
+    """
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+
+    real_connect = sqlite3.connect
+
+    class _Cursor:
+        def fetchone(self):
+            return ("*** in database main ***\nPage 3 is never used",)
+
+    class _Proxy:
+        """sqlite3.Connection attributes are read-only, so wrap instead."""
+
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, *a, **k):
+            if "quick_check" in sql:
+                return _Cursor()
+            return self._conn.execute(sql, *a, **k)
+
+        def close(self):
+            self._conn.close()
+
+    def _fake_connect(*args, **kwargs):
+        return _Proxy(real_connect(*args, **kwargs))
+
+    # Do not call _ensure_connection(): it starts the real quick_check thread
+    # first, and _start_integrity_check() then returns early because a thread is
+    # already alive. The probe opens its own connection, so db_path is enough.
+    store_obj = CacheStore(db_path)
+    monkeypatch.setattr(sqlite3, "connect", _fake_connect)
+    store_obj._start_integrity_check()
+
+    _wait_for(lambda: store_obj.integrity_status not in {"pending", "not-checked"})
+    assert store_obj.integrity_status.startswith(store.INTEGRITY_FAILED_PREFIX)
+    assert store.integrity_is_failure(store_obj.integrity_status)
+
+
+def test_error_prefix_is_actually_produced(tmp_path: Path, monkeypatch) -> None:
+    """Take the path where opening the probe connection itself raises.
+
+    This is the fifth documented form, and the one the docstring had omitted
+    entirely before this change.
+    """
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+
+    store_obj = CacheStore(db_path)
+
+    def _boom(*args, **kwargs):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(sqlite3, "connect", _boom)
+    store_obj._start_integrity_check()
+
+    _wait_for(lambda: store_obj.integrity_status not in {"pending", "not-checked"})
+    assert store_obj.integrity_status.startswith(store.INTEGRITY_ERROR_PREFIX)
+    assert store.integrity_is_failure(store_obj.integrity_status)
+
+
+def test_every_documented_state_has_a_scenario() -> None:
+    """A mechanical reminder that a new state needs a new scenario.
+
+    Weak bookkeeping on its own, but it is what closes the loop between the
+    docstring, the constants, and the producers that actually run.
+    """
+    covered = {
+        store.INTEGRITY_NOT_CHECKED,  # test_integrity_default_before_connection
+        store.INTEGRITY_PENDING,  # test_integrity_kicked_off_on_init_when_async_flag_set
+        store.INTEGRITY_OK,  # test_integrity_ok_on_healthy_db
+        store.INTEGRITY_FAILED_PREFIX,  # test_failed_prefix_is_actually_produced
+        store.INTEGRITY_ERROR_PREFIX,  # test_error_prefix_is_actually_produced
+    }
+    assert covered == set(store.INTEGRITY_STATES)

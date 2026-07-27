@@ -76,7 +76,16 @@ async def _first_bulk_key(call: Caller) -> dict[str, Any]:
 
 PROBES: dict[str, Probe] = {
     # -- server-local utilities ------------------------------------------
-    "health_check": Probe(require_keys=("status", "plan", "cache_ready"), allow_empty=True),
+    # cache_integrity is the field whose vocabulary the docstring promises, so
+    # check the live answer against it: an undocumented form (which "failed: "
+    # and "error: " both were until recently) should be noticed here. status is
+    # deliberately not pinned — failing on a genuinely degraded cache would make
+    # a broken tool and broken data look identical.
+    "health_check": Probe(
+        require_keys=("status", "plan", "cache_ready"),
+        must_match=(r'"cache_integrity": "(ok|pending|not-checked|failed: |error: )',),
+        allow_empty=True,
+    ),
     "cache_status": Probe(require_keys=("db_path", "plan"), allow_empty=True),
     "cache_clear": Probe(skip="destructive: would drop cached tables"),
     "register_api_key": Probe(skip="destructive: would overwrite the stored API key"),

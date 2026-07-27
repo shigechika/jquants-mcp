@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from unittest.mock import MagicMock, patch
 
 import jquants_mcp.server as server_module
+from jquants_mcp.cache import store
 from jquants_mcp.cache.store import CacheStore
 from jquants_mcp.config import Settings
 from jquants_mcp.client import JQuantsClient
@@ -317,3 +319,49 @@ class TestCacheStatus:
             result = await _call("cache_status")
 
         assert result["plan"] == "premium"
+
+
+class TestIntegrityVocabularyIsPinned:
+    """Pin health_check's description to the store's vocabulary.
+
+    The docstring promised a value the code never produces: bare `failed` is
+    never emitted (the real form is `failed: <detail>`), and `error: <detail>`
+    was undocumented entirely. An LLM reads this description verbatim, so the
+    drift was a lie with consequences.
+
+    Guarded by single-sourcing rather than by scanning. Substring matching finds
+    `failed` inside `f"failed: {result}"` and would pass the original bug;
+    exact AST matching false-positives on values built by `.lower()` or
+    produced in another module.
+    """
+
+    @staticmethod
+    def _enumerated(description: str, field: str) -> set[str]:
+        """Return the tokens inside ``field`` (a / b / c) as a set.
+
+        Convention: the parentheses right after ``field`` hold values and
+        nothing else; explanation goes in the following sentence.
+        """
+        m = re.search(rf"``{field}``\s*\(([^)]*)\)", description, re.DOTALL)
+        assert m, f"{field} is not enumerated in the description"
+        tokens = set()
+        for raw in m.group(1).split("/"):
+            token = " ".join(raw.split())
+            if not token:
+                continue
+            # "failed: <detail>" -> "failed: " (compare a prefix as a prefix)
+            tokens.add(token.split("<")[0] if "<" in token else token)
+        return tokens
+
+    @pytest.mark.asyncio
+    async def test_cache_integrity_matches_the_store(self):
+        # Read the registered tool description — the string the LLM actually
+        # receives — so this survives a future move to an explicit description=.
+        tools = {t.name: t.description for t in await server_module.mcp.list_tools()}
+        enumerated = self._enumerated(tools["health_check"], "cache_integrity")
+        assert enumerated == set(store.INTEGRITY_STATES)
+
+    @pytest.mark.asyncio
+    async def test_status_matches_what_the_tool_can_return(self):
+        tools = {t.name: t.description for t in await server_module.mcp.list_tools()}
+        assert self._enumerated(tools["health_check"], "status") == {"healthy", "degraded"}

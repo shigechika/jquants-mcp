@@ -20,6 +20,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from . import __version__
+from .cache import store
 from .cache.store import CacheStore
 from .client import JQuantsClient
 from .config import Settings
@@ -829,9 +830,9 @@ def health_check() -> dict[str, Any]:
     cache = _get_cache()
     integrity = cache.integrity_status
     status = "healthy"
-    if integrity.startswith("failed") or integrity.startswith("error"):
+    if store.integrity_is_failure(integrity):
         status = "degraded"
-    cache_ready = integrity == "ok"
+    cache_ready = integrity == store.INTEGRITY_OK
 
     latest_date = cache.get_latest_equities_date()
     trading_today = cache.get_trading_date_today()
