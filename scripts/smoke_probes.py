@@ -76,11 +76,11 @@ async def _first_bulk_key(call: Caller) -> dict[str, Any]:
 
 PROBES: dict[str, Probe] = {
     # -- server-local utilities ------------------------------------------
-    # cache_integrity は docstring が語彙を約束しているフィールド。本番が
-    # 文書化されていない形（かつては failed:/error: がそうだった）を返し始めたら
-    # 気づけるよう、実際の応答を語彙に対して照合する。status は固定しない —
-    # 本当にキャッシュが壊れている日に degraded で FAIL すると、ツールの故障と
-    # データの異常が同じ見た目になる。
+    # cache_integrity is the field whose vocabulary the docstring promises, so
+    # check the live answer against it: an undocumented form (which "failed: "
+    # and "error: " both were until recently) should be noticed here. status is
+    # deliberately not pinned — failing on a genuinely degraded cache would make
+    # a broken tool and broken data look identical.
     "health_check": Probe(
         require_keys=("status", "plan", "cache_ready"),
         must_match=(r'"cache_integrity": "(ok|pending|not-checked|failed: |error: )',),

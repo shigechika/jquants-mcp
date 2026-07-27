@@ -108,12 +108,13 @@ def test_integrity_timing(tmp_path: Path) -> None:  # pragma: no cover
 
 
 def test_failed_prefix_is_actually_produced(tmp_path: Path, monkeypatch) -> None:
-    """quick_check が ok 以外を返す経路を実際に通す。
+    """Actually take the path where quick_check returns something other than ok.
 
-    既存の test_integrity_detects_corruption は `!= "ok"` としか見ておらず、
-    ヘッダ破壊では _ensure_connection 側で落ちて早期 return する分岐もあるため、
-    `failed: <detail>` を書く producer は一度も実行されていなかった。docstring が
-    この接頭辞を約束している以上、生成されることを実データで固定する。
+    test_integrity_detects_corruption asserts only `!= "ok"`, and its
+    header-scrambling setup has a branch that returns early when
+    _ensure_connection itself fails — so the producer writing
+    `failed: <detail>` had never run. The docstring promises that prefix, so
+    pin that it is really produced.
     """
     db_path = tmp_path / "cache.db"
     sqlite3.connect(str(db_path)).close()
@@ -125,7 +126,7 @@ def test_failed_prefix_is_actually_produced(tmp_path: Path, monkeypatch) -> None
             return ("*** in database main ***\nPage 3 is never used",)
 
     class _Proxy:
-        """sqlite3.Connection の属性は read-only なのでラップして差し替える。"""
+        """sqlite3.Connection attributes are read-only, so wrap instead."""
 
         def __init__(self, conn):
             self._conn = conn
@@ -141,9 +142,9 @@ def test_failed_prefix_is_actually_produced(tmp_path: Path, monkeypatch) -> None
     def _fake_connect(*args, **kwargs):
         return _Proxy(real_connect(*args, **kwargs))
 
-    # _ensure_connection() は呼ばない。呼ぶと本物の quick_check スレッドが先に
-    # 走り、_start_integrity_check() が「稼働中」で早期 return してしまう。
-    # probe は自前で接続を張るので、db_path さえあればよい。
+    # Do not call _ensure_connection(): it starts the real quick_check thread
+    # first, and _start_integrity_check() then returns early because a thread is
+    # already alive. The probe opens its own connection, so db_path is enough.
     store_obj = CacheStore(db_path)
     monkeypatch.setattr(sqlite3, "connect", _fake_connect)
     store_obj._start_integrity_check()
@@ -154,7 +155,11 @@ def test_failed_prefix_is_actually_produced(tmp_path: Path, monkeypatch) -> None
 
 
 def test_error_prefix_is_actually_produced(tmp_path: Path, monkeypatch) -> None:
-    """probe 用の接続自体が例外になる経路。docstring 記載の 5 つ目の形。"""
+    """Take the path where opening the probe connection itself raises.
+
+    This is the fifth documented form, and the one the docstring had omitted
+    entirely before this change.
+    """
     db_path = tmp_path / "cache.db"
     sqlite3.connect(str(db_path)).close()
 
@@ -172,10 +177,10 @@ def test_error_prefix_is_actually_produced(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_every_documented_state_has_a_scenario() -> None:
-    """語彙が増えたらシナリオも増やす、を機械的に思い出させる。
+    """A mechanical reminder that a new state needs a new scenario.
 
-    弱い帳簿的なテストだが、docstring・定数・実際の producer の三者が揃って
-    いることの最後の一押しになる。
+    Weak bookkeeping on its own, but it is what closes the loop between the
+    docstring, the constants, and the producers that actually run.
     """
     covered = {
         store.INTEGRITY_NOT_CHECKED,  # test_integrity_default_before_connection
