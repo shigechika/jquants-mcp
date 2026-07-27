@@ -5,6 +5,18 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.53.0](https://github.com/shigechika/jquants-mcp/compare/v0.52.1...v0.53.0) (2026-07-27)
+
+
+### Features
+
+* make the cache_integrity vocabulary single-source and pin the docstring ([#550](https://github.com/shigechika/jquants-mcp/issues/550)) ([9542e1e](https://github.com/shigechika/jquants-mcp/commit/9542e1eab13a3d9094c9eaf44284e60b9b5f59fe))
+
+
+### Bug Fixes
+
+* **ci:** read AI-review guidance from the base revision, drop the checkout ([#555](https://github.com/shigechika/jquants-mcp/issues/555)) ([6cd0808](https://github.com/shigechika/jquants-mcp/commit/6cd0808e488bd25b518c94437cf7a85aca4e9931))
+
 ## [0.52.1](https://github.com/shigechika/jquants-mcp/compare/v0.52.0...v0.52.1) (2026-07-26)
 
 
