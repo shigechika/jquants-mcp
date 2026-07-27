@@ -8,7 +8,7 @@ recreate exactly the blind spot it exists to remove.
 from __future__ import annotations
 
 import sys
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -91,6 +91,24 @@ class TestEvaluate:
         # It is the last thing checked: a payload broken in its own right is
         # still reported as broken rather than as a complaint about the spec.
         assert "not a container" in sh.evaluate("t", sh.Probe(allow_empty=True), 42, TODAY).detail
+
+    def test_allow_empty_accepts_freshness_as_the_assertion(self):
+        """A freshness check is something asserted, so do not refuse the probe.
+
+        The guard's whitelist named only the shape assertions. A probe that
+        waived the count and checked staleness instead was told it had
+        "asserted nothing" — a verdict the engine had already contradicted by
+        running the freshness branch immediately above.
+        """
+        probe = sh.Probe(allow_empty=True, date_field="Date", fresh_within_days=7)
+        fresh = {"data": [{"Date": TODAY.isoformat()}]}
+        assert sh.evaluate("t", probe, fresh, TODAY).status == "OK"
+        # Still a real check, not a way around the guard: stale data fails, and
+        # for the staleness reason rather than the spec-complaint one.
+        stale = {"data": [{"Date": (TODAY - timedelta(days=30)).isoformat()}]}
+        result = sh.evaluate("t", probe, stale, TODAY)
+        assert result.status == "FAIL"
+        assert "stale" in result.detail
 
     def test_allow_empty_still_enforces_required_keys(self):
         """Waiving the row count must not waive the shape."""
