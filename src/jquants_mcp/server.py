@@ -796,9 +796,18 @@ def health_check() -> dict[str, Any]:
     After a tool-call timeout, use this to distinguish a transient
     cache-loading delay from a permanent failure.
 
-    Returns server version, API key status, active plan,
-    ``cache_integrity`` (ok / pending / failed / not-checked), and
-    ``cache_ready`` (boolean shorthand: true only when cache_integrity is "ok").
+    Returns server version, API key status, active plan, ``status``
+    (healthy / degraded), ``cache_integrity`` and ``cache_ready``.
+
+    ``status`` is degraded only when the integrity check reports a failure;
+    there is no error state, since this call does no I/O that can fail.
+
+    ``cache_integrity`` (ok / pending / not-checked / failed: <detail> /
+    error: <detail>) is the integrity check's own result. The last two carry a
+    detail string appended to the prefix, so test them with ``startswith``,
+    not ``==``. ``cache_ready`` is a boolean shorthand: true only when
+    cache_integrity is exactly "ok".
+
     In multi-user mode, returns the authenticated user's plan.
     """
     from fastmcp.server.dependencies import get_access_token
