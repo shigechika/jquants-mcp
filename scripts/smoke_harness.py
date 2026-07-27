@@ -10,7 +10,7 @@ The engine holds no server-specific knowledge. A companion "probes" module
 supplies the per-tool specs (see ``smoke_probes.py`` for this repo's), so the
 same engine can smoke-test any other FastMCP server by swapping that module.
 Its one deployment-wide assumption is the timezone report timestamps are
-rendered in (JST): every server sharing this harness is operated from Japan.
+rendered in (JST).
 
 Design notes:
 
