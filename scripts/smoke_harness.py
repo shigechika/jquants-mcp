@@ -328,12 +328,19 @@ def evaluate(
     # left here is a probe that waived the row count and then asserted nothing
     # else — which would report every empty or malformed answer as OK. The
     # allow_empty docstring has always said so; only the text path enforced it.
+    # Freshness counts: it is an assertion the engine actually ran a few lines
+    # above, so a probe configured with it has not "asserted nothing" and must
+    # not be told that it did. (It is a weak choice on its own — an empty
+    # payload has no date to check and fails the freshness branch instead — but
+    # a probe that returns fresh rows would otherwise be failed for asserting
+    # something the check itself just verified.)
     if probe.allow_empty and not (
         probe.require_keys
         or probe.min_values
         or probe.must_match
         or probe.min_chars
         or probe.rows_key
+        or (probe.fresh_within_days is not None and probe.date_field)
     ):
         return Result(
             tool,
