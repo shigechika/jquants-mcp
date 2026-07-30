@@ -6,6 +6,23 @@ name: AI review
 # toward repository-guidance violations, cross-file consistency and security,
 # which is a deliberately different lens from Copilot's generic pass.
 #
+# Quality controls (the quality-only subset of mcp-stdio's ai-review.yml,
+# shigechika/mcp-stdio#354):
+#
+#   * Reporting bar: the system prompt demands a concrete failing input and
+#     the resulting wrong behavior per finding, citing file:line from the
+#     diff, and caps output at 3 findings — speculative or borderline
+#     findings are told to stay unreported.
+#   * Verifier pass: a second, cheap call against the same deployment gives
+#     a skeptical KEEP/DROP verdict per finding, and refuted findings are
+#     dropped before posting. If the verifier call fails, findings post
+#     unverified with a note (advisory degrade).
+#
+# The per-push machinery around those controls in mcp-stdio (sticky comment,
+# findings ledger, delta rounds, docs-only skip) is deliberately NOT ported:
+# this workflow reviews each PR once — the trigger below has no synchronize
+# — so there is no per-push noise for that machinery to solve.
+#
 # Advisory only: every failure path soft-fails so this job can never block a
 # PR. Skips release-please version bumps (same-repo scoped, mirroring
 # copilot-review.yml's gate — a fork controls head.ref, so branch names must
@@ -83,6 +100,14 @@ jobs:
           # scheme+host — the same pitfall the summarizer hit before.
           ENDPOINT=$(printf '%s' "$ENDPOINT" | sed -E 's#^([a-zA-Z]+://[^/]+).*#\1#')
 
+          # The diff goes to a file rather than inline into the prompt block:
+          # the verifier pass below reuses it as ground truth.
+          gh pr diff "$PR" 2>/dev/null | head -c 100000 > fulldiff.txt || true
+          if [ ! -s fulldiff.txt ]; then
+            echo "::warning::could not fetch the PR diff (GitHub API error?) — skipping AI review"
+            exit 0
+          fi
+
           # The default run shell is bash with errexit+pipefail, so guard the
           # prompt-building calls too — a transient GitHub API error must
           # degrade the prompt, not fail the job (advisory-only contract).
@@ -135,28 +160,36 @@ jobs:
               fi
             done
             echo "=== Unified diff ==="
-            gh pr diff "$PR" 2>/dev/null | head -c 100000 || true
+            cat fulldiff.txt
           } > prompt.txt
 
-          # If gh pr diff failed above, the marker is the last line — nothing
-          # to review; skip rather than send an empty diff to the model.
-          if [ "$(tail -n 1 prompt.txt)" = "=== Unified diff ===" ]; then
-            echo "::warning::could not fetch the PR diff (GitHub API error?) — skipping AI review"
-            exit 0
-          fi
+          system='You are an advisory reviewer for pull requests in this
+          repository. Focus on: real bugs and logic errors introduced by
+          the diff, violations of the repository guidance included in the
+          prompt, cross-file inconsistencies, and security issues.
 
-          system='You are reviewing a pull request for this repository.
-          Focus on: real bugs and logic errors introduced by the diff,
-          violations of the repository guidance included in the prompt,
-          cross-file inconsistencies, and security issues. Do NOT report
-          style nitpicks, formatting, or anything a linter, typechecker or
-          test suite would catch. For each finding cite the file and the
-          diff hunk it occurs in, and briefly give the concrete failure
-          scenario. If you find nothing significant, say so in one short
-          paragraph — do not invent findings. Write the review in English,
+          Reporting bar: report a finding only if you can name the concrete
+          failing input or state and the resulting wrong behavior, citing
+          file and line from the diff. Do NOT report: pre-existing issues on
+          lines the diff does not modify; documentation or comment accuracy;
+          style or formatting; anything a linter, typechecker or test suite
+          already catches; a speculative scenario that requires a
+          non-compliant peer or component, unless you name the concrete
+          malformed input. Prefer missing a borderline issue over reporting
+          a speculative one. Report at most 3 findings, most severe first.
+
+          Output format, exactly and with no code fences. Write in English,
           whatever language the PR description is in: this is a public
-          repository and the review is published with it. Keep the review
-          under 500 words.'
+          repository and the review is published with it. For each finding:
+          ===FINDING F<n>===
+          <file>:<line> - <one-line summary>
+          <2-4 sentences: the concrete failing input or state and the wrong
+          behavior>
+          ===END FINDING===
+          If nothing clears the bar, write this single line instead of any
+          finding block:
+          No findings clear the reporting bar.
+          Output nothing after the last finding block.'
 
           jq -n --arg model "$MODEL" --arg system "$system" \
                 --rawfile user prompt.txt \
@@ -186,12 +219,96 @@ jobs:
             exit 0
           fi
 
+          # ---------- Parse model output (untrusted) ----------
+          printf '%s\n' "$review" > review_body.txt
+          ids=$(awk '/^===FINDING /{id=$2; sub(/=+$/, "", id); print id}' review_body.txt || true)
+
+          # ---------- Verifier pass (second, cheap call) ----------
+          # A skeptical second opinion on each candidate finding; refuted
+          # ones are dropped before posting. Kept deliberately light: a
+          # heavier verifier prompt overcorrects and drops real findings.
+          VERIFIER_NOTE=""
+          DROPPED_IDS=""
+          if [ -n "$ids" ]; then
+            vsystem='You are a skeptical verifier of candidate code-review findings.
+            Judge each candidate against the diff: can it be refuted? Does
+            the cited evidence actually support it? Would the concern change
+            observed behavior? Output exactly one line per candidate id and
+            nothing else, no formatting or bold:
+            <id>: KEEP - <short reason>
+            <id>: DROP - <short reason>
+            DROP only findings you can refute or whose cited evidence does
+            not support them; otherwise KEEP. Keep each reason under 15
+            words.'
+            {
+              echo "Candidate findings:"
+              cat review_body.txt
+              echo
+              echo "=== Diff (ground truth) ==="
+              head -c 40000 fulldiff.txt
+            } > vprompt.txt
+            verdicts=""
+            if jq -n --arg model "$MODEL" --arg system "$vsystem" \
+                  --rawfile user vprompt.txt \
+                  '{model: $model,
+                    messages: [{role: "system", content: $system},
+                               {role: "user", content: $user}]}' > vpayload.json 2>/dev/null; then
+              vresp=$(curl -fsS -m 120 --retry 2 --retry-delay 5 --retry-all-errors \
+                        -H "Authorization: Bearer $API_KEY" \
+                        -H "Content-Type: application/json" \
+                        -d @vpayload.json \
+                        "${ENDPOINT%/}/openai/v1/chat/completions" 2>/dev/null || true)
+              verdicts=$(printf '%s' "$vresp" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
+            fi
+            if [ -n "$verdicts" ]; then
+              # Tolerant parse: case-insensitive, whitespace-flexible, and
+              # alphanumeric-only ids so stray formatting characters cannot
+              # smuggle an entry into the drop list.
+              DROPPED_IDS=$(printf '%s\n' "$verdicts" \
+                | grep -oiE '^[A-Za-z0-9]+[[:space:]]*:[[:space:]]*DROP' \
+                | cut -d: -f1 | tr -d ' \t' | paste -sd, - || true)
+            else
+              VERIFIER_NOTE="Verifier pass unavailable — findings above are unverified."
+            fi
+          fi
+
+          # Keep only finding blocks the verifier did not drop. Ids the
+          # verifier invents match no block, so they are inert.
+          awk -v list="$DROPPED_IDS" '
+            BEGIN { n = split(list, a, ","); for (i = 1; i <= n; i++) if (a[i] != "") drop[a[i]] = 1 }
+            /^===FINDING / { id = $2; sub(/=+$/, "", id); inb = 1; skip = (id in drop); if (!skip) print; next }
+            /^===END FINDING===/ { if (inb && !skip) print; inb = 0; skip = 0; next }
+            { if (inb && !skip) print }
+          ' review_body.txt > kept.txt || true
+
+          # ---------- Render the visible review body ----------
+          if [ -s kept.txt ]; then
+            awk '
+              /^===FINDING / { id = $2; sub(/=+$/, "", id); printf "**%s** — ", id; next }
+              /^===END FINDING===/ { print ""; next }
+              { print }
+            ' kept.txt > rendered.md || true
+          elif [ -n "$ids" ]; then
+            echo "All candidate findings were refuted by the verifier pass — no findings." > rendered.md
+          elif grep -qi "no findings clear the reporting bar" review_body.txt 2>/dev/null; then
+            echo "No findings clear the reporting bar." > rendered.md
+          else
+            # Unstructured model output: post it as-is rather than discard a
+            # possibly useful review (advisory degrade).
+            head -c 20000 review_body.txt > rendered.md || true
+            VERIFIER_NOTE="Model output was unstructured — posted without verification."
+          fi
+
           {
             echo "### AI review (${MODEL})"
             echo
-            printf '%s\n' "$review"
+            cat rendered.md
             echo
-            echo "<sub>Advisory first-pass review generated by ai-review.yml — verify findings before acting.</sub>"
+            if [ -n "$VERIFIER_NOTE" ]; then
+              echo "<sub>${VERIFIER_NOTE}</sub>"
+              echo
+            fi
+            echo "<sub>Advisory review generated by ai-review.yml — verify findings before acting.</sub>"
           } > comment.md
           gh pr comment "$PR" --body-file comment.md \
             || echo "::warning::failed to post AI review comment"
