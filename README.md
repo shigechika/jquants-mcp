@@ -2,6 +2,8 @@
 
 # jquants-mcp
 
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.shigechika%2Fjquants-mcp.svg)](https://mcptoplist.com/server/io.github.shigechika%2Fjquants-mcp)
+
 English | [日本語](README.ja.md)
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that retrieves Japanese stock market data via [J-Quants API v2](https://jpx-jquants.com/).
