@@ -1,10 +1,14 @@
-"""Request-scoped context shared between the server middleware and the cache.
+"""Request-scoped plan contextvar, read as a fallback by the cache layer.
 
 Holds the authenticated user's subscription plan for the duration of a single
 tool call so the cache layer can apply per-user plan date restrictions without
-threading a ``plan`` argument through every tool. The value is set by the MCP
-``on_call_tool`` middleware (see ``server.PlanContextMiddleware``) and read by
-``CacheStore`` when no explicit plan is passed.
+threading a ``plan`` argument through every tool. Nothing in the stdio server
+sets this contextvar directly anymore (there is no per-call middleware hook in
+the official mcp SDK) — ``CacheStore._effective_plan()`` reads it only as a
+fallback before consulting its constructor-injected ``plan_resolver`` (see
+``server.py``'s ``_resolve_current_plan`` / ``_current_user_id``). Callers that
+want to pin a plan for a block of code (e.g. tests) can still push one
+explicitly via ``set_current_plan``/``reset_current_plan``.
 
 Uses ``contextvars`` so the value is isolated per async task / request. Default
 is ``None``, which means "no per-user plan" — the cache falls back to its own

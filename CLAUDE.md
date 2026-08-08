@@ -3,7 +3,10 @@
 ## Project Overview
 
 jquants-mcp is an MCP server that retrieves Japanese stock market data via J-Quants API v2.
-Built with FastMCP v3, httpx, SQLite cache. Supports multi-user OAuth and Cloud Run deployment.
+The stdio server (`server.py` + `tools/`) is built on the official `mcp` SDK's `mcp.server.fastmcp.FastMCP`.
+The standalone FastMCP v3 package (`fastmcp`) remains a dependency for the still-unreachable HTTP/OAuth
+path (`auth.py`, `settings/`, the non-stdio branch of `run_server()`) — see "Architecture" below.
+httpx, SQLite cache. Supports multi-user OAuth and Cloud Run deployment.
 
 ## Commands
 
@@ -20,7 +23,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 ## Architecture
 
 - `src/jquants_mcp/` — Main package
-  - `server.py` — FastMCP server, per-user client management, tool registration
+  - `server.py` — Official-SDK `FastMCP` server (stdio), per-user client management, tool registration
   - `client.py` — httpx async client with rate limiting, retry, pagination
   - `config.py` — configparser + env vars hybrid configuration
   - `cache/store.py` — 2-tier SQLite cache (Tier1: row-level, Tier2: response-level with TTL)
@@ -31,7 +34,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   - `validators.py` — Input validation (code, date, sector)
   - `settings/` — Web UI for API key registration (/settings endpoint)
   - `oauth_kv_store.py` — SQLite-backed OAuth state persistence
-  - `request_context.py` — Request-scoped plan contextvar set by `PlanContextMiddleware.on_call_tool`; read by `CacheStore._effective_plan` so each user's plan date window applies without threading `plan` through tools
+  - `request_context.py` — Request-scoped plan contextvar; read by `CacheStore._effective_plan` as a fallback before its `plan_resolver` (see below), so each user's plan date window applies without threading `plan` through tools
 - `scripts/` — Operational scripts
   - `daily_fetch.py` — Daily data fetch (cron / scheduled-task companion for cache population)
   - `bulk_fetch_all.py` — Historical data bulk fetch via J-Quants Bulk API
@@ -49,7 +52,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 - Multi-user mode: per-user `JQuantsClient` instances resolved via OAuth user ID
 - Single-user mode: global `_client` with env/config API key (backward compatible)
 - Tests patch `server_module._settings`, `_client`, `_cache` globals directly
-- `_call()` helper uses `mcp.call_tool(name, kwargs)` then parses `result.content[0].text`
+- `_call()` test helper uses `mcp.call_tool(name, kwargs)`; unpack `_, structured = await ...` for tools annotated `-> dict[str, Any]` (the SDK returns `(unstructured, structured)`), or parse `result[0].text` for tools annotated with a bare `-> dict` (no output schema generated, so no tuple)
 - Code is English-only: docstrings, inline comments, log messages, exception messages (Public repository)
 - README.md is in English, README.ja.md is the Japanese translation
 - Commit messages in English
@@ -96,14 +99,19 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   (row queries) and `_plan_bounds` (latest-aggregate readers) clamp the date range to
   `_plan_date_bounds(_effective_plan())`. The stored rows are not tagged by plan; only
   the returned date window depends on the plan.
-- `_effective_plan()` resolves: explicit `plan` arg > per-request plan (set by
-  `PlanContextMiddleware` from the authenticated user, see `request_context.py`) >
-  `default_plan`. This applies each user's plan window on multi-user deployments;
-  single-user / bearer paths fall back to `default_plan`.
-- The per-request path's wiring (middleware → contextvar → cache gating) IS
-  unit-tested by `TestPlanContextMiddlewareE2E` (it patches `get_access_token`).
-  What stays live-only is whether FastMCP actually delivers a token to
-  `on_call_tool` in production — a mock cannot prove that; verify on Cloud Run
-  via the `Resolved plan=...` INFO log (emitted on a plan-cache miss).
+- `_effective_plan()` resolves: explicit `plan` arg > per-request plan (the
+  `request_context.py` contextvar, if a caller has pushed one explicitly) >
+  `CacheStore`'s constructor-injected `plan_resolver` (wired to `server.py`'s
+  `_resolve_current_plan`, which reads the gateway-injected identity via
+  `_current_user_id()` and looks up that user's plan) > `default_plan`. This
+  applies each user's plan window on multi-user deployments; single-user /
+  no-gateway-identity paths fall back to `default_plan`.
+- The identity → plan-resolver wiring IS unit-tested by `TestPlanResolutionE2E`
+  (`tests/test_tools_screener.py`, injects `plan_resolver` directly since the
+  `mock_env` fixture there builds `CacheStore` without going through
+  `_get_cache()`). What stays live-only is whether the stdio gateway (mcp-stdio
+  `serve --user-env`) actually delivers the identity in production — a mock
+  cannot prove that; verify via the `Resolved plan=...` INFO log (emitted on a
+  plan-cache miss).
 - Plan data retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all
 - `sync_plans.py` is removed — no longer copy data between plans

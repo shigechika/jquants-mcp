@@ -2322,9 +2322,9 @@ class TestDetectConsecutiveDividendIncrease:
 
         Uses a standalone ``default_plan="free"`` cache rather than
         ``request_context.set_current_plan`` — the single-user path this
-        test exercises has no OAuth token, so ``PlanContextMiddleware``
-        always resolves the per-request plan to ``None`` and falls back to
-        the cache's own ``default_plan`` (see ``_resolve_current_plan``).
+        test exercises has no gateway identity, so ``_resolve_current_plan``
+        always resolves the per-request plan to ``None`` and the cache falls
+        back to its own ``default_plan``.
         """
         free_cache = CacheStore(tmp_path / "free.db", default_plan="free")
         _seed_master(free_cache, "13010", "花王")

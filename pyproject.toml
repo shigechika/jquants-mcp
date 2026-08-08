@@ -13,7 +13,8 @@ dependencies = [
     # OAuth providers + the /settings web UI). Those modules are unreachable
     # from the stdio-only server built by server.py (which now uses the
     # official mcp SDK's FastMCP below) but are kept present, not deleted,
-    # until Phase 5 of the streamable-http removal — see CHANGELOG.md.
+    # until every HTTP-serving deployment migrates off the fastmcp-based
+    # OAuth path — see #568.
     "fastmcp>=3.2.1",
     # mcp.server.fastmcp.FastMCP is what server.py and the tools/ modules
     # actually import. fastmcp>=3.2.1 itself constrains this to

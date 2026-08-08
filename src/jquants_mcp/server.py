@@ -767,36 +767,7 @@ async def _get_user_client() -> JQuantsClient:
 # ------------------------------------------------------------------
 
 
-@mcp.tool(annotations=READ_ONLY_LOCAL)
-def health_check() -> dict[str, Any]:
-    """Check server health, API key configuration, and cache readiness.
-
-    Sync on purpose: FastMCP runs a sync tool body in a worker thread, which
-    keeps this off the event loop — the body can trigger the slow lazy
-    initialization (connect + migrations). Sharing the SQLite connection with
-    the loop from that thread is what caused #537; the store's write lock, not
-    an async signature, is what makes it safe.
-
-    Call this at session start to confirm cache.db has finished loading
-    before issuing detect_* or cache_status — the first call after server
-    start may take 10–60 seconds while the cache initialises lazily.
-    After a tool-call timeout, use this to distinguish a transient
-    cache-loading delay from a permanent failure.
-
-    Returns server version, API key status, active plan, ``status``
-    (healthy / degraded), ``cache_integrity`` and ``cache_ready``.
-
-    ``status`` is degraded only when the integrity check reports a failure;
-    there is no error state, since this call does no I/O that can fail.
-
-    ``cache_integrity`` (ok / pending / not-checked / failed: <detail> /
-    error: <detail>) is the integrity check's own result. The last two carry a
-    detail string appended to the prefix, so test them with ``startswith``,
-    not ``==``. ``cache_ready`` is a boolean shorthand: true only when
-    cache_integrity is exactly "ok".
-
-    In multi-user mode, returns the authenticated user's plan.
-    """
+def _health_check_impl() -> dict[str, Any]:
     settings = _get_settings()
     has_key = bool(settings.jquants_api_key)
     plan = settings.jquants_plan or "auto (not yet detected)"
@@ -838,18 +809,42 @@ def health_check() -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY_LOCAL)
-def cache_status() -> dict[str, Any]:
-    """Show database metadata: table row counts, file size, and detected plan.
+async def health_check() -> dict[str, Any]:
+    """Check server health, API key configuration, and cache readiness.
 
-    This tool returns cache metadata — it does NOT query screener signals. To detect
-    52-week highs/lows use ``detect_52w_high_low``; for YTD highs/lows use
-    ``detect_ytd_high_low``; for volume spikes use ``detect_volume_surge``; for price
-    limits use ``detect_price_limit``. Do not call this tool to look up market data or
-    screener results.
+    Offloaded to a worker thread (see ``_health_check_impl``): the body can
+    trigger the slow lazy cache initialization (connect + migrations), and
+    the official mcp SDK — unlike the standalone fastmcp package this server
+    used to run on — invokes sync tool bodies directly on the event loop
+    rather than in a worker thread, so an explicit ``asyncio.to_thread``
+    offload is required here to keep that work off the loop. Sharing the
+    SQLite connection with the loop from that thread is what caused #537;
+    the store's write lock, not this offload, is what makes it safe.
 
-    In multi-user mode, returns the authenticated user's plan instead of the global
-    default.
+    Call this at session start to confirm cache.db has finished loading
+    before issuing detect_* or cache_status — the first call after server
+    start may take 10–60 seconds while the cache initialises lazily.
+    After a tool-call timeout, use this to distinguish a transient
+    cache-loading delay from a permanent failure.
+
+    Returns server version, API key status, active plan, ``status``
+    (healthy / degraded), ``cache_integrity`` and ``cache_ready``.
+
+    ``status`` is degraded only when the integrity check reports a failure;
+    there is no error state, since this call does no I/O that can fail.
+
+    ``cache_integrity`` (ok / pending / not-checked / failed: <detail> /
+    error: <detail>) is the integrity check's own result. The last two carry a
+    detail string appended to the prefix, so test them with ``startswith``,
+    not ``==``. ``cache_ready`` is a boolean shorthand: true only when
+    cache_integrity is exactly "ok".
+
+    In multi-user mode, returns the authenticated user's plan.
     """
+    return await asyncio.to_thread(_health_check_impl)
+
+
+def _cache_status_impl() -> dict[str, Any]:
     result = _get_cache().status()
 
     # In multi-user mode, resolve the actual user's plan.
@@ -864,15 +859,45 @@ def cache_status() -> dict[str, Any]:
     return result
 
 
+@mcp.tool(annotations=READ_ONLY_LOCAL)
+async def cache_status() -> dict[str, Any]:
+    """Show database metadata: table row counts, file size, and detected plan.
+
+    This tool returns cache metadata — it does NOT query screener signals. To detect
+    52-week highs/lows use ``detect_52w_high_low``; for YTD highs/lows use
+    ``detect_ytd_high_low``; for volume spikes use ``detect_volume_surge``; for price
+    limits use ``detect_price_limit``. Do not call this tool to look up market data or
+    screener results.
+
+    In multi-user mode, returns the authenticated user's plan instead of the global
+    default.
+
+    Offloaded to a worker thread (see ``_cache_status_impl``): this does a
+    multi-GB row-count scan, and the official mcp SDK runs sync tool bodies
+    directly on the event loop (see ``health_check``'s docstring for why an
+    explicit offload is needed here).
+    """
+    return await asyncio.to_thread(_cache_status_impl)
+
+
+def _cache_clear_impl(table: str | None) -> dict[str, Any]:
+    result = _get_cache().clear(table)
+    return {"cleared": result}
+
+
 @mcp.tool(annotations=DESTRUCTIVE_LOCAL)
-def cache_clear(table: str | None = None) -> dict[str, Any]:
+async def cache_clear(table: str | None = None) -> dict[str, Any]:
     """Clear cached data.
+
+    Offloaded to a worker thread (see ``_cache_clear_impl``): this does a
+    bulk DELETE, and the official mcp SDK runs sync tool bodies directly on
+    the event loop (see ``health_check``'s docstring for why an explicit
+    offload is needed here).
 
     Args:
         table: Table name to clear. Clears all tables when omitted.
     """
-    result = _get_cache().clear(table)
-    return {"cleared": result}
+    return await asyncio.to_thread(_cache_clear_impl, table)
 
 
 @mcp.tool(annotations=DESTRUCTIVE_LOCAL)
@@ -1070,6 +1095,17 @@ def run_server(
     oauth_base_url: str = "",
 ) -> None:
     """Start the MCP server.
+
+    ``transport="stdio"`` is the only path this server actually supports
+    since the migration to the official mcp SDK's ``FastMCP`` — its
+    ``run()`` accepts only ``transport`` and ``mount_path`` (no ``host``,
+    ``port``, ``uvicorn_config``, or ``middleware`` kwargs), so calling this
+    with any other transport raises ``TypeError`` immediately at the
+    ``mcp.run(...)`` call in the ``else`` branch below. The HTTP/OAuth
+    parameters below are kept undeleted only because a parallel deployment
+    still runs this function from an older, unmigrated checkout — see the
+    module-level notes on ``auth.py``/``settings/`` for why. Do not rely on
+    this path from the current checkout.
 
     Args:
         transport: Transport type ("stdio" or "streamable-http")
