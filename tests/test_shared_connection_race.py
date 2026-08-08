@@ -100,7 +100,10 @@ class TestSyncToolInventory:
     """
 
     async def test_only_known_tools_are_sync(self):
-        tools = await server_module.mcp.list_tools()
+        # ``mcp.list_tools()`` returns the wire-format ``mcp.types.Tool`` (no
+        # ``.fn``); the internal registry (``_tool_manager``) still exposes the
+        # underlying callable for this kind of introspection.
+        tools = server_module.mcp._tool_manager.list_tools()
         sync = {t.name for t in tools if not inspect.iscoroutinefunction(t.fn)}
         unexpected = sorted(sync - BLOCKING_BY_DESIGN)
         assert not unexpected, (
@@ -110,7 +113,7 @@ class TestSyncToolInventory:
         )
 
     async def test_blocking_tools_stay_off_the_event_loop(self):
-        tools = {t.name: t for t in await server_module.mcp.list_tools()}
+        tools = {t.name: t for t in server_module.mcp._tool_manager.list_tools()}
         regressed = sorted(
             name
             for name in BLOCKING_BY_DESIGN

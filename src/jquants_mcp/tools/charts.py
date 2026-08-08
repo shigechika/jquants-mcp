@@ -21,7 +21,7 @@ import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from ..cache.store import CacheStore
 from ..exceptions import (

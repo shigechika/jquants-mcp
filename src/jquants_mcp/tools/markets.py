@@ -6,7 +6,7 @@ import logging
 from datetime import date, timedelta
 from typing import Any
 
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from ..cache.store import CacheStore, TTL_24H, make_cache_key
 from ..client import JQuantsClient

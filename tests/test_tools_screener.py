@@ -41,8 +41,8 @@ def mock_env(tmp_path):
 
 async def _call(tool_name: str, **kwargs) -> dict:
     """Invoke an MCP tool and decode the JSON result."""
-    result = await server_module.mcp.call_tool(tool_name, kwargs)
-    return json.loads(result.content[0].text)
+    _, structured = await server_module.mcp.call_tool(tool_name, kwargs)
+    return structured
 
 
 def _bar(
@@ -727,17 +727,22 @@ class TestScreenerCachePersistence:
         assert cache.screener_result_count() == 1
 
 
-class TestPlanContextMiddlewareE2E:
-    """End-to-end: the per-call middleware applies each user's plan window.
+class TestPlanResolutionE2E:
+    """End-to-end: CacheStore's plan_resolver applies each user's plan window.
 
-    Proves the full chain works — PlanContextMiddleware.on_call_tool resolves
-    the user's plan from user_db, sets the request contextvar, and CacheStore
-    reads it (overriding the store's premium default_plan). Without the
-    contextvar wiring this gating would silently not happen.
+    Proves the full chain works — CacheStore._effective_plan() falls back to
+    _resolve_current_plan() (server.py), which reads the gateway-injected
+    identity (JQUANTS_MCP_USER) and looks up that user's plan from user_db.
+    Case A spawns one child process per user, so in production a single
+    process only ever sees one identity for its lifetime; this test instead
+    proves _resolve_current_plan's per-user _plan_cache is correctly keyed by
+    identity rather than stuck on whichever value it resolved first — the
+    property that matters is that a changed JQUANTS_MCP_USER is never served
+    a stale plan.
     """
 
     @pytest.mark.asyncio
-    async def test_free_user_gated_premium_not(self, mock_env):
+    async def test_free_user_gated_premium_not(self, mock_env, monkeypatch):
         from unittest.mock import MagicMock
 
         from jquants_mcp.models.user import UserMeta
@@ -759,16 +764,18 @@ class TestPlanContextMiddlewareE2E:
         user_db.get_user_meta.side_effect = lambda uid: UserMeta(
             plan=plans[uid], last_validated_at=None
         )
-        tok = MagicMock()
 
         with (
             patch.object(server_module, "_get_user_db", return_value=user_db),
-            patch("fastmcp.server.dependencies.get_access_token", return_value=tok),
+            # mock_env's CacheStore is constructed directly (not via
+            # _get_cache()), so it never gets the production plan_resolver
+            # wiring — inject it here to exercise the real per-user path.
+            patch.object(cache, "_plan_resolver", server_module._resolve_current_plan),
         ):
-            tok.client_id = "premium-user"
+            monkeypatch.setenv("JQUANTS_MCP_USER", "premium-user")
             res_prem = await _call("detect_52w_high_low", date=recent, detail=True)
-            # Sequential call as a different (Free) user — must not inherit premium.
-            tok.client_id = "free-user"
+            # Different identity — must not inherit the cached premium plan.
+            monkeypatch.setenv("JQUANTS_MCP_USER", "free-user")
             res_free = await _call("detect_52w_high_low", date=recent, detail=True)
 
         # Premium sees the cached snapshot; Free is embargoed (12-week delay) and
@@ -2470,7 +2477,6 @@ class TestFyEndTimestampStrip:
 
     def test_get_fy_dividend_history_strips_timestamp(self, tmp_path):
         """get_fy_dividend_history が '2026-03-31 00:00:00' → '2026-03-31' に正規化する。"""
-        import json
         import sqlite3
 
         from jquants_mcp.cache.store import CacheStore

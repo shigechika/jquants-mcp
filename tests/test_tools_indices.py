@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -39,8 +38,8 @@ def mock_env(tmp_path):
 
 async def _call(tool_name: str, **kwargs) -> dict:
     """FastMCP v3 の call_tool でツールを呼び出し、JSON を dict で返す。"""
-    result = await server_module.mcp.call_tool(tool_name, kwargs)
-    return json.loads(result.content[0].text)
+    _, structured = await server_module.mcp.call_tool(tool_name, kwargs)
+    return structured
 
 
 class TestGetIndicesBarsDaily:

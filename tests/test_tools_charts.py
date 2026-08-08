@@ -77,9 +77,18 @@ def _seed(cache: CacheStore, rows: list[dict]) -> None:
 
 
 async def _call(tool: str, **kwargs) -> dict:
-    """Invoke a JSON-returning tool and return the parsed dict."""
+    """Invoke a JSON-returning tool and return the parsed dict.
+
+    Both tools in this module return a bare ``dict`` (no ``[str, Any]``), so
+    the SDK does not generate an output schema and ``call_tool`` returns only
+    unstructured content (a ``list[ContentBlock]``), not the
+    ``(unstructured, structured)`` tuple that ``dict[str, Any]``-annotated
+    tools get.
+    """
+    import json
+
     result = await server_module.mcp.call_tool(tool, kwargs)
-    return json.loads(result.content[0].text)
+    return json.loads(result[0].text)
 
 
 def _seed_master(cache: CacheStore, code: str, name: str | None, date: str = "2026-01-04") -> None:

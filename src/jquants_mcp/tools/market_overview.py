@@ -29,7 +29,7 @@ import statistics
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from ..cache import screener_compute
 from ..cache.store import CacheStore, make_cache_key
@@ -1719,23 +1719,19 @@ def register(
         if cached is not None:
             return cached
 
-        # Internal helper: call MCP tool by name and unwrap the JSON content.
-        # Used for screener tools (registered in screener.register) and TOPIX.
+        # Internal helper: call MCP tool by name and unwrap the structured
+        # content. Used for screener tools (registered in screener.register)
+        # and TOPIX. Every tool called here is annotated `-> dict[str, Any]`,
+        # so the SDK always returns the (unstructured, structured) pair.
         async def _call_json(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-            import json as _json
-
             try:
-                result = await mcp.call_tool(tool_name, args)
+                _, structured = await mcp.call_tool(tool_name, args)
             except Exception:
                 # Fail-soft: a missing API key, network blip, or any other tool
                 # error must not derail the whole briefing. Caller checks
                 # `result.get("error")` and substitutes a neutral default.
                 return {"error": True, "error_type": "ToolCallFailed"}
-            text = result.content[0].text if result.content else "{}"
-            try:
-                return _json.loads(text)
-            except (ValueError, TypeError):
-                return {}
+            return structured if isinstance(structured, dict) else {}
 
         # Fetch equities_bars_daily exactly once — a span wide enough for the
         # 25-day ADR window (period+1 = 26 session dates). today and prev are

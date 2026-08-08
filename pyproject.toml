@@ -9,7 +9,17 @@ license-files = ["LICENSE"]
 requires-python = ">=3.10"
 
 dependencies = [
+    # fastmcp stays a direct dependency for auth.py / settings/ (HTTP-transport
+    # OAuth providers + the /settings web UI). Those modules are unreachable
+    # from the stdio-only server built by server.py (which now uses the
+    # official mcp SDK's FastMCP below) but are kept present, not deleted,
+    # until Phase 5 of the streamable-http removal — see CHANGELOG.md.
     "fastmcp>=3.2.1",
+    # mcp.server.fastmcp.FastMCP is what server.py and the tools/ modules
+    # actually import. fastmcp>=3.2.1 itself constrains this to
+    # mcp<2.0,>=1.24.0; pinned explicitly here since it is now a direct
+    # runtime dependency, not just a transitive one.
+    "mcp>=1.24,<2",
     "httpx>=0.25.0",
     "cryptography>=41.0.0",
     "tomli>=2.0.0; python_version < '3.11'",
@@ -37,7 +47,6 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "respx>=0.22.0",
-    "mcp>=1.16.0",
     "ruff>=0.1.0",
     # Exercises the real zstd round-trip in cache.db compress/decompress tests.
     "zstandard>=0.21.0",

@@ -6,7 +6,7 @@ import logging
 import statistics
 from typing import Any
 
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from ..cache.store import CacheStore, TTL_6H, make_cache_key
 from ..tool_annotations import READ_ONLY_CACHE
