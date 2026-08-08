@@ -5,6 +5,15 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.54.0](https://github.com/shigechika/jquants-mcp/compare/v0.53.0...v0.54.0) (2026-08-08)
+
+
+### Features
+
+* add mcp-stdio/serve entrypoint for the parallel Cloud Run deployment ([#570](https://github.com/shigechika/jquants-mcp/issues/570)) ([6f83381](https://github.com/shigechika/jquants-mcp/commit/6f83381f7b8ad7a909494d38b54a197c4cb461ab))
+* add pr-gate.yml admission control caller ([#571](https://github.com/shigechika/jquants-mcp/issues/571)) ([f6952a9](https://github.com/shigechika/jquants-mcp/commit/f6952a944a3d40f7e200c56fdf40552913956760))
+* migrate stdio server to the official mcp SDK ([#566](https://github.com/shigechika/jquants-mcp/issues/566)) ([23a979a](https://github.com/shigechika/jquants-mcp/commit/23a979aa162f76b03c9ada17cebe20c76f818947))
+
 ## [0.53.0](https://github.com/shigechika/jquants-mcp/compare/v0.52.1...v0.53.0) (2026-07-27)
 
 
