@@ -39,8 +39,10 @@ COPY --from=builder /app/.venv /app/.venv
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 
-# Make entrypoint executable
-RUN chmod +x /app/scripts/entrypoint.sh
+# Make entrypoints executable (entrypoint.sh: streamable-http deployment;
+# entrypoint-stdio.sh: mcp-stdio/serve deployment, selected via Cloud Run
+# --command at deploy time — see jquants-mcp#568)
+RUN chmod +x /app/scripts/entrypoint.sh /app/scripts/entrypoint-stdio.sh
 
 # Run as non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app

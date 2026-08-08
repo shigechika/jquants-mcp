@@ -1,0 +1,19 @@
+# Periodic cache.db re-download for the stdio/serve deployment — every 15
+# minutes. Replaces the Pub/Sub-pushed /internal/reload custom_route used by
+# the streamable-http deployment (entrypoint.sh), which has no equivalent on
+# a stdio-only server: there is no HTTP route for a push to land on, so this
+# service polls GCS on a timer instead. gcs_sync.py --init-cache is the same
+# call entrypoint-stdio.sh makes at startup; a fetch failure here is
+# non-fatal (see its own logging) and simply leaves the previous cache.db in
+# place until the next tick.
+#
+# REQUIRES the Cloud Run service to run with CPU always allocated
+# (`--no-cpu-throttling`), not the default request-based throttling. Under
+# request-based billing, Cloud Run suspends CPU on a warm instance between
+# requests — supercronic cannot execute this job on schedule if no request
+# happens to be in flight at the tick, and even if it starts, a multi-GB
+# download that outlives the next request's end gets throttled mid-transfer.
+# That is the exact failure mode entrypoint-stdio.sh's synchronous
+# startup download exists to avoid; this cron job needs the same CPU
+# guarantee to be reliable on its own schedule. See jquants-mcp#570 review.
+*/15 * * * * python /app/scripts/gcs_sync.py --init-cache
