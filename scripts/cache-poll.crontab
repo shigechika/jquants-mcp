@@ -1,0 +1,9 @@
+# Periodic cache.db re-download for the stdio/serve deployment — every 15
+# minutes. Replaces the Pub/Sub-pushed /internal/reload custom_route used by
+# the streamable-http deployment (entrypoint.sh), which has no equivalent on
+# a stdio-only server: there is no HTTP route for a push to land on, so this
+# service polls GCS on a timer instead. gcs_sync.py --init-cache is the same
+# call entrypoint-stdio.sh makes at startup; a fetch failure here is
+# non-fatal (see its own logging) and simply leaves the previous cache.db in
+# place until the next tick.
+*/15 * * * * python /app/scripts/gcs_sync.py --init-cache

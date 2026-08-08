@@ -39,6 +39,10 @@ cloud-run = [
     # and the Pub/Sub reload stream-decompress it (falling back to the
     # uncompressed object when absent). See scripts/gcs_sync.py / server.py.
     "zstandard>=0.21.0",
+    # Fronts the stdio-only server over HTTP for the mcp-stdio/serve Cloud
+    # Run deployment (entrypoint-stdio.sh). PyPI package; see mcp-stdio#400
+    # for the --user-env flag this deployment relies on.
+    "mcp-stdio>=0.40.0",
 ]
 [project.scripts]
 jquants-mcp = "jquants_mcp.cli:main"
