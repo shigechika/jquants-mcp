@@ -55,7 +55,26 @@ from smoke_harness import (  # noqa: E402 - needs the sys.path line above
 
 
 def _decode(result: Any) -> Any:
-    """Normalise a FastMCP tool result into plain Python data."""
+    """Normalise a tool result into plain Python data.
+
+    Two distinct shapes reach here. ``--url``/``--stdio`` go through a real
+    fastmcp ``Client`` speaking wire JSON-RPC, which yields a
+    ``CallToolResult``-like object (``.data``/``.structured_content``/
+    ``.content``) regardless of what SDK the server is built on. In-process
+    mode calls ``jquants_mcp.server.mcp.call_tool()`` directly — the
+    official SDK's ``FastMCP.call_tool(..., convert_result=True)`` returns
+    ``(unstructured_content, structured_content)`` for a ``dict[str, Any]``-
+    annotated tool, or a bare ``list[ContentBlock]`` otherwise.
+    """
+    if isinstance(result, tuple) and len(result) == 2:
+        return result[1]
+    if isinstance(result, list):
+        if result and hasattr(result[0], "text"):
+            try:
+                return json.loads(result[0].text)
+            except json.JSONDecodeError:
+                return result[0].text
+        return result
     for attr in ("data", "structured_content"):
         value = getattr(result, attr, None)
         if value is not None:

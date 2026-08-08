@@ -475,19 +475,19 @@ class TestHandlePubsubReload:
 
 
 async def _call(tool_name: str, **kwargs) -> dict:
-    result = await server_module.mcp.call_tool(tool_name, kwargs)
-    return json.loads(result.content[0].text)
+    _, structured = await server_module.mcp.call_tool(tool_name, kwargs)
+    return structured
 
 
 class TestHealthCheckLastReloadAt:
-    async def test_last_reload_at_none_initially(self, mock_env):
-        with patch("fastmcp.server.dependencies.get_access_token", return_value=None):
-            result = await _call("health_check")
+    async def test_last_reload_at_none_initially(self, mock_env, monkeypatch):
+        monkeypatch.delenv("JQUANTS_MCP_USER", raising=False)
+        result = await _call("health_check")
         assert result["last_reload_at"] is None
 
-    async def test_last_reload_at_reflects_global(self, mock_env):
+    async def test_last_reload_at_reflects_global(self, mock_env, monkeypatch):
         ts = time.time()
         server_module._last_reload_at = ts
-        with patch("fastmcp.server.dependencies.get_access_token", return_value=None):
-            result = await _call("health_check")
+        monkeypatch.delenv("JQUANTS_MCP_USER", raising=False)
+        result = await _call("health_check")
         assert result["last_reload_at"] == pytest.approx(ts)

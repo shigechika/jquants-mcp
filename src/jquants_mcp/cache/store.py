@@ -7,6 +7,7 @@ import logging
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -218,9 +219,11 @@ class CacheStore:
         default_plan: str = "free",
         *,
         check_integrity_async: bool = False,
+        plan_resolver: Callable[[], str | None] | None = None,
     ):
         self._db_path = db_path
         self._default_plan = default_plan
+        self._plan_resolver = plan_resolver
         self._conn: sqlite3.Connection | None = None
         self._ready: bool = False
         self._last_retry: float = 0.0
@@ -260,18 +263,21 @@ class CacheStore:
     def _effective_plan(self, plan: str | None = None) -> str:
         """Resolve the plan that governs date restrictions for a query.
 
-        Priority: explicit ``plan`` arg > per-request plan from the current
-        tool call (set by the server's PlanContextMiddleware for the
-        authenticated user) > this store's configured ``default_plan``.
-
-        The middleware path lets a multi-user deployment apply each user's
-        own plan window without threading ``plan`` through every tool.
+        Priority: explicit ``plan`` arg > per-request plan set via
+        ``request_context`` (still supported for callers that push a plan
+        onto the contextvar explicitly) > this store's ``plan_resolver``
+        (server-supplied, e.g. the authenticated user's plan looked up and
+        cached by ``_resolve_current_plan``) > this store's configured
+        ``default_plan``.
         """
         if plan is not None:
             return plan
         from ..request_context import get_current_plan
 
-        return get_current_plan() or self._default_plan
+        resolved = get_current_plan()
+        if resolved is None and self._plan_resolver is not None:
+            resolved = self._plan_resolver()
+        return resolved or self._default_plan
 
     def effective_plan(self) -> str:
         """Public accessor for the current request's effective plan.

@@ -18,12 +18,6 @@ from jquants_mcp.config import Settings
 # ---------------------------------------------------------------------------
 
 
-def _fake_token(user_id: str = "github|12345") -> MagicMock:
-    tok = MagicMock()
-    tok.client_id = user_id
-    return tok
-
-
 def _make_env(tmp_path, cache_bypass_auth: str = "false"):
     settings = Settings(
         jquants_api_key="global-key",
@@ -44,7 +38,7 @@ def _make_env(tmp_path, cache_bypass_auth: str = "false"):
 
 class TestCacheBypassAuth:
     @pytest.mark.asyncio
-    async def test_raises_user_not_configured_when_bypass_off(self, tmp_path):
+    async def test_raises_user_not_configured_when_bypass_off(self, tmp_path, monkeypatch):
         """Without bypass, OAuth user without key gets UserNotConfiguredError."""
         from jquants_mcp.exceptions import UserNotConfiguredError
 
@@ -57,14 +51,13 @@ class TestCacheBypassAuth:
         mock_rate_limiter = AsyncMock()
         mock_rate_limiter.acquire = AsyncMock()
 
+        monkeypatch.setenv("JQUANTS_MCP_USER", "user@example.com")
         with (
             patch.object(server_module, "_settings", settings),
             patch.object(server_module, "_client", client),
             patch.object(server_module, "_cache", cache),
-            patch("fastmcp.server.dependencies.get_access_token", return_value=_fake_token()),
             patch.object(server_module, "_get_user_db", return_value=mock_user_db),
             patch.object(server_module, "_get_rate_limiter", return_value=mock_rate_limiter),
-            patch("jquants_mcp.allowlist.get_user_email", return_value="user@example.com"),
             patch("jquants_mcp.allowlist.is_email_allowed", return_value=True),
         ):
             with pytest.raises(UserNotConfiguredError):
@@ -73,7 +66,7 @@ class TestCacheBypassAuth:
         cache.close()
 
     @pytest.mark.asyncio
-    async def test_returns_global_client_when_bypass_on(self, tmp_path):
+    async def test_returns_global_client_when_bypass_on(self, tmp_path, monkeypatch):
         """With bypass enabled, OAuth user without key gets the global client."""
         settings, client, cache = _make_env(tmp_path, cache_bypass_auth="true")
 
@@ -84,14 +77,13 @@ class TestCacheBypassAuth:
         mock_rate_limiter = AsyncMock()
         mock_rate_limiter.acquire = AsyncMock()
 
+        monkeypatch.setenv("JQUANTS_MCP_USER", "user@example.com")
         with (
             patch.object(server_module, "_settings", settings),
             patch.object(server_module, "_client", client),
             patch.object(server_module, "_cache", cache),
-            patch("fastmcp.server.dependencies.get_access_token", return_value=_fake_token()),
             patch.object(server_module, "_get_user_db", return_value=mock_user_db),
             patch.object(server_module, "_get_rate_limiter", return_value=mock_rate_limiter),
-            patch("jquants_mcp.allowlist.get_user_email", return_value="user@example.com"),
             patch("jquants_mcp.allowlist.is_email_allowed", return_value=True),
         ):
             result = await server_module._get_user_client()
@@ -100,14 +92,14 @@ class TestCacheBypassAuth:
         cache.close()
 
     @pytest.mark.asyncio
-    async def test_cached_client_skips_decryption(self, tmp_path):
+    async def test_cached_client_skips_decryption(self, tmp_path, monkeypatch):
         """When a per-user client is already cached, get_user (decryption) is not called.
 
         The hot path must reuse the cached client via get_user_meta to avoid a
         PBKDF2 key-derivation on every request.
         """
         settings, client, cache = _make_env(tmp_path, cache_bypass_auth="false")
-        user_id = "github|cached"
+        user_id = "cached@example.com"
 
         mock_user_db = MagicMock()
         # Already validated today → no validation round-trip.
@@ -123,17 +115,14 @@ class TestCacheBypassAuth:
         mock_rate_limiter.acquire = AsyncMock()
 
         cached = JQuantsClient(settings)
+        monkeypatch.setenv("JQUANTS_MCP_USER", user_id)
         with (
             patch.object(server_module, "_settings", settings),
             patch.object(server_module, "_client", client),
             patch.object(server_module, "_cache", cache),
             patch.dict(server_module._user_clients, {user_id: cached}, clear=False),
-            patch(
-                "fastmcp.server.dependencies.get_access_token", return_value=_fake_token(user_id)
-            ),
             patch.object(server_module, "_get_user_db", return_value=mock_user_db),
             patch.object(server_module, "_get_rate_limiter", return_value=mock_rate_limiter),
-            patch("jquants_mcp.allowlist.get_user_email", return_value="user@example.com"),
             patch("jquants_mcp.allowlist.is_email_allowed", return_value=True),
         ):
             result = await server_module._get_user_client()
@@ -144,7 +133,7 @@ class TestCacheBypassAuth:
         cache.close()
 
     @pytest.mark.asyncio
-    async def test_bypass_does_not_suppress_decryption_error(self, tmp_path):
+    async def test_bypass_does_not_suppress_decryption_error(self, tmp_path, monkeypatch):
         """Even with bypass on, a corrupted key still raises DecryptionError."""
         from jquants_mcp.exceptions import DecryptionError
 
@@ -157,14 +146,13 @@ class TestCacheBypassAuth:
         mock_rate_limiter = AsyncMock()
         mock_rate_limiter.acquire = AsyncMock()
 
+        monkeypatch.setenv("JQUANTS_MCP_USER", "user@example.com")
         with (
             patch.object(server_module, "_settings", settings),
             patch.object(server_module, "_client", client),
             patch.object(server_module, "_cache", cache),
-            patch("fastmcp.server.dependencies.get_access_token", return_value=_fake_token()),
             patch.object(server_module, "_get_user_db", return_value=mock_user_db),
             patch.object(server_module, "_get_rate_limiter", return_value=mock_rate_limiter),
-            patch("jquants_mcp.allowlist.get_user_email", return_value="user@example.com"),
             patch("jquants_mcp.allowlist.is_email_allowed", return_value=True),
         ):
             with pytest.raises(DecryptionError):

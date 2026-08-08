@@ -56,7 +56,7 @@ import math
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from ..cache import screener_compute
 from ..cache.screener_compute import SCREENER_CACHE_LOOKBACK_WEEKS

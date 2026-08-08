@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -61,14 +60,14 @@ def mock_env_explicit(tmp_path):
 
 
 async def _call(tool_name: str, **kwargs) -> dict:
-    result = await server_module.mcp.call_tool(tool_name, kwargs)
-    return json.loads(result.content[0].text)
+    _, structured = await server_module.mcp.call_tool(tool_name, kwargs)
+    return structured
 
 
 class TestEnsurePlanDetected:
     """Tests for _ensure_plan_detected()."""
 
-    async def test_auto_detect_light(self, mock_env_auto):
+    async def test_auto_detect_light(self, mock_env_auto, monkeypatch):
         """Plan auto-detect resolves to 'light' when standard probe returns 403."""
 
         async def side_effect(path, *args, **kwargs):
@@ -76,11 +75,11 @@ class TestEnsurePlanDetected:
                 raise PlanRestrictionError("forbidden", status_code=403)
             return {"data": []}
 
+        monkeypatch.delenv("JQUANTS_MCP_USER", raising=False)
         with patch.object(
             mock_env_auto["client"], "get", new_callable=AsyncMock, side_effect=side_effect
         ):
-            with patch("fastmcp.server.dependencies.get_access_token", return_value=None):
-                await server_module._ensure_plan_detected(mock_env_auto["client"])
+            await server_module._ensure_plan_detected(mock_env_auto["client"])
 
         assert mock_env_auto["settings"].jquants_plan == "light"
         assert mock_env_auto["cache"].default_plan == "light"
@@ -221,16 +220,16 @@ class TestUpdateRateLimit:
 class TestHealthCheckPlanDisplay:
     """Tests for health_check plan display with auto-detect."""
 
-    async def test_undetected_plan_shows_auto(self, mock_env_auto):
+    async def test_undetected_plan_shows_auto(self, mock_env_auto, monkeypatch):
         """Before detection, health_check shows 'auto (not yet detected)'."""
-        with patch("fastmcp.server.dependencies.get_access_token", return_value=None):
-            result = await _call("health_check")
+        monkeypatch.delenv("JQUANTS_MCP_USER", raising=False)
+        result = await _call("health_check")
         assert result["plan"] == "auto (not yet detected)"
 
-    async def test_detected_plan_shows_actual(self, mock_env_auto):
+    async def test_detected_plan_shows_actual(self, mock_env_auto, monkeypatch):
         """After detection, health_check shows the detected plan."""
         mock_env_auto["settings"].jquants_plan = "light"
 
-        with patch("fastmcp.server.dependencies.get_access_token", return_value=None):
-            result = await _call("health_check")
+        monkeypatch.delenv("JQUANTS_MCP_USER", raising=False)
+        result = await _call("health_check")
         assert result["plan"] == "light"

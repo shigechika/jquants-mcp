@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from ..cache.store import CacheStore
 from ..cache.technical import compute_bb, compute_rsi, compute_sma

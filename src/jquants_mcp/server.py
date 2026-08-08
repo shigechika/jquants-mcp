@@ -12,8 +12,7 @@ from typing import Any
 
 import httpx
 
-from fastmcp import FastMCP
-from fastmcp.server.middleware.middleware import Middleware as ToolMiddleware
+from mcp.server.fastmcp import FastMCP
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -24,7 +23,6 @@ from .cache import store
 from .cache.store import CacheStore
 from .client import JQuantsClient
 from .config import Settings
-from .request_context import reset_current_plan, set_current_plan
 from .tool_annotations import DESTRUCTIVE_LOCAL, READ_ONLY_LOCAL
 
 logger = logging.getLogger(__name__)
@@ -108,33 +106,46 @@ _user_clients: dict[str, JQuantsClient] = {}
 # Last-used timestamps for stale-client eviction: user_id -> monotonic timestamp.
 _user_client_last_used: dict[str, float] = {}
 
-# Short-TTL cache of each user's plan (user_id -> (plan, expiry_monotonic)) so the
-# per-call PlanContextMiddleware does not hit the user DB (Firestore) on every
-# tool call. A plan change is reflected within _PLAN_CACHE_TTL seconds.
+# Short-TTL cache of each user's plan (user_id -> (plan, expiry_monotonic)) so
+# repeated cache-plan resolution (see CacheStore's plan_resolver, wired in
+# _get_cache()) does not hit the user DB (Firestore) on every tool call. A plan
+# change is reflected within _PLAN_CACHE_TTL seconds.
 _plan_cache: dict[str, tuple[str | None, float]] = {}
 _PLAN_CACHE_TTL = 60.0
+
+
+def _current_user_id() -> str | None:
+    """Return the gateway-authenticated user's identity for this process.
+
+    Identity is injected by mcp-stdio's ``serve`` gateway at child-process
+    spawn time via ``--user-env JQUANTS_MCP_USER`` (per-user child process
+    design, "case A"): one child serves exactly one authenticated principal
+    for its whole lifetime, and the principal is the user's verified email
+    (mcp-stdio's ``--trusted-user-header X-Forwarded-Email``). Returns
+    ``None`` for single-user / static-bearer-token / unauthenticated
+    deployments, where callers fall back to the global client and the
+    cache's configured ``default_plan`` — identical to today's
+    ``token is None or token.client_id == "bearer"`` behavior.
+    """
+    return os.environ.get("JQUANTS_MCP_USER") or None
 
 
 def _resolve_current_plan() -> str | None:
     """Resolve the authenticated user's plan for the current tool call.
 
-    Returns ``None`` for single-user / bearer / unauthenticated paths (the cache
-    then uses its configured ``default_plan``). Cached per user_id for a short
-    TTL to avoid a user-DB round-trip on every tool call. Never raises — any
+    Returns ``None`` for single-user / unauthenticated paths (the cache then
+    uses its configured ``default_plan``). Cached per user_id for a short TTL
+    to avoid a user-DB round-trip on every tool call. Never raises — any
     failure resolves to ``None`` so tool calls are not broken by plan lookup.
+    Wired into ``CacheStore`` as its ``plan_resolver`` (see ``_get_cache()``),
+    which calls this only when the ``request_context`` contextvar is unset.
     """
     user_db = _get_user_db()
     if user_db is None:
         return None
-    try:
-        from fastmcp.server.dependencies import get_access_token
-
-        token = get_access_token()
-    except Exception:
+    user_id = _current_user_id()
+    if user_id is None:
         return None
-    if token is None or token.client_id == "bearer":
-        return None
-    user_id = token.client_id
 
     now = time.monotonic()
     cached = _plan_cache.get(user_id)
@@ -146,34 +157,9 @@ def _resolve_current_plan() -> str | None:
         return None
     plan = meta.plan if meta is not None else None
     _plan_cache[user_id] = (plan, now + _PLAN_CACHE_TTL)
-    # Verifies per-user plan resolution on the live OAuth path. The wiring is
-    # unit-tested by TestPlanContextMiddlewareE2E (with a patched
-    # get_access_token); what only production exercises is whether FastMCP
-    # delivers a real token to on_call_tool (a mock cannot prove that). Logged
-    # at INFO because the app's root level is INFO; only fires on a plan-cache
-    # miss (<= once per user per _PLAN_CACHE_TTL), so the volume is low.
     logger.info("Resolved plan=%s for user=%s", plan, user_id)
     return plan
 
-
-class PlanContextMiddleware(ToolMiddleware):
-    """Bind the authenticated user's plan to the request for each tool call.
-
-    Lets ``CacheStore`` apply per-user plan date restrictions (e.g. Free =
-    2 years + 12-week delay) without threading a ``plan`` argument through every
-    tool. Single-user / bearer deployments resolve to ``None`` and keep using
-    the cache's configured ``default_plan``.
-    """
-
-    async def on_call_tool(self, context, call_next):  # type: ignore[override]
-        token = set_current_plan(_resolve_current_plan())
-        try:
-            return await call_next(context)
-        finally:
-            reset_current_plan(token)
-
-
-mcp.add_middleware(PlanContextMiddleware())
 
 # Timestamp of the last stale-client cleanup run (monotonic).
 _last_cleanup: float = 0.0
@@ -226,6 +212,7 @@ def _get_cache() -> CacheStore:
             db_path,
             default_plan=settings.jquants_plan,
             check_integrity_async=True,
+            plan_resolver=_resolve_current_plan,
         )
     return _cache
 
@@ -681,31 +668,30 @@ async def _get_user_client() -> JQuantsClient:
     """
     global _last_cleanup
 
-    from fastmcp.server.dependencies import get_access_token
-
     from .exceptions import UserNotConfiguredError
 
-    token = get_access_token()
+    user_id = _current_user_id()
 
-    # No auth or static Bearer token -> use the global client.
-    if token is None or token.client_id == "bearer":
+    # No gateway identity (single-user / static bearer token) -> global client.
+    if user_id is None:
         client = _get_client()
         await _ensure_plan_detected(client)
         return client
 
-    user_id = token.client_id
-
-    # Per-user rate limiting (multi-user only; bearer / anonymous were handled above).
+    # Per-user rate limiting (multi-user only; the no-identity path was handled above).
     from .audit import audit
     from .rate_limit import RateLimitExceededError
 
     # Allowlist: reject before rate limiter so untrusted traffic cannot
-    # consume our shared bucket capacity.
-    from .allowlist import get_user_email, is_email_allowed
+    # consume our shared bucket capacity. The gateway-authenticated principal
+    # *is* the user's verified email (case A: mcp-stdio injects
+    # X-Forwarded-Email via --user-env), so no separate claims lookup is
+    # needed here.
+    from .allowlist import is_email_allowed
     from .exceptions import UserNotAllowedError
 
     allowed = _get_settings().get_allowed_emails()
-    email = get_user_email(token)
+    email = user_id
     if not is_email_allowed(email, allowed):
         audit("allowlist_rejected", user_id=user_id, email=email, where="tool")
         raise UserNotAllowedError(email or user_id)
@@ -781,48 +767,17 @@ async def _get_user_client() -> JQuantsClient:
 # ------------------------------------------------------------------
 
 
-@mcp.tool(annotations=READ_ONLY_LOCAL)
-def health_check() -> dict[str, Any]:
-    """Check server health, API key configuration, and cache readiness.
-
-    Sync on purpose: FastMCP runs a sync tool body in a worker thread, which
-    keeps this off the event loop — the body can trigger the slow lazy
-    initialization (connect + migrations). Sharing the SQLite connection with
-    the loop from that thread is what caused #537; the store's write lock, not
-    an async signature, is what makes it safe.
-
-    Call this at session start to confirm cache.db has finished loading
-    before issuing detect_* or cache_status — the first call after server
-    start may take 10–60 seconds while the cache initialises lazily.
-    After a tool-call timeout, use this to distinguish a transient
-    cache-loading delay from a permanent failure.
-
-    Returns server version, API key status, active plan, ``status``
-    (healthy / degraded), ``cache_integrity`` and ``cache_ready``.
-
-    ``status`` is degraded only when the integrity check reports a failure;
-    there is no error state, since this call does no I/O that can fail.
-
-    ``cache_integrity`` (ok / pending / not-checked / failed: <detail> /
-    error: <detail>) is the integrity check's own result. The last two carry a
-    detail string appended to the prefix, so test them with ``startswith``,
-    not ``==``. ``cache_ready`` is a boolean shorthand: true only when
-    cache_integrity is exactly "ok".
-
-    In multi-user mode, returns the authenticated user's plan.
-    """
-    from fastmcp.server.dependencies import get_access_token
-
+def _health_check_impl() -> dict[str, Any]:
     settings = _get_settings()
     has_key = bool(settings.jquants_api_key)
     plan = settings.jquants_plan or "auto (not yet detected)"
 
     # In multi-user mode, resolve the actual user's plan.
-    token = get_access_token()
-    if token is not None and token.client_id != "bearer":
+    user_id = _current_user_id()
+    if user_id is not None:
         user_db = _get_user_db()
         if user_db is not None:
-            user = user_db.get_user(token.client_id)
+            user = user_db.get_user(user_id)
             if user is not None:
                 plan = user.plan
                 has_key = True
@@ -854,7 +809,58 @@ def health_check() -> dict[str, Any]:
 
 
 @mcp.tool(annotations=READ_ONLY_LOCAL)
-def cache_status() -> dict[str, Any]:
+async def health_check() -> dict[str, Any]:
+    """Check server health, API key configuration, and cache readiness.
+
+    Offloaded to a worker thread (see ``_health_check_impl``): the body can
+    trigger the slow lazy cache initialization (connect + migrations), and
+    the official mcp SDK — unlike the standalone fastmcp package this server
+    used to run on — invokes sync tool bodies directly on the event loop
+    rather than in a worker thread, so an explicit ``asyncio.to_thread``
+    offload is required here to keep that work off the loop. Sharing the
+    SQLite connection with the loop from that thread is what caused #537;
+    the store's write lock, not this offload, is what makes it safe.
+
+    Call this at session start to confirm cache.db has finished loading
+    before issuing detect_* or cache_status — the first call after server
+    start may take 10–60 seconds while the cache initialises lazily.
+    After a tool-call timeout, use this to distinguish a transient
+    cache-loading delay from a permanent failure.
+
+    Returns server version, API key status, active plan, ``status``
+    (healthy / degraded), ``cache_integrity`` and ``cache_ready``.
+
+    ``status`` is degraded only when the integrity check reports a failure;
+    there is no error state, since this call does no I/O that can fail.
+
+    ``cache_integrity`` (ok / pending / not-checked / failed: <detail> /
+    error: <detail>) is the integrity check's own result. The last two carry a
+    detail string appended to the prefix, so test them with ``startswith``,
+    not ``==``. ``cache_ready`` is a boolean shorthand: true only when
+    cache_integrity is exactly "ok".
+
+    In multi-user mode, returns the authenticated user's plan.
+    """
+    return await asyncio.to_thread(_health_check_impl)
+
+
+def _cache_status_impl() -> dict[str, Any]:
+    result = _get_cache().status()
+
+    # In multi-user mode, resolve the actual user's plan.
+    user_id = _current_user_id()
+    if user_id is not None:
+        user_db = _get_user_db()
+        if user_db is not None:
+            user = user_db.get_user(user_id)
+            if user is not None:
+                result["plan"] = user.plan
+
+    return result
+
+
+@mcp.tool(annotations=READ_ONLY_LOCAL)
+async def cache_status() -> dict[str, Any]:
     """Show database metadata: table row counts, file size, and detected plan.
 
     This tool returns cache metadata — it does NOT query screener signals. To detect
@@ -865,32 +871,33 @@ def cache_status() -> dict[str, Any]:
 
     In multi-user mode, returns the authenticated user's plan instead of the global
     default.
+
+    Offloaded to a worker thread (see ``_cache_status_impl``): this does a
+    multi-GB row-count scan, and the official mcp SDK runs sync tool bodies
+    directly on the event loop (see ``health_check``'s docstring for why an
+    explicit offload is needed here).
     """
-    from fastmcp.server.dependencies import get_access_token
+    return await asyncio.to_thread(_cache_status_impl)
 
-    result = _get_cache().status()
 
-    # In multi-user mode, resolve the actual user's plan.
-    token = get_access_token()
-    if token is not None and token.client_id != "bearer":
-        user_db = _get_user_db()
-        if user_db is not None:
-            user = user_db.get_user(token.client_id)
-            if user is not None:
-                result["plan"] = user.plan
-
-    return result
+def _cache_clear_impl(table: str | None) -> dict[str, Any]:
+    result = _get_cache().clear(table)
+    return {"cleared": result}
 
 
 @mcp.tool(annotations=DESTRUCTIVE_LOCAL)
-def cache_clear(table: str | None = None) -> dict[str, Any]:
+async def cache_clear(table: str | None = None) -> dict[str, Any]:
     """Clear cached data.
+
+    Offloaded to a worker thread (see ``_cache_clear_impl``): this does a
+    bulk DELETE, and the official mcp SDK runs sync tool bodies directly on
+    the event loop (see ``health_check``'s docstring for why an explicit
+    offload is needed here).
 
     Args:
         table: Table name to clear. Clears all tables when omitted.
     """
-    result = _get_cache().clear(table)
-    return {"cleared": result}
+    return await asyncio.to_thread(_cache_clear_impl, table)
 
 
 @mcp.tool(annotations=DESTRUCTIVE_LOCAL)
@@ -914,12 +921,10 @@ async def register_api_key(api_key: str) -> dict[str, Any]:
     Args:
         api_key: Your J-Quants API key (refresh token from the J-Quants portal).
     """
-    from fastmcp.server.dependencies import get_access_token
-
     from .models.user import User
 
-    token = get_access_token()
-    if token is None or token.client_id == "bearer":
+    user_id = _current_user_id()
+    if user_id is None:
         return {
             "error": True,
             "message": "register_api_key requires OAuth 2.1 authentication.",
@@ -935,13 +940,12 @@ async def register_api_key(api_key: str) -> dict[str, Any]:
             ),
         }
 
-    user_id = token.client_id
-
-    # Allowlist check — prevent unauthorized users from registering keys.
-    from .allowlist import get_user_email, is_email_allowed, unauthorized_message
+    # Allowlist check — prevent unauthorized users from registering keys. The
+    # gateway-authenticated principal *is* the user's verified email (case A).
+    from .allowlist import is_email_allowed, unauthorized_message
     from .audit import audit as _audit_allowlist
 
-    email = get_user_email(token)
+    email = user_id
     if not is_email_allowed(email, _get_settings().get_allowed_emails()):
         _audit_allowlist(
             "allowlist_rejected", user_id=user_id, email=email, where="register_api_key"
@@ -995,10 +999,8 @@ async def delete_api_key() -> dict[str, Any]:
 
     This tool requires OAuth 2.1 authentication.
     """
-    from fastmcp.server.dependencies import get_access_token
-
-    token = get_access_token()
-    if token is None or token.client_id == "bearer":
+    user_id = _current_user_id()
+    if user_id is None:
         return {
             "error": True,
             "message": "delete_api_key requires OAuth 2.1 authentication.",
@@ -1011,11 +1013,11 @@ async def delete_api_key() -> dict[str, Any]:
             "message": "Multi-user mode is not enabled (MCP_ENCRYPTION_KEY not set).",
         }
 
-    from .allowlist import get_user_email, is_email_allowed, unauthorized_message
+    from .allowlist import is_email_allowed, unauthorized_message
     from .audit import audit
 
-    user_id = token.client_id
-    email = get_user_email(token)
+    # The gateway-authenticated principal *is* the user's verified email (case A).
+    email = user_id
 
     if not is_email_allowed(email, _get_settings().get_allowed_emails()):
         audit("allowlist_rejected", user_id=user_id, email=email, where="delete_api_key")
@@ -1093,6 +1095,17 @@ def run_server(
     oauth_base_url: str = "",
 ) -> None:
     """Start the MCP server.
+
+    ``transport="stdio"`` is the only path this server actually supports
+    since the migration to the official mcp SDK's ``FastMCP`` — its
+    ``run()`` accepts only ``transport`` and ``mount_path`` (no ``host``,
+    ``port``, ``uvicorn_config``, or ``middleware`` kwargs), so calling this
+    with any other transport raises ``TypeError`` immediately at the
+    ``mcp.run(...)`` call in the ``else`` branch below. The HTTP/OAuth
+    parameters below are kept undeleted only because a parallel deployment
+    still runs this function from an older, unmigrated checkout — see the
+    module-level notes on ``auth.py``/``settings/`` for why. Do not rely on
+    this path from the current checkout.
 
     Args:
         transport: Transport type ("stdio" or "streamable-http")

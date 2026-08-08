@@ -13,11 +13,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 import threading
+from unittest.mock import patch
 
 import pytest
 
 import jquants_mcp.server as server_module
 from jquants_mcp.cache.store import CacheStore
+from jquants_mcp.client import JQuantsClient
+from jquants_mcp.config import Settings
 
 WRITES = 300
 
@@ -81,45 +84,76 @@ class TestConcurrentWrites:
         assert not errors, f"concurrent put_rows broke the shared connection: {errors[:3]}"
 
 
-#: Tools deliberately left synchronous. FastMCP runs a sync body in a worker
-#: thread, which is what we want for these: they do blocking work (lazy
-#: initialization with migrations, COUNT(*) over a multi-GB database, bulk
-#: DELETE) that would stall every other request if it ran on the event loop.
+#: Tools that do blocking work (lazy initialization with migrations,
+#: COUNT(*) over a multi-GB database, bulk DELETE) and must therefore
+#: explicitly offload to a worker thread via ``asyncio.to_thread`` — the
+#: official mcp SDK, unlike the standalone fastmcp package this server used
+#: to run on, invokes every tool body directly on the event loop, sync or
+#: async, so there is no automatic thread offload to rely on any more.
 #: Sharing the connection from that thread is safe because CacheStore
 #: serializes its mutating paths — see #537.
 BLOCKING_BY_DESIGN = {"health_check", "cache_status", "cache_clear"}
 
 
 class TestSyncToolInventory:
-    """A new sync tool must be a deliberate decision, not an accident.
+    """A new sync tool is always a bug now, not a deliberate choice.
 
-    Sync means "runs in a worker thread, concurrently with the event loop".
-    That is fine for the blocking-by-design tools above, and a trap for
-    anything that writes: the shared connection is only safe through the
-    store's locked API.
+    The official mcp SDK calls sync tool bodies directly on the event loop
+    (no automatic worker-thread offload, unlike the fastmcp package this
+    server previously ran on) — so every registered tool must be async, and
+    the blocking-by-design tools above must explicitly offload their work via
+    ``asyncio.to_thread`` inside their async body instead.
     """
 
-    async def test_only_known_tools_are_sync(self):
-        tools = await server_module.mcp.list_tools()
-        sync = {t.name for t in tools if not inspect.iscoroutinefunction(t.fn)}
-        unexpected = sorted(sync - BLOCKING_BY_DESIGN)
-        assert not unexpected, (
-            f"new sync tool(s): {unexpected}. FastMCP runs these in a worker thread "
-            "alongside the event loop; make the tool async unless it does blocking "
-            "work, and route all cache access through CacheStore (#537)."
+    async def test_no_tool_is_sync(self):
+        # ``mcp.list_tools()`` returns the wire-format ``mcp.types.Tool`` (no
+        # ``.fn``); the internal registry (``_tool_manager``) still exposes the
+        # underlying callable for this kind of introspection.
+        tools = server_module.mcp._tool_manager.list_tools()
+        sync = sorted(t.name for t in tools if not inspect.iscoroutinefunction(t.fn))
+        assert not sync, (
+            f"sync tool(s): {sync}. The official mcp SDK runs sync tool bodies "
+            "directly on the event loop (no thread offload) — make the tool async, "
+            "and if its body blocks, offload it explicitly with asyncio.to_thread "
+            "(see health_check/cache_status/cache_clear for the pattern)."
         )
 
-    async def test_blocking_tools_stay_off_the_event_loop(self):
-        tools = {t.name: t for t in await server_module.mcp.list_tools()}
-        regressed = sorted(
-            name
-            for name in BLOCKING_BY_DESIGN
-            if name in tools and inspect.iscoroutinefunction(tools[name].fn)
-        )
-        assert not regressed, (
-            f"{regressed} became async: their bodies block (migrations, full-table "
-            "counts, bulk delete), so on the event loop they stall every other request."
-        )
+    async def test_blocking_tools_offload_to_a_thread(self, tmp_path, monkeypatch):
+        """The blocking-by-design tools must route their body through asyncio.to_thread.
+
+        Being ``async def`` is not enough on its own — an async tool that runs
+        its blocking body inline still stalls the event loop. This confirms
+        each one actually calls ``asyncio.to_thread`` rather than merely being
+        a coroutine function.
+        """
+        calls: list[str] = []
+        original_to_thread = asyncio.to_thread
+
+        async def spy_to_thread(func, *args, **kwargs):
+            calls.append(getattr(func, "__name__", repr(func)))
+            return await original_to_thread(func, *args, **kwargs)
+
+        monkeypatch.setattr(server_module.asyncio, "to_thread", spy_to_thread)
+
+        settings = Settings(jquants_api_key="test-key", jquants_plan="premium")
+        client = JQuantsClient(settings)
+        cache = CacheStore(tmp_path / "offload.db", default_plan="premium")
+
+        tools = {t.name: t.fn for t in server_module.mcp._tool_manager.list_tools()}
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_client", client),
+            patch.object(server_module, "_cache", cache),
+        ):
+            for name in sorted(BLOCKING_BY_DESIGN):
+                calls.clear()
+                try:
+                    await tools[name]()
+                except Exception:  # noqa: BLE001 - only offload wiring is under test here
+                    pass
+                assert calls, f"{name} did not route its body through asyncio.to_thread"
+
+        cache.close()
 
 
 class TestSingleFlightRefresh:

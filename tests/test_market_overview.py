@@ -22,8 +22,9 @@ from jquants_mcp.config import Settings
 
 
 def _call(result):
-    """Unwrap the text content from a tool call result."""
-    return json.loads(result.content[0].text)
+    """Unwrap the structured content from a tool call result."""
+    _, structured = result
+    return structured
 
 
 def _make_cache(tmp_path: Path) -> CacheStore:

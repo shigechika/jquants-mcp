@@ -21,7 +21,8 @@ from jquants_mcp.config import Settings
 
 
 def _call(result) -> dict:
-    return json.loads(result.content[0].text)
+    _, structured = result
+    return structured
 
 
 def _make_cache(tmp_path: Path) -> CacheStore:

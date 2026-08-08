@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -40,8 +39,8 @@ def mock_env(tmp_path):
 
 
 async def _call(tool_name: str, **kwargs) -> dict:
-    result = await server_module.mcp.call_tool(tool_name, kwargs)
-    return json.loads(result.content[0].text)
+    _, structured = await server_module.mcp.call_tool(tool_name, kwargs)
+    return structured
 
 
 def _bar(code: str, date: str, *, c: float = 100.0, adj_c: float | None = None) -> dict:
