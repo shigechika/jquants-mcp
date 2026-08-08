@@ -90,7 +90,9 @@ trap _shutdown SIGTERM SIGINT
 
 # Step 4: Start supercronic for periodic cache.db re-download (opt-in via the
 # same GCS_BUCKET gate as the synchronous download above — nothing to poll
-# without a bucket).
+# without a bucket). REQUIRES the service to be deployed with
+# --no-cpu-throttling (CPU always allocated) — see cache-poll.crontab's
+# header for why request-based throttling breaks this.
 if [ -n "${GCS_BUCKET:-}" ]; then
     echo "Starting supercronic for periodic cache.db re-download..."
     supercronic /app/scripts/cache-poll.crontab &
