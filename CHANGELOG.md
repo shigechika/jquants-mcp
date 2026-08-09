@@ -5,6 +5,18 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.55.0](https://github.com/shigechika/jquants-mcp/compare/v0.54.0...v0.55.0) (2026-08-09)
+
+
+### Features
+
+* wire mcp-stdio's Firestore token store into the jquants service ([#575](https://github.com/shigechika/jquants-mcp/issues/575)) ([169290e](https://github.com/shigechika/jquants-mcp/commit/169290e794d1e251e37efccabb8772ca08119357))
+
+
+### Bug Fixes
+
+* disable CD deploy until entrypoint.sh migrates off streamable-http ([#572](https://github.com/shigechika/jquants-mcp/issues/572)) ([a2cc43d](https://github.com/shigechika/jquants-mcp/commit/a2cc43d6445d4bfd0ff73bce15951693d5273bf0))
+
 ## [0.54.0](https://github.com/shigechika/jquants-mcp/compare/v0.53.0...v0.54.0) (2026-08-08)
 
 
