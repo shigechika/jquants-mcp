@@ -93,7 +93,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   child process. Uses `entrypoint-stdio.sh`, not `entrypoint.sh`. This is
   the target architecture streamable-http removal is migrating toward.
   Verified end-to-end in production with a real Google account (see
-  "Cache Plan Scoping" above). No Firestore token store wired in yet
+  "Cache Plan Scoping" below). No Firestore token store wired in yet
   (mcp-stdio 0.42.0+ supports `--token-store-firestore`); every instance
   restart currently forces every connected client to re-authenticate.
 
@@ -135,7 +135,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   --user-env JQUANTS_MCP_USER`) → `register_api_key` → a subsequent
   `health_check` showing the registered user's own `plan` (not the
   single-user fallback) → a real tool call returning real market data
-  (2026-08-09). See "Deployment Targets" below. When debugging a similar
+  (2026-08-09). See "Deployment Targets" above. When debugging a similar
   setup, the `Resolved plan=...` INFO log (emitted on a plan-cache miss) is
   the fastest way to confirm identity is flowing.
 - Plan data retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all
