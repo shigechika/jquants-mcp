@@ -58,16 +58,21 @@ jobs:
       - name: Decide whether to deploy
         id: gate
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "Deploying because event_name=workflow_dispatch"
-            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
-          elif [[ "${{ steps.changes.outputs.code }}" == "true" ]]; then
-            echo "Deploying because deploy-relevant files changed"
-            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::No deploy-relevant files changed; skipping deploy."
-            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
-          fi
+          # TEMPORARY circuit breaker (2026-08-09, #568): main no longer
+          # supports the streamable-http transport this service's
+          # entrypoint.sh still invokes (#566 migrated server.py to the
+          # official mcp SDK, stdio-only). Every deploy attempt since #566
+          # merged has failed the container's health check the same way
+          # (jquants-mcp-00275-5rn, and again after #570 merged) --
+          # Cloud Run's atomic revision cutover has kept the prior good
+          # revision serving both times, so production has not gone down,
+          # but every push touching src/ etc. will keep re-attempting and
+          # re-failing this same broken deploy (wasted Cloud Build minutes,
+          # a permanently red CD) until this service is migrated off
+          # streamable-http. Remove this block (restoring the logic below,
+          # kept in git history) once #568 lands.
+          echo "::warning::CD deploy disabled -- see https://github.com/shigechika/jquants-mcp/issues/568 (streamable-http transport removed from main; this service's entrypoint.sh has not migrated yet)"
+          echo "should_deploy=false" >> "$GITHUB_OUTPUT"
 
       - id: auth
         if: steps.gate.outputs.should_deploy == 'true'
