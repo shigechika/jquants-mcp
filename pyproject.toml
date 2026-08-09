@@ -41,8 +41,13 @@ cloud-run = [
     "zstandard>=0.21.0",
     # Fronts the stdio-only server over HTTP for the mcp-stdio/serve Cloud
     # Run deployment (entrypoint-stdio.sh). PyPI package; see mcp-stdio#400
-    # for the --user-env flag this deployment relies on.
-    "mcp-stdio>=0.40.0",
+    # for the --user-env flag this deployment relies on, and mcp-stdio#404
+    # for the --token-store-firestore flag entrypoint-stdio.sh now passes
+    # (0.42.0+). The [firestore] extra is declared explicitly even though
+    # google-cloud-firestore is already present above for jquants-mcp's own
+    # FirestoreUserStore -- it documents the real dependency instead of
+    # relying on that coincidence.
+    "mcp-stdio[firestore]>=0.42.0",
 ]
 [project.scripts]
 jquants-mcp = "jquants_mcp.cli:main"

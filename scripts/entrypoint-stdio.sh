@@ -105,6 +105,11 @@ fi
 # separate sidecar container in front of this one on Cloud Run; it is not
 # started here.
 echo "Starting mcp-stdio serve on port ${PORT}..."
+# --token-store-firestore (mcp-stdio 0.42.0+, mcp-stdio#404): without it,
+# every instance restart/redeploy invalidates all issued OAuth tokens and
+# forces every connected client to re-authenticate. Safe only because this
+# service is deployed with min/max-instances=1 (see mcp-stdio's own
+# --help: no lock against two processes sharing one document).
 mcp-stdio serve \
     --enable-oauth \
     --public-url "${PUBLIC_URL}" \
@@ -116,6 +121,7 @@ mcp-stdio serve \
     --max-sessions-per-owner 6 \
     --modern-idle-ttl 600 \
     --session-idle-ttl 1800 \
+    --token-store-firestore "${FIRESTORE_TOKEN_STORE:-mcp_stdio_oauth/state}" \
     --host 127.0.0.1 \
     --port "${PORT}" \
     -- jquants-mcp &

@@ -895,7 +895,7 @@ wheels = [
 
 [[package]]
 name = "jquants-mcp"
-version = "0.53.0"
+version = "0.54.0"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
@@ -909,7 +909,7 @@ dependencies = [
 cloud-run = [
     { name = "google-cloud-firestore" },
     { name = "google-cloud-storage" },
-    { name = "mcp-stdio" },
+    { name = "mcp-stdio", extra = ["firestore"] },
     { name = "zstandard" },
 ]
 
@@ -934,7 +934,7 @@ requires-dist = [
     { name = "google-cloud-storage", marker = "extra == 'cloud-run'", specifier = ">=2.0.0" },
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "mcp", specifier = ">=1.24,<2" },
-    { name = "mcp-stdio", marker = "extra == 'cloud-run'", specifier = ">=0.40.0" },
+    { name = "mcp-stdio", extras = ["firestore"], marker = "extra == 'cloud-run'", specifier = ">=0.42.0" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0" },
     { name = "zstandard", marker = "extra == 'cloud-run'", specifier = ">=0.21.0" },
 ]
@@ -1154,14 +1154,19 @@ wheels = [
 
 [[package]]
 name = "mcp-stdio"
-version = "0.40.0"
+version = "0.42.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8d/62/888d586ef188a572c61f9e4e79cb175068a95a15d4e8b20b293a492d9003/mcp_stdio-0.40.0.tar.gz", hash = "sha256:8d3f05b70957971b28da1059928a5a646651a1545b8d55ecbb0a35bc5c015484", size = 813097, upload-time = "2026-08-08T03:10:02.65Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/78/23b6cfa7de79e786db69c7f83f847d08d9c32fc0fffdef33adb46945826a/mcp_stdio-0.42.0.tar.gz", hash = "sha256:dd0e77f4fb36b99f91f34b3f15eef0a696b49c02252ac7f5ffe06f17ea33322a", size = 890567, upload-time = "2026-08-09T00:45:59.353Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/63/33cbec226b1db8ecd9a2c8315a67a7e278947bc066611fe0b40fe2bdd9b7/mcp_stdio-0.40.0-py3-none-any.whl", hash = "sha256:0811f3c2c287b2f4b5f482f24bcadebbcf5f1686d397b884c1c8f497cd3a005b", size = 327479, upload-time = "2026-08-08T03:10:01.093Z" },
+    { url = "https://files.pythonhosted.org/packages/17/7d/7814effd6e749cd33ac352d9d68b6a40bad1943a739d07f2357c1a0746a4/mcp_stdio-0.42.0-py3-none-any.whl", hash = "sha256:f61cf4f58d80132a109fac5c1f08ef96ed73cbf407d440df1a47175766c0b7e4", size = 330195, upload-time = "2026-08-09T00:45:57.622Z" },
+]
+
+[package.optional-dependencies]
+firestore = [
+    { name = "google-cloud-firestore" },
 ]
 
 [[package]]
