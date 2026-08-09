@@ -105,6 +105,19 @@ fi
 # separate sidecar container in front of this one on Cloud Run; it is not
 # started here.
 echo "Starting mcp-stdio serve on port ${PORT}..."
+# --token-store-firestore (mcp-stdio 0.42.0+, mcp-stdio#404): without it,
+# every instance restart/redeploy invalidates all issued OAuth tokens and
+# forces every connected client to re-authenticate. mcp-stdio's own --help
+# warns there is no lock against two processes sharing one document -- this
+# service's min/max-instances=1 bounds *steady-state* concurrency, but does
+# NOT prevent the outgoing and incoming instance from overlapping briefly
+# during a normal Cloud Run redeploy or instance recycle (there is no
+# "drain fully, then start" mode on Cloud Run). A write race in that window
+# can silently drop one instance's token issuance, forcing that one client
+# to re-authenticate -- strictly no worse than today's in-memory-only
+# baseline (which invalidates every token on every restart), but not fully
+# eliminated by this flag alone. Tracked upstream: mcp-stdio#406
+# (transactional/generation-checked writes would close this).
 mcp-stdio serve \
     --enable-oauth \
     --public-url "${PUBLIC_URL}" \
@@ -116,6 +129,7 @@ mcp-stdio serve \
     --max-sessions-per-owner 6 \
     --modern-idle-ttl 600 \
     --session-idle-ttl 1800 \
+    --token-store-firestore "${FIRESTORE_TOKEN_STORE:-mcp_stdio_oauth/state}" \
     --host 127.0.0.1 \
     --port "${PORT}" \
     -- jquants-mcp &
