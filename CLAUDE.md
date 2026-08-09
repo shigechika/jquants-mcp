@@ -43,7 +43,8 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   - `rotate_encryption_key.py` — Re-encrypt user API keys during MCP_ENCRYPTION_KEY rotation
   - `collect_metrics.py` / `load_test.py` — Cloud Run sizing helpers
   - `smoke_test.py` — Live smoke test: runs **every registered tool** against real data (in-process, or `--url` against a deployment) and fails on empty/stale/error answers. `smoke_harness.py` is the server-agnostic engine; `smoke_probes.py` holds the per-tool specs. Needs a populated cache + API key, so it runs on the host that has them — not in CI. CI enforces only the coverage half (`tests/test_smoke_probes.py`: a new tool without a probe spec fails the build)
-  - `entrypoint.sh` — Docker/Cloud Run entrypoint
+  - `entrypoint.sh` — Docker/Cloud Run entrypoint for the `jquants-mcp` service (streamable-http, CD currently disabled — see "Deployment Targets")
+  - `entrypoint-stdio.sh` — Docker/Cloud Run entrypoint for the `jquants` service (`mcp-stdio serve`, behind an `oauth2-proxy` sidecar); downloads cache.db synchronously at startup like `entrypoint.sh`, then polls GCS periodically via `cache-poll.crontab` (supercronic) in place of the Pub/Sub-pushed reload route `entrypoint.sh` uses, which has no equivalent on a stdio-only server
 - `tests/` — pytest + pytest-asyncio tests (1000+ tests as of 2026-05)
 
 ## Key Patterns
@@ -69,14 +70,32 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 ## CI/CD
 
 - **CI**: GitHub Actions — ruff lint/format + pytest on Python 3.10–3.13
-- **CD**: GitHub Actions — auto-deploy to Cloud Run after CI passes on main (WIF auth, keyless)
-- Manual deploy: `workflow_dispatch` from Actions tab
+- **CD**: GitHub Actions — deploys the `jquants-mcp` service (WIF auth, keyless) after CI passes on main, or via `workflow_dispatch`. **Currently disabled** (`cd.yml`'s "Decide whether to deploy" step short-circuits to `should_deploy=false`) — see "Deployment Targets" and #568
 
 ## Deployment Targets
 
 - **Local (stdio)**: `jquants-mcp` — single user, env/config API key
 - **Remote (self-hosted)**: Streamable HTTP + TLS + Bearer token
-- **Cloud Run**: `us-west1`, Google OAuth, multi-user, GCS startup copy (cache.db)
+- **Cloud Run, `jquants-mcp` service** (existing production): `us-west1`,
+  Google OAuth via the upstream FastMCP `GoogleProvider` (`auth.py`),
+  multi-user, GCS startup copy (cache.db), `entrypoint.sh`
+  (streamable-http transport). This transport was removed from `server.py`
+  in #566 (official mcp SDK migration, stdio-only) — `entrypoint.sh` was
+  not updated to match, so **this service's CD is currently disabled**
+  (`cd.yml`'s "Decide whether to deploy" step short-circuits to
+  `should_deploy=false`; see #568) until it migrates to the pattern below.
+  Existing deployed revisions are unaffected — Cloud Run's atomic
+  cutover keeps them serving.
+- **Cloud Run, `jquants` service** (parallel deployment, same project/region):
+  an `oauth2-proxy` sidecar (Google OAuth) in front of `mcp-stdio serve
+  --enable-oauth --trusted-user-header X-Forwarded-Email --user-env
+  JQUANTS_MCP_USER`, which spawns this repo's stdio server as a per-session
+  child process. Uses `entrypoint-stdio.sh`, not `entrypoint.sh`. This is
+  the target architecture streamable-http removal is migrating toward.
+  Verified end-to-end in production with a real Google account (see
+  "Cache Plan Scoping" above). No Firestore token store wired in yet
+  (mcp-stdio 0.42.0+ supports `--token-store-firestore`); every instance
+  restart currently forces every connected client to re-authenticate.
 
 ## CI/CD Notes
 
@@ -109,9 +128,15 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 - The identity → plan-resolver wiring IS unit-tested by `TestPlanResolutionE2E`
   (`tests/test_tools_screener.py`, injects `plan_resolver` directly since the
   `mock_env` fixture there builds `CacheStore` without going through
-  `_get_cache()`). What stays live-only is whether the stdio gateway (mcp-stdio
-  `serve --user-env`) actually delivers the identity in production — a mock
-  cannot prove that; verify via the `Resolved plan=...` INFO log (emitted on a
-  plan-cache miss).
+  `_get_cache()`). Whether the stdio gateway (mcp-stdio `serve --user-env`)
+  actually delivers the identity in production is **verified**, not just
+  unit-tested: real Google login through the `jquants` Cloud Run service
+  (oauth2-proxy → `mcp-stdio serve --trusted-user-header X-Forwarded-Email
+  --user-env JQUANTS_MCP_USER`) → `register_api_key` → a subsequent
+  `health_check` showing the registered user's own `plan` (not the
+  single-user fallback) → a real tool call returning real market data
+  (2026-08-09). See "Deployment Targets" below. When debugging a similar
+  setup, the `Resolved plan=...` INFO log (emitted on a plan-cache miss) is
+  the fastest way to confirm identity is flowing.
 - Plan data retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all
 - `sync_plans.py` is removed — no longer copy data between plans
