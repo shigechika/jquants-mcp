@@ -130,6 +130,7 @@ mcp-stdio serve \
     --modern-idle-ttl 600 \
     --session-idle-ttl 1800 \
     --token-store-firestore "${FIRESTORE_TOKEN_STORE:-mcp_stdio_oauth/state}" \
+    --allow-redirect-uri https://claude.ai/api/mcp/auth_callback \
     --host 127.0.0.1 \
     --port "${PORT}" \
     -- jquants-mcp &
