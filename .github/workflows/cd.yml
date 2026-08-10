@@ -155,7 +155,18 @@ jobs:
                 break
                 ;;
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
-                echo "::error::Cloud Build $BUILD_ID finished with status $STATUS"
+                # The deploy SA has no roles/logging.viewer, so build step
+                # output isn't fetchable here. failureInfo.detail is a Build
+                # resource field (covered by the same builds.get this loop
+                # already uses), not log content, but Cloud Build only
+                # populates it for specific failure categories (push
+                # failures, source fetch failures) -- it's commonly empty
+                # for a failed build step (e.g. a broken Dockerfile RUN),
+                # which is why the console link `gcloud builds submit`
+                # already printed above remains the primary way to see what
+                # happened.
+                DETAIL=$(gcloud builds describe "$BUILD_ID" --project ${{ vars.GCP_PROJECT }} --format='value(failureInfo.detail)')
+                echo "::error::Cloud Build $BUILD_ID finished with status $STATUS${DETAIL:+ ($DETAIL)}"
                 exit 1
                 ;;
               QUEUED|WORKING|PENDING)
