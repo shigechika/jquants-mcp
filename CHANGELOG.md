@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.55.2](https://github.com/shigechika/jquants-mcp/compare/v0.55.1...v0.55.2) (2026-08-10)
+
+
+### Bug Fixes
+
+* cache PRAGMA quick_check verdicts across per-message child processes ([#578](https://github.com/shigechika/jquants-mcp/issues/578)) ([a727eb8](https://github.com/shigechika/jquants-mcp/commit/a727eb8bb5ebc92c31f72c012042d3e066ba98e4))
+
 ## [0.55.1](https://github.com/shigechika/jquants-mcp/compare/v0.55.0...v0.55.1) (2026-08-09)
 
 
