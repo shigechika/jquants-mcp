@@ -127,6 +127,7 @@ def download_files(file_list: list[str] | None = None) -> int:
 
 
 _GENERATION_SIDECAR_NAME = "cache.db.generation.json"
+_GENERATION_SIDECAR_VERSION = 1
 
 
 def _generation_sidecar_path(cache_dir: Path) -> Path:
@@ -142,51 +143,90 @@ def _generation_sidecar_path(cache_dir: Path) -> Path:
     return cache_dir / _GENERATION_SIDECAR_NAME
 
 
-def _fetch_current_generations(gcs_bucket, prefix: str) -> tuple[int | None, int | None]:
-    """Fetch the current GCS generation of both cache.db objects.
+def _fetch_effective_generation(gcs_bucket, prefix: str) -> tuple[str, int] | None:
+    """Determine which GCS object download_cache_db would actually use right
+    now, and its generation.
 
-    None for a missing object (mirrors bucket.get_blob own None-on-missing
-    contract). Both objects are checked (not just whichever the download
-    logic would prefer) so a publisher that updates only one of the two is
-    still detected as a change.
+    Mirrors the zst-then-fallback precedence used by the download logic
+    below exactly (same zstandard-importability check, same object-existence
+    check), so the pre-check and the actual download always agree on which
+    object is authoritative. An earlier design (jquants-mcp#579) checked both
+    objects' generations independently and recorded both -- which could
+    report "unchanged" even when the object actually used for content was
+    stale relative to the OTHER, unused object's generation. Concretely: a
+    publisher updating only the uncompressed ``cache.db`` (``cache.db.zst``
+    left untouched) would still make that check see "something changed",
+    trigger a download that -- correctly, per the zst-preferred precedence --
+    fetched the stale zst content, and then incorrectly record that stale
+    content as "in sync" with the new plain generation. Tracking a single
+    effective (source, generation) pair that mirrors real precedence closes
+    this: plain's generation is simply irrelevant whenever zst remains the
+    effective source. See jquants-mcp#581 review round 2.
 
-    The two ``get_blob`` calls and the subsequent content download are not
+    The ``get_blob`` call and the subsequent content download are not
     atomic: a publisher write landing in between means the generation
     recorded in the sidecar can describe an older revision than the bytes
-    that were actually downloaded. This is self-healing rather than a
-    correctness problem -- the next poll's ``get_blob`` reports the newer
-    generation, mismatches the stale recorded value, and triggers one
-    redundant-but-harmless re-download that then records correctly. It never
-    causes permanent staleness or corruption.
+    actually downloaded (or, rarely, that the source predicted here --
+    ``stream_download_zst`` succeeding or not -- ends up disagreeing with
+    what this function saw). This is self-healing rather than a correctness
+    problem: the next poll's ``get_blob`` re-observes the current state
+    (using the same precedence check), mismatches the stale recorded value,
+    and triggers one redundant-but-harmless re-download that then records
+    correctly. It never causes permanent staleness or corruption.
+
+    Returns None when neither object exists (nothing published yet).
     """
-    zst_blob = gcs_bucket.get_blob(f"{prefix}cache.db.zst")
+    try:
+        import zstandard  # noqa: F401
+
+        zstandard_available = True
+    except ImportError:
+        zstandard_available = False
+
+    if zstandard_available:
+        zst_blob = gcs_bucket.get_blob(f"{prefix}cache.db.zst")
+        if zst_blob is not None:
+            return "zst", zst_blob.generation
+
     plain_blob = gcs_bucket.get_blob(f"{prefix}cache.db")
-    return (
-        zst_blob.generation if zst_blob is not None else None,
-        plain_blob.generation if plain_blob is not None else None,
-    )
+    if plain_blob is not None:
+        return "plain", plain_blob.generation
+
+    return None
 
 
-def _read_recorded_generations(cache_dir: Path) -> tuple[int | None, int | None] | None:
-    """Best-effort read of the last-downloaded (zst, plain) GCS generations.
+def _read_recorded_generation(cache_dir: Path) -> tuple[str, int] | None:
+    """Best-effort read of the last-downloaded (source, generation) pair.
 
-    Returns None on any read/parse failure so the caller falls through to an
-    unconditional download -- this sidecar is a pure optimization, never a
-    source of truth for whether cache.db needs downloading.
+    Returns None on any read/parse failure, a version mismatch, or an
+    unrecognized source -- so the caller falls through to an unconditional
+    download. This sidecar is a pure optimization, never a source of truth
+    for whether cache.db needs downloading. A version mismatch also covers
+    the pre-review-round-2 two-key sidecar shape (``zst_generation``/
+    ``plain_generation``, no ``version`` key): that old shape has neither a
+    ``source`` nor a ``generation`` key, so it fails the version check (and
+    would fail the source/generation checks too) -- a stale on-disk sidecar
+    left over from an in-place upgrade is treated exactly like "no
+    sidecar", forcing one harmless re-download rather than misreading an
+    incompatible format.
     """
     import json
 
     try:
         data = json.loads(_generation_sidecar_path(cache_dir).read_text(encoding="utf-8"))
-        return data.get("zst_generation"), data.get("plain_generation")
+        if data.get("version") != _GENERATION_SIDECAR_VERSION:
+            return None
+        source = data.get("source")
+        generation = data.get("generation")
+        if source not in ("zst", "plain") or generation is None:
+            return None
+        return source, generation
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
         return None
 
 
-def _write_recorded_generations(
-    cache_dir: Path, zst_gen: int | None, plain_gen: int | None
-) -> None:
-    """Best-effort atomic write of the last-downloaded GCS generations.
+def _write_recorded_generation(cache_dir: Path, source: str, generation: int) -> None:
+    """Best-effort atomic write of the last-downloaded (source, generation).
 
     tempfile.mkstemp (same directory, so os.replace stays same-filesystem and
     atomic) plus os.replace avoids a torn read from a concurrent reader. Every
@@ -203,7 +243,11 @@ def _write_recorded_generations(
     import tempfile
 
     sidecar = _generation_sidecar_path(cache_dir)
-    payload = {"zst_generation": zst_gen, "plain_generation": plain_gen}
+    payload = {
+        "version": _GENERATION_SIDECAR_VERSION,
+        "source": source,
+        "generation": generation,
+    }
     try:
         fd, tmp_name = tempfile.mkstemp(
             dir=str(sidecar.parent), prefix=f".{sidecar.name}.", suffix=".tmp"
@@ -230,11 +274,13 @@ def download_cache_db() -> int:
     Cloud Run roll out independently: until the publisher writes ``.zst`` the
     fallback keeps startup working unchanged.
 
-    Skips the download entirely when the GCS generation of both objects is
-    unchanged since the last successful download and the local file is still
-    present -- this keeps a periodic poller (cache-poll.crontab) from
-    re-downloading (and atomically replacing, which always allocates a new
-    inode) an unchanged file on every tick. See jquants-mcp#579.
+    Skips the download entirely when the GCS generation of the object that
+    would actually be used (mirroring the same zst-then-fallback precedence
+    below -- see ``_fetch_effective_generation``) is unchanged since the
+    last successful download and the local file is still present -- this
+    keeps a periodic poller (cache-poll.crontab) from re-downloading (and
+    atomically replacing, which always allocates a new inode) an unchanged
+    file on every tick. See jquants-mcp#579, jquants-mcp#581.
 
     The generation pre-check is best-effort: if it fails (transient GCS
     error), the function falls through to an unconditional download instead
@@ -259,9 +305,9 @@ def download_cache_db() -> int:
     local_path = cache_dir / "cache.db"
     tmp_path = cache_dir / ".cache.db.download"
 
-    generations_known = True
+    effective: tuple[str, int] | None = None
     try:
-        zst_gen, plain_gen = _fetch_current_generations(gcs_bucket, prefix)
+        effective = _fetch_effective_generation(gcs_bucket, prefix)
     except Exception as e:
         # Broad on purpose, matching this file's other GCS call sites: a
         # metadata-only pre-check blip must not abort the content download
@@ -269,17 +315,16 @@ def download_cache_db() -> int:
         # transient get_blob error can never turn a healthy tick into a
         # reported "download failed" (see docstring above, jquants-mcp#579).
         logger.warning("Failed to check cache.db generation on GCS: %s", e)
-        generations_known = False
-        zst_gen = plain_gen = None
+        effective = None
     else:
-        if zst_gen is None and plain_gen is None:
+        if effective is None:
             logger.info("gs://%s/%scache.db(.zst) not found, skipping (first run?)", bucket, prefix)
             return 0
-        if local_path.exists() and _read_recorded_generations(cache_dir) == (zst_gen, plain_gen):
+        if local_path.exists() and _read_recorded_generation(cache_dir) == effective:
             logger.info(
-                "cache.db generation unchanged (zst=%s, plain=%s), skipping re-download",
-                zst_gen,
-                plain_gen,
+                "cache.db generation unchanged (%s=%s), skipping re-download",
+                effective[0],
+                effective[1],
             )
             return 0
 
@@ -294,8 +339,8 @@ def download_cache_db() -> int:
             local_path,
             size_mb,
         )
-        if generations_known:
-            _write_recorded_generations(cache_dir, zst_gen, plain_gen)
+        if effective is not None:
+            _write_recorded_generation(cache_dir, *effective)
         return 0
 
     # 2. Fallback: uncompressed cache.db.
@@ -307,8 +352,8 @@ def download_cache_db() -> int:
         logger.info(
             "Downloaded gs://%s/%scache.db -> %s (%.1f MB)", bucket, prefix, local_path, size_mb
         )
-        if generations_known:
-            _write_recorded_generations(cache_dir, zst_gen, plain_gen)
+        if effective is not None:
+            _write_recorded_generation(cache_dir, *effective)
         return 0
     except NotFound:
         logger.info("gs://%s/%scache.db not found, skipping (first run?)", bucket, prefix)
