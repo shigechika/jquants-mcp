@@ -226,13 +226,37 @@ jobs:
           # successful response is 401, not 200.
           # Any 5xx or network failure (reported as 000) means the revision
           # is crashing. Assumes OAUTH_BASE_URL has no trailing slash.
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            --max-time 30 \
-            -X POST \
-            "${{ vars.OAUTH_BASE_URL }}/mcp" || echo "000")
-          echo "MCP endpoint HTTP status: $HTTP_STATUS"
+          #
+          # Retried: Cloud Run's readiness check for this revision is driven
+          # by the *ingress* container's (oauth2-proxy) startup probe, not
+          # the non-ingress `app` container -- so "latestReadyRevisionName"
+          # (and traffic routing to it, just above) can go True while `app`
+          # is still mid-startup (synchronous cache.db download, ~12s).
+          # oauth2-proxy returns 502 for that window since its upstream
+          # isn't listening yet. Observed live on the first successful
+          # deploy through this job: traffic cut over correctly to the new
+          # revision, the immediate smoke test hit a 502, and the same
+          # request succeeded (401) a few minutes later with no other
+          # change -- confirming this is a transient cold-start race, not an
+          # unhealthy revision.
+          MAX_ATTEMPTS=12
+          SLEEP_SECONDS=5
+          HTTP_STATUS=000
+          for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 30 \
+              -X POST \
+              "${{ vars.OAUTH_BASE_URL }}/mcp" || echo "000")
+            echo "MCP endpoint HTTP status (attempt $attempt/$MAX_ATTEMPTS): $HTTP_STATUS"
+            if [[ "$HTTP_STATUS" != 5* ]] && [[ "$HTTP_STATUS" != "000" ]]; then
+              break
+            fi
+            if [[ "$attempt" -lt "$MAX_ATTEMPTS" ]]; then
+              sleep "$SLEEP_SECONDS"
+            fi
+          done
           if [[ "$HTTP_STATUS" == 5* ]] || [[ "$HTTP_STATUS" == "000" ]]; then
-            echo "::error::MCP endpoint returned HTTP $HTTP_STATUS — \
+            echo "::error::MCP endpoint returned HTTP $HTTP_STATUS after $MAX_ATTEMPTS attempts — \
           revision $SERVING may be unhealthy; check Cloud Run logs"
             exit 1
           fi
