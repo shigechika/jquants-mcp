@@ -117,7 +117,67 @@ jobs:
           set -eu
           SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
           IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/cloud-run-source-deploy/jquants:${SHA}"
-          gcloud builds submit --tag "$IMAGE" --project ${{ vars.GCP_PROJECT }} .
+          # The WIF deploy SA can create builds (roles/cloudbuild.builds.editor)
+          # but has no roles/logging.viewer, so plain `gcloud builds submit`
+          # creates the build successfully and then fails trying to STREAM its
+          # logs -- exit 1 even though the build itself succeeds (confirmed on
+          # the first merge-triggered CD run: the image built and pushed, but
+          # the job still failed at this step).
+          #
+          # --suppress-logs does NOT fix this -- confirmed by reading the
+          # installed gcloud SDK source (api_lib/cloudbuild/logs.py,
+          # command_lib/builds/submit_util.py): it only sets `out=None`, which
+          # gates whether fetched log text gets printed. The GCSLogTailer
+          # thread that performs the authenticated GCS read is still started
+          # unconditionally in CloudBuildClient.Stream(), and its 403 is still
+          # re-raised via `if t.exception is not None: raise t.exception`
+          # regardless of `out`. (My first attempt at this fix used
+          # --suppress-logs and appeared to work in local testing -- but that
+          # test ran under my own Owner-level gcloud identity, not the
+          # restricted WIF SA, so it never exercised the actual 403 path.)
+          #
+          # --async skips log streaming (and the GCSLogTailer thread)
+          # entirely -- confirmed in submit_util.py: `if async_: return
+          # build, op` returns before Stream() is ever called. Poll
+          # `builds describe` separately instead, which only needs
+          # `cloudbuild.builds.get` (already covered by
+          # cloudbuild.builds.editor, and proven to work under the real WIF
+          # SA: the failed run's own logs show "Waiting for build to
+          # complete" -- i.e. GetBuild() polling -- succeeding before the
+          # later log-tail failure).
+          BUILD_ID=$(gcloud builds submit --tag "$IMAGE" --project ${{ vars.GCP_PROJECT }} --async --format='value(id)' .)
+          echo "Cloud Build: $BUILD_ID"
+          while true; do
+            STATUS=$(gcloud builds describe "$BUILD_ID" --project ${{ vars.GCP_PROJECT }} --format='value(status)')
+            case "$STATUS" in
+              SUCCESS)
+                echo "Cloud Build $BUILD_ID succeeded"
+                break
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                # The deploy SA has no roles/logging.viewer, so build step
+                # output isn't fetchable here. failureInfo.detail is a Build
+                # resource field (covered by the same builds.get this loop
+                # already uses), not log content, but Cloud Build only
+                # populates it for specific failure categories (push
+                # failures, source fetch failures) -- it's commonly empty
+                # for a failed build step (e.g. a broken Dockerfile RUN),
+                # which is why the console link `gcloud builds submit`
+                # already printed above remains the primary way to see what
+                # happened.
+                DETAIL=$(gcloud builds describe "$BUILD_ID" --project ${{ vars.GCP_PROJECT }} --format='value(failureInfo.detail)')
+                echo "::error::Cloud Build $BUILD_ID finished with status $STATUS${DETAIL:+ ($DETAIL)}"
+                exit 1
+                ;;
+              QUEUED|WORKING|PENDING)
+                sleep 5
+                ;;
+              *)
+                echo "::error::Cloud Build $BUILD_ID: unexpected status '$STATUS'"
+                exit 1
+                ;;
+            esac
+          done
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to Cloud Run (app container image only)
