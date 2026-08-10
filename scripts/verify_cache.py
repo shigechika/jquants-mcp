@@ -12,14 +12,18 @@ of the same cache.db. This script runs that same check standalone, ahead of
 any request, so the sidecar is already warm by the time the next child
 process connects (see the two call sites below).
 
-Intended to run in two places:
-    - scripts/cache-poll.crontab: chained after
-      ``gcs_sync.py --init-cache`` on the 15-minute supercronic poll, so a
-      freshly re-downloaded cache.db (a new inode after the atomic rename)
-      gets re-verified promptly instead of waiting for the next request.
-    - scripts/entrypoint-stdio.sh: backgrounded right after the synchronous
-      startup download, so it does not delay ``mcp-stdio serve`` binding its
-      port.
+Called from scripts/entrypoint-stdio.sh, backgrounded right after the
+synchronous startup download, so it does not delay ``mcp-stdio serve``
+binding its port. Since that download gives cache.db a fresh inode, this
+is what makes the very first per-message child process report
+``cache_integrity: ok`` immediately.
+
+Previously also chained after ``gcs_sync.py --init-cache`` on a 15-minute
+supercronic poll (scripts/cache-poll.crontab), removed in jquants-mcp#584
+along with the poll itself: with min-instances=0 every cold start already
+re-downloads a current cache.db, so the poll spent a full quick_check on
+all 96 daily ticks to cover only the narrow case of an instance staying
+warm across the publisher's once-a-weekday export.
 
 Usage:
     python verify_cache.py
@@ -28,17 +32,18 @@ Environment variables:
     JQUANTS_CACHE_DIR  Local cache directory (default: /tmp) — the same
                         variable gcs_sync.py uses to locate cache.db.
 
-Exit codes:
+Exit codes (currently informational only: the sole call site backgrounds
+this script with `&` and never waits on it, so nothing consumes the status
+— the log line above is the operator-visible signal. The contract is kept
+accurate for direct/manual invocation and any future waiting caller):
     0   No cache.db yet (routine first-run / pre-download state, matching
         CacheStore's own constructor exists-guard), or the check ran and
         produced any status other than "error: ..." (including "ok" and a
         genuinely failed "failed: ..." integrity verdict — that is a real,
-        cacheable result, not an environmental problem for this poller to
-        page on).
+        cacheable result, not an environmental problem to page on).
     1   verify_and_record() raised, or it returned an "error: ..." status
         (a transient/environmental failure, e.g. the DB could not be opened
-        at all) — surfaced so supercronic makes it visible instead of
-        silently retrying forever.
+        at all).
 """
 
 from __future__ import annotations
@@ -73,11 +78,11 @@ def main() -> int:
 
     if not db_path.exists():
         # Matches CacheStore's constructor exists-guard: no cache.db yet is a
-        # routine state (pre-download, or --init-cache's own NotFound
-        # "first run" case, which itself exits 0). This script is chained
-        # after --init-cache with `&&` in cache-poll.crontab, so treating
-        # "missing" as an error here would turn every fresh instance's early
-        # ticks into a false alarm.
+        # routine state. entrypoint-stdio.sh runs this right after
+        # `gcs_sync.py --init-cache`, which itself exits 0 when the GCS
+        # object does not exist yet ("first run") — so cache.db can legitimately
+        # be absent here even on a correctly configured deployment, and
+        # treating that as an error would turn it into a false alarm.
         logger.info("%s does not exist yet, skipping verification", db_path)
         return 0
 
@@ -89,8 +94,8 @@ def main() -> int:
         status = verify_and_record(db_path)
     except Exception:
         # An exception here means the shared verification path itself broke
-        # rather than producing a normal "error: ..." status string — that
-        # is exactly the kind of genuine environmental problem supercronic
+        # rather than producing a normal "error: ..." status string — that is
+        # exactly the kind of genuine environmental problem the exit code
         # should surface, not the routine "no cache yet" case handled above.
         logger.exception("verify_and_record raised for %s", db_path)
         return 1
