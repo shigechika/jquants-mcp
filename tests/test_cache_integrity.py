@@ -429,3 +429,46 @@ def test_request_reload_unlinks_sidecar(tmp_path: Path) -> None:
 
     store_obj.request_reload()
     assert not sidecar.exists()
+
+
+def test_sidecar_lookup_rechecks_identity_after_reading_sidecar(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """ai-review R1F1: a replacement landing between the pre-stat and the
+    sidecar read must not let the old file's verdict apply to the new one.
+
+    _start_integrity_check stats db_path, then reads the sidecar, then
+    (this test's regression) must stat db_path again and compare before
+    trusting the cached verdict -- otherwise a cache.db swapped out from
+    under it in that window (a GCS re-download landing mid-lookup) would
+    silently inherit whatever verdict was recorded for the file that used
+    to be there.
+    """
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+
+    store1 = CacheStore(db_path, check_integrity_async=True)
+    _wait_for(lambda: store1.integrity_status == store.INTEGRITY_OK)
+    _wait_for(store._sidecar_path(db_path).exists)
+
+    real_read = store._read_verified_sidecar
+
+    def read_then_replace(path):
+        # Runs after the caller's pre-stat but before its post-stat --
+        # exactly the window ai-review flagged. Simulate an atomic
+        # replacement (the same rename gcs_sync.py / request_reload's
+        # callers use) landing right here.
+        result = real_read(path)
+        replacement = tmp_path / "cache_replacement.db"
+        sqlite3.connect(str(replacement)).close()
+        os.replace(replacement, path)
+        return result
+
+    monkeypatch.setattr(store, "_read_verified_sidecar", read_then_replace)
+
+    store2 = CacheStore(db_path, check_integrity_async=True)
+    # Must NOT fast-path off the now-stale sidecar: the post-stat re-check
+    # should see the replacement's different inode and fall through to a
+    # real check instead.
+    assert store2._integrity_thread is not None
+    _wait_for(lambda: store2.integrity_status == store.INTEGRITY_OK)

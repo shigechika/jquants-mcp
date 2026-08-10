@@ -527,31 +527,50 @@ class CacheStore:
         The existing "is a check already running" guard stays first: it
         must win over the sidecar lookup so a check already in flight is
         never abandoned or duplicated.
+
+        The file identity is stat'd twice around the sidecar read (before
+        and after), not once: an atomic replacement (a GCS re-download or
+        a SIGHUP reload) landing in the gap between the first stat and the
+        sidecar read would otherwise let a verdict recorded for the *old*
+        file get trusted for whatever new file now occupies db_path --
+        e.g. reporting a fresh, healthy replacement as "failed" (or worse,
+        a corrupt replacement as "ok") on the strength of a stale sidecar
+        that merely happened to match a stat taken before the swap
+        (ai-review R1F1). Mirrors the pre-stat/re-stat check
+        ``verify_and_record`` already does around the check thread itself.
         """
         if self._integrity_thread is not None and self._integrity_thread.is_alive():
             return
 
         try:
-            current_stat = self._db_path.stat()
+            pre_stat = self._db_path.stat()
         except OSError:
-            current_stat = None
+            pre_stat = None
 
-        if current_stat is not None:
+        if pre_stat is not None:
             cached = _read_verified_sidecar(self._db_path)
             if cached is not None and (cached["dev"], cached["ino"]) == (
-                current_stat.st_dev,
-                current_stat.st_ino,
+                pre_stat.st_dev,
+                pre_stat.st_ino,
             ):
-                status = cached["status"]
-                self._integrity_status = status
-                if status == INTEGRITY_OK:
-                    logger.info("cache.db integrity check: ok (cached verification)")
-                else:
-                    logger.warning(
-                        "cache.db integrity check failed: %s (cached verification)",
-                        status[len(INTEGRITY_FAILED_PREFIX) :],
-                    )
-                return
+                try:
+                    post_stat = self._db_path.stat()
+                except OSError:
+                    post_stat = None
+                if post_stat is not None and (post_stat.st_dev, post_stat.st_ino) == (
+                    pre_stat.st_dev,
+                    pre_stat.st_ino,
+                ):
+                    status = cached["status"]
+                    self._integrity_status = status
+                    if status == INTEGRITY_OK:
+                        logger.info("cache.db integrity check: ok (cached verification)")
+                    else:
+                        logger.warning(
+                            "cache.db integrity check failed: %s (cached verification)",
+                            status[len(INTEGRITY_FAILED_PREFIX) :],
+                        )
+                    return
 
         self._integrity_status = INTEGRITY_PENDING
 
