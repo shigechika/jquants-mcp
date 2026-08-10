@@ -449,6 +449,82 @@ class TestGenerationCheck:
         mock_bucket.blob.assert_not_called()
         assert gcs_sync._read_recorded_generation(tmp_path) == ("zst", 111)
 
+    def test_zst_fetch_failure_after_precheck_records_plain_not_zst(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """Regression for jquants-mcp#581 review round 3: an earlier design
+        threaded the pre-check's *predicted* winner through to whichever
+        download branch actually ran. When zst existed at generation G (the
+        pre-check's predicted effective source) but the actual zst *fetch*
+        failed for a transient, non-"missing" reason -- a corrupt frame, a
+        dropped connection mid-stream, exactly what stream_download_zst
+        swallows and reports as a plain ``False`` -- the code correctly fell
+        back to plain, but recorded ``("zst", G)`` anyway: a description of
+        an object that was never actually written to disk. Because zst's
+        generation hadn't changed, every subsequent poll's pre-check kept
+        agreeing with that mislabeled sidecar and skipping forever -- an
+        indefinite staleness bug, not the bounded, self-healing race this
+        design otherwise relies on. Verified against the pre-round-3
+        implementation directly: it recorded ("zst", 100) despite cache.db
+        on disk holding the plain payload; this test's final assertion
+        holds only post-fix.
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        # zst exists (pre-check sees it, predicts it as the effective
+        # source) but its *content fetch* fails transiently below -- a
+        # different failure mode from "the object doesn't exist" (NotFound).
+        self._configure_get_blob(mock_bucket, zst_gen=100, plain_gen=50)
+
+        blob = mock_bucket.blob.return_value
+        blob.open.side_effect = RuntimeError("transient network blip mid-stream")
+        blob.download_to_filename.side_effect = lambda p: Path(p).write_bytes(b"plain-content")
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == b"plain-content"
+        # The load-bearing assertion: the sidecar must record what was
+        # actually written to disk (plain, gen 50), not the pre-check's
+        # zst prediction (gen 100).
+        assert gcs_sync._read_recorded_generation(tmp_path) == ("plain", 50)
+
+    def test_mislabeled_plain_sidecar_retries_on_next_tick_not_stuck_forever(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """Follow-up to the fix above: once the sidecar correctly records
+        ("plain", ...) instead of the zst prediction, the *next* tick's
+        pre-check -- seeing zst still present and unchanged -- disagrees
+        with the recorded source and retries, rather than treating the
+        mismatch as a permanently stuck state. This is what keeps the
+        round-2 fix's self-healing story intact: recording the source that
+        actually ran (this fix), rather than the predicted one (the
+        round-3 bug), means a transient zst failure is retried on every
+        subsequent tick until it succeeds, instead of being locked in
+        indefinitely.
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=100, plain_gen=50)
+
+        # Sidecar already correctly records the plain fallback from a prior
+        # tick (as the fix above produces).
+        (tmp_path / "cache.db").write_bytes(b"plain-content")
+        gcs_sync._write_recorded_generation(tmp_path, "plain", 50)
+
+        # zst is still present at the same generation (unchanged) and
+        # remains the effective source, which disagrees with the recorded
+        # "plain" -- a retry must be attempted rather than a skip. This
+        # time the zst fetch succeeds.
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        mock_bucket.blob.assert_called()
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        assert gcs_sync._read_recorded_generation(tmp_path) == ("zst", 100)
+
     def test_pre_zst_rollout_state_skips_when_plain_generation_matches(
         self, tmp_path, monkeypatch, mock_google_storage
     ):
