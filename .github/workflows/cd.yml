@@ -147,8 +147,31 @@ jobs:
           # later log-tail failure).
           BUILD_ID=$(gcloud builds submit --tag "$IMAGE" --project ${{ vars.GCP_PROJECT }} --async --format='value(id)' .)
           echo "Cloud Build: $BUILD_ID"
+          DESCRIBE_FAILURES=0
+          MAX_DESCRIBE_FAILURES=5
           while true; do
-            STATUS=$(gcloud builds describe "$BUILD_ID" --project ${{ vars.GCP_PROJECT }} --format='value(status)')
+            # A transient `gcloud builds describe` failure (429 throttling,
+            # a network blip) must not be treated the same as a real build
+            # failure -- under `set -e`, testing the substitution directly
+            # in the `if` condition (rather than assigning it unconditionally
+            # first) is what lets bash tolerate a non-zero exit here instead
+            # of killing the whole step on the first hiccup during a build
+            # that can run for minutes. stderr is left unredirected (not
+            # merged into $STATUS) so a stray warning gcloud prints on an
+            # otherwise-successful call can't corrupt the value the case
+            # statement below matches on; it still reaches this step's own
+            # log normally.
+            if ! STATUS=$(gcloud builds describe "$BUILD_ID" --project ${{ vars.GCP_PROJECT }} --format='value(status)'); then
+              DESCRIBE_FAILURES=$((DESCRIBE_FAILURES + 1))
+              echo "::warning::gcloud builds describe failed (attempt $DESCRIBE_FAILURES/$MAX_DESCRIBE_FAILURES), see the error output above"
+              if [ "$DESCRIBE_FAILURES" -ge "$MAX_DESCRIBE_FAILURES" ]; then
+                echo "::error::gcloud builds describe failed $MAX_DESCRIBE_FAILURES times in a row for build $BUILD_ID"
+                exit 1
+              fi
+              sleep 5
+              continue
+            fi
+            DESCRIBE_FAILURES=0
             case "$STATUS" in
               SUCCESS)
                 echo "Cloud Build $BUILD_ID succeeded"
