@@ -19,13 +19,20 @@
 # backed by the cache.db that was current when the instance started. The
 # publisher exports to GCS once per weekday (~17:32 JST). The only window a
 # refresh mechanism could ever help is an instance that stays warm *across*
-# that export, and there the server already degrades correctly: missing days
-# fall through to the live J-Quants API (slower, consumes the user's plan
-# quota, but correct), and the next instance recycle restores a fresh cache.
-# An earlier 15-minute supercronic poll (cache-poll.crontab, removed) spent a
-# full ~5s PRAGMA quick_check on all 96 daily ticks to cover that one window;
-# see jquants-mcp#584 for the measurements and the push-based alternatives
-# that were considered and rejected.
+# that export, and it degrades in two different ways there:
+#   - Days not yet cached DO fall through to the live J-Quants API (slower,
+#     consumes the user's plan quota, but correct).
+#   - Corrections to rows that are ALREADY cached (restated financials, a
+#     retroactive split adjustment to historical bars) do NOT fall through:
+#     the cache-vs-API decision is presence-based, not freshness-based, and
+#     Tier 1 `get_rows` applies no TTL. Those rows stay stale until the
+#     instance recycles.
+# Measured instance lifetimes under min-instances=0 are 15-26 min (7
+# instances observed, max 25.6 min), so that second exposure is bounded by
+# roughly the same order as the 15-minute supercronic poll this replaces
+# (cache-poll.crontab, removed) — which spent a full ~5s PRAGMA quick_check
+# on all 96 daily ticks to buy that difference. See jquants-mcp#584 for the
+# measurements and the push-based alternatives considered and rejected.
 #
 # Why the cache.db download is synchronous (Step 2): under Cloud Run
 # request-based billing the CPU is throttled to ~0 between requests, so a
