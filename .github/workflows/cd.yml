@@ -26,6 +26,11 @@ jobs:
       id-token: write
       packages: write
 
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUDRUN_SERVICE: ${{ vars.CLOUDRUN_SERVICE }}
+
     steps:
       - uses: actions/checkout@v7
         with:
@@ -49,7 +54,7 @@ jobs:
           changed=$(git diff --name-only HEAD~1 HEAD)
           echo "Changed files:"
           echo "$changed"
-          if echo "$changed" | grep -qE '^(src/|Dockerfile$|pyproject\.toml$|uv\.lock$|scripts/|\.github/workflows/cd\.yml$)'; then
+          if echo "$changed" | grep -qE '^(src/|Dockerfile$|pyproject\.toml$|uv\.lock$|scripts/|\.github/workflows/cd\.yml$|\.github/workflows/scripts/)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -58,21 +63,16 @@ jobs:
       - name: Decide whether to deploy
         id: gate
         run: |
-          # TEMPORARY circuit breaker (2026-08-09, #568): main no longer
-          # supports the streamable-http transport this service's
-          # entrypoint.sh still invokes (#566 migrated server.py to the
-          # official mcp SDK, stdio-only). Every deploy attempt since #566
-          # merged has failed the container's health check the same way
-          # (jquants-mcp-00275-5rn, and again after #570 merged) --
-          # Cloud Run's atomic revision cutover has kept the prior good
-          # revision serving both times, so production has not gone down,
-          # but every push touching src/ etc. will keep re-attempting and
-          # re-failing this same broken deploy (wasted Cloud Build minutes,
-          # a permanently red CD) until this service is migrated off
-          # streamable-http. Remove this block (restoring the logic below,
-          # kept in git history) once #568 lands.
-          echo "::warning::CD deploy disabled -- see https://github.com/shigechika/jquants-mcp/issues/568 (streamable-http transport removed from main; this service's entrypoint.sh has not migrated yet)"
-          echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Deploying because event_name=workflow_dispatch"
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          elif [[ "${{ steps.changes.outputs.code }}" == "true" ]]; then
+            echo "Deploying because deploy-relevant files changed"
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No deploy-relevant files changed; skipping deploy."
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - id: auth
         if: steps.gate.outputs.should_deploy == 'true'
@@ -84,77 +84,88 @@ jobs:
       - if: steps.gate.outputs.should_deploy == 'true'
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Deploy to Cloud Run
+      # This service (oauth2-proxy sidecar + app, jquants-mcp#570/#585) is
+      # structurally different from the single-container deploy this job used
+      # to target: min-instances=0 is load-bearing (jquants-mcp#584 — cold
+      # starts always download a current cache.db, so idling to zero is what
+      # keeps the service correct, not just cheap) and CPU must stay
+      # unthrottled while the app container's startup sync runs. Both were
+      # violated by hand once already (a real billing incident, see the plan
+      # doc). `gcloud run services update --container app --image` only
+      # touches the app container's image — the oauth2-proxy container, env
+      # vars, and secrets are left exactly as they are. Never add scaling or
+      # CPU flags to this step; if a setting genuinely needs to change, do it
+      # deliberately in its own reviewed step, not as a side effect of an
+      # image bump.
+      # Checked against fixed expected values, not a pre/post diff: a diff
+      # alone would pass silently if the service was *already* misconfigured
+      # before this run started (the exact incident this guard exists for —
+      # an out-of-band `gcloud` change persists across every deploy that
+      # merely confirms "nothing changed"). Run before the build too, so a
+      # pre-existing drift fails fast instead of deploying on top of it.
+      #   minScale: the annotation is absent (empty string) when scale-to-zero
+      #   is in effect — Cloud Run does not write "0" explicitly.
+      - name: Assert billing-relevant settings (pre-deploy)
         if: steps.gate.outputs.should_deploy == 'true'
-        # NOTE: `gcloud run deploy` merges with the existing service config —
-        # flags that are omitted retain their previous value. To change a
-        # setting you must pass its explicit form, not just drop the opposite
-        # flag. `--cpu-throttling` is therefore stated explicitly: dropping a
-        # prior `--no-cpu-throttling` alone would leave the service on
-        # instance-based billing (CPU always allocated). Keep this flag here.
         run: |
-          gcloud run deploy ${{ vars.CLOUDRUN_SERVICE }} \
+          .github/workflows/scripts/assert-jquants-billing-settings.sh pre-deploy
+
+      - name: Build app image
+        if: steps.gate.outputs.should_deploy == 'true'
+        id: build
+        run: |
+          set -eu
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/cloud-run-source-deploy/jquants:${SHA}"
+          gcloud builds submit --tag "$IMAGE" --project ${{ vars.GCP_PROJECT }} .
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Cloud Run (app container image only)
+        if: steps.gate.outputs.should_deploy == 'true'
+        run: |
+          gcloud run services update ${{ vars.CLOUDRUN_SERVICE }} \
             --project ${{ vars.GCP_PROJECT }} \
             --region ${{ vars.GCP_REGION }} \
-            --service-account ${{ vars.GCP_SERVICE_ACCOUNT }} \
-            --source . \
-            --execution-environment gen2 \
-            --memory 8Gi \
-            --cpu 2 \
-            --cpu-throttling \
-            --timeout 1800 \
-            --clear-volumes --clear-volume-mounts \
-            --cpu-boost \
-            --max-instances 3 \
-            --set-env-vars "\
-              GOOGLE_CLOUD_PROJECT=${{ vars.GCP_PROJECT }},\
-              GCS_BUCKET=${{ vars.GCS_BUCKET }},\
-              PUBSUB_INVOKER_SA=${{ vars.PUBSUB_INVOKER_SA }},\
-              PUBSUB_AUDIENCE=${{ vars.OAUTH_BASE_URL }}/internal/reload,\
-              JQUANTS_CACHE_DIR=/tmp,\
-              OAUTH_PROVIDER=google,\
-              OAUTH_BASE_URL=${{ vars.OAUTH_BASE_URL }},\
-              OAUTH_REQUIRE_CONSENT=false,\
-              GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }},\
-              GITHUB_CLIENT_ID=${{ secrets.GH_OAUTH_CLIENT_ID }}" \
-            --set-secrets "\
-              GOOGLE_CLIENT_SECRET=google-oauth-client-secret:latest,\
-              MCP_ENCRYPTION_KEY=mcp-encryption-key:latest,\
-              JQUANTS_API_KEY=jquants-api-key:latest,\
-              GITHUB_CLIENT_SECRET=github-oauth-client-secret:latest,\
-              OAUTH_JWT_SIGNING_KEY=OAUTH_JWT_SIGNING_KEY:latest,\
-              JQUANTS_ALLOWED_EMAILS=jquants-allowed-emails:latest"
+            --container app \
+            --image ${{ steps.build.outputs.image }}
+
+      - name: Assert billing-relevant settings (post-deploy)
+        if: steps.gate.outputs.should_deploy == 'true'
+        run: |
+          .github/workflows/scripts/assert-jquants-billing-settings.sh post-deploy
 
       - name: Verify Cloud Run deployment
         if: steps.gate.outputs.should_deploy == 'true'
         run: |
           set -eu
 
-          # 1. Ensure spec.traffic uses latestRevision rather than a pinned revisionName.
-          #    gcloud run deploy does not support --traffic; we call update-traffic separately.
-          #    This also overrides any prior explicit pin left by Cloud Run's reconciler.
+          # gcloud run services update does not support --traffic; call
+          # update-traffic separately. This also self-heals if Cloud Run's
+          # reconciler ever pins traffic to a specific revision instead of
+          # latest (observed before, see the old `gcloud run deploy` job
+          # this replaced) -- without it, that state would hard-fail every
+          # subsequent deploy instead of being corrected here.
           gcloud run services update-traffic ${{ vars.CLOUDRUN_SERVICE }} \
             --project ${{ vars.GCP_PROJECT }} \
             --region ${{ vars.GCP_REGION }} \
             --to-latest
 
-          # 2. Confirm --to-latest took effect, and capture the serving revision
-          #    in a single gcloud call (--format="value(f1,f2)" → tab-separated).
           read -r TRAFFIC_MODE SERVING < <(gcloud run services describe ${{ vars.CLOUDRUN_SERVICE }} \
             --project ${{ vars.GCP_PROJECT }} \
             --region ${{ vars.GCP_REGION }} \
             --format="value(spec.traffic[0].latestRevision,status.traffic[0].revisionName)")
           if [[ "$TRAFFIC_MODE" != "True" ]]; then
-            echo "::error::spec.traffic is still pinned to a specific revision after update-traffic --to-latest"
+            echo "::error::spec.traffic is not routed to latestRevision after deploy"
             exit 1
           fi
           echo "Traffic routing: latestRevision=true ✓"
           echo "Serving revision: $SERVING"
 
-          # 2. Smoke-test the MCP endpoint.
-          #    The endpoint is OAuth-protected, so a successful response is 401.
-          #    Any 5xx or network failure (reported as 000) means the revision is crashing.
-          #    Assumes OAUTH_BASE_URL has no trailing slash (e.g. https://mcp.example.jp).
+          # Smoke-test the MCP endpoint. oauth2-proxy skip-auths ^/mcp(/|$)
+          # (mcp-stdio serve's own OAuth layer is the real gate for it), so a
+          # successful response is 401, not 200.
+          # Any 5xx or network failure (reported as 000) means the revision
+          # is crashing. Assumes OAUTH_BASE_URL has no trailing slash.
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 30 \
             -X POST \
@@ -167,6 +178,13 @@ jobs:
           fi
           echo "MCP endpoint smoke test passed: HTTP $HTTP_STATUS ✓"
 
+      # docs/deploy/local.md and compose.yml document
+      # ghcr.io/shigechika/jquants-mcp:latest as the self-hosted
+      # docker-compose image (streamable-http entrypoint.sh, or entrypoint.sh
+      # with ENABLE_DAILY_FETCH) -- unrelated to *which* Cloud Run service is
+      # deployed above, but still gated by the same should_deploy condition
+      # and still skipped if an earlier step in this job fails (pre-existing
+      # sequencing, unchanged by this PR).
       - name: Log in to GHCR
         if: steps.gate.outputs.should_deploy == 'true'
         uses: docker/login-action@v4

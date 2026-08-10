@@ -44,7 +44,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   - `rotate_encryption_key.py` — Re-encrypt user API keys during MCP_ENCRYPTION_KEY rotation
   - `collect_metrics.py` / `load_test.py` — Cloud Run sizing helpers
   - `smoke_test.py` — Live smoke test: runs **every registered tool** against real data (in-process, or `--url` against a deployment) and fails on empty/stale/error answers. `smoke_harness.py` is the server-agnostic engine; `smoke_probes.py` holds the per-tool specs. Needs a populated cache + API key, so it runs on the host that has them — not in CI. CI enforces only the coverage half (`tests/test_smoke_probes.py`: a new tool without a probe spec fails the build)
-  - `entrypoint.sh` — Docker/Cloud Run entrypoint for the `jquants-mcp` service (streamable-http, CD currently disabled — see "Deployment Targets")
+  - `entrypoint.sh` — Docker/Cloud Run entrypoint for the `jquants-mcp` service (streamable-http, no longer CD-deployed — see "Deployment Targets")
   - `entrypoint-stdio.sh` — Docker/Cloud Run entrypoint for the `jquants` service (`mcp-stdio serve`, behind an `oauth2-proxy` sidecar); downloads cache.db synchronously at startup like `entrypoint.sh`, then backgrounds `verify_cache.py` to warm the integrity sidecar. It has **no in-container refresh mechanism** (#584 removed the 15-minute `cache-poll.crontab` supercronic poll): with `min-instances=0` every cold start already re-downloads a current cache.db, and the only window a refresh could help is an instance staying warm across the publisher's once-a-weekday export. There, not-yet-cached days fall through to the live API (correct, just slower), while **corrections to already-cached rows do not** — the cache-vs-API decision is presence-based and Tier 1 `get_rows` applies no TTL, so a restated statement or retroactive split adjustment stays stale until the instance recycles (measured lifetimes 15-26 min under `min-instances=0`, i.e. the same order as the 15-minute poll it replaces). `entrypoint.sh`'s Pub/Sub-pushed reload route has no equivalent here because a stdio-only server exposes no HTTP route for a push to land on; push-based alternatives were designed and rejected as not worth the moving parts (see #584)
 - `tests/` — pytest + pytest-asyncio tests (1000+ tests as of 2026-05)
 
@@ -71,36 +71,36 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 ## CI/CD
 
 - **CI**: GitHub Actions — ruff lint/format + pytest on Python 3.10–3.13
-- **CD**: GitHub Actions — deploys the `jquants-mcp` service (WIF auth, keyless) after CI passes on main, or via `workflow_dispatch`. **Currently disabled** (`cd.yml`'s "Decide whether to deploy" step short-circuits to `should_deploy=false`) — see "Deployment Targets" and #568
+- **CD**: GitHub Actions — deploys the `jquants` service (WIF auth, keyless; `--container app --image` only, never scaling/CPU flags) after CI passes on main, or via `workflow_dispatch`. Does **not** deploy `jquants-mcp` (the older service) at all — see "Deployment Targets" and #588
 
 ## Deployment Targets
 
 - **Local (stdio)**: `jquants-mcp` — single user, env/config API key
 - **Remote (self-hosted)**: Streamable HTTP + TLS + Bearer token
-- **Cloud Run, `jquants-mcp` service** (existing production): `us-west1`,
+- **Cloud Run, `jquants-mcp` service** (older, no longer CD-deployed): `us-west1`,
   Google OAuth via the upstream FastMCP `GoogleProvider` (`auth.py`),
   multi-user, GCS startup copy (cache.db), `entrypoint.sh`
   (streamable-http transport). This transport was removed from `server.py`
   in #566 (official mcp SDK migration, stdio-only) — `entrypoint.sh` was
-  not updated to match, so **this service's CD is currently disabled**
-  (`cd.yml`'s "Decide whether to deploy" step short-circuits to
-  `should_deploy=false`; see #568) until it migrates to the pattern below.
+  not updated to match, so this service's revisions are frozen at whatever
+  was last manually deployed; `cd.yml` no longer targets it at all (#588).
   Existing deployed revisions are unaffected — Cloud Run's atomic
-  cutover keeps them serving.
-- **Cloud Run, `jquants` service** (parallel deployment, same project/region):
+  cutover keeps them serving. Scheduled for decommissioning (#568).
+- **Cloud Run, `jquants` service** (CD-deployed, same project/region):
   an `oauth2-proxy` sidecar (Google OAuth) in front of `mcp-stdio serve
   --enable-oauth --trusted-user-header X-Forwarded-Email --user-env
   JQUANTS_MCP_USER`, which spawns this repo's stdio server as a per-session
   child process. Uses `entrypoint-stdio.sh`, not `entrypoint.sh`. This is
-  the target architecture streamable-http removal is migrating toward.
+  the target architecture streamable-http removal migrated toward, and is
+  the only service `cd.yml` deploys (#588).
   Verified end-to-end in production with a real Google account (see
-  "Cache Plan Scoping" below). No Firestore token store wired in yet
-  (mcp-stdio 0.42.0+ supports `--token-store-firestore`); every instance
-  restart currently forces every connected client to re-authenticate.
+  "Cache Plan Scoping" below). Firestore token store wired in
+  (`--token-store-firestore`, mcp-stdio 0.42.0+, #575); instance restarts
+  no longer force reconnected clients to re-authenticate.
 
 ## CI/CD Notes
 
-- CD workflow declares ALL env vars and secrets — never use manual `gcloud run services update` (it gets overwritten by next CD deploy)
+- CD workflow (`jquants` service) updates **only** the `app` container's image (`--container app --image`, never scaling/CPU flags) — env vars, secrets, and the `oauth2-proxy` container are set once by hand and left alone; a manual `gcloud run services update --container app --image` for a hotfix is safe and won't be reverted by the next CD run, but manually changing scaling/CPU/env/secrets will be silently preserved (not reset) until someone changes them back
 - `gcloud storage cp` with parallel composite upload corrupts SQLite files — use `parallel_composite_upload_enabled=False`
 - Cloud Run: cache.db is downloaded from GCS at startup (`entrypoint.sh`), not gcsfuse-mounted
 - Cloud Run user/OAuth data lives in **Firestore** (`FirestoreUserStore` in `db/users_firestore.py`; OAuth client store via `FirestoreStore`; selected at `server.py:559-566`), not in GCS-synced SQLite — so the `gcs_sync` daemon uploads nothing (`_UPLOAD_FILES` is empty; see `docs/runbooks/firestore-*.md`). cache.db is still GCS-downloaded at startup and owned by the self-hosted server
