@@ -117,7 +117,17 @@ jobs:
           set -eu
           SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
           IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/cloud-run-source-deploy/jquants:${SHA}"
-          gcloud builds submit --tag "$IMAGE" --project ${{ vars.GCP_PROJECT }} .
+          # --suppress-logs: the WIF deploy SA can create builds
+          # (roles/cloudbuild.builds.editor) but has no roles/logging.viewer,
+          # so without this flag `gcloud builds submit` creates the build
+          # successfully and then fails trying to stream its logs -- exit 1
+          # even though the build itself succeeds (confirmed live: the image
+          # was built and pushed, but the job still failed). --suppress-logs
+          # polls build status via `builds.get` (already covered by
+          # cloudbuild.builds.editor) instead of tailing logs, and still
+          # blocks until completion with an accurate exit code. Verified
+          # directly: ~2.5 min wall time, exit 0, STATUS=SUCCESS printed.
+          gcloud builds submit --tag "$IMAGE" --project ${{ vars.GCP_PROJECT }} --suppress-logs .
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to Cloud Run (app container image only)
