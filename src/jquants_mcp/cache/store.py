@@ -288,6 +288,11 @@ def _write_verified_sidecar(db_path: Path, dev: int, ino: int, status: str) -> N
         "dev": dev,
         "ino": ino,
         "status": status,
+        # Diagnostic only (operator inspecting the sidecar by hand) — never
+        # read back by this module. No TTL/staleness logic keys off it: a
+        # stale "failed:" self-heals within one GCS re-download cycle (new
+        # inode -> sidecar miss), so age-based expiry would add complexity
+        # without closing a real gap.
         "checked_at": time.time(),
     }
     try:
