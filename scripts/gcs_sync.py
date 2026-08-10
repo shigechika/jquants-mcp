@@ -285,7 +285,7 @@ def download_cache_db() -> int:
 
     # 1. Preferred: compressed cache.db.zst, stream-decompressed.
     if stream_download_zst(gcs_bucket, f"{prefix}cache.db.zst", tmp_path):
-        tmp_path.rename(local_path)
+        tmp_path.replace(local_path)
         size_mb = local_path.stat().st_size / 1024 / 1024
         logger.info(
             "Downloaded gs://%s/%scache.db.zst -> %s (%.1f MB decompressed)",
@@ -302,7 +302,7 @@ def download_cache_db() -> int:
     blob = gcs_bucket.blob(f"{prefix}cache.db")
     try:
         blob.download_to_filename(str(tmp_path))
-        tmp_path.rename(local_path)
+        tmp_path.replace(local_path)
         size_mb = local_path.stat().st_size / 1024 / 1024
         logger.info(
             "Downloaded gs://%s/%scache.db -> %s (%.1f MB)", bucket, prefix, local_path, size_mb
