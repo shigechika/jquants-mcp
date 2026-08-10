@@ -266,10 +266,26 @@ jobs:
           SLEEP_SECONDS=5
           success=false
           for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
+            # NOT `... || echo "000"`: curl's `-w "%{http_code}"` already
+            # writes "000" to stdout on a connection failure (refused,
+            # timeout, DNS) *before* exiting non-zero, so an unconditional
+            # `|| echo "000"` fallback appends a second "000" on top of it --
+            # HTTP_STATUS becomes the literal string "000000", which matches
+            # neither `== 5*` nor `== "000"` below and is silently treated as
+            # success. Reproduced directly: a connection to an unreachable
+            # address prints "000" via -w, curl exits non-zero, and the old
+            # `|| echo "000"` pattern left HTTP_STATUS="000000". Testing the
+            # substitution in isolation (`|| true`, no output) and only
+            # backfilling "000" if it's genuinely empty (curl failing before
+            # -w has anything to write at all, e.g. a bad flag) avoids the
+            # duplication while still covering that fallback case.
             HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
               --max-time 30 \
               -X POST \
-              "${{ vars.OAUTH_BASE_URL }}/mcp" || echo "000")
+              "${{ vars.OAUTH_BASE_URL }}/mcp") || true
+            if [[ -z "$HTTP_STATUS" ]]; then
+              HTTP_STATUS="000"
+            fi
             echo "MCP endpoint HTTP status (attempt $attempt/$MAX_ATTEMPTS): $HTTP_STATUS"
             # The retryable-failure test is written once, here, and driven by
             # a flag rather than re-testing $HTTP_STATUS again after the loop
