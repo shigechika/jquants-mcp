@@ -24,10 +24,21 @@ EXPECTED_MINSCALE=""
 EXPECTED_MAXSCALE="1"
 EXPECTED_THROTTLE="false"
 
-read -r MINSCALE MAXSCALE THROTTLE < <(gcloud run services describe "$CLOUDRUN_SERVICE" \
+# --format=json + jq, not `--format=value(...)` + `read`: bash `read` strips
+# leading/trailing runs of IFS whitespace before splitting -- including a
+# leading empty field from a tab-separated line -- regardless of what IFS is
+# set to, as long as IFS consists solely of whitespace characters. minScale
+# being absent (the expected, correct state) produces exactly that leading
+# empty field, which silently shifted every value by one and made this
+# script reject a correctly configured service (ai-review R2F1, reproduced
+# and confirmed before this fix).
+DESCRIBE_JSON=$(gcloud run services describe "$CLOUDRUN_SERVICE" \
   --project "$GCP_PROJECT" \
   --region "$GCP_REGION" \
-  --format="value(spec.template.metadata.annotations['autoscaling.knative.dev/minScale'],spec.template.metadata.annotations['autoscaling.knative.dev/maxScale'],spec.template.metadata.annotations['run.googleapis.com/cpu-throttling'])")
+  --format=json)
+MINSCALE=$(echo "$DESCRIBE_JSON" | jq -r '.spec.template.metadata.annotations["autoscaling.knative.dev/minScale"] // ""')
+MAXSCALE=$(echo "$DESCRIBE_JSON" | jq -r '.spec.template.metadata.annotations["autoscaling.knative.dev/maxScale"] // ""')
+THROTTLE=$(echo "$DESCRIBE_JSON" | jq -r '.spec.template.metadata.annotations["run.googleapis.com/cpu-throttling"] // ""')
 
 echo "[$STAGE] minScale='$MINSCALE' maxScale='$MAXSCALE' cpu-throttling='$THROTTLE'"
 
