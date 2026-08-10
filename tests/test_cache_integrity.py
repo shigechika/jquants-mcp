@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -190,3 +192,283 @@ def test_every_documented_state_has_a_scenario() -> None:
         store.INTEGRITY_ERROR_PREFIX,  # test_error_prefix_is_actually_produced
     }
     assert covered == set(store.INTEGRITY_STATES)
+
+
+# --- Verified-sidecar cache (mtime/size-blind, keyed on (dev, ino)) --------
+#
+# These cover the "verify once per file generation, not once per per-message
+# child process" optimization described in _start_integrity_check's
+# docstring: mcp-stdio serve's per-user child model spawns a fresh
+# CacheStore on every claude.ai Web UI message, and without the sidecar every
+# one of those pays for a full multi-second PRAGMA quick_check against an
+# unchanged multi-GB file.
+
+
+def test_sidecar_written_after_successful_check(tmp_path: Path) -> None:
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+    sidecar = store._sidecar_path(db_path)
+
+    store_obj = CacheStore(db_path, check_integrity_async=True)
+    # Wait for the sidecar FILE itself, not just integrity_status == "ok":
+    # the write happens as a side effect inside verify_and_record, strictly
+    # before _run() assigns self._integrity_status — so the file can already
+    # exist while the in-memory flag is still "pending". Poll both
+    # independently rather than assuming either order.
+    _wait_for(sidecar.exists)
+    _wait_for(lambda: store_obj.integrity_status == store.INTEGRITY_OK)
+
+    data = json.loads(sidecar.read_text())
+    assert data["status"] == store.INTEGRITY_OK
+    st = db_path.stat()
+    assert (data["dev"], data["ino"]) == (st.st_dev, st.st_ino)
+
+
+def test_second_store_same_inode_fast_paths_without_a_thread(tmp_path: Path) -> None:
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+
+    store1 = CacheStore(db_path, check_integrity_async=True)
+    _wait_for(lambda: store1.integrity_status == store.INTEGRITY_OK)
+    _wait_for(store._sidecar_path(db_path).exists)
+
+    # A second store built against the exact same file (same inode) should
+    # see the recorded verdict immediately, without spawning a background
+    # quick_check thread at all — the "is_alive" guard is not what skips it,
+    # the sidecar match is.
+    store2 = CacheStore(db_path, check_integrity_async=True)
+    assert store2.integrity_status == store.INTEGRITY_OK
+    assert store2._integrity_thread is None
+
+
+def test_replacing_file_invalidates_sidecar(tmp_path: Path) -> None:
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+
+    store1 = CacheStore(db_path, check_integrity_async=True)
+    _wait_for(lambda: store1.integrity_status == store.INTEGRITY_OK)
+    # Windows CI safety: do not call _ensure_connection() here — it would
+    # hold an open sqlite3.Connection on db_path, and os.replace() can raise
+    # PermissionError on Windows while a target-file handle is open.
+    # check_integrity_async=True construction is enough to drive the
+    # verification; wait for the background thread to fully exit (it opens
+    # and closes its own probe connection) before replacing the file.
+    _wait_for(lambda: not (store1._integrity_thread and store1._integrity_thread.is_alive()))
+
+    replacement = tmp_path / "cache_new.db"
+    sqlite3.connect(str(replacement)).close()
+    # Simulates an atomic GCS download swap: always a rename onto db_path,
+    # which always allocates a new inode.
+    os.replace(replacement, db_path)
+
+    store2 = CacheStore(db_path, check_integrity_async=True)
+    # The stale sidecar still names the old (dev, ino); a fresh full
+    # recheck must run rather than short-circuiting off it.
+    assert store2._integrity_thread is not None
+    _wait_for(lambda: store2.integrity_status == store.INTEGRITY_OK)
+
+
+def test_malformed_sidecar_json_falls_through_to_full_recheck(tmp_path: Path) -> None:
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+    store._sidecar_path(db_path).write_text("{not valid json")
+
+    # Pin the rejection at the reader itself, independent of whether a
+    # background thread happens to spawn -- a refactor that dropped sidecar
+    # reading entirely would still spawn a thread and pass the assertions
+    # below, so this line is what actually proves the malformed content was
+    # read-and-rejected rather than merely ignored.
+    assert store._read_verified_sidecar(db_path) is None
+
+    store_obj = CacheStore(db_path, check_integrity_async=True)
+    # A sidecar that fails to parse must not be trusted -- a real
+    # background thread should have been spawned instead of a fast path.
+    assert store_obj._integrity_thread is not None
+    _wait_for(lambda: store_obj.integrity_status == store.INTEGRITY_OK)
+
+
+def test_non_utf8_sidecar_falls_through_to_full_recheck(tmp_path: Path) -> None:
+    """A sidecar that isn't valid UTF-8 must degrade like any other malformed file.
+
+    ``Path.read_text()`` raises ``UnicodeDecodeError`` (a ``ValueError``
+    subtype, not an ``OSError``) on undecodable bytes, which
+    ``_read_verified_sidecar`` must catch alongside ``OSError`` -- otherwise
+    a hand-corrupted sidecar crashes the caller instead of degrading to a
+    fresh quick_check. The existing malformed-JSON test above does not cover
+    this: invalid JSON is still valid UTF-8, so it never exercises the
+    decode step at all.
+    """
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+    store._sidecar_path(db_path).write_bytes(b"\xff\xfe\x00\x01not utf-8")
+
+    assert store._read_verified_sidecar(db_path) is None
+
+    store_obj = CacheStore(db_path, check_integrity_async=True)
+    assert store_obj._integrity_thread is not None
+    _wait_for(lambda: store_obj.integrity_status == store.INTEGRITY_OK)
+
+
+def test_in_place_corruption_same_inode_short_circuits_via_sidecar(tmp_path: Path) -> None:
+    """Documents an accepted trade-off, not a bug.
+
+    The sidecar answers "did a GCS replacement swap in a different file
+    generation?" (keyed on (dev, ino)), not "is the file's current content
+    still healthy?". In-place byte corruption that leaves the inode alone —
+    as done here — therefore still matches the sidecar and short-circuits to
+    the stale "ok" verdict instead of re-running quick_check. In production
+    this scenario does not arise: verify_and_record's docstring establishes
+    that every real replacement path is an atomic rename (GCS re-download),
+    which always allocates a new inode and so always invalidates the
+    sidecar on its own. The sidecar was built to answer "did claude.ai just
+    reconnect for the Nth time this conversation against an unchanged
+    file?", not to serve as a tamper-detection mechanism for an external
+    process scribbling into a live cache.db without going through a
+    rename — that threat model was never in scope.
+    """
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+
+    store1 = CacheStore(db_path, check_integrity_async=True)
+    _wait_for(lambda: store1.integrity_status == store.INTEGRITY_OK)
+    _wait_for(store._sidecar_path(db_path).exists)
+
+    # Corrupt in place -- same inode, no rename/replace involved. `connect()`
+    # + `close()` never writes a SQLite header (the file is 0 bytes), so
+    # seeking to 24 and writing 32 zero bytes does not "scramble" an
+    # existing header -- it zero-pads the gap and leaves a 56-byte
+    # all-zeros file. That is a corrupt (non-SQLite) file either way, which
+    # is all this test needs: the point being demonstrated is that the
+    # sidecar short-circuits *any* in-place same-inode change, not that
+    # this particular corruption resembles a damaged real database.
+    with open(db_path, "r+b") as f:
+        f.seek(24)
+        f.write(b"\x00" * 32)
+
+    store2 = CacheStore(db_path, check_integrity_async=True)
+    assert store2.integrity_status == store.INTEGRITY_OK
+    assert store2._integrity_thread is None
+
+
+def test_failed_status_is_cached_and_reused(tmp_path: Path, monkeypatch) -> None:
+    """The ``failed: <detail>`` verdict is durable across store instances.
+
+    Mirrors test_failed_prefix_is_actually_produced's fake-connection setup
+    (same rationale: quick_check needs to actually return a non-"ok" row,
+    not merely raise), then constructs a second store on the same file to
+    confirm the sidecar served that verdict back immediately.
+    """
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+
+    real_connect = sqlite3.connect
+
+    class _Cursor:
+        def fetchone(self):
+            return ("*** in database main ***\nPage 3 is never used",)
+
+    class _Proxy:
+        def __init__(self, conn):
+            self._conn = conn
+
+        def execute(self, sql, *a, **k):
+            if "quick_check" in sql:
+                return _Cursor()
+            return self._conn.execute(sql, *a, **k)
+
+        def close(self):
+            self._conn.close()
+
+    def _fake_connect(*args, **kwargs):
+        return _Proxy(real_connect(*args, **kwargs))
+
+    store_obj = CacheStore(db_path)
+    monkeypatch.setattr(sqlite3, "connect", _fake_connect)
+    store_obj._start_integrity_check()
+
+    _wait_for(lambda: store_obj.integrity_status.startswith(store.INTEGRITY_FAILED_PREFIX))
+    _wait_for(store._sidecar_path(db_path).exists)
+    # Restore the real sqlite3.connect before building the next store: the
+    # thing under test here is the sidecar fast path (which, on a match,
+    # never calls sqlite3.connect at all), not the fake quick_check result.
+    monkeypatch.undo()
+
+    store2 = CacheStore(db_path, check_integrity_async=True)
+    assert store2.integrity_status.startswith(store.INTEGRITY_FAILED_PREFIX)
+    assert store2._integrity_thread is None
+
+
+def test_error_status_is_never_written_to_sidecar(tmp_path: Path, monkeypatch) -> None:
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+
+    store_obj = CacheStore(db_path)
+
+    def _boom(*args, **kwargs):
+        raise sqlite3.OperationalError("unable to open database file")
+
+    monkeypatch.setattr(sqlite3, "connect", _boom)
+    store_obj._start_integrity_check()
+
+    _wait_for(lambda: store_obj.integrity_status.startswith(store.INTEGRITY_ERROR_PREFIX))
+    # "error: ..." means the check itself couldn't run (transient/
+    # environmental), not that the DB is bad -- verify_and_record's
+    # docstring is explicit that this form is never cached, so a later
+    # store on the same file cannot see a false, frozen-in verdict.
+    assert not store._sidecar_path(db_path).exists()
+
+
+def test_request_reload_unlinks_sidecar(tmp_path: Path) -> None:
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+
+    store_obj = CacheStore(db_path, check_integrity_async=True)
+    _wait_for(lambda: store_obj.integrity_status == store.INTEGRITY_OK)
+    sidecar = store._sidecar_path(db_path)
+    _wait_for(sidecar.exists)
+
+    store_obj.request_reload()
+    assert not sidecar.exists()
+
+
+def test_sidecar_lookup_rechecks_identity_after_reading_sidecar(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """ai-review R1F1: a replacement landing between the pre-stat and the
+    sidecar read must not let the old file's verdict apply to the new one.
+
+    _start_integrity_check stats db_path, then reads the sidecar, then
+    (this test's regression) must stat db_path again and compare before
+    trusting the cached verdict -- otherwise a cache.db swapped out from
+    under it in that window (a GCS re-download landing mid-lookup) would
+    silently inherit whatever verdict was recorded for the file that used
+    to be there.
+    """
+    db_path = tmp_path / "cache.db"
+    sqlite3.connect(str(db_path)).close()
+
+    store1 = CacheStore(db_path, check_integrity_async=True)
+    _wait_for(lambda: store1.integrity_status == store.INTEGRITY_OK)
+    _wait_for(store._sidecar_path(db_path).exists)
+
+    real_read = store._read_verified_sidecar
+
+    def read_then_replace(path):
+        # Runs after the caller's pre-stat but before its post-stat --
+        # exactly the window ai-review flagged. Simulate an atomic
+        # replacement (the same rename gcs_sync.py / request_reload's
+        # callers use) landing right here.
+        result = real_read(path)
+        replacement = tmp_path / "cache_replacement.db"
+        sqlite3.connect(str(replacement)).close()
+        os.replace(replacement, path)
+        return result
+
+    monkeypatch.setattr(store, "_read_verified_sidecar", read_then_replace)
+
+    store2 = CacheStore(db_path, check_integrity_async=True)
+    # Must NOT fast-path off the now-stale sidecar: the post-stat re-check
+    # should see the replacement's different inode and fall through to a
+    # real check instead.
+    assert store2._integrity_thread is not None
+    _wait_for(lambda: store2.integrity_status == store.INTEGRITY_OK)

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
+import tempfile
 import threading
 import time
 from collections.abc import Callable
@@ -197,6 +199,197 @@ def _cache_stale_message(latest_date: str | None, today: str, stale_days: int) -
     return None
 
 
+# --- Integrity-check sidecar cache ------------------------------------------
+#
+# mcp-stdio serve's per-user child-process model means claude.ai's Web UI
+# (which re-initializes its MCP session on every message rather than reusing
+# one) causes a fresh jquants-mcp child — and therefore a fresh CacheStore —
+# to spawn on every single message. Without this cache, PRAGMA quick_check
+# (4-6s on the ~3.5 GB cache.db) would re-run every time, so health_check
+# would report "pending" for most of a conversation. The sidecar remembers
+# the verdict for a given (dev, ino): as long as the file identity is
+# unchanged, a fresh process can trust a prior process's verification.
+#
+# Keyed on (st_dev, st_ino) rather than mtime/size: normal cache writes
+# (put_rows/put_response, WAL) touch mtime/size constantly, which would
+# defeat the cache on every write. All on-disk *replacements* of cache.db
+# (GCS re-download, request_reload's SIGHUP path) go through an atomic
+# rename, which always allocates a new inode — so a stale verdict cannot
+# survive a real replacement. In-place mutation of the same inode (e.g.
+# daily.sh's import_csv_to_cache.py writing through the existing file) is
+# exactly the case request_reload() handles by unlinking the sidecar itself.
+# Inode reuse is not a practical risk here: Cloud Run's /tmp is a tmpfs with
+# a monotonically increasing allocator, and local development runs on APFS,
+# neither of which recycles inode numbers on any timescale this cache cares
+# about.
+_SIDECAR_VERSION = 1
+
+
+def _sidecar_path(db_path: Path) -> Path:
+    """Return the integrity-verification sidecar path for ``db_path``.
+
+    A visible suffix (``cache.db.verified.json``), not a dotfile, so it
+    reads clearly alongside the existing ``.cache.db.download`` /
+    ``.cache.db.reload`` sentinels instead of blending into "hidden file"
+    noise.
+    """
+    return db_path.with_name(db_path.name + ".verified.json")
+
+
+def _read_verified_sidecar(db_path: Path) -> dict[str, Any] | None:
+    """Read and validate the sidecar; ``None`` on any shape/parse problem.
+
+    Reading is strict by design: a version bump, a hand-edited file, a
+    non-UTF-8 file, or a partially-written file (shouldn't happen given the
+    mkstemp+os.replace writer, but cheap to guard anyway) all fall through
+    to a fresh quick_check rather than trusting a verdict we can't fully
+    validate.
+    Only ``ok`` / ``failed: <detail>`` are ever accepted — ``error: <detail>``
+    is never written to the sidecar in the first place (see
+    ``verify_and_record``), so a status of that shape here means the file
+    was tampered with and is rejected too.
+    """
+    try:
+        raw = _sidecar_path(db_path).read_text()
+    except (OSError, UnicodeDecodeError):
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict) or data.get("version") != _SIDECAR_VERSION:
+        return None
+    dev, ino, status = data.get("dev"), data.get("ino"), data.get("status")
+    # `type(x) is int` rather than isinstance: bool is an int subclass, and a
+    # JSON `true`/`false` sneaking through as dev/ino should not validate.
+    if type(dev) is not int or type(ino) is not int:
+        return None
+    if not isinstance(status, str) or not (
+        status == INTEGRITY_OK or status.startswith(INTEGRITY_FAILED_PREFIX)
+    ):
+        return None
+    return data
+
+
+def _write_verified_sidecar(db_path: Path, dev: int, ino: int, status: str) -> None:
+    """Best-effort atomic write of the sidecar; every failure is swallowed.
+
+    ``tempfile.mkstemp`` (same directory as the sidecar, so ``os.replace``
+    stays same-filesystem and atomic) plus ``os.replace`` avoids a torn read
+    from a concurrent writer: the per-message child-process model means
+    several jquants-mcp children can race to verify and record the same
+    cache.db at once. A failed write must not affect
+    ``CacheStore._integrity_status`` — the sidecar is purely an optimization,
+    never the source of truth for the current process's own check.
+    """
+    sidecar = _sidecar_path(db_path)
+    payload = {
+        "version": _SIDECAR_VERSION,
+        "dev": dev,
+        "ino": ino,
+        "status": status,
+        # Diagnostic only (operator inspecting the sidecar by hand) — never
+        # read back by this module. No TTL/staleness logic keys off it: a
+        # stale "failed:" self-heals within one GCS re-download cycle (new
+        # inode -> sidecar miss), so age-based expiry would add complexity
+        # without closing a real gap.
+        "checked_at": time.time(),
+    }
+    try:
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(sidecar.parent), prefix=f".{sidecar.name}.", suffix=".tmp"
+        )
+    # Broad on purpose: this is a pure optimization, so any failure — disk
+    # full, read-only filesystem, an unexpected serialization error — must
+    # be swallowed rather than surfaced, and must never touch
+    # CacheStore._integrity_status.
+    except Exception:
+        return
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f)
+        os.replace(tmp_name, sidecar)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+
+
+def verify_and_record(db_path: Path) -> str:
+    """Run ``PRAGMA quick_check`` against ``db_path`` and cache the verdict.
+
+    Returns one of ``INTEGRITY_OK``, ``"failed: <detail>"``, or
+    ``"error: <detail>"`` — the same vocabulary as
+    ``CacheStore.integrity_status``. This is the single implementation of
+    "open a probe connection and run quick_check": both
+    ``CacheStore._start_integrity_check``'s background thread and the
+    stand-alone prewarm script (``scripts/verify_cache.py``) call this
+    rather than each keeping their own copy.
+
+    Only ``ok`` and ``failed: <detail>`` are durable. An ``error: <detail>``
+    means the *check itself* could not run (missing file, locked file,
+    transient I/O) rather than the database being bad — caching it would
+    make an unrelated, transient hiccup look like a permanent integrity
+    failure until the next GCS download happens to replace the inode.
+
+    The (dev, ino) pair is captured before the probe connection is opened
+    and re-read once the check completes; the sidecar is written only when
+    the two agree. This closes a narrow but real race: if ``db_path`` is
+    atomically replaced while quick_check is running, the open file
+    descriptor keeps reading the *old* file, so the verdict is only valid
+    for the *old* identity — recording it under whatever now sits at
+    ``db_path`` would be a lie.
+
+    A missing ``db_path`` is one of the ``error:`` cases above (the initial
+    ``stat()`` fails before any connection is attempted) — this function
+    does *not* special-case "no file yet" as a benign outcome. A caller that
+    wants "database not present yet" to be a success (e.g. a prewarm script
+    running before the first GCS download completes) must check
+    ``db_path.exists()`` itself before calling this function.
+    """
+    # Behavior note vs. the pre-refactor `_run` body: that code went
+    # straight to `sqlite3.connect(missing_path)`, which silently creates an
+    # empty on-disk database and then reports `ok` (quick_check passes
+    # trivially on an empty file). Stat-ing first turns that into an
+    # explicit `error:` instead — "I couldn't check" is more honest than
+    # "ok, I just created an empty database for you" — but it is a real
+    # behavior change, not a no-op refactor, for the "no file yet" case.
+    try:
+        pre_stat = db_path.stat()
+    except OSError as exc:
+        return f"{INTEGRITY_ERROR_PREFIX}{exc}"
+
+    # Broad on purpose (this mirrors the pre-refactor `_run` body): opening
+    # the probe connection or running quick_check can fail for reasons that
+    # have nothing to do with database corruption (locked file, disk I/O
+    # error, etc). test_error_prefix_is_actually_produced pins that this
+    # catch-all is what produces INTEGRITY_ERROR_PREFIX.
+    try:
+        probe = sqlite3.connect(str(db_path), check_same_thread=False)
+        try:
+            row = probe.execute("PRAGMA quick_check").fetchone()
+        finally:
+            probe.close()
+        result = row[0] if row else "unknown"
+    except Exception as exc:
+        return f"{INTEGRITY_ERROR_PREFIX}{exc}"
+
+    status = INTEGRITY_OK if result == INTEGRITY_OK else f"{INTEGRITY_FAILED_PREFIX}{result}"
+
+    try:
+        post_stat = db_path.stat()
+    except OSError:
+        # Can't confirm the file identity held for the duration of the
+        # check; report the verdict to the caller but don't cache it.
+        return status
+
+    if (post_stat.st_dev, post_stat.st_ino) == (pre_stat.st_dev, pre_stat.st_ino):
+        _write_verified_sidecar(db_path, pre_stat.st_dev, pre_stat.st_ino, status)
+
+    return status
+
+
 class CacheStore:
     """SQLite-based two-tier cache store.
 
@@ -317,37 +510,93 @@ class CacheStore:
         return self._integrity_status
 
     def _start_integrity_check(self) -> None:
-        """Kick off PRAGMA quick_check in a background thread.
+        """Kick off PRAGMA quick_check in a background thread, or reuse a cached verdict.
 
-        quick_check on a 3.5 GB cache.db takes ~1 minute — running it on the
+        quick_check on a 3.5 GB cache.db takes ~4-6s — running it on the
         event loop would freeze the server. A dedicated thread with its own
-        sqlite connection runs the check in parallel with normal traffic
-        and records the result on ``self._integrity_status``.
+        sqlite connection (``verify_and_record``, shared with the
+        stand-alone prewarm script) runs the check in parallel with normal
+        traffic and records the result on ``self._integrity_status``.
+
+        Before spawning that thread, this checks for a sidecar file recorded
+        by a prior verification of the exact same (dev, ino) and short-
+        circuits if it matches, skipping the thread entirely. This matters
+        because mcp-stdio serve's per-user child-process model means a fresh
+        jquants-mcp child — and therefore a fresh ``CacheStore`` — spawns on
+        every claude.ai Web UI message (it re-initializes its MCP session
+        each time rather than reusing one); without the sidecar,
+        quick_check would re-run on an unchanged multi-GB file on every
+        single message, and ``health_check`` would report "pending" for
+        most of a conversation.
+
+        The existing "is a check already running" guard stays first: it
+        must win over the sidecar lookup so a check already in flight is
+        never abandoned or duplicated.
+
+        The file identity is stat'd twice around the sidecar read (before
+        and after), not once: an atomic replacement (a GCS re-download or
+        a SIGHUP reload) landing in the gap between the first stat and the
+        sidecar read would otherwise let a verdict recorded for the *old*
+        file get trusted for whatever new file now occupies db_path --
+        e.g. reporting a fresh, healthy replacement as "failed" (or worse,
+        a corrupt replacement as "ok") on the strength of a stale sidecar
+        that merely happened to match a stat taken before the swap
+        (ai-review R1F1). Mirrors the pre-stat/re-stat check
+        ``verify_and_record`` already does around the check thread itself.
         """
         if self._integrity_thread is not None and self._integrity_thread.is_alive():
             return
+
+        try:
+            pre_stat = self._db_path.stat()
+        except OSError:
+            pre_stat = None
+
+        if pre_stat is not None:
+            cached = _read_verified_sidecar(self._db_path)
+            if cached is not None and (cached["dev"], cached["ino"]) == (
+                pre_stat.st_dev,
+                pre_stat.st_ino,
+            ):
+                try:
+                    post_stat = self._db_path.stat()
+                except OSError:
+                    post_stat = None
+                if post_stat is not None and (post_stat.st_dev, post_stat.st_ino) == (
+                    pre_stat.st_dev,
+                    pre_stat.st_ino,
+                ):
+                    status = cached["status"]
+                    self._integrity_status = status
+                    if status == INTEGRITY_OK:
+                        logger.info("cache.db integrity check: ok (cached verification)")
+                    else:
+                        logger.warning(
+                            "cache.db integrity check failed: %s (cached verification)",
+                            status[len(INTEGRITY_FAILED_PREFIX) :],
+                        )
+                    return
+
         self._integrity_status = INTEGRITY_PENDING
 
         def _run() -> None:
-            try:
-                probe = sqlite3.connect(str(self._db_path), check_same_thread=False)
-                try:
-                    row = probe.execute("PRAGMA quick_check").fetchone()
-                finally:
-                    probe.close()
-                result = row[0] if row else "unknown"
-                if result == INTEGRITY_OK:
-                    self._integrity_status = INTEGRITY_OK
-                    logger.info("cache.db integrity check: ok")
-                else:
-                    self._integrity_status = f"{INTEGRITY_FAILED_PREFIX}{result}"
-                    logger.warning("cache.db integrity check failed: %s", result)
+            status = verify_and_record(self._db_path)
+            self._integrity_status = status
+            if status == INTEGRITY_OK:
+                logger.info("cache.db integrity check: ok")
+            elif status.startswith(INTEGRITY_FAILED_PREFIX):
+                logger.warning(
+                    "cache.db integrity check failed: %s",
+                    status[len(INTEGRITY_FAILED_PREFIX) :],
+                )
             # Not "no cover": test_error_prefix_is_actually_produced drives this
             # branch on purpose, because INTEGRITY_ERROR_PREFIX is a documented
             # state and a documented state needs a producer that really runs.
-            except Exception as exc:
-                self._integrity_status = f"{INTEGRITY_ERROR_PREFIX}{exc}"
-                logger.warning("cache.db integrity check errored: %s", exc)
+            else:
+                logger.warning(
+                    "cache.db integrity check errored: %s",
+                    status[len(INTEGRITY_ERROR_PREFIX) :],
+                )
 
         t = threading.Thread(target=_run, name="cache-integrity-check", daemon=True)
         self._integrity_thread = t
@@ -363,8 +612,22 @@ class CacheStore:
         references go out of scope. This is intended to be called from
         a signal handler after an external process (e.g. daily.sh's
         ``import_csv_to_cache.py``) has updated the on-disk database.
+
+        Also drops the integrity-check sidecar (best-effort). An in-place
+        update from ``import_csv_to_cache.py`` reuses the same inode, so
+        without this the sidecar would still match on the next
+        ``_start_integrity_check`` call and the just-modified file would
+        never be re-verified. GCS's atomic-rename replacement path doesn't
+        need this — a rename always allocates a new inode, so the sidecar
+        already misses on its own — but dropping it unconditionally here is
+        simpler than distinguishing the two reload triggers, and requesting
+        one extra quick_check on an already-fresh sidecar costs nothing.
         """
         self._needs_reload = True
+        try:
+            _sidecar_path(self._db_path).unlink(missing_ok=True)
+        except OSError:
+            pass
 
     def _ensure_connection(self) -> sqlite3.Connection | None:
         """Lazy initialization of SQLite connection with integrity check.
@@ -433,10 +696,11 @@ class CacheStore:
             conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
             conn.row_factory = sqlite3.Row
             # Previously we ran `PRAGMA quick_check` here, but on the
-            # 3.5 GB cache.db it takes ~1 minute and blocks the event loop.
+            # 3.5 GB cache.db it takes ~4-6s and would block the event loop.
             # Atomic download (see gcs_sync._reinitialize temp-file rename)
             # already prevents reading a half-written file, so this check
-            # is no longer needed. See #71 for a non-blocking alternative.
+            # is no longer needed here — it runs non-blocking instead via
+            # _start_integrity_check() below (#71).
             conn.execute("PRAGMA journal_mode=WAL")
             self._conn = conn
             self._init_tables()
