@@ -5,6 +5,14 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.55.4](https://github.com/shigechika/jquants-mcp/compare/v0.55.3...v0.55.4) (2026-08-10)
+
+
+### Bug Fixes
+
+* **cd:** avoid the gcloud builds submit log-streaming permission error ([#591](https://github.com/shigechika/jquants-mcp/issues/591)) ([56f3bbb](https://github.com/shigechika/jquants-mcp/commit/56f3bbb413b8384626b51920dd4ed16ac9c26329))
+* **cd:** retry the post-deploy smoke test ([#593](https://github.com/shigechika/jquants-mcp/issues/593)) ([d31e27b](https://github.com/shigechika/jquants-mcp/commit/d31e27b1fe0939e643eff6d89f0367e57d503bc1))
+
 ## [0.55.3](https://github.com/shigechika/jquants-mcp/compare/v0.55.2...v0.55.3) (2026-08-10)
 
 
