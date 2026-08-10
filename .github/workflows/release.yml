@@ -7,6 +7,15 @@ on:
   release:
     types: [published]
 
+# Default for the test/build jobs, which only check out, run pytest and
+# `uv build` — nothing beyond read. Declared explicitly so they no longer
+# inherit the repository's default token permissions (CodeQL
+# actions/missing-workflow-permissions). The publishing jobs below set their
+# own `permissions:` blocks, which replace this default outright rather than
+# merging with it, so their OIDC-only scope is unaffected.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ${{ matrix.os }}
