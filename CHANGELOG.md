@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.55.1](https://github.com/shigechika/jquants-mcp/compare/v0.55.0...v0.55.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* trust claude.ai's fixed OAuth redirect_uri on the jquants service ([#576](https://github.com/shigechika/jquants-mcp/issues/576)) ([bd77986](https://github.com/shigechika/jquants-mcp/commit/bd7798609c24807ef680534c31ba6623334fa014))
+
 ## [0.55.0](https://github.com/shigechika/jquants-mcp/compare/v0.54.0...v0.55.0) (2026-08-09)
 
 
