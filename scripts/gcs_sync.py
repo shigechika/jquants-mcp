@@ -275,6 +275,29 @@ def _write_recorded_generation(cache_dir: Path, source: str, generation: int) ->
             pass
 
 
+def _invalidate_recorded_generation(cache_dir: Path) -> None:
+    """Best-effort removal of the generation sidecar.
+
+    Called when a download succeeded but its true generation is unknown
+    (the pre-check itself raised, so ``download_cache_db`` proceeded with an
+    unconditional download rather than a generation-informed one -- see its
+    docstring). Any pre-existing sidecar now describes content that this
+    download just overwrote; leaving it in place would let a later tick,
+    once the pre-check succeeds again, match that stale value against
+    unrelated current GCS state and skip indefinitely even though the file
+    on disk was never actually confirmed to match. Deleting it forces the
+    next tick to re-evaluate from scratch instead. See jquants-mcp#581
+    review round 4.
+
+    Swallows every failure, same rationale as ``_write_recorded_generation``:
+    a failed unlink must never surface as a download_cache_db failure.
+    """
+    try:
+        _generation_sidecar_path(cache_dir).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def download_cache_db() -> int:
     """Download cache.db from GCS, preferring the zstd-compressed object.
 
@@ -298,10 +321,23 @@ def download_cache_db() -> int:
     tick into a reported download failure. The actual content download keeps
     its own (unconditional) failure handling below.
 
-    Each download branch records the (source, generation) pair the pre-check
-    already observed for *that specific object* -- never a value predicted
-    for a different branch. This is deliberate: see ``_fetch_effective_generation``'s
-    docstring for the mislabeling bug this avoids (jquants-mcp#581 round 3).
+    The sidecar is kept honest across four possible outcomes (jquants-mcp#581
+    rounds 2-4):
+
+    1. Pre-check succeeds, zst wins -> record ("zst", zst_gen).
+    2. Pre-check succeeds, plain wins -> record ("plain", plain_gen).
+    3. Pre-check raises, either branch succeeds anyway (unconditional
+       download) -> the true generation is unknown, so any pre-existing
+       sidecar is invalidated (deleted) rather than left describing content
+       this download just overwrote (see ``_invalidate_recorded_generation``).
+    4. Nothing downloaded (skip, both objects missing, or a genuine download
+       failure) -> the sidecar is left untouched, since it still accurately
+       describes whatever is on disk.
+
+    Each success branch records only the generation it observed for *that
+    specific object* -- never a value predicted for a different branch. This
+    is deliberate: see ``_fetch_effective_generation``'s docstring for the
+    mislabeling bug this avoids (jquants-mcp#581 round 3).
 
     Returns:
         The number of failures (0 on success, an unchanged-generation skip, or
@@ -361,6 +397,15 @@ def download_cache_db() -> int:
         )
         if zst_gen is not None:
             _write_recorded_generation(cache_dir, "zst", zst_gen)
+        else:
+            # zst_gen is only None here if the pre-check itself raised (a
+            # successful pre-check that found zst genuinely absent, or
+            # zstandard unavailable, would have made stream_download_zst
+            # fail identically and never reach this branch). We don't know
+            # the true generation of what was just downloaded, so any
+            # pre-existing sidecar is now stale -- see
+            # _invalidate_recorded_generation's docstring.
+            _invalidate_recorded_generation(cache_dir)
         return 0
 
     # 2. Fallback: uncompressed cache.db.
@@ -374,6 +419,13 @@ def download_cache_db() -> int:
         )
         if plain_gen is not None:
             _write_recorded_generation(cache_dir, "plain", plain_gen)
+        else:
+            # Same reasoning as the zst branch above: plain_gen is only
+            # None here if the pre-check raised (a successful pre-check
+            # finding plain genuinely absent would have made this
+            # download_to_filename call raise NotFound instead of
+            # succeeding).
+            _invalidate_recorded_generation(cache_dir)
         return 0
     except NotFound:
         logger.info("gs://%s/%scache.db not found, skipping (first run?)", bucket, prefix)
