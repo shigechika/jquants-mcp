@@ -26,7 +26,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   - `server.py` — Official-SDK `FastMCP` server (stdio), per-user client management, tool registration
   - `client.py` — httpx async client with rate limiting, retry, pagination
   - `config.py` — configparser + env vars hybrid configuration
-  - `cache/store.py` — 2-tier SQLite cache (Tier1: row-level, Tier2: response-level with TTL)
+  - `cache/store.py` — 2-tier SQLite cache (Tier1: row-level, Tier2: response-level with TTL); background `PRAGMA quick_check` integrity verification (`verify_and_record`) with a `(dev, ino)`-keyed sidecar (`cache.db.verified.json`) so a fresh per-message `CacheStore` reuses a prior generation's verdict instead of re-running the multi-second check on every claude.ai message
   - `tools/` — Tool modules registered via `register(mcp, get_client, get_cache)` pattern
   - `auth.py` — Bearer token + Google/GitHub OAuth authentication (Google via upstream FastMCP GoogleProvider)
   - `crypto.py` — AES-256-GCM encryption for user API keys
@@ -40,11 +40,12 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   - `bulk_fetch_all.py` — Historical data bulk fetch via J-Quants Bulk API
   - `gcs_sync.py` — Cloud Run cache.db startup download from GCS (`--init-cache`). Auth DBs are **no longer synced here**: `users.db`/`oauth_state.db` moved to Firestore on Cloud Run, so `_DOWNLOAD_FILES`/`_UPLOAD_FILES` are empty and `--init`/`--daemon` are auth-DB no-ops
   - `gcs_export_cache.py` — Export cache.db to GCS (used by the daily publisher)
+  - `verify_cache.py` — Stand-alone cache-integrity prewarm CLI: runs the same `verify_and_record` quick_check the `CacheStore` sidecar uses, ahead of the next request, so a freshly (re-)downloaded cache.db already has a warm `(dev, ino)` sidecar by the time the next per-message child process connects. Invoked by `cache-poll.crontab` (after each re-download) and `entrypoint-stdio.sh` (backgrounded after the synchronous startup download)
   - `rotate_encryption_key.py` — Re-encrypt user API keys during MCP_ENCRYPTION_KEY rotation
   - `collect_metrics.py` / `load_test.py` — Cloud Run sizing helpers
   - `smoke_test.py` — Live smoke test: runs **every registered tool** against real data (in-process, or `--url` against a deployment) and fails on empty/stale/error answers. `smoke_harness.py` is the server-agnostic engine; `smoke_probes.py` holds the per-tool specs. Needs a populated cache + API key, so it runs on the host that has them — not in CI. CI enforces only the coverage half (`tests/test_smoke_probes.py`: a new tool without a probe spec fails the build)
   - `entrypoint.sh` — Docker/Cloud Run entrypoint for the `jquants-mcp` service (streamable-http, CD currently disabled — see "Deployment Targets")
-  - `entrypoint-stdio.sh` — Docker/Cloud Run entrypoint for the `jquants` service (`mcp-stdio serve`, behind an `oauth2-proxy` sidecar); downloads cache.db synchronously at startup like `entrypoint.sh`, then polls GCS periodically via `cache-poll.crontab` (supercronic) in place of the Pub/Sub-pushed reload route `entrypoint.sh` uses, which has no equivalent on a stdio-only server
+  - `entrypoint-stdio.sh` — Docker/Cloud Run entrypoint for the `jquants` service (`mcp-stdio serve`, behind an `oauth2-proxy` sidecar); downloads cache.db synchronously at startup like `entrypoint.sh`, then polls GCS periodically via `cache-poll.crontab` (supercronic) in place of the Pub/Sub-pushed reload route `entrypoint.sh` uses, which has no equivalent on a stdio-only server; each poll chains `verify_cache.py` after the re-download (`&&`) to re-warm the integrity sidecar for the new inode
 - `tests/` — pytest + pytest-asyncio tests (1000+ tests as of 2026-05)
 
 ## Key Patterns

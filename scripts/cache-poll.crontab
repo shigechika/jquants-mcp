@@ -7,6 +7,16 @@
 # non-fatal (see its own logging) and simply leaves the previous cache.db in
 # place until the next tick.
 #
+# Chained with verify_cache.py: a successful re-download atomically renames
+# cache.db onto a new inode (gcs_sync.py's tmp-file + rename), which
+# invalidates CacheStore's verified-generation sidecar. Running
+# verify_cache.py right after re-warms that sidecar so the next per-request
+# jquants-mcp child (mcp-stdio serve spawns a fresh one per claude.ai
+# message) can report cache_integrity without repeating the multi-second
+# PRAGMA quick_check itself. supercronic runs each job line via `sh -c`, so
+# `&&` works, and it skips a tick whose previous run is still executing, so
+# this cannot pile up even if a download runs long.
+#
 # REQUIRES the Cloud Run service to run with CPU always allocated
 # (`--no-cpu-throttling`), not the default request-based throttling. Under
 # request-based billing, Cloud Run suspends CPU on a warm instance between
@@ -16,4 +26,4 @@
 # That is the exact failure mode entrypoint-stdio.sh's synchronous
 # startup download exists to avoid; this cron job needs the same CPU
 # guarantee to be reliable on its own schedule. See jquants-mcp#570 review.
-*/15 * * * * python /app/scripts/gcs_sync.py --init-cache
+*/15 * * * * python /app/scripts/gcs_sync.py --init-cache && python /app/scripts/verify_cache.py

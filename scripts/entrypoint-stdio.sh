@@ -52,6 +52,16 @@ if [ -n "${GCS_BUCKET:-}" ]; then
     else
         echo "cache.db download failed; continuing with live-API fallback"
     fi
+
+    # Pre-warm the integrity-check sidecar for the freshly downloaded (new
+    # inode) cache.db, backgrounded so it does not delay mcp-stdio serve's
+    # startup below. Same --no-cpu-throttling dependency as
+    # cache-poll.crontab's chained invocation. Intentionally untracked: it
+    # is short-lived (~4-6s) and not added to _shutdown's tracked PID list
+    # below — waiting on it would only delay container teardown for no
+    # benefit, since Cloud Run reaps any stray process when the container
+    # exits.
+    python /app/scripts/verify_cache.py &
 else
     echo "GCS_BUCKET not set, skipping GCS downloads"
 fi
