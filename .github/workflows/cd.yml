@@ -26,6 +26,11 @@ jobs:
       id-token: write
       packages: write
 
+    env:
+      GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUDRUN_SERVICE: ${{ vars.CLOUDRUN_SERVICE }}
+
     steps:
       - uses: actions/checkout@v7
         with:
@@ -49,7 +54,7 @@ jobs:
           changed=$(git diff --name-only HEAD~1 HEAD)
           echo "Changed files:"
           echo "$changed"
-          if echo "$changed" | grep -qE '^(src/|Dockerfile$|pyproject\.toml$|uv\.lock$|scripts/|\.github/workflows/cd\.yml$)'; then
+          if echo "$changed" | grep -qE '^(src/|Dockerfile$|pyproject\.toml$|uv\.lock$|scripts/|\.github/workflows/cd\.yml$|\.github/workflows/scripts/)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -102,10 +107,6 @@ jobs:
       #   is in effect — Cloud Run does not write "0" explicitly.
       - name: Assert billing-relevant settings (pre-deploy)
         if: steps.gate.outputs.should_deploy == 'true'
-        env:
-          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
-          GCP_REGION: ${{ vars.GCP_REGION }}
-          CLOUDRUN_SERVICE: ${{ vars.CLOUDRUN_SERVICE }}
         run: |
           .github/workflows/scripts/assert-jquants-billing-settings.sh pre-deploy
 
@@ -115,7 +116,7 @@ jobs:
         run: |
           set -eu
           SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
-          IMAGE="us-west1-docker.pkg.dev/${{ vars.GCP_PROJECT }}/cloud-run-source-deploy/jquants:${SHA}"
+          IMAGE="${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/cloud-run-source-deploy/jquants:${SHA}"
           gcloud builds submit --tag "$IMAGE" --project ${{ vars.GCP_PROJECT }} .
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
@@ -130,10 +131,6 @@ jobs:
 
       - name: Assert billing-relevant settings (post-deploy)
         if: steps.gate.outputs.should_deploy == 'true'
-        env:
-          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
-          GCP_REGION: ${{ vars.GCP_REGION }}
-          CLOUDRUN_SERVICE: ${{ vars.CLOUDRUN_SERVICE }}
         run: |
           .github/workflows/scripts/assert-jquants-billing-settings.sh post-deploy
 
@@ -141,6 +138,17 @@ jobs:
         if: steps.gate.outputs.should_deploy == 'true'
         run: |
           set -eu
+
+          # gcloud run services update does not support --traffic; call
+          # update-traffic separately. This also self-heals if Cloud Run's
+          # reconciler ever pins traffic to a specific revision instead of
+          # latest (observed before, see the old `gcloud run deploy` job
+          # this replaced) -- without it, that state would hard-fail every
+          # subsequent deploy instead of being corrected here.
+          gcloud run services update-traffic ${{ vars.CLOUDRUN_SERVICE }} \
+            --project ${{ vars.GCP_PROJECT }} \
+            --region ${{ vars.GCP_REGION }} \
+            --to-latest
 
           read -r TRAFFIC_MODE SERVING < <(gcloud run services describe ${{ vars.CLOUDRUN_SERVICE }} \
             --project ${{ vars.GCP_PROJECT }} \
@@ -170,11 +178,13 @@ jobs:
           fi
           echo "MCP endpoint smoke test passed: HTTP $HTTP_STATUS ✓"
 
-      # Unrelated to the Cloud Run deploy above: docs/deploy/local.md and
-      # compose.yml document ghcr.io/shigechika/jquants-mcp:latest as the
-      # self-hosted docker-compose image (streamable-http entrypoint.sh, or
-      # entrypoint.sh with ENABLE_DAILY_FETCH). Keep it fresh independent of
-      # which Cloud Run service is deployed above.
+      # docs/deploy/local.md and compose.yml document
+      # ghcr.io/shigechika/jquants-mcp:latest as the self-hosted
+      # docker-compose image (streamable-http entrypoint.sh, or entrypoint.sh
+      # with ENABLE_DAILY_FETCH) -- unrelated to *which* Cloud Run service is
+      # deployed above, but still gated by the same should_deploy condition
+      # and still skipped if an earlier step in this job fails (pre-existing
+      # sequencing, unchanged by this PR).
       - name: Log in to GHCR
         if: steps.gate.outputs.should_deploy == 'true'
         uses: docker/login-action@v4
