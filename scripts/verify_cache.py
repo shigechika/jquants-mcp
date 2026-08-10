@@ -32,7 +32,10 @@ Environment variables:
     JQUANTS_CACHE_DIR  Local cache directory (default: /tmp) — the same
                         variable gcs_sync.py uses to locate cache.db.
 
-Exit codes:
+Exit codes (currently informational only: the sole call site backgrounds
+this script with `&` and never waits on it, so nothing consumes the status
+— the log line above is the operator-visible signal. The contract is kept
+accurate for direct/manual invocation and any future waiting caller):
     0   No cache.db yet (routine first-run / pre-download state, matching
         CacheStore's own constructor exists-guard), or the check ran and
         produced any status other than "error: ..." (including "ok" and a
@@ -40,7 +43,7 @@ Exit codes:
         cacheable result, not an environmental problem to page on).
     1   verify_and_record() raised, or it returned an "error: ..." status
         (a transient/environmental failure, e.g. the DB could not be opened
-        at all) — surfaced in the container log rather than exiting silently.
+        at all).
 """
 
 from __future__ import annotations
@@ -75,11 +78,11 @@ def main() -> int:
 
     if not db_path.exists():
         # Matches CacheStore's constructor exists-guard: no cache.db yet is a
-        # routine state (pre-download, or --init-cache's own NotFound
-        # "first run" case, which itself exits 0). entrypoint-stdio.sh runs
-        # this unconditionally after that download, so treating "missing" as
-        # an error here would turn a legitimately cache-less deployment
-        # (GCS_BUCKET unset, live-API-only) into a startup alarm.
+        # routine state. entrypoint-stdio.sh runs this right after
+        # `gcs_sync.py --init-cache`, which itself exits 0 when the GCS
+        # object does not exist yet ("first run") — so cache.db can legitimately
+        # be absent here even on a correctly configured deployment, and
+        # treating that as an error would turn it into a false alarm.
         logger.info("%s does not exist yet, skipping verification", db_path)
         return 0
 

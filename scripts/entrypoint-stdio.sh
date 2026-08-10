@@ -72,13 +72,16 @@ if [ -n "${GCS_BUCKET:-}" ]; then
 
     # Pre-warm the integrity-check sidecar for the freshly downloaded (new
     # inode) cache.db, backgrounded so it does not delay mcp-stdio serve's
-    # startup below. Requires --no-cpu-throttling (CPU always allocated) to
-    # finish promptly: it runs after the port is bound, so under
-    # request-based throttling it would be CPU-starved between requests.
-    # Intentionally untracked: it is short-lived (~4-6s) and not added to
-    # _shutdown's tracked PID list below — waiting on it would only delay
-    # container teardown for no benefit, since Cloud Run reaps any stray
-    # process when the container exits.
+    # startup below. Because it is backgrounded it can outlive the
+    # full-CPU startup window and still be running once serve binds the
+    # port, so it depends on --no-cpu-throttling (CPU always allocated) to
+    # finish promptly; under request-based throttling it would be
+    # CPU-starved between requests. Intentionally untracked: it is
+    # short-lived (~4-6s) and not added to _shutdown's tracked PID list
+    # below — waiting on it would only delay container teardown for no
+    # benefit, since Cloud Run reaps any stray process when the container
+    # exits. Nothing consumes its exit code (see verify_cache.py); a
+    # failure is surfaced in the container log only.
     python /app/scripts/verify_cache.py &
 else
     echo "GCS_BUCKET not set, skipping GCS downloads"
@@ -118,8 +121,9 @@ echo "Starting mcp-stdio serve on port ${PORT}..."
 # every instance restart/redeploy invalidates all issued OAuth tokens and
 # forces every connected client to re-authenticate. mcp-stdio's own --help
 # warns there is no lock against two processes sharing one document -- this
-# service's min/max-instances=1 bounds *steady-state* concurrency, but does
-# NOT prevent the outgoing and incoming instance from overlapping briefly
+# service's max-instances=1 bounds *steady-state* concurrency (min-instances
+# is 0; only the max matters for the single-writer argument), but does NOT
+# prevent the outgoing and incoming instance from overlapping briefly
 # during a normal Cloud Run redeploy or instance recycle (there is no
 # "drain fully, then start" mode on Cloud Run). A write race in that window
 # can silently drop one instance's token issuance, forcing that one client
