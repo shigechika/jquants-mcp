@@ -241,21 +241,26 @@ jobs:
           # unhealthy revision.
           MAX_ATTEMPTS=12
           SLEEP_SECONDS=5
-          HTTP_STATUS=000
+          success=false
           for attempt in $(seq 1 "$MAX_ATTEMPTS"); do
             HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
               --max-time 30 \
               -X POST \
               "${{ vars.OAUTH_BASE_URL }}/mcp" || echo "000")
             echo "MCP endpoint HTTP status (attempt $attempt/$MAX_ATTEMPTS): $HTTP_STATUS"
+            # The retryable-failure test is written once, here, and driven by
+            # a flag rather than re-testing $HTTP_STATUS again after the loop
+            # -- a duplicated pattern match in both places is one edit away
+            # from silently drifting out of sync.
             if [[ "$HTTP_STATUS" != 5* ]] && [[ "$HTTP_STATUS" != "000" ]]; then
+              success=true
               break
             fi
             if [[ "$attempt" -lt "$MAX_ATTEMPTS" ]]; then
               sleep "$SLEEP_SECONDS"
             fi
           done
-          if [[ "$HTTP_STATUS" == 5* ]] || [[ "$HTTP_STATUS" == "000" ]]; then
+          if ! $success; then
             echo "::error::MCP endpoint returned HTTP $HTTP_STATUS after $MAX_ATTEMPTS attempts — \
           revision $SERVING may be unhealthy; check Cloud Run logs"
             exit 1
