@@ -232,3 +232,561 @@ class TestZstCacheDownload:
         assert gcs_sync.download_cache_db() == 0
         assert (tmp_path / "cache.db").read_bytes() == b"raw-db"
         blob.download_to_filename.assert_called_once()
+
+
+class TestGenerationCheck:
+    """download_cache_db skips re-download when the GCS generation of the
+    effective (zst-preferred, precedence-mirrored) source object is
+    unchanged since the last successful download (jquants-mcp#579,
+    jquants-mcp#581 review round 2).
+    """
+
+    def _configure_get_blob(self, mock_bucket, zst_gen, plain_gen):
+        """Configure get_blob(name) to return a blob stub with .generation.
+
+        A generation of None means the object is missing (get_blob's own
+        None-on-missing contract).
+        """
+
+        def _get_blob(name: str):
+            if name.endswith(".zst"):
+                if zst_gen is None:
+                    return None
+                stub = MagicMock()
+                stub.generation = zst_gen
+                return stub
+            if plain_gen is None:
+                return None
+            stub = MagicMock()
+            stub.generation = plain_gen
+            return stub
+
+        mock_bucket.get_blob.side_effect = _get_blob
+
+    def test_skips_download_when_generation_unchanged(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=111, plain_gen=222)
+
+        # Local cache.db already present, and the sidecar records the same
+        # effective (zst-preferred) generation that get_blob will report.
+        (tmp_path / "cache.db").write_bytes(b"existing-db")
+        gcs_sync._write_recorded_generation(tmp_path, "zst", 111)
+
+        assert gcs_sync.download_cache_db() == 0
+        # Content is untouched -- proves no download (and therefore no
+        # atomic replace / new inode) happened.
+        assert (tmp_path / "cache.db").read_bytes() == b"existing-db"
+        # Neither download path (zst nor fallback) was ever attempted --
+        # both go through gcs_bucket.blob(...), so this single assertion
+        # covers both.
+        mock_bucket.blob.assert_not_called()
+
+    def test_download_proceeds_and_sidecar_updated_when_generation_changed(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=999, plain_gen=888)
+
+        # Local cache.db present, but the recorded generation is stale.
+        (tmp_path / "cache.db").write_bytes(b"old-db")
+        gcs_sync._write_recorded_generation(tmp_path, "zst", 111)
+
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == payload
+
+        recorded = gcs_sync._read_recorded_generation(tmp_path)
+        assert recorded == ("zst", 999)
+        # Also assert on the raw JSON content, not just the round-trip
+        # helper, per the task's explicit instruction.
+        import json
+
+        sidecar_data = json.loads(
+            (tmp_path / gcs_sync._GENERATION_SIDECAR_NAME).read_text(encoding="utf-8")
+        )
+        assert sidecar_data == {
+            "version": gcs_sync._GENERATION_SIDECAR_VERSION,
+            "source": "zst",
+            "generation": 999,
+        }
+
+    def test_download_proceeds_when_generation_matches_but_local_file_missing(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=111, plain_gen=222)
+
+        # Sidecar matches, but cache.db itself is gone (manual cleanup,
+        # corruption removal, etc.) -- the safety-net case.
+        gcs_sync._write_recorded_generation(tmp_path, "zst", 111)
+        assert not (tmp_path / "cache.db").exists()
+
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        mock_bucket.blob.assert_called_once()
+
+    def test_first_run_no_sidecar_downloads_and_creates_sidecar(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=42, plain_gen=43)
+
+        assert not gcs_sync._generation_sidecar_path(tmp_path).exists()
+
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        assert gcs_sync._read_recorded_generation(tmp_path) == ("zst", 42)
+
+    def test_malformed_sidecar_falls_through_to_normal_download(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=111, plain_gen=222)
+
+        (tmp_path / "cache.db").write_bytes(b"existing-db")
+        gcs_sync._generation_sidecar_path(tmp_path).write_text("{not valid json", encoding="utf-8")
+
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        # Must not raise despite the corrupt sidecar.
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        mock_bucket.blob.assert_called_once()
+
+    def test_both_objects_missing_returns_zero_no_download_no_sidecar(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=None, plain_gen=None)
+
+        assert gcs_sync.download_cache_db() == 0
+        # Neither download path was attempted.
+        mock_bucket.blob.assert_not_called()
+        # Nothing was downloaded, so nothing should be recorded either.
+        assert not gcs_sync._generation_sidecar_path(tmp_path).exists()
+
+    def test_only_zst_generation_changed_triggers_download(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """A publisher updating cache.db.zst (the effective source) must be
+        detected as a change (jquants-mcp#579).
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=999, plain_gen=222)
+
+        (tmp_path / "cache.db").write_bytes(b"old-db")
+        gcs_sync._write_recorded_generation(tmp_path, "zst", 111)  # zst differs
+
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        assert gcs_sync._read_recorded_generation(tmp_path) == ("zst", 999)
+
+    def test_plain_only_change_does_not_trigger_download_when_zst_is_effective_source(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """Regression for jquants-mcp#581 review round 2: an earlier design
+        checked both objects' generations independently, so a publisher
+        updating only the uncompressed ``cache.db`` (``cache.db.zst``
+        untouched) would still be seen as "changed", trigger a download that
+        -- correctly, per the zst-preferred precedence -- re-fetched the
+        unchanged (stale relative to the publisher's intent) zst content,
+        and then incorrectly record that as "in sync" with the new plain
+        generation. Since zst remains the effective source throughout, a
+        plain-only change must not trigger a download at all: verified
+        against the pre-fix implementation with a hand exercise of
+        download_cache_db() (zst=111 fixed, plain 222->777, recorded
+        ("zst", 111)) that observed ``mock_bucket.blob.called is True`` and
+        the sidecar rewritten to ("zst"-shaped: `{"zst_generation": 111,
+        "plain_generation": 777}`) pre-fix, versus ``False`` / unchanged
+        content and sidecar post-fix.
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        # zst unchanged (111), plain changed (222 -> 777). zst is the
+        # effective source (exists, zstandard available), so plain's change
+        # is irrelevant to what actually gets served.
+        self._configure_get_blob(mock_bucket, zst_gen=111, plain_gen=777)
+
+        (tmp_path / "cache.db").write_bytes(b"existing-db")
+        gcs_sync._write_recorded_generation(tmp_path, "zst", 111)
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == b"existing-db"
+        mock_bucket.blob.assert_not_called()
+        assert gcs_sync._read_recorded_generation(tmp_path) == ("zst", 111)
+
+    def test_zst_fetch_failure_after_precheck_records_plain_not_zst(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """Regression for jquants-mcp#581 review round 3: an earlier design
+        threaded the pre-check's *predicted* winner through to whichever
+        download branch actually ran. When zst existed at generation G (the
+        pre-check's predicted effective source) but the actual zst *fetch*
+        failed for a transient, non-"missing" reason -- a corrupt frame, a
+        dropped connection mid-stream, exactly what stream_download_zst
+        swallows and reports as a plain ``False`` -- the code correctly fell
+        back to plain, but recorded ``("zst", G)`` anyway: a description of
+        an object that was never actually written to disk. Because zst's
+        generation hadn't changed, every subsequent poll's pre-check kept
+        agreeing with that mislabeled sidecar and skipping forever -- an
+        indefinite staleness bug, not the bounded, self-healing race this
+        design otherwise relies on. Verified against the pre-round-3
+        implementation directly: it recorded ("zst", 100) despite cache.db
+        on disk holding the plain payload; this test's final assertion
+        holds only post-fix.
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        # zst exists (pre-check sees it, predicts it as the effective
+        # source) but its *content fetch* fails transiently below -- a
+        # different failure mode from "the object doesn't exist" (NotFound).
+        self._configure_get_blob(mock_bucket, zst_gen=100, plain_gen=50)
+
+        blob = mock_bucket.blob.return_value
+        blob.open.side_effect = RuntimeError("transient network blip mid-stream")
+        blob.download_to_filename.side_effect = lambda p: Path(p).write_bytes(b"plain-content")
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == b"plain-content"
+        # The load-bearing assertion: the sidecar must record what was
+        # actually written to disk (plain, gen 50), not the pre-check's
+        # zst prediction (gen 100).
+        assert gcs_sync._read_recorded_generation(tmp_path) == ("plain", 50)
+
+    def test_mislabeled_plain_sidecar_retries_on_next_tick_not_stuck_forever(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """Follow-up to the fix above: once the sidecar correctly records
+        ("plain", ...) instead of the zst prediction, the *next* tick's
+        pre-check -- seeing zst still present and unchanged -- disagrees
+        with the recorded source and retries, rather than treating the
+        mismatch as a permanently stuck state. This is what keeps the
+        round-2 fix's self-healing story intact: recording the source that
+        actually ran (this fix), rather than the predicted one (the
+        round-3 bug), means a transient zst failure is retried on every
+        subsequent tick until it succeeds, instead of being locked in
+        indefinitely.
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=100, plain_gen=50)
+
+        # Sidecar already correctly records the plain fallback from a prior
+        # tick (as the fix above produces).
+        (tmp_path / "cache.db").write_bytes(b"plain-content")
+        gcs_sync._write_recorded_generation(tmp_path, "plain", 50)
+
+        # zst is still present at the same generation (unchanged) and
+        # remains the effective source, which disagrees with the recorded
+        # "plain" -- a retry must be attempted rather than a skip. This
+        # time the zst fetch succeeds.
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        mock_bucket.blob.assert_called()
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        assert gcs_sync._read_recorded_generation(tmp_path) == ("zst", 100)
+
+    def test_pre_zst_rollout_state_skips_when_plain_generation_matches(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """Realistic pre-``.zst``-rollout production state: the publisher has
+        never written ``cache.db.zst`` (``get_blob`` -> None for it on every
+        poll), only the uncompressed ``cache.db`` exists and is unchanged.
+        Must still skip -- plain becomes the effective source once zst is
+        absent, and its generation matches what was recorded.
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=None, plain_gen=222)
+
+        (tmp_path / "cache.db").write_bytes(b"existing-db")
+        gcs_sync._write_recorded_generation(tmp_path, "plain", 222)
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == b"existing-db"
+        mock_bucket.blob.assert_not_called()
+
+    def test_warm_upgrade_local_file_exists_no_sidecar_downloads_and_creates_sidecar(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """Rollout-critical branch: a pre-#579 deployment already has
+        cache.db on disk (warm instance), but the generation sidecar itself
+        is new and does not exist yet. Must download once (sidecar miss
+        forces it) and then create the sidecar so subsequent polls can skip.
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=42, plain_gen=43)
+
+        (tmp_path / "cache.db").write_bytes(b"pre-existing-warm-instance-db")
+        assert not gcs_sync._generation_sidecar_path(tmp_path).exists()
+
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        assert gcs_sync._read_recorded_generation(tmp_path) == ("zst", 42)
+
+    def test_pre_581_two_key_sidecar_shape_is_treated_as_no_sidecar(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """A sidecar left over from the pre-review-round-2 two-key shape
+        (``zst_generation``/``plain_generation``, no ``version`` key) must be
+        treated exactly like "no sidecar" -- forcing one harmless
+        re-download rather than misreading an incompatible format via
+        ``.get("source")`` silently returning None and comparing equal to
+        some unintended state.
+        """
+        import json
+
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=111, plain_gen=222)
+
+        (tmp_path / "cache.db").write_bytes(b"old-db")
+        gcs_sync._generation_sidecar_path(tmp_path).write_text(
+            json.dumps({"zst_generation": 111, "plain_generation": 222}), encoding="utf-8"
+        )
+
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        mock_bucket.blob.assert_called_once()
+        assert gcs_sync._read_recorded_generation(tmp_path) == ("zst", 111)
+
+    def test_malformed_sidecar_non_dict_json_falls_through_to_normal_download(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """Valid JSON that is not an object (e.g. a list) hits AttributeError
+        on ``.get(...)``, a distinct failure mode from JSONDecodeError that
+        _read_recorded_generation also promises to swallow.
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=111, plain_gen=222)
+
+        (tmp_path / "cache.db").write_bytes(b"existing-db")
+        gcs_sync._generation_sidecar_path(tmp_path).write_text("[1, 2, 3]", encoding="utf-8")
+
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        mock_bucket.blob.assert_called_once()
+
+    def test_sidecar_write_failure_does_not_crash_download(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """A sidecar-write failure (any Exception, not just OSError -- see
+        _write_recorded_generation's broad catch) must never surface as a
+        download_cache_db failure: the download itself already succeeded.
+        """
+        import tempfile
+
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        self._configure_get_blob(mock_bucket, zst_gen=42, plain_gen=43)
+
+        def _raise_mkstemp(*_args, **_kwargs):
+            raise ValueError("boom: not even an OSError")
+
+        monkeypatch.setattr(tempfile, "mkstemp", _raise_mkstemp)
+
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        # The sidecar write failed, so no sidecar file should exist.
+        assert not gcs_sync._generation_sidecar_path(tmp_path).exists()
+
+
+class TestGenerationCheckFailsOpen:
+    """A transient GCS error during the generation pre-check itself
+    (_fetch_effective_generation) must not propagate out of
+    download_cache_db() uncaught -- it must fall through to an
+    unconditional download instead, so a metadata-only blip can never turn
+    a healthy tick into a reported "download failed" (jquants-mcp#579).
+    """
+
+    def test_generation_check_error_falls_through_and_download_succeeds(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        mock_bucket.get_blob.side_effect = RuntimeError("network down")
+
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        # Must not raise despite the pre-check failure.
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        # The generations were never actually observed (the fetch raised),
+        # so nothing must be persisted -- writing a bogus value here would
+        # be recording a lie about what generation was downloaded.
+        assert not gcs_sync._generation_sidecar_path(tmp_path).exists()
+
+    def test_generation_check_error_with_stale_sidecar_invalidates_it_on_success(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """Regression for jquants-mcp#581 review round 4: when the pre-check
+        raises but the subsequent unconditional download still succeeds, the
+        true generation of what was just downloaded is unknown. A
+        pre-existing sidecar from an earlier successful tick must not be
+        left in place -- it now describes content this download just
+        overwrote. Leaving it would let a later tick, once the pre-check
+        succeeds again and happens to see the same (source, generation) as
+        that stale sidecar, wrongly skip a re-download even though the file
+        on disk was never actually confirmed to match. Verified against the
+        pre-round-4 implementation: it left the sidecar at ("zst", 100)
+        despite cache.db on disk actually holding the plain fallback's
+        content; this test's assertion holds only post-fix.
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+
+        # A prior successful tick recorded zst generation 100.
+        (tmp_path / "cache.db").write_bytes(b"old-zst-content")
+        gcs_sync._write_recorded_generation(tmp_path, "zst", 100)
+
+        # This tick: the pre-check itself raises.
+        mock_bucket.get_blob.side_effect = RuntimeError("transient network blip")
+
+        # zst also fails this tick (a different, non-NotFound error), so the
+        # code falls back to plain, which succeeds.
+        blob = mock_bucket.blob.return_value
+        blob.open.side_effect = RuntimeError("zst fetch also fails this tick")
+        blob.download_to_filename.side_effect = lambda p: Path(p).write_bytes(b"plain-content")
+
+        assert gcs_sync.download_cache_db() == 0
+        assert (tmp_path / "cache.db").read_bytes() == b"plain-content"
+        # The load-bearing assertion: the stale ("zst", 100) sidecar must be
+        # gone, not left in place describing overwritten content.
+        assert gcs_sync._read_recorded_generation(tmp_path) is None
+        assert not gcs_sync._generation_sidecar_path(tmp_path).exists()
+
+    def test_invalidated_sidecar_does_not_cause_false_skip_on_next_tick(
+        self, tmp_path, monkeypatch, mock_google_storage
+    ):
+        """Follow-up to the test above: once the stale sidecar is
+        invalidated, the *next* tick's pre-check -- succeeding this time and
+        seeing zst unchanged at the same generation the old stale sidecar
+        named -- must not find anything to match against, so it correctly
+        retries instead of falsely skipping a download whose local content
+        was never actually confirmed to be zst generation 100.
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+
+        # Simulates the post-invalidation state from the test above: no
+        # sidecar, but local content that does not actually match zst gen
+        # 100 (it's the plain fallback's content from the prior tick).
+        (tmp_path / "cache.db").write_bytes(b"plain-content")
+        assert not gcs_sync._generation_sidecar_path(tmp_path).exists()
+
+        def _get_blob(name: str):
+            if name.endswith(".zst"):
+                stub = MagicMock()
+                stub.generation = 100
+                return stub
+            return None
+
+        mock_bucket.get_blob.side_effect = _get_blob
+
+        payload = b"zstd-db" * 3000
+        blob = _zst_stream_blob(payload)
+        mock_bucket.blob.return_value = blob
+
+        assert gcs_sync.download_cache_db() == 0
+        mock_bucket.blob.assert_called()
+        assert (tmp_path / "cache.db").read_bytes() == payload
+        assert gcs_sync._read_recorded_generation(tmp_path) == ("zst", 100)
+
+    def test_generation_check_error_then_download_failure_still_alerts(
+        self, tmp_path, monkeypatch, mock_google_storage, caplog
+    ):
+        """End-to-end: pre-check fails open, the subsequent real download
+        also fails, and the failure must still reach --init-cache's alert
+        phrase -- this is the finding's actual "alert goes dark" concern,
+        verified with the failure now on the download side.
+        """
+        monkeypatch.setenv("GCS_BUCKET", "test-bucket")
+        monkeypatch.setenv("JQUANTS_CACHE_DIR", str(tmp_path))
+        monkeypatch.setattr(sys, "argv", ["gcs_sync.py", "--init-cache"])
+        mock_bucket = mock_google_storage.Client.return_value.bucket.return_value
+        mock_bucket.get_blob.side_effect = RuntimeError("network down")
+
+        # The fixture aliases NotFound to the base Exception, which would
+        # swallow the injected download RuntimeError as a benign "first run"
+        # skip. Narrow it so the error reaches the real failure branch, as
+        # in test_init_cache_failure_logs_alert_phrase above.
+        class _NotFound(Exception):
+            pass
+
+        monkeypatch.setattr(sys.modules["google.cloud.exceptions"], "NotFound", _NotFound)
+
+        blob = mock_bucket.blob.return_value
+        blob.open.side_effect = _NotFound("no zst")
+        blob.download_to_filename.side_effect = RuntimeError("download also down")
+
+        with caplog.at_level("ERROR"), pytest.raises(SystemExit) as exc:
+            gcs_sync.main()
+        assert exc.value.code == 1
+        assert "cache.db download failed" in caplog.text
