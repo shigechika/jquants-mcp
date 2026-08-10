@@ -5,6 +5,18 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.55.3](https://github.com/shigechika/jquants-mcp/compare/v0.55.2...v0.55.3) (2026-08-10)
+
+
+### Bug Fixes
+
+* skip redundant cache.db re-downloads when GCS generation is unchanged ([#581](https://github.com/shigechika/jquants-mcp/issues/581)) ([ff77db1](https://github.com/shigechika/jquants-mcp/commit/ff77db18323e9f7ab3c32e05127423d7b311d466))
+
+
+### Refactoring
+
+* remove the 15-minute cache.db poll from the stdio deployment ([#585](https://github.com/shigechika/jquants-mcp/issues/585)) ([bde7bee](https://github.com/shigechika/jquants-mcp/commit/bde7bee02523cc897394a9f02009a28c071f3ab9))
+
 ## [0.55.2](https://github.com/shigechika/jquants-mcp/compare/v0.55.1...v0.55.2) (2026-08-10)
 
 
