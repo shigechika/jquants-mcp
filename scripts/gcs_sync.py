@@ -126,6 +126,101 @@ def download_files(file_list: list[str] | None = None) -> int:
     return failures
 
 
+_GENERATION_SIDECAR_NAME = "cache.db.generation.json"
+
+
+def _generation_sidecar_path(cache_dir: Path) -> Path:
+    """Return the generation-tracking sidecar path for the cache dir.
+
+    Parallel in spirit to ``_sidecar_path`` in ``src/jquants_mcp/cache/store.py``
+    (PR #578), but keyed on ``cache_dir`` rather than a specific db path: this
+    sidecar tracks GCS object generation (whether a re-download is needed at
+    all), a distinct, independent concern from that module's file-identity
+    integrity cache (whether an already-downloaded file is structurally
+    valid). No coupling is needed between the two.
+    """
+    return cache_dir / _GENERATION_SIDECAR_NAME
+
+
+def _fetch_current_generations(gcs_bucket, prefix: str) -> tuple[int | None, int | None]:
+    """Fetch the current GCS generation of both cache.db objects.
+
+    None for a missing object (mirrors bucket.get_blob own None-on-missing
+    contract). Both objects are checked (not just whichever the download
+    logic would prefer) so a publisher that updates only one of the two is
+    still detected as a change.
+
+    The two ``get_blob`` calls and the subsequent content download are not
+    atomic: a publisher write landing in between means the generation
+    recorded in the sidecar can describe an older revision than the bytes
+    that were actually downloaded. This is self-healing rather than a
+    correctness problem -- the next poll's ``get_blob`` reports the newer
+    generation, mismatches the stale recorded value, and triggers one
+    redundant-but-harmless re-download that then records correctly. It never
+    causes permanent staleness or corruption.
+    """
+    zst_blob = gcs_bucket.get_blob(f"{prefix}cache.db.zst")
+    plain_blob = gcs_bucket.get_blob(f"{prefix}cache.db")
+    return (
+        zst_blob.generation if zst_blob is not None else None,
+        plain_blob.generation if plain_blob is not None else None,
+    )
+
+
+def _read_recorded_generations(cache_dir: Path) -> tuple[int | None, int | None] | None:
+    """Best-effort read of the last-downloaded (zst, plain) GCS generations.
+
+    Returns None on any read/parse failure so the caller falls through to an
+    unconditional download -- this sidecar is a pure optimization, never a
+    source of truth for whether cache.db needs downloading.
+    """
+    import json
+
+    try:
+        data = json.loads(_generation_sidecar_path(cache_dir).read_text(encoding="utf-8"))
+        return data.get("zst_generation"), data.get("plain_generation")
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+        return None
+
+
+def _write_recorded_generations(
+    cache_dir: Path, zst_gen: int | None, plain_gen: int | None
+) -> None:
+    """Best-effort atomic write of the last-downloaded GCS generations.
+
+    tempfile.mkstemp (same directory, so os.replace stays same-filesystem and
+    atomic) plus os.replace avoids a torn read from a concurrent reader. Every
+    failure is swallowed: this sidecar only ever saves a redundant re-download,
+    so a failed write must never surface as a download_cache_db failure.
+
+    Broad ``except Exception`` (not just OSError) to match the precedent this
+    sidecar is parallel to, ``_write_verified_sidecar`` in
+    ``src/jquants_mcp/cache/store.py`` (PR #578): disk-full, read-only
+    filesystem, or an unexpected serialization error must all be swallowed
+    rather than surfaced.
+    """
+    import json
+    import tempfile
+
+    sidecar = _generation_sidecar_path(cache_dir)
+    payload = {"zst_generation": zst_gen, "plain_generation": plain_gen}
+    try:
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(sidecar.parent), prefix=f".{sidecar.name}.", suffix=".tmp"
+        )
+    except Exception:
+        return
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        os.replace(tmp_name, sidecar)
+    except Exception:
+        try:
+            Path(tmp_name).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def download_cache_db() -> int:
     """Download cache.db from GCS, preferring the zstd-compressed object.
 
@@ -135,9 +230,22 @@ def download_cache_db() -> int:
     Cloud Run roll out independently: until the publisher writes ``.zst`` the
     fallback keeps startup working unchanged.
 
+    Skips the download entirely when the GCS generation of both objects is
+    unchanged since the last successful download and the local file is still
+    present -- this keeps a periodic poller (cache-poll.crontab) from
+    re-downloading (and atomically replacing, which always allocates a new
+    inode) an unchanged file on every tick. See jquants-mcp#579.
+
+    The generation pre-check is best-effort: if it fails (transient GCS
+    error), the function falls through to an unconditional download instead
+    of failing outright, so a metadata-only blip can never turn a healthy
+    tick into a reported download failure. The actual content download keeps
+    its own (unconditional) failure handling below.
+
     Returns:
-        The number of failures (0 on success or a first-run missing object, 1 on
-        a genuine download failure) so ``--init-cache`` can map it to the alert.
+        The number of failures (0 on success, an unchanged-generation skip, or
+        a first-run missing object, 1 on a genuine download failure) so
+        ``--init-cache`` can map it to the alert.
     """
     from google.cloud import storage  # type: ignore[import-untyped]
     from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
@@ -151,6 +259,30 @@ def download_cache_db() -> int:
     local_path = cache_dir / "cache.db"
     tmp_path = cache_dir / ".cache.db.download"
 
+    generations_known = True
+    try:
+        zst_gen, plain_gen = _fetch_current_generations(gcs_bucket, prefix)
+    except Exception as e:
+        # Broad on purpose, matching this file's other GCS call sites: a
+        # metadata-only pre-check blip must not abort the content download
+        # below. Fall through to an unconditional download instead so a
+        # transient get_blob error can never turn a healthy tick into a
+        # reported "download failed" (see docstring above, jquants-mcp#579).
+        logger.warning("Failed to check cache.db generation on GCS: %s", e)
+        generations_known = False
+        zst_gen = plain_gen = None
+    else:
+        if zst_gen is None and plain_gen is None:
+            logger.info("gs://%s/%scache.db(.zst) not found, skipping (first run?)", bucket, prefix)
+            return 0
+        if local_path.exists() and _read_recorded_generations(cache_dir) == (zst_gen, plain_gen):
+            logger.info(
+                "cache.db generation unchanged (zst=%s, plain=%s), skipping re-download",
+                zst_gen,
+                plain_gen,
+            )
+            return 0
+
     # 1. Preferred: compressed cache.db.zst, stream-decompressed.
     if stream_download_zst(gcs_bucket, f"{prefix}cache.db.zst", tmp_path):
         tmp_path.rename(local_path)
@@ -162,6 +294,8 @@ def download_cache_db() -> int:
             local_path,
             size_mb,
         )
+        if generations_known:
+            _write_recorded_generations(cache_dir, zst_gen, plain_gen)
         return 0
 
     # 2. Fallback: uncompressed cache.db.
@@ -173,6 +307,8 @@ def download_cache_db() -> int:
         logger.info(
             "Downloaded gs://%s/%scache.db -> %s (%.1f MB)", bucket, prefix, local_path, size_mb
         )
+        if generations_known:
+            _write_recorded_generations(cache_dir, zst_gen, plain_gen)
         return 0
     except NotFound:
         logger.info("gs://%s/%scache.db not found, skipping (first run?)", bucket, prefix)
