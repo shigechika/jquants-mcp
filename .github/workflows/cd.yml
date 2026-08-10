@@ -79,16 +79,6 @@ jobs:
       - if: steps.gate.outputs.should_deploy == 'true'
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Build app image
-        if: steps.gate.outputs.should_deploy == 'true'
-        id: build
-        run: |
-          set -eu
-          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
-          IMAGE="us-west1-docker.pkg.dev/${{ vars.GCP_PROJECT }}/cloud-run-source-deploy/jquants:${SHA}"
-          gcloud builds submit --tag "$IMAGE" --project ${{ vars.GCP_PROJECT }} .
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-
       # This service (oauth2-proxy sidecar + app, jquants-mcp#570/#585) is
       # structurally different from the single-container deploy this job used
       # to target: min-instances=0 is load-bearing (jquants-mcp#584 — cold
@@ -102,19 +92,32 @@ jobs:
       # CPU flags to this step; if a setting genuinely needs to change, do it
       # deliberately in its own reviewed step, not as a side effect of an
       # image bump.
-      - name: Snapshot billing-relevant settings (pre-deploy)
+      # Checked against fixed expected values, not a pre/post diff: a diff
+      # alone would pass silently if the service was *already* misconfigured
+      # before this run started (the exact incident this guard exists for —
+      # an out-of-band `gcloud` change persists across every deploy that
+      # merely confirms "nothing changed"). Run before the build too, so a
+      # pre-existing drift fails fast instead of deploying on top of it.
+      #   minScale: the annotation is absent (empty string) when scale-to-zero
+      #   is in effect — Cloud Run does not write "0" explicitly.
+      - name: Assert billing-relevant settings (pre-deploy)
         if: steps.gate.outputs.should_deploy == 'true'
-        id: pre
+        env:
+          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          CLOUDRUN_SERVICE: ${{ vars.CLOUDRUN_SERVICE }}
+        run: |
+          .github/workflows/scripts/assert-jquants-billing-settings.sh pre-deploy
+
+      - name: Build app image
+        if: steps.gate.outputs.should_deploy == 'true'
+        id: build
         run: |
           set -eu
-          read -r MINSCALE MAXSCALE THROTTLE < <(gcloud run services describe ${{ vars.CLOUDRUN_SERVICE }} \
-            --project ${{ vars.GCP_PROJECT }} \
-            --region ${{ vars.GCP_REGION }} \
-            --format="value(spec.template.metadata.annotations['autoscaling.knative.dev/minScale'],spec.template.metadata.annotations['autoscaling.knative.dev/maxScale'],spec.template.metadata.annotations['run.googleapis.com/cpu-throttling'])")
-          echo "minscale=$MINSCALE" >> "$GITHUB_OUTPUT"
-          echo "maxscale=$MAXSCALE" >> "$GITHUB_OUTPUT"
-          echo "throttle=$THROTTLE" >> "$GITHUB_OUTPUT"
-          echo "Pre-deploy: minScale='$MINSCALE' maxScale='$MAXSCALE' cpu-throttling='$THROTTLE'"
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          IMAGE="us-west1-docker.pkg.dev/${{ vars.GCP_PROJECT }}/cloud-run-source-deploy/jquants:${SHA}"
+          gcloud builds submit --tag "$IMAGE" --project ${{ vars.GCP_PROJECT }} .
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
       - name: Deploy to Cloud Run (app container image only)
         if: steps.gate.outputs.should_deploy == 'true'
@@ -125,27 +128,14 @@ jobs:
             --container app \
             --image ${{ steps.build.outputs.image }}
 
-      - name: Assert billing-relevant settings unchanged (post-deploy)
+      - name: Assert billing-relevant settings (post-deploy)
         if: steps.gate.outputs.should_deploy == 'true'
+        env:
+          GCP_PROJECT: ${{ vars.GCP_PROJECT }}
+          GCP_REGION: ${{ vars.GCP_REGION }}
+          CLOUDRUN_SERVICE: ${{ vars.CLOUDRUN_SERVICE }}
         run: |
-          set -eu
-          read -r MINSCALE MAXSCALE THROTTLE < <(gcloud run services describe ${{ vars.CLOUDRUN_SERVICE }} \
-            --project ${{ vars.GCP_PROJECT }} \
-            --region ${{ vars.GCP_REGION }} \
-            --format="value(spec.template.metadata.annotations['autoscaling.knative.dev/minScale'],spec.template.metadata.annotations['autoscaling.knative.dev/maxScale'],spec.template.metadata.annotations['run.googleapis.com/cpu-throttling'])")
-          echo "Post-deploy: minScale='$MINSCALE' maxScale='$MAXSCALE' cpu-throttling='$THROTTLE'"
-          if [[ "$MINSCALE" != "${{ steps.pre.outputs.minscale }}" ]] || \
-             [[ "$MAXSCALE" != "${{ steps.pre.outputs.maxscale }}" ]] || \
-             [[ "$THROTTLE" != "${{ steps.pre.outputs.throttle }}" ]]; then
-            echo "::error::Billing-relevant settings drifted during deploy \
-          (minScale '${{ steps.pre.outputs.minscale }}' -> '$MINSCALE', \
-          maxScale '${{ steps.pre.outputs.maxscale }}' -> '$MAXSCALE', \
-          cpu-throttling '${{ steps.pre.outputs.throttle }}' -> '$THROTTLE'). \
-          This deploy step must only change the app container's image; \
-          investigate before deploying again."
-            exit 1
-          fi
-          echo "Billing settings unchanged."
+          .github/workflows/scripts/assert-jquants-billing-settings.sh post-deploy
 
       - name: Verify Cloud Run deployment
         if: steps.gate.outputs.should_deploy == 'true'
