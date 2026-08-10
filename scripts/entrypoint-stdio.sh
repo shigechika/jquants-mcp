@@ -6,16 +6,26 @@
 # Workflow:
 #   1. Download auth DBs from GCS (small, fast)
 #   2. Download cache.db from GCS *synchronously*, before the server starts
-#   3. Start supercronic for periodic cache.db re-download (replaces the
-#      Pub/Sub-pushed /internal/reload custom_route, which does not exist on
-#      a stdio-only server — there is no HTTP route for mcp-stdio to forward
-#      a push to, so this service polls GCS on a timer instead)
-#   4. Start mcp-stdio serve (fronts the stdio jquants-mcp child over HTTP;
+#   3. Start mcp-stdio serve (fronts the stdio jquants-mcp child over HTTP;
 #      oauth2-proxy sits in front of this as a Cloud Run sidecar and is not
 #      started here)
-#   5. Start background GCS sync daemon (users.db + oauth_state.db upload only)
-#   6. On SIGTERM: stop mcp-stdio serve, stop supercronic, stop the daemon
-#      (triggers its final GCS upload)
+#   4. Start background GCS sync daemon (users.db + oauth_state.db upload only)
+#   5. On SIGTERM: stop mcp-stdio serve, stop the daemon (triggers its final
+#      GCS upload)
+#
+# Cache freshness model (no in-container update mechanism, jquants-mcp#584):
+# this service runs with min-instances=0, so an idle instance is torn down
+# and every cold start re-runs Step 2 — a served request is therefore always
+# backed by the cache.db that was current when the instance started. The
+# publisher exports to GCS once per weekday (~17:32 JST). The only window a
+# refresh mechanism could ever help is an instance that stays warm *across*
+# that export, and there the server already degrades correctly: missing days
+# fall through to the live J-Quants API (slower, consumes the user's plan
+# quota, but correct), and the next instance recycle restores a fresh cache.
+# An earlier 15-minute supercronic poll (cache-poll.crontab, removed) spent a
+# full ~5s PRAGMA quick_check on all 96 daily ticks to cover that one window;
+# see jquants-mcp#584 for the measurements and the push-based alternatives
+# that were considered and rejected.
 #
 # Why the cache.db download is synchronous (Step 2): under Cloud Run
 # request-based billing the CPU is throttled to ~0 between requests, so a
@@ -55,12 +65,13 @@ if [ -n "${GCS_BUCKET:-}" ]; then
 
     # Pre-warm the integrity-check sidecar for the freshly downloaded (new
     # inode) cache.db, backgrounded so it does not delay mcp-stdio serve's
-    # startup below. Same --no-cpu-throttling dependency as
-    # cache-poll.crontab's chained invocation. Intentionally untracked: it
-    # is short-lived (~4-6s) and not added to _shutdown's tracked PID list
-    # below — waiting on it would only delay container teardown for no
-    # benefit, since Cloud Run reaps any stray process when the container
-    # exits.
+    # startup below. Requires --no-cpu-throttling (CPU always allocated) to
+    # finish promptly: it runs after the port is bound, so under
+    # request-based throttling it would be CPU-starved between requests.
+    # Intentionally untracked: it is short-lived (~4-6s) and not added to
+    # _shutdown's tracked PID list below — waiting on it would only delay
+    # container teardown for no benefit, since Cloud Run reaps any stray
+    # process when the container exits.
     python /app/scripts/verify_cache.py &
 else
     echo "GCS_BUCKET not set, skipping GCS downloads"
@@ -69,7 +80,6 @@ fi
 # Step 3: SIGTERM / SIGINT handler
 GCS_DAEMON_PID=""
 SERVE_PID=""
-SUPERCRONIC_PID=""
 
 _shutdown() {
     echo "Received shutdown signal"
@@ -78,12 +88,6 @@ _shutdown() {
         echo "Stopping mcp-stdio serve (PID=${SERVE_PID})..."
         kill -TERM "${SERVE_PID}" 2>/dev/null || true
         wait "${SERVE_PID}" 2>/dev/null || true
-    fi
-
-    if [ -n "${SUPERCRONIC_PID:-}" ]; then
-        echo "Stopping supercronic (PID=${SUPERCRONIC_PID})..."
-        kill -TERM "${SUPERCRONIC_PID}" 2>/dev/null || true
-        wait "${SUPERCRONIC_PID}" 2>/dev/null || true
     fi
 
     if [ -n "${GCS_DAEMON_PID:-}" ]; then
@@ -98,19 +102,7 @@ _shutdown() {
 
 trap _shutdown SIGTERM SIGINT
 
-# Step 4: Start supercronic for periodic cache.db re-download (opt-in via the
-# same GCS_BUCKET gate as the synchronous download above — nothing to poll
-# without a bucket). REQUIRES the service to be deployed with
-# --no-cpu-throttling (CPU always allocated) — see cache-poll.crontab's
-# header for why request-based throttling breaks this.
-if [ -n "${GCS_BUCKET:-}" ]; then
-    echo "Starting supercronic for periodic cache.db re-download..."
-    supercronic /app/scripts/cache-poll.crontab &
-    SUPERCRONIC_PID=$!
-    echo "supercronic started (PID=${SUPERCRONIC_PID})"
-fi
-
-# Step 5: Start mcp-stdio serve (cache.db already downloaded in Step 2, or
+# Step 4: Start mcp-stdio serve (cache.db already downloaded in Step 2, or
 # live-API fallback if the download was skipped/failed). oauth2-proxy is a
 # separate sidecar container in front of this one on Cloud Run; it is not
 # started here.
@@ -147,7 +139,7 @@ mcp-stdio serve \
 SERVE_PID=$!
 echo "mcp-stdio serve started (PID=${SERVE_PID})"
 
-# Step 6: Start GCS sync daemon (uploads users.db + oauth_state.db only)
+# Step 5: Start GCS sync daemon (uploads users.db + oauth_state.db only)
 if [ -n "${GCS_BUCKET:-}" ]; then
     echo "Starting GCS sync daemon..."
     python /app/scripts/gcs_sync.py --daemon &
@@ -162,10 +154,6 @@ echo "mcp-stdio serve exited with code ${SERVE_EXIT}"
 
 # If serve exited on its own (not via SIGTERM), stop the other background
 # processes and exit with the same code.
-if [ -n "${SUPERCRONIC_PID:-}" ]; then
-    kill -TERM "${SUPERCRONIC_PID}" 2>/dev/null || true
-    wait "${SUPERCRONIC_PID}" 2>/dev/null || true
-fi
 if [ -n "${GCS_DAEMON_PID:-}" ]; then
     kill -TERM "${GCS_DAEMON_PID}" 2>/dev/null || true
     wait "${GCS_DAEMON_PID}" 2>/dev/null || true

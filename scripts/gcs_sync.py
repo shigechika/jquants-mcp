@@ -310,10 +310,18 @@ def download_cache_db() -> int:
     Skips the download entirely when the GCS generation of the object that
     would actually be used (mirroring the same zst-then-fallback precedence
     below -- see ``_fetch_effective_generation``) is unchanged since the
-    last successful download and the local file is still present -- this
-    keeps a periodic poller (cache-poll.crontab) from re-downloading (and
-    atomically replacing, which always allocates a new inode) an unchanged
-    file on every tick. See jquants-mcp#579, jquants-mcp#581.
+    last successful download and the local file is still present, avoiding a
+    redundant transfer and the atomic replace that always allocates a new
+    inode (which would invalidate ``CacheStore``'s integrity sidecar). See
+    jquants-mcp#579, jquants-mcp#581.
+
+    On Cloud Run this skip is effectively dormant: the periodic poller it was
+    written for is gone (jquants-mcp#584) and a cold start always begins with
+    an empty cache dir, so the local-file check fails and the download runs.
+    It stays because it is still correct and load-bearing wherever the script
+    IS re-run against a populated cache dir -- repeat ``--init-cache``
+    invocations during development, and any future re-introduction of a
+    periodic or push-triggered refresh.
 
     The generation pre-check is best-effort: if it fails (transient GCS
     error), the function falls through to an unconditional download instead
