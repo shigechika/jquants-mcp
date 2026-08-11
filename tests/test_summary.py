@@ -128,6 +128,7 @@ def _insert_fins(
     nxfdivann: float | None = None,
     cur_per_type: str = "FY",
     fy_end: str = "2026-03-31",
+    roe: float | None = None,
 ) -> None:
     data = {
         "Code": code,
@@ -146,6 +147,8 @@ def _insert_fins(
         data["FDivAnn"] = fdivann
     if nxfdivann is not None:
         data["NxFDivAnn"] = nxfdivann
+    if roe is not None:
+        data["ROE"] = roe
     conn.execute(
         "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
         (code, disc_date, json.dumps(data), time.time()),
@@ -272,12 +275,63 @@ class TestGetStockBriefing:
         assert val["pbr"] == pytest.approx(1.05, rel=1e-3)
 
     async def test_valuation_roe(self, mock_env):
+        """No native ROE in the cached row (mock_env's fixture omits it) --
+        falls back to the EPS/BPS approximation, covering rows cached before
+        jquants-api-client>=2.4.0 (#565)."""
         result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"})
         data = _call(result)
 
         val = data["valuation"]
         # ROE = EPS / BPS * 100 = 100 / 1000 * 100 = 10.0
         assert val["roe"] == pytest.approx(10.0, rel=1e-3)
+
+    async def test_valuation_roe_prefers_native_field(self, tmp_path):
+        """#565: the native ROE field (stored as a fraction) wins over the
+        EPS/BPS approximation when both are present and disagree."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "13030", "2026-05-02", 500.0)
+        _insert_master(conn, "13030", "Native ROE Corp")
+        # EPS/BPS approximation would give 100/1000*100 = 10.0; native says 15.8%.
+        _insert_fins(conn, "13030", "2026-05-01", eps=100.0, bps=1000.0, roe=0.158)
+        conn.commit()
+        conn.close()
+
+        settings = Settings()
+        settings.jquants_plan = "premium"
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_cache", cache),
+        ):
+            result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13030"})
+            data = _call(result)
+
+        cache.close()
+        assert data["valuation"]["roe"] == pytest.approx(15.8, rel=1e-3)
+
+    async def test_valuation_roe_native_ignores_eps_guard(self, tmp_path):
+        """#565: the native ROE field is used as-is even when EPS <= 0 --
+        unlike the EPS/BPS approximation, it needs no positivity guard."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "13040", "2026-05-02", 500.0)
+        _insert_master(conn, "13040", "Native ROE Loss Corp")
+        _insert_fins(conn, "13040", "2026-05-01", eps=-50.0, bps=800.0, roe=0.05)
+        conn.commit()
+        conn.close()
+
+        settings = Settings()
+        settings.jquants_plan = "premium"
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_cache", cache),
+        ):
+            result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13040"})
+            data = _call(result)
+
+        cache.close()
+        assert data["valuation"]["per"] is None  # unaffected: EPS <= 0
+        assert data["valuation"]["roe"] == pytest.approx(5.0, rel=1e-3)
 
     async def test_dividend_yield(self, mock_env):
         result = await server_module.mcp.call_tool("get_stock_briefing", {"code": "13010"})

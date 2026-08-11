@@ -115,8 +115,19 @@ def register(
                 buckets[sec_code]["pers"].append(close / eps_adj)
             if bps_adj is not None and bps_adj > 0:
                 buckets[sec_code]["pbrs"].append(close / bps_adj)
-            # ROE = EPS / BPS — split factor cancels, so use raw values
-            if eps_raw is not None and bps_raw is not None and bps_raw > 0:
+            # ROE: prefer the native field (jquants-api-client>=2.4.0, #565),
+            # a plain ratio needing no split adjustment (stored as a
+            # fraction: 0.158 == 15.8%). Falls back to the EPS/BPS
+            # approximation for rows cached before the upstream fix landed
+            # (2026-08-07) or otherwise missing the native value --
+            # daily_fetch.py only re-fetches a rolling 7-day window, so
+            # older cached rows keep the pre-fix empty ROE permanently until
+            # re-fetched. Matches the existing guard: no eps_raw>0
+            # requirement, unlike per/pbr above.
+            native_roe = float_or_none(fins_row.get("ROE"))
+            if native_roe is not None:
+                buckets[sec_code]["roes"].append(native_roe * 100)
+            elif eps_raw is not None and bps_raw is not None and bps_raw > 0:
                 buckets[sec_code]["roes"].append(eps_raw / bps_raw * 100)
 
             margin_row = margin_map.get(code)

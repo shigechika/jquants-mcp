@@ -157,8 +157,19 @@ def register(
             if adj_close and bps and bps > 0:
                 pbr = round(adj_close / bps, 2)
 
-            # ROE: split factor cancels in the ratio (AdjEPS / AdjBPS = EPS_raw / BPS_raw)
-            if eps is not None and bps is not None and bps > 0 and eps > 0:
+            # ROE: prefer the native field (jquants-api-client>=2.4.0, #565) --
+            # it's a plain ratio (net income / equity), so unlike EPS/BPS it
+            # needs no split adjustment and survives _apply_split_adjustment
+            # untouched. Stored as a fraction (0.158 == 15.8%). Falls back to
+            # the EPS/BPS approximation for rows cached before the upstream
+            # fix landed (2026-08-07) or otherwise missing the native value:
+            # daily_fetch.py only re-fetches a rolling 7-day window
+            # (FINS_LOOKBACK_DAYS), so older cached rows keep the pre-fix
+            # empty ROE permanently until re-fetched.
+            native_roe = float_or_none(row.get("ROE"))
+            if native_roe is not None:
+                roe = round(native_roe * 100, 2)
+            elif eps is not None and bps is not None and bps > 0 and eps > 0:
                 roe = round(eps / bps * 100, 2)
 
         # --- 4. Dividend yield -------------------------------------------------------
