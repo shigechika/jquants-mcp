@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP
 
 from ..cache.store import CacheStore, TTL_6H, make_cache_key
 from ..tool_annotations import READ_ONLY_CACHE
-from ..validators import float_or_none, make_validation_error_response
+from ..validators import float_or_none, make_validation_error_response, resolve_roe_pct
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,9 @@ def register(
         """Return sector-level median PER, PBR, ROE, and margin ratio (業種別ブリーフィング). All plans.
 
         Use for セクターバリュエーション・業種別PER/PBR・割安セクター・業種別信用倍率 queries.
-        PER/ROE exclude net-loss stocks (EPS≤0); PBR excludes negative-book stocks.
+        PER excludes net-loss stocks (EPS≤0); PBR excludes negative-book stocks. ROE
+        excludes net-loss stocks only when falling back to the EPS/BPS approximation --
+        a stock with a native ROE value is included in the median regardless of EPS sign.
         See also get_market_briefing (market-wide), get_stock_briefing (single stock),
         get_sector_performance (騰落率).
 
@@ -115,20 +117,16 @@ def register(
                 buckets[sec_code]["pers"].append(close / eps_adj)
             if bps_adj is not None and bps_adj > 0:
                 buckets[sec_code]["pbrs"].append(close / bps_adj)
-            # ROE: prefer the native field (jquants-api-client>=2.4.0, #565),
-            # a plain ratio needing no split adjustment (stored as a
-            # fraction: 0.158 == 15.8%). Falls back to the EPS/BPS
-            # approximation for rows cached before the upstream fix landed
-            # (2026-08-07) or otherwise missing the native value --
-            # daily_fetch.py only re-fetches a rolling 7-day window, so
-            # older cached rows keep the pre-fix empty ROE permanently until
-            # re-fetched. Matches the existing guard: no eps_raw>0
-            # requirement, unlike per/pbr above.
-            native_roe = float_or_none(fins_row.get("ROE"))
-            if native_roe is not None:
-                buckets[sec_code]["roes"].append(native_roe * 100)
-            elif eps_raw is not None and bps_raw is not None and bps_raw > 0:
-                buckets[sec_code]["roes"].append(eps_raw / bps_raw * 100)
+            # ROE: see resolve_roe_pct's docstring for the native-vs-fallback
+            # rationale. Uses raw (not split-adjusted) EPS/BPS for the
+            # fallback -- the split factor cancels in the ratio -- and, unlike
+            # per/pbr above, never required eps_raw > 0 even before this
+            # native-field change.
+            roe_pct = resolve_roe_pct(
+                fins_row.get("ROE"), eps_raw, bps_raw, require_eps_positive=False
+            )
+            if roe_pct is not None:
+                buckets[sec_code]["roes"].append(roe_pct)
 
             margin_row = margin_map.get(code)
             if margin_row:

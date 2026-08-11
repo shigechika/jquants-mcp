@@ -16,6 +16,7 @@ from ..validators import (
     float_or_none,
     make_validation_error_response,
     normalize_code,
+    resolve_roe_pct,
     validate_code,
 )
 from .financials import _annotate_fiscal_period, _apply_split_adjustment
@@ -44,8 +45,10 @@ def register(
         """One-page briefing for a single stock: price, financials, valuation, and margin (株式ブリーフィング). All plans.
 
         Returns latest price, FY financials, PER/PBR/dividend yield, margin ratio, and
-        sector short-sale ratio. PER/ROE null when EPS≤0. Margin fields null without
-        Standard/Premium cache. See also get_sector_briefing, get_market_briefing.
+        sector short-sale ratio. PER null when EPS≤0. ROE null when EPS≤0 and no native
+        ROE is cached; when a native ROE value is present it is returned regardless of
+        EPS sign (a net-loss period can still report a native ROE). Margin fields null
+        without Standard/Premium cache. See also get_sector_briefing, get_market_briefing.
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no live API call)
 
@@ -157,20 +160,12 @@ def register(
             if adj_close and bps and bps > 0:
                 pbr = round(adj_close / bps, 2)
 
-            # ROE: prefer the native field (jquants-api-client>=2.4.0, #565) --
-            # it's a plain ratio (net income / equity), so unlike EPS/BPS it
-            # needs no split adjustment and survives _apply_split_adjustment
-            # untouched. Stored as a fraction (0.158 == 15.8%). Falls back to
-            # the EPS/BPS approximation for rows cached before the upstream
-            # fix landed (2026-08-07) or otherwise missing the native value:
-            # daily_fetch.py only re-fetches a rolling 7-day window
-            # (FINS_LOOKBACK_DAYS), so older cached rows keep the pre-fix
-            # empty ROE permanently until re-fetched.
-            native_roe = float_or_none(row.get("ROE"))
-            if native_roe is not None:
-                roe = round(native_roe * 100, 2)
-            elif eps is not None and bps is not None and bps > 0 and eps > 0:
-                roe = round(eps / bps * 100, 2)
+            # ROE: see resolve_roe_pct's docstring for the native-vs-fallback
+            # rationale. This tool requires eps > 0 for the fallback, matching
+            # the PER guard above.
+            roe_pct = resolve_roe_pct(row.get("ROE"), eps, bps, require_eps_positive=True)
+            if roe_pct is not None:
+                roe = round(roe_pct, 2)
 
         # --- 4. Dividend yield -------------------------------------------------------
         div_yield: float | None = None

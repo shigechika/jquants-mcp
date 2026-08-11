@@ -217,3 +217,50 @@ def float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def resolve_roe_pct(
+    native_roe: Any,
+    eps: float | None,
+    bps: float | None,
+    *,
+    require_eps_positive: bool = True,
+) -> float | None:
+    """Resolve an ROE percentage (unrounded) for a fins_summary row.
+
+    Prefers the native ``ROE`` field (jquants-api-client>=2.4.0, #565): it's
+    a plain ratio (net income / equity), so unlike EPS/BPS it needs no split
+    adjustment. Stored as a fraction (0.158 == 15.8%), so it's returned
+    unconditionally when present -- including for a net-loss period
+    (eps<=0), which the EPS/BPS fallback below cannot represent.
+
+    Falls back to the EPS/BPS approximation for rows cached before the
+    upstream fix landed (2026-08-07) or otherwise missing the native value:
+    ``daily_fetch.py`` only re-fetches a rolling 7-day window
+    (``FINS_LOOKBACK_DAYS``), so older cached rows keep the pre-fix empty
+    ROE permanently until re-fetched.
+
+    Args:
+        native_roe: Raw ``ROE`` field from a fins_summary row (may be a
+            string, number, empty string, or None).
+        eps: Earnings per share (already split-adjusted where applicable).
+        bps: Book value per share (already split-adjusted where applicable).
+        require_eps_positive: Whether the EPS/BPS fallback additionally
+            requires eps > 0. Callers differ here: get_stock_briefing
+            requires it (matches its PER guard); get_sector_briefing's
+            existing ROE bucket never required it (only bps > 0), unlike
+            its PER bucket -- preserved as-is, not changed by this function.
+
+    Returns:
+        ROE as a percentage (e.g. 15.8), not rounded -- callers round at
+        the point that matches their own precision needs (immediately vs.
+        after aggregating into a median). None if no value is resolvable.
+    """
+    roe = float_or_none(native_roe)
+    if roe is not None:
+        return roe * 100
+    if eps is None or bps is None or bps <= 0:
+        return None
+    if require_eps_positive and eps <= 0:
+        return None
+    return eps / bps * 100

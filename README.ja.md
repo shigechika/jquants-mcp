@@ -689,7 +689,7 @@ jquants-mcp -t streamable-http --port 8080 \
 
 | ツール名 | 説明 |
 |---|---|
-| `get_stock_briefing` | 単銘柄ブリーフィング（株式ブリーフィング）: 最新株価（終値・変化率・出来高・OHLC）、直近 FY 財務（売上・営業利益・純利益）、バリュエーション指標（PER・PBR・ROE・EPS・BPS・配当利回り）を 1 回で返す。すべて分割調整済み。EPS ≤ 0（赤字期）は PER・ROE を null、開示日が 18 ヶ月超の DivAnn は配当利回りを null とする。 |
+| `get_stock_briefing` | 単銘柄ブリーフィング（株式ブリーフィング）: 最新株価（終値・変化率・出来高・OHLC）、直近 FY 財務（売上・営業利益・純利益）、バリュエーション指標（PER・PBR・ROE・EPS・BPS・配当利回り）を 1 回で返す。すべて分割調整済み。EPS ≤ 0（赤字期）は PER を null とする。ROE は、キャッシュにネイティブ ROE 値が無い場合のみ EPS ≤ 0 で null とする（ネイティブ ROE がある場合は EPS の符号に関わらずその値を返す）。開示日が 18 ヶ月超の DivAnn は配当利回りを null とする。 |
 
 ### テクニカル指標 (Technical Indicators) — 1ツール
 
