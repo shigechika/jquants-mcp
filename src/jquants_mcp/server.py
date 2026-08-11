@@ -173,10 +173,6 @@ _plan_detected: bool = False
 # Run cleanup at most once every 5 minutes.
 _CLEANUP_INTERVAL = 300
 
-# Pub/Sub reload state
-_last_reload_at: float | None = None
-_reload_in_progress: bool = False
-
 # User store — lazily initialized when encryption_key is configured.
 # Backend is SQLite (local) or Firestore (Cloud Run); both share the same
 # duck-typed interface, so the concrete type is not annotated here.
@@ -232,140 +228,6 @@ def _sighup_handler(signum: int, frame: Any) -> None:
         _cache.request_reload()
     else:
         logger.info("Cache DB not yet initialized; reload is a no-op")
-
-
-def _verify_pubsub_oidc_token(token: str, expected_email: str, audience: str) -> None:
-    """Verify a Google-signed OIDC token delivered by Pub/Sub.
-
-    Args:
-        token: Raw JWT string from the Authorization header.
-        expected_email: Service-account email that must match the token's ``email`` claim.
-        audience: Expected ``aud`` claim (typically the push endpoint URL).
-
-    Raises:
-        ValueError: When verification fails or the email / audience does not match.
-    """
-    try:
-        import google.auth.transport.requests  # type: ignore[import-untyped]
-        import google.oauth2.id_token  # type: ignore[import-untyped]
-    except ImportError as exc:
-        raise ValueError("google-auth not installed; install [cloud-run] extras") from exc
-
-    if not audience:
-        raise ValueError("audience must not be empty")
-
-    request = google.auth.transport.requests.Request()
-    try:
-        claims: dict[str, Any] = google.oauth2.id_token.verify_oauth2_token(
-            token, request, audience=audience
-        )
-    except Exception as exc:
-        raise ValueError(f"OIDC token verification failed: {exc}") from exc
-
-    if not claims.get("email_verified", False):
-        raise ValueError("OIDC token email not verified")
-
-    email = claims.get("email", "")
-    if email != expected_email:
-        raise ValueError(f"OIDC token email {email!r} does not match expected {expected_email!r}")
-
-
-def _download_cache_db_from_gcs() -> None:
-    """Download cache.db from GCS to the local cache directory (blocking).
-
-    Prefers the zstd-compressed ``cache.db.zst`` (stream-decompressed) and falls
-    back to the uncompressed ``cache.db`` when it is absent. Uses atomic write:
-    downloads to ``.cache.db.reload`` then renames to ``cache.db`` to prevent the
-    MCP server from reading a half-written file.
-
-    Raises:
-        RuntimeError: When ``GCS_BUCKET`` is not set or the object is not found.
-    """
-    from pathlib import Path
-
-    bucket_name = os.environ.get("GCS_BUCKET", "")
-    if not bucket_name:
-        raise RuntimeError("GCS_BUCKET environment variable is not set")
-
-    from google.cloud import storage as gcs  # type: ignore[import-untyped]
-    from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
-
-    prefix = os.environ.get("GCS_PREFIX", "jquants-mcp/")
-    if prefix and not prefix.endswith("/"):
-        prefix += "/"
-
-    cache_dir = Path(os.environ.get("JQUANTS_CACHE_DIR", "/tmp"))
-    local_path = cache_dir / "cache.db"
-    # Distinct from gcs_sync.py's ".cache.db.download" temp name so the
-    # Pub/Sub reload download can never collide with the entrypoint's
-    # startup download (they target the same cache.db / cache_dir).
-    tmp_path = cache_dir / ".cache.db.reload"
-
-    from .cache.gcs_download import stream_download_zst
-
-    client = gcs.Client()
-    bucket = client.bucket(bucket_name)
-
-    # 1. Preferred: compressed cache.db.zst, stream-decompressed.
-    if stream_download_zst(bucket, f"{prefix}cache.db.zst", tmp_path):
-        tmp_path.rename(local_path)
-        size_mb = local_path.stat().st_size / 1024 / 1024
-        logger.info("Downloaded+decompressed cache.db.zst from GCS (%.1f MB)", size_mb)
-        return
-
-    # 2. Fallback: uncompressed cache.db.
-    blob_name = f"{prefix}cache.db"
-    blob = bucket.blob(blob_name)
-    logger.info("Downloading gs://%s/%s ...", bucket_name, blob_name)
-    try:
-        blob.download_to_filename(str(tmp_path))
-    except NotFound as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise RuntimeError(f"gs://{bucket_name}/{blob_name} not found") from exc
-    except Exception as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise RuntimeError(f"GCS download failed: {exc}") from exc
-
-    tmp_path.rename(local_path)
-    size_mb = local_path.stat().st_size / 1024 / 1024
-    logger.info("Downloaded cache.db from GCS (%.1f MB)", size_mb)
-
-
-async def _reload_cache_background() -> bool:
-    """Download cache.db from GCS then request a lazy reload.
-
-    When ``GCS_BUCKET`` is not set (local dev), skips the download and just
-    flips the lazy-reconnect flag — behaves like SIGHUP.
-
-    Returns:
-        True when the reload succeeded, or was skipped because another reload
-        is already in progress (a duplicate Pub/Sub delivery). False when the
-        download or reconnect failed — the caller maps False to a non-2xx so
-        Pub/Sub redelivers instead of dropping the published snapshot.
-    """
-    global _reload_in_progress, _last_reload_at
-
-    if _reload_in_progress:
-        logger.info("Pub/Sub reload: already in progress, ignoring duplicate request")
-        return True
-
-    _reload_in_progress = True
-    try:
-        if os.environ.get("GCS_BUCKET"):
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _download_cache_db_from_gcs)
-        else:
-            logger.info("GCS_BUCKET not set; skipping download, flagging lazy reconnect only")
-
-        _get_cache().request_reload()
-        _last_reload_at = time.time()
-        logger.info("Cache reload scheduled (last_reload_at=%.3f)", _last_reload_at)
-        return True
-    except Exception as exc:
-        logger.error("Cache reload failed: %s", exc)
-        return False
-    finally:
-        _reload_in_progress = False
 
 
 @mcp.custom_route("/.well-known/oauth-protected-resource/mcp", methods=["GET", "OPTIONS"])
@@ -432,70 +294,6 @@ async def _handle_openid_configuration(request: Request) -> Response:
             content='{"error":"service unavailable"}',
             media_type="application/json",
         )
-
-
-@mcp.custom_route("/internal/reload", methods=["POST"])
-async def _handle_pubsub_reload(request: Request) -> Response:
-    """Accept a GCS Pub/Sub push notification and schedule a cache.db reload.
-
-    Security: when ``PUBSUB_INVOKER_SA`` is configured, the endpoint verifies
-    the Google-signed OIDC token delivered in the ``Authorization`` header.
-    The audience must match ``PUBSUB_AUDIENCE`` (or defaults to the request URL).
-
-    The cache.db download runs synchronously, before the 200 is returned, so
-    the work happens while this push request is still active. Under request-based
-    billing (CPU throttled between requests) a detached background task would be
-    CPU-starved the instant the handler returned and could die at scale-to-zero,
-    leaving a freshly published cache.db unloaded. The push subscription's ack
-    deadline must therefore exceed the download time
-    (see ops/pubsub/setup.md: ``--ack-deadline=180``); the ``_reload_in_progress``
-    guard dedups any Pub/Sub redelivery that a slow download might trigger.
-
-    On a download/reconnect failure the handler returns 500 so Pub/Sub redelivers
-    (bounded by the subscription's message-retention) rather than dropping the
-    published snapshot and waiting for the next cold-start re-download.
-    """
-    expected_sa = os.environ.get("PUBSUB_INVOKER_SA", "")
-    if expected_sa:
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            logger.warning("Pub/Sub reload: missing or malformed Authorization header")
-            return Response(
-                content='{"error":"missing token"}',
-                status_code=401,
-                media_type="application/json",
-            )
-
-        raw_token = auth_header[len("Bearer ") :]
-        audience = os.environ.get("PUBSUB_AUDIENCE", str(request.url))
-
-        try:
-            await asyncio.get_running_loop().run_in_executor(
-                None, _verify_pubsub_oidc_token, raw_token, expected_sa, audience
-            )
-        except ValueError as exc:
-            logger.warning("Pub/Sub reload: OIDC verification failed: %s", exc)
-            return Response(
-                content='{"error":"unauthorized"}',
-                status_code=403,
-                media_type="application/json",
-            )
-    else:
-        logger.debug("PUBSUB_INVOKER_SA not set; skipping OIDC verification")
-
-    # Await the download here (rather than a detached create_task) so it runs
-    # under the allocated CPU of this active push request — see the docstring.
-    if not await _reload_cache_background():
-        return Response(
-            content='{"status":"reload failed"}',
-            status_code=500,
-            media_type="application/json",
-        )
-    return Response(
-        content='{"status":"reloaded"}',
-        status_code=200,
-        media_type="application/json",
-    )
 
 
 def _get_rate_limiter():
@@ -804,7 +602,6 @@ def _health_check_impl() -> dict[str, Any]:
         "latest_cache_date": latest_date,
         "trading_date_today": trading_today,
         "today_cache_ready": today_cache_ready,
-        "last_reload_at": _last_reload_at,
     }
 
 
