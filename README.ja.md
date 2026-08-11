@@ -161,6 +161,10 @@ jquants-mcp は **stdio トランスポート専用**で、ネットワークソ
 ゲートウェイ構成では、認証済みユーザーの識別子（検証済み email）が環境変数 `JQUANTS_MCP_USER` として子プロセスに注入されます（`mcp-stdio serve --trusted-user-header X-Forwarded-Email --user-env JQUANTS_MCP_USER`）。1 つの子プロセスは生存期間を通じて 1 ユーザーだけを担当し、サーバーはこの値を検証済みの email として扱って `JQUANTS_ALLOWED_EMAILS` の許可リスト判定・ユーザーごとのレート制限・保存済み API キーの参照に用います。`JQUANTS_MCP_USER` が未設定の場合はシングルユーザーとして扱われ、共通の `JQUANTS_API_KEY` とデフォルトプランで動作します。
 
 > **信頼モデル**: `JQUANTS_MCP_USER` は検証なしでそのまま信頼されます。サーバー自身は一切の検証を行いません。つまり**子プロセスの環境変数を設定できる者は、そのままそのユーザーになれます**。この変数は必ずゲートウェイが注入するものであり、ユーザー入力に由来する値を渡してはいけません。
+>
+> **`--trusted-user-header` を使う場合、前段には TLS 終端だけのプロキシではなく「認証を行うプロキシ」が必須です。** ゲートウェイはこのヘッダを検証せずに信頼するため、素の TLS プロキシのようにクライアントのヘッダをそのまま通す構成だと、誰でも `X-Forwarded-Email: victim@example.com` を送って他人として振る舞い、その人の保存済み API キーに到達できます。前段のプロキシが**呼び出し元を認証し、クライアントが送ってきた値を破棄して検証済みの identity で上書きする**必要があります（`oauth2-proxy` は既定の `skip_auth_strip_headers` でこれを行います）。あわせてゲートウェイは loopback に bind し、そのプロキシ経由でしか到達できないようにします。
+>
+> 認証プロキシを置かない場合は `--trusted-user-header` と `--user-env` を指定しないでください。設定済み API キーによるシングルユーザー動作になり、安全です。
 
 Cloud Run 本番構成（[scripts/entrypoint-stdio.sh](scripts/entrypoint-stdio.sh)）の例:
 
@@ -217,11 +221,11 @@ Claude が `register_api_key(api_key="...")` を呼び出します。サーバ�
 ### セキュリティ
 
 - API キーは **AES-256-GCM**（認証付き暗号化）で暗号化して保存
-- 暗号化キーは `MCP_ENCRYPTION_KEY` から **PBKDF2-HMAC-SHA256**（60 万回反復）で導出
+- 暗号化キーは `MCP_ENCRYPTION_KEY` から **PBKDF2-HMAC-SHA256**（20 万回反復）で導出。暗号化のたびにランダムな 16 バイトのソルトを生成
 - 暗号化のたびにランダムな 12 バイトのノンスを生成。同じキーを 2 回暗号化しても異なる暗号文になる
 - 改ざん・切り詰めされた暗号文は復号前に検出して拒否
 
-### 後方互換性
+### シングルユーザーへのフォールバック
 
 | 設定状態 | 動作 |
 |---|---|
@@ -307,15 +311,13 @@ Claude Desktop はリモート MCP サーバーへの HTTP 接続に直接対応
   "mcpServers": {
     "jquants-mcp": {
       "command": "mcp-stdio",
-      "args": [
-        "https://mcp.example.com/mcp"
-      ]
+      "args": ["--oauth", "https://mcp.example.com/mcp"]
     }
   }
 }
 ```
 
-設定後、Claude Desktop を再起動してください。
+設定後、Claude Desktop を再起動してください。`--oauth` はゲートウェイの OAuth フローをブラウザで実行します（ゲートウェイ側が `--enable-oauth` の場合）。静的トークンで認証するゲートウェイなら `--oauth` の代わりに `--bearer-token <TOKEN>` を指定します。**どちらも指定しないとゲートウェイに認証情報が渡らず 401 になります。**
 
 ## 提供ツール一覧
 
@@ -587,25 +589,11 @@ gcloud firestore databases create \
 
 ### デプロイ
 
-推奨経路はリポジトリを fork し、[.github/workflows/cd.yml](.github/workflows/cd.yml) の GitHub Actions CD ワークフローを利用する方法です。このワークフローは正しいフラグ（メモリ、CPU、環境変数、シークレット）付きで `gcloud run deploy --source .` を呼び出し、本番デプロイの唯一の真実源（single source of truth）になります。手動で `gcloud run services update` を実行すると次回の CD で上書きされるので避けてください。
+推奨経路はリポジトリを fork し、[.github/workflows/cd.yml](.github/workflows/cd.yml) の GitHub Actions CD ワークフローを利用する方法です。このワークフローは Cloud Build でイメージをビルドし、**app コンテナのイメージだけ**を更新します（`gcloud run services update --container app --image …`）。サイドカー・スケーリング・CPU・環境変数・シークレットは一度手で設定したものを CD が意図的に触らない設計です。
 
-手動で一度だけデプロイしたい場合（fork のテスト等）は、同じコマンドをローカルで実行します:
+2 コンテナ構成のサービス自体は、app コンテナを `--command /app/scripts/entrypoint-stdio.sh` で起動する形で、CD の外側で一度だけ作成します。その初期構築手順は [docs/deploy/gcp.md](docs/deploy/gcp.md) が正典です。
 
-```bash
-gcloud run deploy jquants-mcp \
-  --project "${PROJECT_ID}" \
-  --region "${REGION}" \
-  --source . \
-  --execution-environment gen2 \
-  --memory 8Gi \
-  --cpu 2 \
-  --cpu-boost \
-  --max-instances 3 \
-  --set-env-vars "GCS_BUCKET=YOUR_BUCKET,JQUANTS_CACHE_DIR=/tmp" \
-  --set-secrets "JQUANTS_API_KEY=jquants-api-key:latest"
-```
-
-メモリサイジングの指針は下記 [メモリ要件](#メモリ要件) を参照してください。
+メモリとスケーリングの指針は下記 [メモリ要件](#メモリ要件) を参照してください。
 
 ### 環境変数
 
@@ -614,13 +602,16 @@ gcloud run deploy jquants-mcp \
 | `GCS_BUCKET` | はい | — | `cache.db` スナップショットを保持する GCS バケット名 |
 | `GCS_PREFIX` | いいえ | `jquants-mcp/` | バケット内のオブジェクトキープレフィックス |
 | `JQUANTS_CACHE_DIR` | いいえ | `/tmp` | `cache.db` を展開するローカルディレクトリ（Cloud Run では tmpfs） |
-| `PORT` | いいえ | `8000` | HTTP ポート（Cloud Run が自動設定） |
+| `PUBLIC_URL` | はい | — | サービスの公開ベース URL（例: `https://mcp.example.com`）。`mcp-stdio serve --public-url` に渡される |
+| `PORT` | いいえ | `8081` | ゲートウェイが待ち受けるポート（ingress コンテナは `oauth2-proxy` サイドカー） |
+| `FIRESTORE_TOKEN_STORE` | いいえ | `mcp_stdio_oauth/state` | ゲートウェイの OAuth トークンストアの Firestore パス |
 | `JQUANTS_API_KEY` | はい | — | J-Quants API キー（Secret Manager 推奨） |
 | `JQUANTS_PLAN` | いいえ | 自動検出 | プラン: `free` / `light` / `standard` / `premium`（API キーから自動検出、明示設定はオーバーライド） |
-| `GOOGLE_CLOUD_PROJECT` | はい | — | GCP プロジェクト ID。Firestore（ユーザー DB）および Secret Manager アクセスに必須。CD ワークフローで `vars.GCP_PROJECT` 経由で設定。 |
-| `MCP_ENCRYPTION_KEY` | いいえ | — | ユーザーごとの API キー保存（マルチユーザーモード）を有効化 |
+| `MCP_ENCRYPTION_KEY` | いいえ | — | ユーザーごとの API キー保存（マルチユーザーモード）を有効化。Secret Manager 推奨 |
+| `JQUANTS_ALLOWED_EMAILS` | いいえ | — | 認証済みユーザーのうちサービスを利用できる範囲を制限する |
+| `GOOGLE_CLOUD_PROJECT` | はい | — | GCP プロジェクト ID。Firestore（ユーザー DB）および Secret Manager アクセスに必須。CD ワークフローで `vars.GCP_PROJECT` 経由で設定 |
 
-Firestore は Cloud Run サービスアカウントの Application Default Credentials を使います。
+Firestore は Cloud Run サービスアカウントの Application Default Credentials を使います。`oauth2-proxy` サイドカーは独自の設定（Google OAuth クライアント、cookie secret）を持ちます — [docs/deploy/gcp.md](docs/deploy/gcp.md) 参照。
 
 ### GCS と Firestore の連携
 
@@ -762,7 +753,7 @@ Cloud Run は `cache.db` を `/tmp`（tmpfs = RAM）に展開します。した�
 - Python runtime + mcp SDK + sqlite + httpx のオーバーヘッド（~300 MiB）
 - リクエスト処理中の JSON シリアライズ用ヘッドルーム
 
-本番の現行サイジング（[.github/workflows/cd.yml](.github/workflows/cd.yml) 参照）は `--memory 8Gi --cpu 2 --max-instances 3` で、CPU スロットリングはデフォルト（有効）のままです。CPU スロットリング有効＝**リクエストベース課金**で、リクエスト処理中だけ課金されるため、ほぼ idle な本サービスを月次フリーティア内に収められます。`--no-cpu-throttling` を付けるとインスタンスが生存している全秒（idle キープアライブ含む）が課金対象になります。**リクエストベース課金ではメモリもアクティブ処理中のみ課金**されるため、上限を上げても実質無料（フリーティア内）です。4 GiB を超えるメモリ割り当てには Cloud Run gen2 が必要で、かつ >4 GiB は ≥2 vCPU が強制されます（2 vCPU の上限は 8 GiB）。
+本番の現行サイジングは `--memory 8Gi --cpu 2`、`min-instances=0`（ゼロスケール）、`max-instances=1`、CPU 常時割当です。この課金に関わる 3 設定は CD ワークフローからは一切渡されません。一度手で設定したものを、デプロイの前後で [.github/workflows/scripts/assert-jquants-billing-settings.sh](.github/workflows/scripts/assert-jquants-billing-settings.sh) が検証するため、CD の外側で変更されると次のデプロイが失敗し、黙って残り続けることがありません。ゼロスケールはコストだけでなく**正しさのためにも load-bearing** です — コールドスタートのたびに最新の `cache.db` を再ダウンロードするからです（[日次キャッシュ更新](#日次キャッシュ更新) 参照）。4 GiB を超えるメモリ割り当てには Cloud Run gen2 が必要で、かつ >4 GiB は ≥2 vCPU が強制されます（2 vCPU の上限は 8 GiB）。
 
 メモリが 8 GiB なのは、cache reload 時に `/tmp`（tmpfs = RAM）が一時的に **約 2× `cache.db`** を保持するためです。新スナップショットを一時ファイルへダウンロードする間、現行 `cache.db` がまだマップされたままで、完了後にアトミックに置き換えます。約 3 GiB のスナップショットではこのピーク（約 6 GiB）に Python/SQLite の RSS が乗ると 6 GiB 上限を超え、tmpfs 書き込みが **SIGBUS**（`Container terminated on signal 7` として観測）で失敗します。そのため上限は 8 GiB です。`cache.db` が大きく成長した場合はさらに上限を上げてください（かつ ≥2 vCPU を維持。>8 GiB は ≥4 vCPU 必要）。
 

@@ -311,7 +311,12 @@ mcp-stdio serve --host 127.0.0.1 --port 8081 --path /mcp \
   -- jquants-mcp
 ```
 
-Behind a TLS-terminating proxy (as in the Cloud Run deployment below), that gateway serves the MCP endpoint at `https://mcp.example.com/mcp` and hands each session's authenticated identity to its `jquants-mcp` child (see [Authentication](#authentication)). [`scripts/entrypoint-stdio.sh`](scripts/entrypoint-stdio.sh) is the worked example: it is the entrypoint of the Cloud Run deployment described below, and shows the gateway running behind an `oauth2-proxy` sidecar together with the startup cache download.
+> **`--trusted-user-header` requires an authenticating proxy in front — not merely a TLS-terminating one.**
+> The gateway trusts that header without verifying it. A plain TLS proxy passes client headers through, so anyone could send `X-Forwarded-Email: victim@example.com` and be served as that user, reaching their stored API key. The proxy must **authenticate the caller and overwrite the header with the verified identity**, discarding whatever the client sent. `oauth2-proxy` does this (its `skip_auth_strip_headers` default strips client-supplied headers on pass-through routes). Bind the gateway to loopback, as above, so it is reachable only via that proxy.
+>
+> Omit `--trusted-user-header` and `--user-env` if you have no such proxy: the server then runs single-user against the configured API key, which is safe.
+
+[`scripts/entrypoint-stdio.sh`](scripts/entrypoint-stdio.sh) is the worked example. It is the entrypoint of the Cloud Run deployment described below, and shows the gateway running behind an `oauth2-proxy` sidecar together with the startup cache download.
 
 That is the whole remote-access story. How clients connect depends only on the gateway you chose; the sections below cover the two shapes used with `mcp-stdio serve`.
 
