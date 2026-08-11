@@ -115,6 +115,7 @@ def _insert_fins(
     bps: float = 1_000.0,
     cur_per_type: str = "FY",
     fy_end: str = "2026-03-31",
+    roe: float | None = None,
 ) -> None:
     data = {
         "Code": code,
@@ -124,6 +125,8 @@ def _insert_fins(
         "EPS": eps,
         "BPS": bps,
     }
+    if roe is not None:
+        data["ROE"] = roe
     conn.execute(
         "INSERT OR REPLACE INTO fins_summary (code, disc_date, data, fetched_at) VALUES (?, ?, ?, ?)",
         (code, disc_date, json.dumps(data), time.time()),
@@ -232,6 +235,9 @@ class TestGetSectorBriefing:
         assert elec["pbr_count"] == 2
 
     async def test_roe_median(self, mock_env):
+        """No native ROE in mock_env's fixture -- falls back to the EPS/BPS
+        approximation, covering rows cached before jquants-api-client>=2.4.0
+        (#565)."""
         data = _call(
             await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
         )
@@ -239,6 +245,61 @@ class TestGetSectorBriefing:
         # ROE: 100/1000*100=10%, 200/1500*100≈13.33% → median ≈ 11.67%
         assert elec["roe_median"] == pytest.approx((10.0 + 200 / 1500 * 100) / 2, rel=1e-3)
         assert elec["roe_count"] == 2
+
+    async def test_roe_median_prefers_native_field(self, tmp_path):
+        """#565: the native ROE field (stored as a fraction) wins over the
+        EPS/BPS approximation when both are present and disagree."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "13010", "2026-05-02", 500.0)
+        _insert_master(conn, "13010", "Native ROE Corp", s33="3050", s33_name="Electric Machinery")
+        # EPS/BPS approximation would give 100/1000*100 = 10.0; native says 15.8%.
+        _insert_fins(conn, "13010", "2026-05-01", eps=100.0, bps=1000.0, roe=0.158)
+        conn.commit()
+        conn.close()
+
+        settings = Settings()
+        settings.jquants_plan = "premium"
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_cache", cache),
+        ):
+            data = _call(
+                await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
+            )
+        cache.close()
+
+        elec = next(s for s in data["sectors"] if s["code"] == "3050")
+        assert elec["roe_median"] == pytest.approx(15.8, rel=1e-3)
+        assert elec["roe_count"] == 1
+
+    async def test_roe_median_native_ignores_eps_guard(self, tmp_path):
+        """#565: the native ROE field is included even when EPS <= 0 --
+        matching the existing guard, which never required eps_raw > 0 for
+        ROE (unlike PER)."""
+        cache = _make_cache(tmp_path)
+        conn = sqlite3.connect(str(tmp_path / "cache.db"))
+        _insert_bar(conn, "13010", "2026-05-02", 500.0)
+        _insert_master(conn, "13010", "Loss Corp", s33="3050", s33_name="Electric Machinery")
+        _insert_fins(conn, "13010", "2026-05-01", eps=-50.0, bps=800.0, roe=0.05)
+        conn.commit()
+        conn.close()
+
+        settings = Settings()
+        settings.jquants_plan = "premium"
+        with (
+            patch.object(server_module, "_settings", settings),
+            patch.object(server_module, "_cache", cache),
+        ):
+            data = _call(
+                await server_module.mcp.call_tool("get_sector_briefing", {"sector_type": "s33"})
+            )
+        cache.close()
+
+        elec = next(s for s in data["sectors"] if s["code"] == "3050")
+        assert elec["per_median"] is None  # unaffected: EPS <= 0
+        assert elec["roe_median"] == pytest.approx(5.0, rel=1e-3)
+        assert elec["roe_count"] == 1
 
     async def test_single_sector_stock(self, mock_env):
         data = _call(

@@ -10,7 +10,7 @@ from mcp.server.fastmcp import FastMCP
 
 from ..cache.store import CacheStore, TTL_6H, make_cache_key
 from ..tool_annotations import READ_ONLY_CACHE
-from ..validators import float_or_none, make_validation_error_response
+from ..validators import float_or_none, make_validation_error_response, resolve_roe_pct
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,10 @@ def register(
         """Return sector-level median PER, PBR, ROE, and margin ratio (業種別ブリーフィング). All plans.
 
         Use for セクターバリュエーション・業種別PER/PBR・割安セクター・業種別信用倍率 queries.
-        PER/ROE exclude net-loss stocks (EPS≤0); PBR excludes negative-book stocks.
+        PER excludes net-loss stocks (EPS≤0); PBR excludes negative-book stocks. ROE
+        does not exclude net-loss stocks -- neither the native ROE value (returned
+        regardless of EPS sign) nor the EPS/BPS fallback (unlike PER's guard, it never
+        required EPS>0) filters them out.
         See also get_market_briefing (market-wide), get_stock_briefing (single stock),
         get_sector_performance (騰落率).
 
@@ -115,9 +118,16 @@ def register(
                 buckets[sec_code]["pers"].append(close / eps_adj)
             if bps_adj is not None and bps_adj > 0:
                 buckets[sec_code]["pbrs"].append(close / bps_adj)
-            # ROE = EPS / BPS — split factor cancels, so use raw values
-            if eps_raw is not None and bps_raw is not None and bps_raw > 0:
-                buckets[sec_code]["roes"].append(eps_raw / bps_raw * 100)
+            # ROE: see resolve_roe_pct's docstring for the native-vs-fallback
+            # rationale. Uses raw (not split-adjusted) EPS/BPS for the
+            # fallback -- the split factor cancels in the ratio -- and, unlike
+            # per/pbr above, never required eps_raw > 0 even before this
+            # native-field change.
+            roe_pct = resolve_roe_pct(
+                fins_row.get("ROE"), eps_raw, bps_raw, require_eps_positive=False
+            )
+            if roe_pct is not None:
+                buckets[sec_code]["roes"].append(roe_pct)
 
             margin_row = margin_map.get(code)
             if margin_row:

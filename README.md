@@ -690,7 +690,7 @@ Cache-only tool that assembles a one-page snapshot for a single stock from cache
 
 | Tool | Description |
 |---|---|
-| `get_stock_briefing` | One-page briefing for a single stock (株式ブリーフィング): latest price (close, change_pct, volume, OHLC), most recent FY financials (revenue, operating profit, net income), and valuation ratios (PER, PBR, ROE, EPS, BPS, dividend yield). All figures are split-adjusted. PER and ROE are null when EPS ≤ 0 (net-loss period). Dividend yield uses the most recent DivAnn disclosed within the past 18 months. |
+| `get_stock_briefing` | One-page briefing for a single stock (株式ブリーフィング): latest price (close, change_pct, volume, OHLC), most recent FY financials (revenue, operating profit, net income), and valuation ratios (PER, PBR, ROE, EPS, BPS, dividend yield). All figures are split-adjusted. PER is null when EPS ≤ 0 (net-loss period); ROE is null when EPS ≤ 0 and no native ROE value is cached (a native ROE, when present, is returned regardless of EPS sign). Dividend yield uses the most recent DivAnn disclosed within the past 18 months. |
 
 ### Technical Indicators (1 tool)
 
