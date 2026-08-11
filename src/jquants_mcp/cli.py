@@ -83,64 +83,12 @@ def _cmd_logout(args: argparse.Namespace) -> int:  # noqa: ARG001
     return 0
 
 
-def _cmd_serve(args: argparse.Namespace) -> int:
+def _cmd_serve(args: argparse.Namespace) -> int:  # noqa: ARG001
     """Start the MCP server (default when no subcommand is given)."""
     from .server import run_server
 
-    run_server(
-        transport=args.transport,
-        host=args.host,
-        port=args.port,
-        ssl_certfile=args.ssl_certfile,
-        ssl_keyfile=args.ssl_keyfile,
-        bearer_token=args.bearer_token,
-        github_client_id=args.github_client_id,
-        github_client_secret=args.github_client_secret,
-        oauth_base_url=args.oauth_base_url,
-    )
+    run_server()
     return 0
-
-
-def _add_serve_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument(
-        "--transport",
-        "-t",
-        choices=["stdio", "streamable-http"],
-        default="stdio",
-        help="Transport type (default: stdio)",
-    )
-    p.add_argument(
-        "--host", default="127.0.0.1", help="Bind address for HTTP transport (default: 127.0.0.1)"
-    )
-    p.add_argument(
-        "--port", "-p", type=int, default=8080, help="Port for HTTP transport (default: 8080)"
-    )
-    p.add_argument("--ssl-certfile", default="", help="Path to SSL certificate file")
-    p.add_argument("--ssl-keyfile", default="", help="Path to SSL private key file")
-    p.add_argument(
-        "--bearer-token",
-        default="",
-        help="Bearer token for authentication (used when OAuth is not configured)",
-    )
-    oauth_group = p.add_argument_group("GitHub OAuth 2.1")
-    oauth_group.add_argument(
-        "--github-client-id",
-        default="",
-        metavar="CLIENT_ID",
-        help="GitHub OAuth App client ID (enables OAuth 2.1; overrides GITHUB_CLIENT_ID env var)",
-    )
-    oauth_group.add_argument(
-        "--github-client-secret",
-        default="",
-        metavar="CLIENT_SECRET",
-        help="GitHub OAuth App client secret (overrides GITHUB_CLIENT_SECRET env var)",
-    )
-    oauth_group.add_argument(
-        "--oauth-base-url",
-        default="",
-        metavar="URL",
-        help="Public base URL for OAuth endpoints (overrides OAUTH_BASE_URL env var)",
-    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -178,10 +126,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Clear the locally-saved API key",
     )
 
-    # Default subcommand: serve. Kept as the top-level arg set for backward compat
-    # so that ``jquants-mcp --port 9000`` still works without ``serve`` prefix.
-    _add_serve_args(parser)
-
+    # No subcommand means serve: the server takes no options (stdio only), so
+    # the bare ``jquants-mcp`` invocation needs no extra top-level arguments.
     args = parser.parse_args(argv)
 
     try:

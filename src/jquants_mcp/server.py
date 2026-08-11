@@ -3,20 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import signal
 import time
 from typing import Any
 
-import httpx
-
 from mcp.server.fastmcp import FastMCP
-from starlette.middleware import Middleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
 
 from . import __version__
 from .cache import store
@@ -26,70 +18,6 @@ from .config import Settings
 from .tool_annotations import DESTRUCTIVE_LOCAL, READ_ONLY_LOCAL
 
 logger = logging.getLogger(__name__)
-
-# Paths whose requests are logged for OAuth debugging.
-_OAUTH_DEBUG_PATHS = ("/oauth/", "/.well-known/")
-
-# Query params and headers redacted from OAuth debug logs to avoid leaking
-# short-lived authorization secrets and session credentials.
-_REDACTED_QUERY_PARAMS = frozenset({"code", "state", "token", "access_token", "id_token"})
-_REDACTED_HEADERS = frozenset({"authorization", "cookie", "set-cookie"})
-
-
-class OAuthDebugMiddleware(BaseHTTPMiddleware):
-    """Log OAuth-related HTTP requests to help diagnose auth flow issues."""
-
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
-        path = request.url.path
-        is_oauth = any(p in path for p in _OAUTH_DEBUG_PATHS)
-
-        if is_oauth:
-            # Redact short-lived OAuth secrets from query params (authorization
-            # code, state, token) so they never reach the logs.
-            query = {
-                k: (v if k.lower() not in _REDACTED_QUERY_PARAMS else "[REDACTED]")
-                for k, v in request.query_params.items()
-            }
-            # Redact credential-bearing headers (auth bearer token, session cookie).
-            headers = {
-                k: (v if k.lower() not in _REDACTED_HEADERS else "[REDACTED]")
-                for k, v in request.headers.items()
-            }
-            logger.info(
-                "OAuth request: method=%s path=%s query=%r headers=%r",
-                request.method,
-                path,
-                query,
-                headers,
-            )
-
-        try:
-            response = await call_next(request)
-        except RuntimeError as exc:
-            # Starlette BaseHTTPMiddleware raises "No response returned." when
-            # the client disconnects mid-request. That's a cosmetic symptom of
-            # the well-known BaseHTTPMiddleware limitation, not a server bug —
-            # swallow it and let the ASGI layer handle the disconnect.
-            if "No response returned" in str(exc):
-                if is_oauth:
-                    logger.info(
-                        "OAuth request aborted (client disconnect): method=%s path=%s",
-                        request.method,
-                        path,
-                    )
-                return Response(status_code=499)
-            raise
-
-        if is_oauth:
-            logger.info(
-                "OAuth response: method=%s path=%s status=%d",
-                request.method,
-                path,
-                response.status_code,
-            )
-
-        return response
-
 
 mcp = FastMCP("jquants-mcp")
 
@@ -228,72 +156,6 @@ def _sighup_handler(signum: int, frame: Any) -> None:
         _cache.request_reload()
     else:
         logger.info("Cache DB not yet initialized; reload is a no-op")
-
-
-@mcp.custom_route("/.well-known/oauth-protected-resource/mcp", methods=["GET", "OPTIONS"])
-async def _handle_protected_resource_metadata(request: Request) -> Response:
-    """RFC 9728: OAuth 2.0 Protected Resource Metadata.
-
-    Lets MCP clients discover the authorization server from the resource URL.
-    Only handles root-level deployments (resource = {base_url}/mcp).
-    When deployed behind a path-prefix reverse proxy the proxy must serve the
-    RFC 9728 well-known URL at the domain root level.
-    """
-    base_url = _get_settings().oauth_base_url.rstrip("/")
-    if not base_url:
-        return Response(
-            status_code=404,
-            content='{"error":"OAuth not configured"}',
-            media_type="application/json",
-        )
-    data = {
-        "resource": f"{base_url}/mcp",
-        "authorization_servers": [base_url],
-    }
-    return Response(
-        content=json.dumps(data),
-        status_code=200,
-        media_type="application/json",
-        headers={"Cache-Control": "public, max-age=3600"},
-    )
-
-
-@mcp.custom_route("/.well-known/openid-configuration", methods=["GET", "OPTIONS"])
-async def _handle_openid_configuration(request: Request) -> Response:
-    """OIDC discovery — alias for OAuth 2.0 Authorization Server Metadata (RFC 8414).
-
-    Claude Desktop and its backend probe this endpoint before the MCP-spec
-    RFC 8414 path.  jquants-mcp uses GitHub OAuth (not OpenID Connect), but
-    returning the OAuth server metadata here is sufficient for clients to
-    discover the authorization and token endpoints.
-    """
-    if not _get_settings().oauth_base_url:
-        return Response(
-            status_code=404,
-            content='{"error":"OAuth not configured"}',
-            media_type="application/json",
-        )
-    host, port = request.scope.get("server", ("127.0.0.1", 8080))
-    host_str = f"[{host}]" if ":" in str(host) else host
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"http://{host_str}:{port}/.well-known/oauth-authorization-server",
-                timeout=5.0,
-            )
-        return Response(
-            content=resp.content,
-            status_code=resp.status_code,
-            media_type="application/json",
-            headers={"Cache-Control": "public, max-age=3600"},
-        )
-    except httpx.RequestError as exc:
-        logger.warning("/.well-known/openid-configuration proxy failed: %s", exc)
-        return Response(
-            status_code=503,
-            content='{"error":"service unavailable"}',
-            media_type="application/json",
-        )
 
 
 def _get_rate_limiter():
@@ -870,110 +732,22 @@ def _register_tools() -> None:
 
 _register_tools()
 
-from .settings import register_settings_routes  # noqa: E402
-
-register_settings_routes(mcp, _get_user_db, _user_clients, _user_client_last_used, _get_settings)
-
 
 # ------------------------------------------------------------------
 # Server startup
 # ------------------------------------------------------------------
 
 
-def run_server(
-    transport: str = "stdio",
-    host: str = "127.0.0.1",
-    port: int = 8080,
-    ssl_certfile: str = "",
-    ssl_keyfile: str = "",
-    bearer_token: str = "",
-    github_client_id: str = "",
-    github_client_secret: str = "",
-    oauth_base_url: str = "",
-) -> None:
-    """Start the MCP server.
+def run_server() -> None:
+    """Start the MCP server over stdio.
 
-    ``transport="stdio"`` is the only path this server actually supports
-    since the migration to the official mcp SDK's ``FastMCP`` — its
-    ``run()`` accepts only ``transport`` and ``mount_path`` (no ``host``,
-    ``port``, ``uvicorn_config``, or ``middleware`` kwargs), so calling this
-    with any other transport raises ``TypeError`` immediately at the
-    ``mcp.run(...)`` call in the ``else`` branch below. The HTTP/OAuth
-    parameters below are kept undeleted only because a parallel deployment
-    still runs this function from an older, unmigrated checkout — see the
-    module-level notes on ``auth.py``/``settings/`` for why. Do not rely on
-    this path from the current checkout.
-
-    Args:
-        transport: Transport type ("stdio" or "streamable-http")
-        host: Bind address for HTTP transport
-        port: Port number for HTTP transport
-        ssl_certfile: Path to SSL certificate file
-        ssl_keyfile: Path to SSL private key file
-        bearer_token: Bearer token for authentication (fallback if OAuth not configured)
-        github_client_id: GitHub OAuth App client ID (enables OAuth 2.1)
-        github_client_secret: GitHub OAuth App client secret
-        oauth_base_url: Public base URL for OAuth endpoints (e.g. https://mcp.example.com)
+    stdio is the only transport this server supports: since the migration to
+    the official mcp SDK's ``FastMCP``, ``run()`` accepts only ``transport``
+    and ``mount_path`` — no ``host``, ``port``, ``uvicorn_config`` or
+    ``middleware``. HTTP is terminated upstream instead, by the ``mcp-stdio``
+    gateway that spawns one child process per authenticated user.
     """
     logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
-    logger.info("jquants-mcp v%s starting (transport=%s)", __version__, transport)
+    logger.info("jquants-mcp v%s starting (transport=stdio)", __version__)
 
-    if transport == "stdio":
-        mcp.run(transport="stdio")
-    else:
-        # Install SIGHUP handler for lazy cache reload. Safe here because
-        # uvicorn only manages SIGINT/SIGTERM, and the handler itself only
-        # flips a flag (no I/O), so async reentrancy is not a concern.
-        try:
-            signal.signal(signal.SIGHUP, _sighup_handler)
-            logger.info("SIGHUP handler installed for cache DB reload")
-        except (ValueError, OSError) as e:
-            # ValueError: signal only works in main thread
-            # OSError: platform without SIGHUP (e.g. Windows)
-            logger.warning("Could not install SIGHUP handler: %s", e)
-
-        # Apply CLI overrides to settings before creating the auth provider.
-        settings = _get_settings()
-        ssl_certfile = ssl_certfile or settings.ssl_certfile
-        ssl_keyfile = ssl_keyfile or settings.ssl_keyfile
-
-        # For OAuth/Bearer settings, CLI overrides take precedence over the config file.
-        if bearer_token:
-            settings.bearer_token = bearer_token
-        if github_client_id:
-            settings.github_client_id = github_client_id
-        if github_client_secret:
-            settings.github_client_secret = github_client_secret
-        if oauth_base_url:
-            settings.oauth_base_url = oauth_base_url
-
-        # Configure authentication.
-        from .auth import create_auth_provider
-
-        auth_provider = create_auth_provider(settings)
-        if auth_provider is not None:
-            mcp.auth = auth_provider
-        else:
-            logger.warning(
-                "HTTP transport running without authentication. "
-                "Set bearer_token or OAuth provider for security."
-            )
-
-        # Configure TLS.
-        uvicorn_config: dict[str, Any] = {}
-        if ssl_certfile and ssl_keyfile:
-            uvicorn_config["ssl_certfile"] = ssl_certfile
-            uvicorn_config["ssl_keyfile"] = ssl_keyfile
-            scheme = "https"
-        else:
-            scheme = "http"
-
-        logger.info("%s server: %s://%s:%d/mcp", transport, scheme, host, port)
-        debug_middleware = [Middleware(OAuthDebugMiddleware)]
-        mcp.run(
-            transport=transport,
-            host=host,
-            port=port,
-            uvicorn_config=uvicorn_config,
-            middleware=debug_middleware,
-        )
+    mcp.run(transport="stdio")
