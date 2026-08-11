@@ -894,8 +894,6 @@ Memory sizing notes are in [Memory requirements](#memory-requirements) below.
 | `JQUANTS_API_KEY` | Yes | — | J-Quants API key (use Secret Manager) |
 | `JQUANTS_PLAN` | No | auto-detect | Plan: `free` / `light` / `standard` / `premium` (auto-detected from the API key unless overridden) |
 | `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication (single-user mode only) |
-| `PUBSUB_INVOKER_SA` | No | — | Service account email for Pub/Sub push authentication. When set, `/internal/reload` verifies the Google-signed OIDC token. Required if using Pub/Sub auto-reload; leave unset otherwise. |
-| `PUBSUB_AUDIENCE` | No | request URL | OIDC audience to verify against (defaults to the incoming request URL) |
 | `GOOGLE_CLOUD_PROJECT` | Yes | — | GCP project ID. Required for Firestore (user DB) and Secret Manager access. Set via `vars.GCP_PROJECT` in the CD workflow |
 | `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | No | — | OAuth configuration for multi-user mode |
 
@@ -938,57 +936,26 @@ Notes:
 
 #### Daily cache refresh
 
-After startup, `cache.db` is refreshed daily by the publisher. The mechanism differs by deployment target.
+After startup, `cache.db` is refreshed daily by the publisher. How that update reaches a
+running server depends on the deployment.
 
-**Cloud Run — Pub/Sub push**
+**Cloud Run — instance recycling**
 
-SIGHUP cannot reliably target a specific process across Cloud Run's multi-instance model. Instead, the publisher triggers a reload via a Pub/Sub push to the `/internal/reload` endpoint, which re-downloads `cache.db` from GCS synchronously before acknowledging — so the download runs under the push request's allocated CPU (request-based billing throttles CPU between requests). The push subscription's ack deadline must exceed the download time; see [`ops/pubsub/setup.md`](ops/pubsub/setup.md).
+There is no in-container refresh mechanism. With `min-instances=0` every cold start
+downloads a current `cache.db`, so the only window in which a running instance can hold a
+stale copy is one that stays warm across the publisher's export. In that window, days not
+yet cached fall through to the live J-Quants API (correct, just slower), while corrections
+to already-cached rows do stay stale — the cache-vs-API decision is presence-based and the
+row-level tier applies no TTL. Measured instance lifetimes under `min-instances=0` are
+15–26 minutes, so the exposure is bounded by recycling. A push-based reload endpoint
+existed until v1.0.0; it was removed after the design was evaluated and rejected as not
+worth the moving parts (#584).
 
-```mermaid
-sequenceDiagram
-    participant P as Publisher (daily_fetch.py<br/>+ gcs_export_cache.py)
-    participant G as GCS
-    participant PS as Pub/Sub
-    participant CR as Cloud Run<br/>(/internal/reload)
-    participant C as CacheStore
+**Local process**
 
-    P->>G: upload new cache.db snapshot
-    G->>PS: GCS object notification
-    PS->>CR: POST /internal/reload<br/>(Google-signed OIDC token)
-    CR->>CR: verify OIDC token<br/>(PUBSUB_INVOKER_SA)
-    CR->>G: download new cache.db.zst to /tmp<br/>(synchronous, during the request)
-    G-->>CR: ~3 GiB
-    CR->>C: request_reload()<br/>(lazy reconnect on next query)
-    CR-->>PS: 200 OK (ACK after reload)
-```
-
-`PUBSUB_INVOKER_SA` must be the service account email that Pub/Sub uses to sign the OIDC token. `PUBSUB_AUDIENCE` defaults to the incoming request URL and normally does not need to be set.
-
-**Docker Compose — direct file update**
-
-When `GCS_BUCKET` is not set, `cache.db` lives on the local filesystem (bind-mounted into the container). `daily_fetch.py` appends rows directly to the same file; SQLite's normal concurrent-access handling means the server picks up new data on the next query with no explicit signal required.
-
-```mermaid
-sequenceDiagram
-    participant P as Publisher (daily_fetch.py)
-    participant D as cache.db (bind mount)
-    participant M as MCP server
-
-    P->>D: append new rows (daily_fetch.py)
-    Note right of D: same file, visible<br/>to the server immediately
-    M->>D: reads new rows on next query
-```
-
-**Local process (launchd / systemd) — SIGHUP**
-
-When running the MCP server as a local service (e.g. launchd on macOS), SIGHUP triggers a lazy reconnect — useful after replacing `cache.db` wholesale (e.g. via `bulk_fetch_all.py`):
-
-```bash
-# macOS launchd
-launchctl kill SIGHUP system/<YOUR_LAUNCHD_LABEL>
-# or directly
-kill -HUP <MCP_PID>
-```
+The publisher and the server share a filesystem, so an updated `cache.db` is visible to
+the next query with no signal required. Behind a gateway such as `mcp-stdio serve`, each
+session spawns a fresh child process that opens the file as it stands at that moment.
 
 #### Troubleshooting
 

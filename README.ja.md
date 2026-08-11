@@ -893,8 +893,6 @@ gcloud run deploy jquants-mcp \
 | `JQUANTS_API_KEY` | はい | — | J-Quants API キー（Secret Manager 推奨） |
 | `JQUANTS_PLAN` | いいえ | 自動検出 | プラン: `free` / `light` / `standard` / `premium`（API キーから自動検出、明示設定はオーバーライド） |
 | `MCP_BEARER_TOKEN` | いいえ | — | HTTP 認証用 Bearer トークン（単一ユーザーモードのみ） |
-| `PUBSUB_INVOKER_SA` | いいえ | — | Pub/Sub push 認証用サービスアカウントメール。設定時は `/internal/reload` エンドポイントで Google 署名 OIDC トークンを検証。Pub/Sub 自動リロードを使う場合に必須。 |
-| `PUBSUB_AUDIENCE` | いいえ | リクエスト URL | OIDC 検証時の audience（デフォルトはリクエスト URL） |
 | `GOOGLE_CLOUD_PROJECT` | はい | — | GCP プロジェクト ID。Firestore（ユーザー DB）および Secret Manager アクセスに必須。CD ワークフローで `vars.GCP_PROJECT` 経由で設定。 |
 | `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | いいえ | — | マルチユーザーモード時の OAuth 設定 |
 
@@ -937,57 +935,26 @@ sequenceDiagram
 
 #### 日次キャッシュ更新
 
-起動後の `cache.db` は publisher が日次で更新します。更新のトリガー方法はデプロイ先によって異なります。
+起動後、`cache.db` は publisher によって日次で更新されます。その更新が稼働中のサーバーに
+届く経路はデプロイ形態によって異なります。
 
-**Cloud Run — Pub/Sub push**
+**Cloud Run — インスタンスのリサイクル**
 
-Cloud Run のマルチインスタンスモデルでは SIGHUP を特定プロセスへ確実に届けられないため、代わりに Pub/Sub push で `/internal/reload` エンドポイントを呼び出します。サーバーは ACK を返す前に GCS から新しい `cache.db` を**同期的に再ダウンロード**します（リクエストベース課金は CPU をリクエスト間で絞るため、push リクエスト中の CPU で DL を完走させる必要がある）。push subscription の ack deadline は DL 時間より長くする必要があります。[`ops/pubsub/setup.md`](ops/pubsub/setup.md) 参照。
+コンテナ内に更新機構はありません。`min-instances=0` なのでコールドスタートのたびに最新の
+`cache.db` をダウンロードします。したがって稼働中のインスタンスが古いコピーを保持しうるのは、
+publisher のエクスポートをまたいで温まり続けた場合だけです。その窓では、まだキャッシュされて
+いない日付は live な J-Quants API にフォールバックします（正しい結果になりますが遅くなります）。
+一方、**すでにキャッシュ済みの行に対する訂正は古いまま**です — キャッシュか API かの判定は行の
+存在有無で行われ、行レベルの Tier に TTL が無いためです。`min-instances=0` での実測インスタンス
+生存時間は 15〜26 分なので、影響はリサイクルによって上限が定まります。push 型のリロード
+エンドポイントは v1.0.0 まで存在しましたが、設計を評価した結果「構成要素の増加に見合わない」と
+判断して削除しました（#584）。
 
-```mermaid
-sequenceDiagram
-    participant P as Publisher（daily_fetch.py<br/>+ gcs_export_cache.py）
-    participant G as GCS
-    participant PS as Pub/Sub
-    participant CR as Cloud Run<br/>（/internal/reload）
-    participant C as CacheStore
+**ローカルプロセス**
 
-    P->>G: 新しい cache.db スナップショットをアップロード
-    G->>PS: GCS オブジェクト通知
-    PS->>CR: POST /internal/reload<br/>（Google 署名 OIDC トークン）
-    CR->>CR: OIDC トークン検証<br/>（PUBSUB_INVOKER_SA）
-    CR->>G: 新しい cache.db.zst を /tmp にダウンロード<br/>（リクエスト中に同期実行）
-    G-->>CR: 約 3 GiB
-    CR->>C: request_reload()<br/>（次のクエリ時に遅延再接続）
-    CR-->>PS: 200 OK（reload 後に ACK）
-```
-
-`PUBSUB_INVOKER_SA` には Pub/Sub が OIDC トークンの署名に使うサービスアカウントのメールアドレスを設定します。`PUBSUB_AUDIENCE` はデフォルトでリクエスト URL になるため、通常は設定不要です。
-
-**Docker Compose — ファイル直接更新**
-
-`GCS_BUCKET` を設定しない場合、`cache.db` はローカルファイルシステム（bind mount）に置きます。`daily_fetch.py` は同じファイルに直接行を追記するため、SQLite の通常の concurrent access 処理により、サーバーは次のクエリ時に新しいデータを自動的に参照します。明示的なシグナルは不要です。
-
-```mermaid
-sequenceDiagram
-    participant P as Publisher（daily_fetch.py）
-    participant D as cache.db（bind mount）
-    participant M as MCP サーバー
-
-    P->>D: 新しい行を追記（daily_fetch.py）
-    Note right of D: 同じファイルのため<br/>即座にサーバーから見える
-    M->>D: 次のクエリ時に新しい行を参照
-```
-
-**ローカルプロセス（launchd / systemd） — SIGHUP**
-
-MCP サーバーをローカルサービス（macOS の launchd 等）として運用している場合、SIGHUP で遅延再接続をトリガーできます。`bulk_fetch_all.py` で `cache.db` を丸ごと置き換えた後などに有用です:
-
-```bash
-# macOS launchd
-launchctl kill SIGHUP system/<YOUR_LAUNCHD_LABEL>
-# または直接
-kill -HUP <MCP_PID>
-```
+publisher とサーバーはファイルシステムを共有するため、更新された `cache.db` はシグナルなしで
+次のクエリから見えます。`mcp-stdio serve` のようなゲートウェイ配下では、セッションごとに新しい
+子プロセスが起動し、その時点のファイルを開きます。
 
 #### トラブルシューティング
 
