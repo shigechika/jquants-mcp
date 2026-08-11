@@ -169,6 +169,47 @@ async def _stdio_caller(command: str) -> tuple[Caller, list[str], AsyncExitStack
     return await _client_caller(AsyncExitStack(), stdio_client(server))
 
 
+# A page budget rather than a bare ``while``: the smoke test must not be
+# hangable by the server it is auditing. Far past any real registry — this
+# server's tools arrive in a single page.
+_MAX_TOOL_PAGES = 200
+
+
+async def _list_all_tools(session: Any) -> list[str]:
+    """Every registered tool name, following ``tools/list`` pagination to the end.
+
+    The fastmcp client this replaced followed ``nextCursor`` itself; the
+    official SDK returns one page per call. Reading only the first page would
+    quietly shrink the run to the tools that fit on it *and* report the rest as
+    probe specs for tools "no longer registered" — a green exit that never
+    called half the tools, which is the failure this script exists to catch.
+    """
+    from mcp.types import PaginatedRequestParams
+
+    names: list[str] = []
+    cursor: str | None = None
+    seen: set[str] = set()
+    for _ in range(_MAX_TOOL_PAGES):
+        params = PaginatedRequestParams(cursor=cursor) if cursor is not None else None
+        page = await session.list_tools(params=params)
+        names.extend(tool.name for tool in page.tools)
+        cursor = page.nextCursor
+        if cursor is None:
+            return names
+        if cursor in seen:
+            raise RuntimeError(
+                f"tools/list handed back the cursor {cursor!r} a second time after "
+                f"{len(names)} tools: the server is not advancing through its own "
+                "pagination, so the tool list cannot be read in full"
+            )
+        seen.add(cursor)
+    raise RuntimeError(
+        f"tools/list still had pages left after {_MAX_TOOL_PAGES} of them "
+        f"({len(names)} tools); refusing to probe a tool list this harness "
+        "cannot finish reading"
+    )
+
+
 async def _client_caller(
     stack: AsyncExitStack, transport: Any
 ) -> tuple[Caller, list[str], AsyncExitStack]:
@@ -186,7 +227,7 @@ async def _client_caller(
         read, write, *_ = await stack.enter_async_context(transport)
         session = await stack.enter_async_context(ClientSession(read, write))
         await session.initialize()
-        names = [tool.name for tool in (await session.list_tools()).tools]
+        names = await _list_all_tools(session)
     except BaseException:
         # The caller only learns about the session through our return value, so
         # a failure here would strand it — and in stdio mode that means an
