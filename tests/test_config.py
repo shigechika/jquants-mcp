@@ -224,3 +224,9 @@ def test_cache_bypass_auth_override():
     """cache_bypass_auth can be overridden via constructor."""
     s = Settings(jquants_api_key="dummy", cache_bypass_auth="true")
     assert s.cache_bypass_auth is True
+
+
+def test_cache_bypass_auth_empty_falls_back_to_default():
+    """An empty value falls back to cache_bypass_auth's default (False)."""
+    settings = Settings(cache_bypass_auth="")
+    assert settings.cache_bypass_auth is False
