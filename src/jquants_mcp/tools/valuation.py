@@ -30,8 +30,9 @@ def register(
 
         Use for セクターバリュエーション・業種別PER/PBR・割安セクター・業種別信用倍率 queries.
         PER excludes net-loss stocks (EPS≤0); PBR excludes negative-book stocks. ROE
-        excludes net-loss stocks only when falling back to the EPS/BPS approximation --
-        a stock with a native ROE value is included in the median regardless of EPS sign.
+        does not exclude net-loss stocks -- neither the native ROE value (returned
+        regardless of EPS sign) nor the EPS/BPS fallback (unlike PER's guard, it never
+        required EPS>0) filters them out.
         See also get_market_briefing (market-wide), get_stock_briefing (single stock),
         get_sector_performance (騰落率).
 
