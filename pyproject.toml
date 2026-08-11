@@ -9,17 +9,13 @@ license-files = ["LICENSE"]
 requires-python = ">=3.10"
 
 dependencies = [
-    # fastmcp is no longer imported by the package itself: auth.py and settings/
-    # were deleted with the HTTP/OAuth surface (#601), and server.py builds on
-    # the official mcp SDK's FastMCP below. It is still imported by
-    # scripts/smoke_test.py, which uses fastmcp's *client* side to exercise the
-    # deployed server. Demoting it to a dev/scripts-only dependency is a
-    # separate change — see #568.
-    "fastmcp>=3.2.1",
-    # mcp.server.fastmcp.FastMCP is what server.py and the tools/ modules
-    # actually import. fastmcp>=3.2.1 itself constrains this to
-    # mcp<2.0,>=1.24.0; pinned explicitly here since it is now a direct
-    # runtime dependency, not just a transitive one.
+    # The official MCP SDK is the only MCP dependency: server.py and the
+    # tools/ modules import mcp.server.fastmcp.FastMCP, and scripts/
+    # smoke_test.py drives deployments through its client side. The
+    # standalone fastmcp package was dropped once the HTTP/OAuth surface
+    # (auth.py, settings/) was deleted (#601, #568). The <2 bound guards
+    # against SDK 2.0 API changes; the >=1.24 floor is inherited from the
+    # fastmcp era and is deliberately conservative (the lock resolves 1.28.x).
     "mcp>=1.24,<2",
     "httpx>=0.25.0",
     "cryptography>=41.0.0",

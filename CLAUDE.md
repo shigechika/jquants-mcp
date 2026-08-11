@@ -3,10 +3,12 @@
 ## Project Overview
 
 jquants-mcp is an MCP server that retrieves Japanese stock market data via J-Quants API v2.
-The stdio server (`server.py` + `tools/`) is built on the official `mcp` SDK's `mcp.server.fastmcp.FastMCP`.
-The standalone FastMCP v3 package (`fastmcp`) remains a dependency for the still-unreachable HTTP/OAuth
-path (`auth.py`, `settings/`, the non-stdio branch of `run_server()`) — see "Architecture" below.
-httpx, SQLite cache. Supports multi-user OAuth and Cloud Run deployment.
+The server is **stdio-only** and is built on the official `mcp` SDK's `mcp.server.fastmcp.FastMCP`
+(`server.py` + `tools/`). The standalone FastMCP v3 package (`fastmcp`) is **no longer a dependency**:
+its last in-repo users — the HTTP/OAuth surface (`auth.py`, `settings/`, `oauth_kv_store.py`, the
+non-stdio branch of `run_server()`) and `scripts/smoke_test.py`'s client — were deleted or ported to
+the official SDK in #601. httpx, SQLite cache. Multi-user OAuth is terminated **upstream** by the
+Cloud Run gateway (`oauth2-proxy` + `mcp-stdio serve`), not in this process — see "Deployment Targets".
 
 ## Commands
 
@@ -28,12 +30,10 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   - `config.py` — configparser + env vars hybrid configuration
   - `cache/store.py` — 2-tier SQLite cache (Tier1: row-level, Tier2: response-level with TTL); background `PRAGMA quick_check` integrity verification (`verify_and_record`) with a `(dev, ino)`-keyed sidecar (`cache.db.verified.json`) so a fresh per-message `CacheStore` reuses a prior generation's verdict instead of re-running the multi-second check on every claude.ai message
   - `tools/` — Tool modules registered via `register(mcp, get_client, get_cache)` pattern
-  - `auth.py` — Bearer token + Google/GitHub OAuth authentication (Google via upstream FastMCP GoogleProvider)
   - `crypto.py` — AES-256-GCM encryption for user API keys
   - `db/users.py` — Per-user API key storage (SQLite, encrypted)
   - `validators.py` — Input validation (code, date, sector)
-  - `settings/` — Web UI for API key registration (/settings endpoint)
-  - `oauth_kv_store.py` — SQLite-backed OAuth state persistence
+  - `allowlist.py` — `JQUANTS_ALLOWED_EMAILS` gate; the gateway-injected principal *is* the verified email, so `server.py` passes it straight to `is_email_allowed`
   - `request_context.py` — Request-scoped plan contextvar; read by `CacheStore._effective_plan` as a fallback before its `plan_resolver` (see below), so each user's plan date window applies without threading `plan` through tools
 - `scripts/` — Operational scripts
   - `daily_fetch.py` — Daily data fetch (cron / scheduled-task companion for cache population)
@@ -46,7 +46,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   - `smoke_test.py` — Live smoke test: runs **every registered tool** against real data (in-process, or `--url` against a deployment) and fails on empty/stale/error answers. `smoke_harness.py` is the server-agnostic engine; `smoke_probes.py` holds the per-tool specs. Needs a populated cache + API key, so it runs on the host that has them — not in CI. CI enforces only the coverage half (`tests/test_smoke_probes.py`: a new tool without a probe spec fails the build)
   - `entrypoint.sh` — Docker/Cloud Run entrypoint for the `jquants-mcp` service (streamable-http, no longer CD-deployed — see "Deployment Targets")
   - `entrypoint-stdio.sh` — Docker/Cloud Run entrypoint for the `jquants` service (`mcp-stdio serve`, behind an `oauth2-proxy` sidecar); downloads cache.db synchronously at startup like `entrypoint.sh`, then backgrounds `verify_cache.py` to warm the integrity sidecar. It has **no in-container refresh mechanism** (#584 removed the 15-minute `cache-poll.crontab` supercronic poll): with `min-instances=0` every cold start already re-downloads a current cache.db, and the only window a refresh could help is an instance staying warm across the publisher's once-a-weekday export. There, not-yet-cached days fall through to the live API (correct, just slower), while **corrections to already-cached rows do not** — the cache-vs-API decision is presence-based and Tier 1 `get_rows` applies no TTL, so a restated statement or retroactive split adjustment stays stale until the instance recycles (measured lifetimes 15-26 min under `min-instances=0`, i.e. the same order as the 15-minute poll it replaces). `entrypoint.sh`'s Pub/Sub-pushed reload route has no equivalent here because a stdio-only server exposes no HTTP route for a push to land on; push-based alternatives were designed and rejected as not worth the moving parts (see #584)
-- `tests/` — pytest + pytest-asyncio tests (1000+ tests as of 2026-05)
+- `tests/` — pytest + pytest-asyncio tests (1272 tests as of 2026-08, after the HTTP/OAuth removal in #601)
 
 ## Key Patterns
 
@@ -65,7 +65,8 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 - Cloud Run secrets must use Secret Manager, not plain env vars
 - User API keys encrypted with AES-256-GCM (crypto.py)
 - All tool exception handlers must catch DecryptionError
-- CLI default --host is 127.0.0.1 (not 0.0.0.0)
+- The server binds no network socket at all (stdio-only since #601), so there is no
+  `--host`/`--port` to get wrong; exposure decisions belong to the gateway in front of it
 - Dockerfile runs as non-root user (appuser)
 
 ## CI/CD
@@ -75,15 +76,22 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 
 ## Deployment Targets
 
-- **Local (stdio)**: `jquants-mcp` — single user, env/config API key
-- **Remote (self-hosted)**: Streamable HTTP + TLS + Bearer token
+- **Local (stdio)**: `jquants-mcp` — single user, env/config API key. This is
+  the **only** transport the code still speaks; `serve` has no `--transport`,
+  `--host` or `--port` flags any more (#601).
+- **Remote (self-hosted)**: front the stdio server with a gateway
+  (`mcp-stdio serve`, as Cloud Run does below). The in-process
+  Streamable-HTTP + TLS + Bearer-token listener that used to serve this role
+  is **gone**.
 - **Cloud Run, `jquants-mcp` service** (older, no longer CD-deployed): `us-west1`,
-  Google OAuth via the upstream FastMCP `GoogleProvider` (`auth.py`),
   multi-user, GCS startup copy (cache.db), `entrypoint.sh`
-  (streamable-http transport). This transport was removed from `server.py`
-  in #566 (official mcp SDK migration, stdio-only) — `entrypoint.sh` was
-  not updated to match, so this service's revisions are frozen at whatever
-  was last manually deployed; `cd.yml` no longer targets it at all (#588).
+  (streamable-http transport). That transport was removed from `server.py`
+  in #566 (official mcp SDK migration, stdio-only), and its Google OAuth
+  provider (`auth.py`, via the upstream FastMCP `GoogleProvider`), the
+  `/settings` web UI and `oauth_kv_store.py` were **deleted** in #601 —
+  `entrypoint.sh` was never updated to match, so it can no longer start a
+  server at all and this service's revisions are frozen at whatever was
+  last manually deployed; `cd.yml` no longer targets it (#588).
   Existing deployed revisions are unaffected — Cloud Run's atomic
   cutover keeps them serving. Scheduled for decommissioning (#568).
 - **Cloud Run, `jquants` service** (CD-deployed, same project/region):
