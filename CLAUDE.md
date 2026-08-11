@@ -141,3 +141,29 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   the fastest way to confirm identity is flowing.
 - Plan data retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all
 - `sync_plans.py` is removed — no longer copy data between plans
+
+## Cache Freshness
+
+- Tier 1 cache has **no time-based freshness bound**: `CacheStore.get_rows` returns
+  cached rows regardless of `fetched_at` age, and the cache-vs-API fetch decision in
+  tools is presence-based (a missing date triggers a live fetch; a cached one never
+  does), not freshness-based. See the `entrypoint-stdio.sh` bullet under
+  "Architecture" for the Cloud Run instance-lifecycle angle on this.
+- This is by design for the common case: cache.db is a **published snapshot**
+  (jpx-short-report's `daily.sh` re-fetches and re-exports it once a weekday;
+  consumers download the new artifact wholesale). A blanket TTL would fight that
+  model — re-fetching from the live API when a fresher whole-snapshot is already en
+  route, and hammering a rate-limited API against years of history that essentially
+  never changes (#587).
+- The actual gap: a row that is already cached is **never re-verified**, even if
+  J-Quants silently corrects it before the next snapshot lands. `equities_bars_daily`
+  has one concrete, targeted fix for this — `CacheStore.detect_split_in_batch()`
+  compares every row of a freshly-fetched batch against the cache's per-date value
+  and forces an invalidate+refetch on mismatch, catching retroactive `AdjFactor`
+  corrections (splits/consolidations/rights-issue reversals) without a time-based TTL
+  (#597, #598).
+- No equivalent check exists for other Tier 1 tables (e.g. `fins_summary`
+  restatements) — deferred until an actual stale-row incident is observed, per #587.
+  Do not add a blanket TTL preemptively; if a restatement-staleness problem shows up,
+  prefer a targeted signal (like `detect_split_in_batch`) over a time-based expiry,
+  for the same reasons as above.
