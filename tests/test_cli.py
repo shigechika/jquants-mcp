@@ -10,34 +10,6 @@ from unittest.mock import patch
 import jquants_mcp.cli as cli
 
 
-class TestServeArgs:
-    def test_host_defaults_to_loopback(self):
-        """Security requirement: --host defaults to 127.0.0.1, not 0.0.0.0."""
-        captured = {}
-
-        def fake_run_server(**kwargs):
-            captured.update(kwargs)
-
-        with patch("jquants_mcp.server.run_server", fake_run_server):
-            rc = cli.main([])
-        assert rc == 0
-        assert captured["host"] == "127.0.0.1"
-
-    def test_explicit_host_is_passed_through(self):
-        captured = {}
-
-        with patch("jquants_mcp.server.run_server", lambda **kw: captured.update(kw)):
-            cli.main(["--host", "0.0.0.0", "--port", "9001"])
-        assert captured["host"] == "0.0.0.0"
-        assert captured["port"] == 9001
-
-    def test_transport_default_is_stdio(self):
-        captured = {}
-        with patch("jquants_mcp.server.run_server", lambda **kw: captured.update(kw)):
-            cli.main([])
-        assert captured["transport"] == "stdio"
-
-
 class TestWriteApiKey:
     def test_sets_0600_permissions_on_posix(self, tmp_path, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
