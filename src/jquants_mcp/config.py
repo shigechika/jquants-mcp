@@ -54,23 +54,6 @@ _CONFIG_DEFS: list[_ConfigDef] = [
     _ConfigDef("max_retries", "client", "max_retries", "MAX_RETRIES", "5"),
     _ConfigDef("retry_base_delay", "client", "retry_base_delay", "RETRY_BASE_DELAY", "1.0"),
     _ConfigDef("max_pages", "client", "max_pages", "MAX_PAGES", "10"),
-    _ConfigDef("ssl_certfile", "server", "ssl_certfile", "SSL_CERTFILE", ""),
-    _ConfigDef("ssl_keyfile", "server", "ssl_keyfile", "SSL_KEYFILE", ""),
-    _ConfigDef("bearer_token", "server", "bearer_token", "MCP_BEARER_TOKEN", ""),
-    # OAuth provider selection ("github" or "google").
-    _ConfigDef("oauth_provider", "oauth", "provider", "OAUTH_PROVIDER", "github"),
-    # GitHub OAuth 2.1 settings
-    _ConfigDef("github_client_id", "oauth", "github_client_id", "GITHUB_CLIENT_ID", ""),
-    _ConfigDef("github_client_secret", "oauth", "github_client_secret", "GITHUB_CLIENT_SECRET", ""),
-    # Google OAuth 2.0 settings
-    _ConfigDef("google_client_id", "oauth", "google_client_id", "GOOGLE_CLIENT_ID", ""),
-    _ConfigDef("google_client_secret", "oauth", "google_client_secret", "GOOGLE_CLIENT_SECRET", ""),
-    # Common OAuth settings
-    _ConfigDef("oauth_base_url", "oauth", "base_url", "OAUTH_BASE_URL", ""),
-    _ConfigDef("oauth_jwt_signing_key", "oauth", "jwt_signing_key", "OAUTH_JWT_SIGNING_KEY", ""),
-    _ConfigDef(
-        "oauth_require_consent", "oauth", "require_consent", "OAUTH_REQUIRE_CONSENT", "true"
-    ),
     # Multi-user: encryption key for storing per-user API keys.
     _ConfigDef("encryption_key", "server", "encryption_key", "MCP_ENCRYPTION_KEY", ""),
     # Rotation window: previous encryption key — allowed to decrypt old blobs
@@ -107,7 +90,7 @@ _TYPE_MAP: dict[str, type] = {
 }
 
 # Boolean settings — treated as bool after string conversion.
-_BOOL_SETTINGS: frozenset[str] = frozenset({"oauth_require_consent", "cache_bypass_auth"})
+_BOOL_SETTINGS: frozenset[str] = frozenset({"cache_bypass_auth"})
 
 # J-Quants official config file default path. Tests patch this directly,
 # so keep it as a plain module-level constant.
@@ -213,9 +196,12 @@ class Settings:
             elif attr in _BOOL_SETTINGS and not isinstance(value, bool):
                 s = str(value).strip().lower()
                 if s == "":
-                    # An explicitly empty env var (e.g. OAUTH_REQUIRE_CONSENT="")
-                    # means "unset" → fall back to the declared default rather
-                    # than silently coercing a True-default flag to False.
+                    # An explicitly empty value (e.g. CACHE_BYPASS_AUTH="") means
+                    # "unset" → re-read the declared default rather than reading
+                    # the empty string as False. Today's only bool defaults to
+                    # "false", so the two agree; the branch is what would keep a
+                    # future True-default flag from being switched off by an
+                    # empty assignment.
                     s = str(default).strip().lower()
                 value = s not in ("false", "0", "no", "off")
 

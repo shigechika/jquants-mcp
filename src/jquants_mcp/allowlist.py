@@ -24,10 +24,11 @@ def parse_allowed_emails(raw: str) -> list[str]:
 
 
 def get_user_email(token: Any) -> str | None:
-    """Return the verified email from a FastMCP OAuth ``AccessToken``.
+    """Return the verified email from an OAuth access-token object.
 
-    Both the Google and GitHub providers populate ``token.claims["email"]``
-    when the corresponding scope was requested at authorization time.
+    ``token`` is anything exposing a ``.claims`` mapping; an OAuth
+    provider populates ``token.claims["email"]`` when the corresponding
+    scope was requested at authorization time.
 
     Defense-in-depth: when ``claims["email_verified"]`` is **explicitly
     ``False``** the email is dropped (returns ``None``) — Google sets

@@ -56,7 +56,7 @@ Once jquants-mcp is connected, conversational queries like these just work:
 - **[FAQ →](faq.md)** — plan recommendations, common errors, and tips.
 
 For the full technical reference (config schema, deployment shapes, multi-user
-mode, OAuth setup, every tool with parameter tables), see the
+mode behind a gateway, every tool with parameter tables), see the
 [README on GitHub](https://github.com/shigechika/jquants-mcp).
 
 ---

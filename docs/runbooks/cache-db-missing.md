@@ -18,7 +18,8 @@ Covers two related alerts that both point here:
 
 **Loaded stale:**
 - Alert `cache.db loaded stale` firing (log pattern `"cache.db is stale"`,
-  emitted by `CacheStore._log_cache_freshness` on load/reload)
+  emitted by `CacheStore._log_cache_freshness` when a snapshot is loaded —
+  i.e. at cold start, the only load event left)
 - Server is otherwise healthy and serving Tier 1 cache hits normally, but
   the latest cached date is stuck > 7 days behind today
 - Tool calls for recent dates silently fall back to the live J-Quants API
@@ -72,13 +73,29 @@ gcloud logging read \
    but `gcs_export_cache.py` errors before the upload (e.g. `verify_cache_completeness.py`
    catching an incomplete fetch and exiting non-zero, which the bundled
    `scripts/daily-fetch.crontab` treats as a hard stop before the export step).
-3. **No reload has run since the publisher recovered** — this alert only
-   fires on a load/reload event (startup or a Pub/Sub-triggered reload); a
-   publisher that resumes pushing fresh snapshots without a Cloud Run
-   restart or `jquants-mcp-cache-updated` publish won't clear the condition
-   until the next reload happens.
+3. **The snapshot in GCS is genuinely old** — every load is a cold-start
+   load (there is no in-place reload; see Recovery), so an alert that keeps
+   firing after the publisher was supposedly fixed means the GCS object is
+   still stale, not that a reload is pending. Check the object timestamp in
+   Quick check and the publisher's export log before touching Cloud Run.
 
 ## Recovery
+
+> **There is no in-process reload lever.** `cache.db` is downloaded once,
+> **synchronously, at container start** (`scripts/entrypoint-stdio.sh` Step 2
+> → `gcs_sync.py --init-cache`); the process holds that snapshot for its
+> whole life. The `SIGHUP` handler and the `/internal/reload` push endpoint
+> that used to force a reload are both gone — push-based refresh was
+> evaluated and rejected (#584), and the HTTP surface it lived on was
+> removed. **The only way an instance picks up a new snapshot is for that
+> instance to be replaced.**
+>
+> **Do not run `gcloud pubsub topics publish jquants-mcp-cache-updated`.**
+> The topic and the GCS bucket notification still exist, so the publish is
+> accepted and *reports success* — while the push lands on a route that no
+> longer exists. It reloads nothing. See
+> [`ops/pubsub/README.md`](../../ops/pubsub/README.md) for teardown of those
+> leftovers.
 
 - **Stale / missing object**: re-run the daily refresh on the publisher
   host, for example:
@@ -87,22 +104,31 @@ gcloud logging read \
   uv run python scripts/gcs_export_cache.py
   ```
 - **IAM**: `gcloud projects add-iam-policy-binding ${PROJECT} --member=serviceAccount:jquants-mcp@${PROJECT}.iam.gserviceaccount.com --role=roles/storage.objectViewer`
-- **Force a retry (download failed)**: send SIGHUP or deploy a new revision
+- **Pick up a fresh snapshot — usually no action needed**: the service runs
+  with `min-instances=0` and every cold start re-downloads `cache.db`.
+  Measured instance lifetimes are 15–26 min (#584), so a snapshot published
+  while an instance was warm propagates on its own within roughly half an
+  hour. Wait that out before escalating.
+- **Force it now** (download failed, or you cannot wait for the recycle):
+  deploy a new revision. This replaces the running instances, and each new
+  one re-runs the startup download.
   ```sh
-  gcloud run services update jquants-mcp --region=us-west1 \
+  gcloud run services update ${SERVICE} --region=us-west1 \
     --project=${PROJECT} --update-labels=kick=$(date +%s)
   ```
-- **Force a reload (loaded stale, after the publisher has a fresh snapshot)**:
-  publish the Pub/Sub topic so Cloud Run picks it up without waiting for a
-  cold start
-  ```sh
-  gcloud pubsub topics publish jquants-mcp-cache-updated --project=${PROJECT}
-  ```
+  `${SERVICE}` is the CD-deployed **`jquants`** service (`oauth2-proxy` +
+  `mcp-stdio serve`). The older `jquants-mcp` service is frozen and
+  scheduled for decommissioning (#568); the alert policies and the Quick
+  check queries above still carry that old name (#586).
 
 ## Post-incident
 
 - Confirm the next scheduled daily refresh succeeds
 - If the schedule was down, check your cron / launchd / systemd service
-- For a stale-load incident, confirm the reload actually cleared the
-  condition: no further `"cache.db is stale"` log lines after the next
-  load/reload, and `health_check` / `cache_status` show a recent latest date
+- For a stale-load incident, confirm the next cold start actually cleared
+  the condition: no further `"cache.db is stale"` log lines after it, and
+  `health_check` reports `cache_ready: true` with a recent
+  `latest_cache_date` (plus `today_cache_ready: true` once the publisher has
+  exported the current trading day). `cache_status` should show non-zero row
+  counts and a plausible `db_size_mb`. `health_check` has no `last_reload_at`
+  field — there are no reloads to timestamp

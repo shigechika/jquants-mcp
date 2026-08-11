@@ -9,17 +9,13 @@ license-files = ["LICENSE"]
 requires-python = ">=3.10"
 
 dependencies = [
-    # fastmcp stays a direct dependency for auth.py / settings/ (HTTP-transport
-    # OAuth providers + the /settings web UI). Those modules are unreachable
-    # from the stdio-only server built by server.py (which now uses the
-    # official mcp SDK's FastMCP below) but are kept present, not deleted,
-    # until every HTTP-serving deployment migrates off the fastmcp-based
-    # OAuth path — see #568.
-    "fastmcp>=3.2.1",
-    # mcp.server.fastmcp.FastMCP is what server.py and the tools/ modules
-    # actually import. fastmcp>=3.2.1 itself constrains this to
-    # mcp<2.0,>=1.24.0; pinned explicitly here since it is now a direct
-    # runtime dependency, not just a transitive one.
+    # The official MCP SDK is the only MCP dependency: server.py and the
+    # tools/ modules import mcp.server.fastmcp.FastMCP, and scripts/
+    # smoke_test.py drives deployments through its client side. The
+    # standalone fastmcp package was dropped once the HTTP/OAuth surface
+    # (auth.py, settings/) was deleted (#568). The <2 bound guards
+    # against SDK 2.0 API changes; the >=1.24 floor is inherited from the
+    # fastmcp era and is deliberately conservative (the lock resolves 1.28.x).
     "mcp>=1.24,<2",
     "httpx>=0.25.0",
     "cryptography>=41.0.0",
@@ -36,8 +32,8 @@ cloud-run = [
     "google-cloud-storage>=2.0.0",
     "google-cloud-firestore>=2.0.0",
     # cache.db is published to GCS zstd-compressed; the Cloud Run startup copy
-    # and the Pub/Sub reload stream-decompress it (falling back to the
-    # uncompressed object when absent). See scripts/gcs_sync.py / server.py.
+    # stream-decompresses it (falling back to the uncompressed object when
+    # absent). See scripts/gcs_sync.py.
     "zstandard>=0.21.0",
     # Fronts the stdio-only server over HTTP for the mcp-stdio/serve Cloud
     # Run deployment (entrypoint-stdio.sh). PyPI package; see mcp-stdio#400

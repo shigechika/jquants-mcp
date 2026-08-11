@@ -34,22 +34,32 @@ Free プランは 1 分あたり 5 リクエストまで。Claude が大量ク�
 ## iPhone でも動きますか？
 
 動きます。[Claude iOS アプリ](https://claude.ai/download)をインストールし、
-Streamable HTTP + Bearer token でセルフホストの jquants-mcp に接続すれば、
-チャート画像がチャットに inline 表示されます。
+MCP ゲートウェイ（`mcp-stdio serve`）を前段に置いたセルフホストの jquants-mcp へ
+HTTPS で接続すれば、チャート画像がチャットに inline 表示されます。
 [トップページのデモ](index.md) は実際に iPhone で収録したものです。
 
-ホスト側のセットアップ（TLS、OAuth、マルチユーザーモード）は GitHub の
+ホスト側のセットアップ（TLS、ゲートウェイでのサインイン、マルチユーザーの ID 連携）は
+GitHub の
 [deploy/](https://github.com/shigechika/jquants-mcp/tree/main/docs/deploy)
 ガイドを参照。
 
 ## 複数ユーザー向けに動かしたい
 
-Streamable HTTP サーバーとして起動し、Google または GitHub OAuth と組み合わせます。
-各ユーザーは `register_api_key` で自分の J-Quants API キーを登録し、AES-256-GCM で
-暗号化保存されます。Cloud Run がサポート対象のマネージドデプロイ先です。
+jquants-mcp 自体は stdio サーバーでネットワークを待ち受けないため、マルチユーザー
+対応は前段に置くゲートウェイが担います。`mcp-stdio serve` が接続元を認証し、
+セッションごとに jquants-mcp の子プロセスを起動して、そのユーザーの検証済みメール
+アドレスを子プロセスへ渡します
+（`--trusted-user-header X-Forwarded-Email --user-env JQUANTS_MCP_USER`）。
+1 つのプロセスが扱う利用者は常に 1 人だけです。
 
-詳細は [README のマルチユーザーセクション](https://github.com/shigechika/jquants-mcp#multi-user-mode)
-を参照。
+各ユーザーは Claude に `register_api_key` ツールを呼ばせて自分の J-Quants API キーを
+登録します。キーは AES-256-GCM で暗号化保存されます（サーバー側に
+`MCP_ENCRYPTION_KEY` の設定が必要）。マネージドデプロイのサポート対象は Cloud Run で、
+`oauth2-proxy` サイドカーを `mcp-stdio serve` の前段に置く構成です。
+
+詳細は GitHub の
+[deploy/](https://github.com/shigechika/jquants-mcp/tree/main/docs/deploy)
+ガイドを参照。
 
 ## キャッシュファイルはどこ？
 

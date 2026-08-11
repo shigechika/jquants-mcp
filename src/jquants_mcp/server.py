@@ -3,20 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import signal
 import time
 from typing import Any
 
-import httpx
-
 from mcp.server.fastmcp import FastMCP
-from starlette.middleware import Middleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
 
 from . import __version__
 from .cache import store
@@ -26,70 +18,6 @@ from .config import Settings
 from .tool_annotations import DESTRUCTIVE_LOCAL, READ_ONLY_LOCAL
 
 logger = logging.getLogger(__name__)
-
-# Paths whose requests are logged for OAuth debugging.
-_OAUTH_DEBUG_PATHS = ("/oauth/", "/.well-known/")
-
-# Query params and headers redacted from OAuth debug logs to avoid leaking
-# short-lived authorization secrets and session credentials.
-_REDACTED_QUERY_PARAMS = frozenset({"code", "state", "token", "access_token", "id_token"})
-_REDACTED_HEADERS = frozenset({"authorization", "cookie", "set-cookie"})
-
-
-class OAuthDebugMiddleware(BaseHTTPMiddleware):
-    """Log OAuth-related HTTP requests to help diagnose auth flow issues."""
-
-    async def dispatch(self, request: Request, call_next):  # type: ignore[override]
-        path = request.url.path
-        is_oauth = any(p in path for p in _OAUTH_DEBUG_PATHS)
-
-        if is_oauth:
-            # Redact short-lived OAuth secrets from query params (authorization
-            # code, state, token) so they never reach the logs.
-            query = {
-                k: (v if k.lower() not in _REDACTED_QUERY_PARAMS else "[REDACTED]")
-                for k, v in request.query_params.items()
-            }
-            # Redact credential-bearing headers (auth bearer token, session cookie).
-            headers = {
-                k: (v if k.lower() not in _REDACTED_HEADERS else "[REDACTED]")
-                for k, v in request.headers.items()
-            }
-            logger.info(
-                "OAuth request: method=%s path=%s query=%r headers=%r",
-                request.method,
-                path,
-                query,
-                headers,
-            )
-
-        try:
-            response = await call_next(request)
-        except RuntimeError as exc:
-            # Starlette BaseHTTPMiddleware raises "No response returned." when
-            # the client disconnects mid-request. That's a cosmetic symptom of
-            # the well-known BaseHTTPMiddleware limitation, not a server bug —
-            # swallow it and let the ASGI layer handle the disconnect.
-            if "No response returned" in str(exc):
-                if is_oauth:
-                    logger.info(
-                        "OAuth request aborted (client disconnect): method=%s path=%s",
-                        request.method,
-                        path,
-                    )
-                return Response(status_code=499)
-            raise
-
-        if is_oauth:
-            logger.info(
-                "OAuth response: method=%s path=%s status=%d",
-                request.method,
-                path,
-                response.status_code,
-            )
-
-        return response
-
 
 mcp = FastMCP("jquants-mcp")
 
@@ -173,10 +101,6 @@ _plan_detected: bool = False
 # Run cleanup at most once every 5 minutes.
 _CLEANUP_INTERVAL = 300
 
-# Pub/Sub reload state
-_last_reload_at: float | None = None
-_reload_in_progress: bool = False
-
 # User store — lazily initialized when encryption_key is configured.
 # Backend is SQLite (local) or Firestore (Cloud Run); both share the same
 # duck-typed interface, so the concrete type is not annotated here.
@@ -215,287 +139,6 @@ def _get_cache() -> CacheStore:
             plan_resolver=_resolve_current_plan,
         )
     return _cache
-
-
-def _sighup_handler(signum: int, frame: Any) -> None:
-    """Handle SIGHUP by requesting a lazy reload of the cache database.
-
-    Triggered externally (e.g. by ``launchctl kill SIGHUP``) after an
-    offline process such as ``daily.sh`` has updated ``cache.db``.
-    The handler only sets a flag; the actual reconnection happens on
-    the next request to avoid disturbing in-flight queries. uvicorn
-    does not install its own SIGHUP handler, so this handler coexists
-    with its SIGINT/SIGTERM shutdown handling.
-    """
-    logger.info("Received SIGHUP; scheduling cache DB reload")
-    if _cache is not None:
-        _cache.request_reload()
-    else:
-        logger.info("Cache DB not yet initialized; reload is a no-op")
-
-
-def _verify_pubsub_oidc_token(token: str, expected_email: str, audience: str) -> None:
-    """Verify a Google-signed OIDC token delivered by Pub/Sub.
-
-    Args:
-        token: Raw JWT string from the Authorization header.
-        expected_email: Service-account email that must match the token's ``email`` claim.
-        audience: Expected ``aud`` claim (typically the push endpoint URL).
-
-    Raises:
-        ValueError: When verification fails or the email / audience does not match.
-    """
-    try:
-        import google.auth.transport.requests  # type: ignore[import-untyped]
-        import google.oauth2.id_token  # type: ignore[import-untyped]
-    except ImportError as exc:
-        raise ValueError("google-auth not installed; install [cloud-run] extras") from exc
-
-    if not audience:
-        raise ValueError("audience must not be empty")
-
-    request = google.auth.transport.requests.Request()
-    try:
-        claims: dict[str, Any] = google.oauth2.id_token.verify_oauth2_token(
-            token, request, audience=audience
-        )
-    except Exception as exc:
-        raise ValueError(f"OIDC token verification failed: {exc}") from exc
-
-    if not claims.get("email_verified", False):
-        raise ValueError("OIDC token email not verified")
-
-    email = claims.get("email", "")
-    if email != expected_email:
-        raise ValueError(f"OIDC token email {email!r} does not match expected {expected_email!r}")
-
-
-def _download_cache_db_from_gcs() -> None:
-    """Download cache.db from GCS to the local cache directory (blocking).
-
-    Prefers the zstd-compressed ``cache.db.zst`` (stream-decompressed) and falls
-    back to the uncompressed ``cache.db`` when it is absent. Uses atomic write:
-    downloads to ``.cache.db.reload`` then renames to ``cache.db`` to prevent the
-    MCP server from reading a half-written file.
-
-    Raises:
-        RuntimeError: When ``GCS_BUCKET`` is not set or the object is not found.
-    """
-    from pathlib import Path
-
-    bucket_name = os.environ.get("GCS_BUCKET", "")
-    if not bucket_name:
-        raise RuntimeError("GCS_BUCKET environment variable is not set")
-
-    from google.cloud import storage as gcs  # type: ignore[import-untyped]
-    from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
-
-    prefix = os.environ.get("GCS_PREFIX", "jquants-mcp/")
-    if prefix and not prefix.endswith("/"):
-        prefix += "/"
-
-    cache_dir = Path(os.environ.get("JQUANTS_CACHE_DIR", "/tmp"))
-    local_path = cache_dir / "cache.db"
-    # Distinct from gcs_sync.py's ".cache.db.download" temp name so the
-    # Pub/Sub reload download can never collide with the entrypoint's
-    # startup download (they target the same cache.db / cache_dir).
-    tmp_path = cache_dir / ".cache.db.reload"
-
-    from .cache.gcs_download import stream_download_zst
-
-    client = gcs.Client()
-    bucket = client.bucket(bucket_name)
-
-    # 1. Preferred: compressed cache.db.zst, stream-decompressed.
-    if stream_download_zst(bucket, f"{prefix}cache.db.zst", tmp_path):
-        tmp_path.rename(local_path)
-        size_mb = local_path.stat().st_size / 1024 / 1024
-        logger.info("Downloaded+decompressed cache.db.zst from GCS (%.1f MB)", size_mb)
-        return
-
-    # 2. Fallback: uncompressed cache.db.
-    blob_name = f"{prefix}cache.db"
-    blob = bucket.blob(blob_name)
-    logger.info("Downloading gs://%s/%s ...", bucket_name, blob_name)
-    try:
-        blob.download_to_filename(str(tmp_path))
-    except NotFound as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise RuntimeError(f"gs://{bucket_name}/{blob_name} not found") from exc
-    except Exception as exc:
-        tmp_path.unlink(missing_ok=True)
-        raise RuntimeError(f"GCS download failed: {exc}") from exc
-
-    tmp_path.rename(local_path)
-    size_mb = local_path.stat().st_size / 1024 / 1024
-    logger.info("Downloaded cache.db from GCS (%.1f MB)", size_mb)
-
-
-async def _reload_cache_background() -> bool:
-    """Download cache.db from GCS then request a lazy reload.
-
-    When ``GCS_BUCKET`` is not set (local dev), skips the download and just
-    flips the lazy-reconnect flag — behaves like SIGHUP.
-
-    Returns:
-        True when the reload succeeded, or was skipped because another reload
-        is already in progress (a duplicate Pub/Sub delivery). False when the
-        download or reconnect failed — the caller maps False to a non-2xx so
-        Pub/Sub redelivers instead of dropping the published snapshot.
-    """
-    global _reload_in_progress, _last_reload_at
-
-    if _reload_in_progress:
-        logger.info("Pub/Sub reload: already in progress, ignoring duplicate request")
-        return True
-
-    _reload_in_progress = True
-    try:
-        if os.environ.get("GCS_BUCKET"):
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, _download_cache_db_from_gcs)
-        else:
-            logger.info("GCS_BUCKET not set; skipping download, flagging lazy reconnect only")
-
-        _get_cache().request_reload()
-        _last_reload_at = time.time()
-        logger.info("Cache reload scheduled (last_reload_at=%.3f)", _last_reload_at)
-        return True
-    except Exception as exc:
-        logger.error("Cache reload failed: %s", exc)
-        return False
-    finally:
-        _reload_in_progress = False
-
-
-@mcp.custom_route("/.well-known/oauth-protected-resource/mcp", methods=["GET", "OPTIONS"])
-async def _handle_protected_resource_metadata(request: Request) -> Response:
-    """RFC 9728: OAuth 2.0 Protected Resource Metadata.
-
-    Lets MCP clients discover the authorization server from the resource URL.
-    Only handles root-level deployments (resource = {base_url}/mcp).
-    When deployed behind a path-prefix reverse proxy the proxy must serve the
-    RFC 9728 well-known URL at the domain root level.
-    """
-    base_url = _get_settings().oauth_base_url.rstrip("/")
-    if not base_url:
-        return Response(
-            status_code=404,
-            content='{"error":"OAuth not configured"}',
-            media_type="application/json",
-        )
-    data = {
-        "resource": f"{base_url}/mcp",
-        "authorization_servers": [base_url],
-    }
-    return Response(
-        content=json.dumps(data),
-        status_code=200,
-        media_type="application/json",
-        headers={"Cache-Control": "public, max-age=3600"},
-    )
-
-
-@mcp.custom_route("/.well-known/openid-configuration", methods=["GET", "OPTIONS"])
-async def _handle_openid_configuration(request: Request) -> Response:
-    """OIDC discovery — alias for OAuth 2.0 Authorization Server Metadata (RFC 8414).
-
-    Claude Desktop and its backend probe this endpoint before the MCP-spec
-    RFC 8414 path.  jquants-mcp uses GitHub OAuth (not OpenID Connect), but
-    returning the OAuth server metadata here is sufficient for clients to
-    discover the authorization and token endpoints.
-    """
-    if not _get_settings().oauth_base_url:
-        return Response(
-            status_code=404,
-            content='{"error":"OAuth not configured"}',
-            media_type="application/json",
-        )
-    host, port = request.scope.get("server", ("127.0.0.1", 8080))
-    host_str = f"[{host}]" if ":" in str(host) else host
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f"http://{host_str}:{port}/.well-known/oauth-authorization-server",
-                timeout=5.0,
-            )
-        return Response(
-            content=resp.content,
-            status_code=resp.status_code,
-            media_type="application/json",
-            headers={"Cache-Control": "public, max-age=3600"},
-        )
-    except httpx.RequestError as exc:
-        logger.warning("/.well-known/openid-configuration proxy failed: %s", exc)
-        return Response(
-            status_code=503,
-            content='{"error":"service unavailable"}',
-            media_type="application/json",
-        )
-
-
-@mcp.custom_route("/internal/reload", methods=["POST"])
-async def _handle_pubsub_reload(request: Request) -> Response:
-    """Accept a GCS Pub/Sub push notification and schedule a cache.db reload.
-
-    Security: when ``PUBSUB_INVOKER_SA`` is configured, the endpoint verifies
-    the Google-signed OIDC token delivered in the ``Authorization`` header.
-    The audience must match ``PUBSUB_AUDIENCE`` (or defaults to the request URL).
-
-    The cache.db download runs synchronously, before the 200 is returned, so
-    the work happens while this push request is still active. Under request-based
-    billing (CPU throttled between requests) a detached background task would be
-    CPU-starved the instant the handler returned and could die at scale-to-zero,
-    leaving a freshly published cache.db unloaded. The push subscription's ack
-    deadline must therefore exceed the download time
-    (see ops/pubsub/setup.md: ``--ack-deadline=180``); the ``_reload_in_progress``
-    guard dedups any Pub/Sub redelivery that a slow download might trigger.
-
-    On a download/reconnect failure the handler returns 500 so Pub/Sub redelivers
-    (bounded by the subscription's message-retention) rather than dropping the
-    published snapshot and waiting for the next cold-start re-download.
-    """
-    expected_sa = os.environ.get("PUBSUB_INVOKER_SA", "")
-    if expected_sa:
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            logger.warning("Pub/Sub reload: missing or malformed Authorization header")
-            return Response(
-                content='{"error":"missing token"}',
-                status_code=401,
-                media_type="application/json",
-            )
-
-        raw_token = auth_header[len("Bearer ") :]
-        audience = os.environ.get("PUBSUB_AUDIENCE", str(request.url))
-
-        try:
-            await asyncio.get_running_loop().run_in_executor(
-                None, _verify_pubsub_oidc_token, raw_token, expected_sa, audience
-            )
-        except ValueError as exc:
-            logger.warning("Pub/Sub reload: OIDC verification failed: %s", exc)
-            return Response(
-                content='{"error":"unauthorized"}',
-                status_code=403,
-                media_type="application/json",
-            )
-    else:
-        logger.debug("PUBSUB_INVOKER_SA not set; skipping OIDC verification")
-
-    # Await the download here (rather than a detached create_task) so it runs
-    # under the allocated CPU of this active push request — see the docstring.
-    if not await _reload_cache_background():
-        return Response(
-            content='{"status":"reload failed"}',
-            status_code=500,
-            media_type="application/json",
-        )
-    return Response(
-        content='{"status":"reloaded"}',
-        status_code=200,
-        media_type="application/json",
-    )
 
 
 def _get_rate_limiter():
@@ -804,7 +447,6 @@ def _health_check_impl() -> dict[str, Any]:
         "latest_cache_date": latest_date,
         "trading_date_today": trading_today,
         "today_cache_ready": today_cache_ready,
-        "last_reload_at": _last_reload_at,
     }
 
 
@@ -905,8 +547,9 @@ async def register_api_key(api_key: str) -> dict[str, Any]:
     """Register or update your J-Quants API key (multi-user mode).
 
     ⚠️ SECURITY WARNING: The API key is transmitted in plaintext via the MCP
-    protocol and may be logged by the MCP client or LLM provider. Use the
-    browser-based /settings page instead for secure key registration.
+    protocol and may be logged by the MCP client or LLM provider. Treat the
+    key as exposed to every hop in that chain, and rotate it from the
+    J-Quants console if that is not acceptable.
 
     Stores your J-Quants API key encrypted in the server's user database,
     associated with your OAuth identity. The server probes plan-specific
@@ -1073,110 +716,22 @@ def _register_tools() -> None:
 
 _register_tools()
 
-from .settings import register_settings_routes  # noqa: E402
-
-register_settings_routes(mcp, _get_user_db, _user_clients, _user_client_last_used, _get_settings)
-
 
 # ------------------------------------------------------------------
 # Server startup
 # ------------------------------------------------------------------
 
 
-def run_server(
-    transport: str = "stdio",
-    host: str = "127.0.0.1",
-    port: int = 8080,
-    ssl_certfile: str = "",
-    ssl_keyfile: str = "",
-    bearer_token: str = "",
-    github_client_id: str = "",
-    github_client_secret: str = "",
-    oauth_base_url: str = "",
-) -> None:
-    """Start the MCP server.
+def run_server() -> None:
+    """Start the MCP server over stdio.
 
-    ``transport="stdio"`` is the only path this server actually supports
-    since the migration to the official mcp SDK's ``FastMCP`` — its
-    ``run()`` accepts only ``transport`` and ``mount_path`` (no ``host``,
-    ``port``, ``uvicorn_config``, or ``middleware`` kwargs), so calling this
-    with any other transport raises ``TypeError`` immediately at the
-    ``mcp.run(...)`` call in the ``else`` branch below. The HTTP/OAuth
-    parameters below are kept undeleted only because a parallel deployment
-    still runs this function from an older, unmigrated checkout — see the
-    module-level notes on ``auth.py``/``settings/`` for why. Do not rely on
-    this path from the current checkout.
-
-    Args:
-        transport: Transport type ("stdio" or "streamable-http")
-        host: Bind address for HTTP transport
-        port: Port number for HTTP transport
-        ssl_certfile: Path to SSL certificate file
-        ssl_keyfile: Path to SSL private key file
-        bearer_token: Bearer token for authentication (fallback if OAuth not configured)
-        github_client_id: GitHub OAuth App client ID (enables OAuth 2.1)
-        github_client_secret: GitHub OAuth App client secret
-        oauth_base_url: Public base URL for OAuth endpoints (e.g. https://mcp.example.com)
+    stdio is the only transport this server supports: since the migration to
+    the official mcp SDK's ``FastMCP``, ``run()`` accepts only ``transport``
+    and ``mount_path`` — no ``host``, ``port``, ``uvicorn_config`` or
+    ``middleware``. HTTP is terminated upstream instead, by the ``mcp-stdio``
+    gateway that spawns one child process per authenticated user.
     """
     logging.basicConfig(level=logging.INFO, format="%(name)s - %(levelname)s - %(message)s")
-    logger.info("jquants-mcp v%s starting (transport=%s)", __version__, transport)
+    logger.info("jquants-mcp v%s starting (transport=stdio)", __version__)
 
-    if transport == "stdio":
-        mcp.run(transport="stdio")
-    else:
-        # Install SIGHUP handler for lazy cache reload. Safe here because
-        # uvicorn only manages SIGINT/SIGTERM, and the handler itself only
-        # flips a flag (no I/O), so async reentrancy is not a concern.
-        try:
-            signal.signal(signal.SIGHUP, _sighup_handler)
-            logger.info("SIGHUP handler installed for cache DB reload")
-        except (ValueError, OSError) as e:
-            # ValueError: signal only works in main thread
-            # OSError: platform without SIGHUP (e.g. Windows)
-            logger.warning("Could not install SIGHUP handler: %s", e)
-
-        # Apply CLI overrides to settings before creating the auth provider.
-        settings = _get_settings()
-        ssl_certfile = ssl_certfile or settings.ssl_certfile
-        ssl_keyfile = ssl_keyfile or settings.ssl_keyfile
-
-        # For OAuth/Bearer settings, CLI overrides take precedence over the config file.
-        if bearer_token:
-            settings.bearer_token = bearer_token
-        if github_client_id:
-            settings.github_client_id = github_client_id
-        if github_client_secret:
-            settings.github_client_secret = github_client_secret
-        if oauth_base_url:
-            settings.oauth_base_url = oauth_base_url
-
-        # Configure authentication.
-        from .auth import create_auth_provider
-
-        auth_provider = create_auth_provider(settings)
-        if auth_provider is not None:
-            mcp.auth = auth_provider
-        else:
-            logger.warning(
-                "HTTP transport running without authentication. "
-                "Set bearer_token or OAuth provider for security."
-            )
-
-        # Configure TLS.
-        uvicorn_config: dict[str, Any] = {}
-        if ssl_certfile and ssl_keyfile:
-            uvicorn_config["ssl_certfile"] = ssl_certfile
-            uvicorn_config["ssl_keyfile"] = ssl_keyfile
-            scheme = "https"
-        else:
-            scheme = "http"
-
-        logger.info("%s server: %s://%s:%d/mcp", transport, scheme, host, port)
-        debug_middleware = [Middleware(OAuthDebugMiddleware)]
-        mcp.run(
-            transport=transport,
-            host=host,
-            port=port,
-            uvicorn_config=uvicorn_config,
-            middleware=debug_middleware,
-        )
+    mcp.run(transport="stdio")
