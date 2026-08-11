@@ -5,6 +5,18 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [0.56.0](https://github.com/shigechika/jquants-mcp/compare/v0.55.4...v0.56.0) (2026-08-11)
+
+
+### Features
+
+* prefer the native ROE field over EPS/BPS derivation ([#565](https://github.com/shigechika/jquants-mcp/issues/565)) ([#594](https://github.com/shigechika/jquants-mcp/issues/594)) ([b46c34c](https://github.com/shigechika/jquants-mcp/commit/b46c34c20f2f59045688dcbfb911e81b5bf577f8))
+
+
+### Bug Fixes
+
+* detect splits by scanning the whole fetched batch, not just the last row ([#598](https://github.com/shigechika/jquants-mcp/issues/598)) ([9617248](https://github.com/shigechika/jquants-mcp/commit/9617248ccace57edf6a83d1b38a762e79bc35218))
+
 ## [0.55.4](https://github.com/shigechika/jquants-mcp/compare/v0.55.3...v0.55.4) (2026-08-10)
 
 
