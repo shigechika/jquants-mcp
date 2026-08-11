@@ -141,23 +141,6 @@ def _get_cache() -> CacheStore:
     return _cache
 
 
-def _sighup_handler(signum: int, frame: Any) -> None:
-    """Handle SIGHUP by requesting a lazy reload of the cache database.
-
-    Triggered externally (e.g. by ``launchctl kill SIGHUP``) after an
-    offline process such as ``daily.sh`` has updated ``cache.db``.
-    The handler only sets a flag; the actual reconnection happens on
-    the next request to avoid disturbing in-flight queries. uvicorn
-    does not install its own SIGHUP handler, so this handler coexists
-    with its SIGINT/SIGTERM shutdown handling.
-    """
-    logger.info("Received SIGHUP; scheduling cache DB reload")
-    if _cache is not None:
-        _cache.request_reload()
-    else:
-        logger.info("Cache DB not yet initialized; reload is a no-op")
-
-
 def _get_rate_limiter():
     """Return the per-user rate limiter, creating it on first access."""
     global _rate_limiter
