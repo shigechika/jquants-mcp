@@ -58,8 +58,10 @@ api_key = YOUR_API_KEY_HERE
     1. [claude.ai](https://claude.ai) を開き **プロジェクト** を作成
        （左サイドバー → **プロジェクト** → **新規プロジェクト**）。
     2. プロジェクトを開く → 歯車アイコン → **Integrations** → **Add integration** →
-       **Custom** → jquants-mcp サーバーの URL を入力（例：Cloud Run のエンドポイント）。
-       Google OAuth で認証。
+       **Custom** → jquants-mcp の前段に置いたゲートウェイの URL を入力
+       （例：Cloud Run のエンドポイント）。jquants-mcp 自体は stdio しか話さないため、
+       リモートからの接続は必ずゲートウェイ経由になります。リファレンス構成の
+       Cloud Run では Google アカウントでサインインします。
     3. _（推奨）_ **指示を追加** をクリックし、
        [`docs/claude-project-instructions.md`](claude-project-instructions.md)
        の内容を貼り付ける。
@@ -120,5 +122,5 @@ Claude が `get_candlestick_data` を呼んでローソク足 React artifact を
 - **[ツール →](tools.md)** — Claude にできることの一覧
 - **[FAQ →](faq.md)** — よくあるエラー、プラン選び、マルチユーザーモード
 - **完全なリファレンス**: [GitHub README](https://github.com/shigechika/jquants-mcp)
-  に設定 schema、デプロイ形態（Docker / Cloud Run / セルフホスト HTTP）、
-  ツール別パラメータ表、OAuth 設定が網羅されています
+  に設定 schema、デプロイ形態（Docker / Cloud Run / ゲートウェイ経由のセルフホスト）、
+  ツール別パラメータ表、ゲートウェイ側の認証設定が網羅されています

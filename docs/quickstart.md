@@ -59,8 +59,10 @@ api_key = YOUR_API_KEY_HERE
     1. Open [claude.ai](https://claude.ai) and create a **Project**
        (left sidebar → **Projects** → **New project**).
     2. Open the project → gear icon → **Integrations** → **Add integration** →
-       **Custom** → enter the URL of your jquants-mcp server (e.g. a
-       Cloud Run deployment). Authenticate with Google OAuth.
+       **Custom** → enter the URL of the gateway fronting your jquants-mcp
+       server (e.g. a Cloud Run deployment). jquants-mcp itself speaks only
+       stdio, so remote clients always connect through a gateway — the
+       reference Cloud Run setup signs you in with your Google account.
     3. _(Optional but recommended)_ Click **Add instructions** and paste
        the contents of
        [`docs/claude-project-instructions.md`](claude-project-instructions.md).
@@ -124,5 +126,6 @@ Claude calls `get_candlestick_data` and renders a candlestick React artifact inl
 - **[FAQ →](faq.md)** — common errors, plan recommendations, multi-user mode.
 - **Full reference**:
   [GitHub README](https://github.com/shigechika/jquants-mcp) covers
-  config schema, deployment shapes (Docker / Cloud Run / self-hosted HTTP),
-  per-tool parameter tables, and OAuth.
+  config schema, deployment shapes (Docker / Cloud Run / gateway-fronted
+  self-hosting), per-tool parameter tables, and the gateway-side
+  authentication setup.

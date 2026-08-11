@@ -49,8 +49,8 @@ jquants-mcp を接続すると、以下のような自然な日本語クエリ�
 - **[ツール →](tools.md)** — 何ができるかのユーザー向けツアー
 - **[FAQ →](faq.md)** — プラン選び、よくあるエラー、Tips
 
-完全な技術リファレンス（設定 schema、デプロイ形態、マルチユーザーモード、OAuth、
-全ツールのパラメータ表）は [GitHub README](https://github.com/shigechika/jquants-mcp)
+完全な技術リファレンス（設定 schema、デプロイ形態、ゲートウェイ経由のマルチユーザー
+モード、全ツールのパラメータ表）は [GitHub README](https://github.com/shigechika/jquants-mcp)
 を参照してください。
 
 ---
