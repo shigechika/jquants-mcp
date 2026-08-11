@@ -1683,43 +1683,110 @@ class CacheStore:
             conn.commit()
             return cursor.rowcount
 
-    def check_adj_factor(
+    def detect_split_in_batch(
         self,
         code: str,
-        new_adj_factor: float | None,
-    ) -> bool:
-        """Check if AdjFactor has changed for a stock (split detection).
+        api_data: list[dict],
+    ) -> str | None:
+        """Scan a freshly-fetched batch of daily bars for a split/consolidation/
+        rights-issue event the cache does not already reflect.
+
+        AdjFactor is a per-date event flag (1.0 on ordinary days, the split
+        ratio only on the effective date) rather than a cumulative running
+        value, so this inspects every row in the batch instead of diffing two
+        single most-recent scalars — comparing only the batch's last row
+        (the previous implementation) missed splits that occurred earlier in
+        the batch and could also misfire on reversal-to-1.0 transitions that
+        are not new events (jquants-mcp#597).
+
+        For each row, compares against the *cache's own value for that exact
+        date* rather than skipping whenever the newly-fetched value looks
+        "ordinary" (1.0/0.0/None) — J-Quants does retroactively correct a
+        previously-reported non-1.0 AdjFactor back to 1.0 on the same date
+        (confirmed in production for a rights-issue reversal), and that
+        correction must still trigger invalidation (jquants-mcp#598 R1F1).
+        A date with no prior cached row at all is only treated as a new
+        event if this code already has *some* cached history — an initial
+        full-history fetch into an empty cache is not a "change" and would
+        otherwise trigger a redundant duplicate fetch for every historical
+        split in that code's history (jquants-mcp#598 R1F2).
 
         Returns:
-            True if cache is valid (no split detected), False if invalidation needed
+            The effective date (YYYY-MM-DD) of the first new/changed event
+            found in the batch, or None if none is present.
         """
-        if new_adj_factor is None:
-            return True
-
         conn = self._ensure_connection()
         if conn is None:
-            return True  # DB not ready → cannot check splits, treat as cache miss
+            return None  # DB not ready → cannot check splits, treat as cache miss
 
-        _adj_sql = (
-            "SELECT COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
-            "FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT 1"
+        dates = [row.get("Date") for row in api_data if row.get("Date") is not None]
+        if not dates:
+            return None
+
+        cached_by_date: dict[str, float | None] = {}
+        # SQLite の変数上限（既定999）を踏まえ、900件ずつに分割してクエリする
+        # （get_cumulative_split_factor と同じ既存のチャンク方式に合わせる）。
+        for i in range(0, len(dates), 900):
+            chunk = dates[i : i + 900]
+            placeholders = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT date, COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
+                f"FROM equities_bars_daily WHERE code = ? AND date IN ({placeholders})",
+                (code, *chunk),
+            ).fetchall()
+            cached_by_date.update({r["date"]: r["adj_factor"] for r in rows})
+
+        has_any_cache = bool(cached_by_date) or (
+            conn.execute(
+                "SELECT 1 FROM equities_bars_daily WHERE code = ? LIMIT 1", (code,)
+            ).fetchone()
+            is not None
         )
-        row = conn.execute(_adj_sql, (code,)).fetchone()
 
-        if row is None:
-            return True  # no cached data → nothing to invalidate
+        def _is_ordinary(value: float | None) -> bool:
+            # None/0.0/1.0 はいずれも「その日はイベントなし」を表す同値の表現
+            # （None=未取得・未計算、0.0=一部の古い応答、1.0=通常の event flag）。
+            # cached 側と new 側で異なる「通常値」表現を使っていても、両方が
+            # 通常値なら実際には変化が無い（jquants-mcp#598 R2F1）。
+            return value is None or value in (0.0, 1.0)
 
-        cached_adj = row["adj_factor"]
-        if cached_adj is not None and abs(cached_adj - new_adj_factor) > 1e-10:
-            logger.info(
-                "Stock split detected: code=%s (AdjFactor: %s -> %s)",
-                code,
-                cached_adj,
-                new_adj_factor,
-            )
-            return False
+        for row in api_data:
+            row_date = row.get("Date")
+            if row_date is None:
+                continue
+            adj_factor = row.get("AdjFactor")
+            was_cached = row_date in cached_by_date
 
-        return True
+            if not was_cached:
+                if not has_any_cache:
+                    continue  # コールドキャッシュへの初回投入は「変化」ではない
+                if _is_ordinary(adj_factor):
+                    continue
+                logger.info(
+                    "Stock split detected: code=%s date=%s (new event, AdjFactor=%s)",
+                    code,
+                    row_date,
+                    adj_factor,
+                )
+                return row_date
+
+            cached_adj = cached_by_date[row_date]
+            if _is_ordinary(cached_adj) and _is_ordinary(adj_factor):
+                continue  # どちらも通常値の別表現なだけで、実際の変化ではない
+
+            effective_cached = 1.0 if cached_adj is None else cached_adj
+            effective_new = 1.0 if adj_factor is None else adj_factor
+            if abs(effective_cached - effective_new) > 1e-10:
+                logger.info(
+                    "Stock split detected: code=%s date=%s (AdjFactor: %s -> %s)",
+                    code,
+                    row_date,
+                    effective_cached,
+                    effective_new,
+                )
+                return row_date
+
+        return None
 
     def get_cumulative_split_factor(self, code: str, target_date: str) -> float:
         """Get the cumulative split adjustment factor for a stock after target_date.

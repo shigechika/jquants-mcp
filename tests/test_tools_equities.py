@@ -153,6 +153,45 @@ class TestGetEquitiesBarsDaily:
             result = await _call("get_equities_bars_daily", date_from="2024-01-04")
             assert result["count"] == 1
 
+    async def test_split_mid_batch_still_triggers_full_refetch(self, mock_env):
+        """jquants-mcp#597 の false negative 回帰: 新規取得バッチの最終行
+        ではなく途中の行で分割が起きても、キャッシュ全体の再取得が走ること。
+        AdjFactor は日付単位のイベントフラグのため、分割日の翌営業日以降は
+        1.0 に戻っており、バッチ末尾だけを見る旧実装は検知できなかった。
+        """
+        with patch.object(
+            mock_env["client"],
+            "get_all_pages",
+            new_callable=AsyncMock,
+            return_value=[{"Code": "72030", "Date": "2024-01-04", "O": 2800, "AdjFactor": 1.0}],
+        ):
+            await _call(
+                "get_equities_bars_daily",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-01-04",
+            )
+
+        # 分割は 01-05（バッチ2行目=末尾ではない）、01-06 は通常日で 1.0 に復帰
+        incremental_batch = [
+            {"Code": "72030", "Date": "2024-01-04", "O": 2800, "AdjFactor": 1.0},
+            {"Code": "72030", "Date": "2024-01-05", "O": 280, "AdjFactor": 0.1},
+            {"Code": "72030", "Date": "2024-01-06", "O": 285, "AdjFactor": 1.0},
+        ]
+        mock_fn = AsyncMock(return_value=incremental_batch)
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-01-06",
+            )
+            assert result["count"] == 3
+            # 分割検知 → invalidate 後の全件再取得で get_all_pages が2回呼ばれる
+            assert mock_fn.call_count == 2, (
+                "バッチ途中の分割が検知されず、無条件再取得が走らなかった"
+            )
+
 
 class TestGetEquitiesBarsMinute:
     async def test_returns_data(self, mock_env):

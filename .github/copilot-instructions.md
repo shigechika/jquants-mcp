@@ -104,15 +104,18 @@ docstring is what the calling model uses to decide how to invoke the tool.
 ## 5. Cache correctness (`cache/store.py`)
 
 Two tiers: **Tier 1** (row-level, e.g. `equities_bars_daily`, `fins_summary`)
-supports incremental fetch and detects stock splits by comparing `AdjFactor`
-across fetches, rewriting historical adjusted prices when a split is found.
-**Tier 2** (response-level) caches full API responses with a per-endpoint TTL
-(`ENDPOINT_TTL` map — currently ranging 6h/24h/7d/90d, with a few endpoints
-explicitly set to `TTL_NONE`, e.g. `/equities/bars/daily/am`, intraday data
-that must never be cached). A diff touching TTL values, the `ENDPOINT_TTL`
-map, or the split-detection comparison in `CacheStore.check_adj_factor`
-needs scrutiny — a wrong TTL or a broken split comparison produces silently
-stale/incorrect data rather than a visible error. Also: Tier 1 data is
+supports incremental fetch and detects stock splits by scanning every row of
+a freshly-fetched batch for an `AdjFactor` the cache doesn't already have for
+that date (`AdjFactor` is a per-date event flag, not a cumulative value —
+see jquants-mcp#597), rewriting historical adjusted prices when a split is
+found. **Tier 2** (response-level) caches full API responses with a
+per-endpoint TTL (`ENDPOINT_TTL` map — currently ranging 6h/24h/7d/90d, with
+a few endpoints explicitly set to `TTL_NONE`, e.g. `/equities/bars/daily/am`,
+intraday data that must never be cached). A diff touching TTL values, the
+`ENDPOINT_TTL` map, or the split-detection comparison in
+`CacheStore.detect_split_in_batch` needs scrutiny — a wrong TTL or a broken
+split comparison produces silently stale/incorrect data rather than a
+visible error. Also: Tier 1 data is
 plan-agnostic (no `plan` column per
 `CLAUDE.md`/the `_migrate_drop_plan` migration) — plan-based date
 restriction happens at query time via `_effective_plan()`, not at insert

@@ -723,13 +723,16 @@ async def _get_bars_daily_with_cache(
             raise
 
         if api_data:
-            # Stock split check
-            latest_row = api_data[-1]
-            adj_factor = latest_row.get("AdjFactor")
-            if not cache.check_adj_factor(cache_code, adj_factor):
+            # Stock split check: scan the whole batch, not just the last row
+            # (AdjFactor is a per-date event flag, not a running value — see
+            # jquants-mcp#597).
+            split_date = cache.detect_split_in_batch(cache_code, api_data)
+            if split_date:
                 # Split detected -> invalidate the cache and refetch all rows
                 cache.invalidate_rows("equities_bars_daily", {"code": cache_code})
-                logger.info("株式分割検知、キャッシュ再取得: code=%s", code)
+                logger.info(
+                    "株式分割検知、キャッシュ再取得: code=%s (発生日: %s)", code, split_date
+                )
                 params_full = {"code": code}
                 if date_from:
                     params_full["from"] = date_from
