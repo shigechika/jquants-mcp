@@ -103,20 +103,64 @@ class TestTier1RowCache:
         result = cache_store.get_rows("equities_bars_daily", {"code": "72030"})
         assert len(result) == 0
 
-    def test_check_adj_factor_no_split(self, cache_store: CacheStore):
+    def test_detect_split_in_batch_no_split(self, cache_store: CacheStore):
         rows = [{"Code": "72030", "Date": "2024-01-04", "O": 100, "AdjFactor": 1.0}]
         cache_store.put_rows(
             "equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor"
         )
-        assert cache_store.check_adj_factor("72030", 1.0) is True
+        batch = [{"Code": "72030", "Date": "2024-01-05", "O": 100, "AdjFactor": 1.0}]
+        assert cache_store.detect_split_in_batch("72030", batch) is None
 
-    def test_check_adj_factor_split_detected(self, cache_store: CacheStore):
+    def test_detect_split_in_batch_split_on_last_row(self, cache_store: CacheStore):
         rows = [{"Code": "72030", "Date": "2024-01-04", "O": 100, "AdjFactor": 1.0}]
         cache_store.put_rows(
             "equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor"
         )
-        # 株式分割: AdjFactor が変わった
-        assert cache_store.check_adj_factor("72030", 0.1) is False
+        # 株式分割: 新規バッチの最終行の AdjFactor が変わった
+        batch = [{"Code": "72030", "Date": "2024-01-05", "O": 10, "AdjFactor": 0.1}]
+        assert cache_store.detect_split_in_batch("72030", batch) == "2024-01-05"
+
+    def test_detect_split_in_batch_split_mid_batch(self, cache_store: CacheStore):
+        """jquants-mcp#597 の false negative 再現: 分割が新規バッチの最終行
+        ではなく途中の行で起きた場合でも検知できること。AdjFactor は日付
+        単位のイベントフラグであり、分割日の翌日以降は 1.0 に戻るため、
+        バッチ末尾の値だけを見る旧実装は検知できなかった。
+        """
+        rows = [{"Code": "72030", "Date": "2024-01-04", "O": 100, "AdjFactor": 1.0}]
+        cache_store.put_rows(
+            "equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor"
+        )
+        batch = [
+            {"Code": "72030", "Date": "2024-01-05", "O": 10, "AdjFactor": 0.1},  # 分割日
+            {"Code": "72030", "Date": "2024-01-06", "O": 11, "AdjFactor": 1.0},  # 通常日
+            {"Code": "72030", "Date": "2024-01-07", "O": 12, "AdjFactor": 1.0},  # バッチ末尾
+        ]
+        assert cache_store.detect_split_in_batch("72030", batch) == "2024-01-05"
+
+    def test_detect_split_in_batch_reversal_pattern_is_not_a_false_positive(
+        self, cache_store: CacheStore
+    ):
+        """jquants-mcp#597 の false positive 再現: キャッシュ済み最新行が
+        非1.0（分割日そのもの）で、新規バッチの最終行が1.0（通常日）に
+        戻っただけの遷移は「新しいイベントではない」ため誤検知しないこと。
+        """
+        rows = [{"Code": "72030", "Date": "2024-01-05", "O": 10, "AdjFactor": 0.1}]
+        cache_store.put_rows(
+            "equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor"
+        )
+        batch = [{"Code": "72030", "Date": "2024-01-06", "O": 11, "AdjFactor": 1.0}]
+        assert cache_store.detect_split_in_batch("72030", batch) is None
+
+    def test_detect_split_in_batch_already_cached_value_is_not_new(self, cache_store: CacheStore):
+        """再取得で同じ日付・同じ AdjFactor が戻ってきただけなら新規イベント
+        ではない（境界日の from=latest_cached による再取得を誤検知しない）。
+        """
+        rows = [{"Code": "72030", "Date": "2024-01-05", "O": 10, "AdjFactor": 0.1}]
+        cache_store.put_rows(
+            "equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor"
+        )
+        batch = [{"Code": "72030", "Date": "2024-01-05", "O": 10, "AdjFactor": 0.1}]
+        assert cache_store.detect_split_in_batch("72030", batch) is None
 
     def test_upsert_overwrites(self, cache_store: CacheStore):
         """同じキーで INSERT すると上書きされること。"""
@@ -381,7 +425,9 @@ class TestCorruptDatabase:
         assert store.get_rows("equities_bars_daily", {"code": "72030"}) == []
         assert store.get_cached_dates("equities_bars_daily", {"code": "72030"}) == set()
         assert store.get_response("some_key") is None
-        assert store.check_adj_factor("72030", 1.0) is True
+        assert (
+            store.detect_split_in_batch("72030", [{"Date": "2024-01-04", "AdjFactor": 1.0}]) is None
+        )
 
     def test_corrupt_db_write_is_noop(self, tmp_path: Path):
         """All write operations silently skip when DB is corrupt."""

@@ -1683,43 +1683,55 @@ class CacheStore:
             conn.commit()
             return cursor.rowcount
 
-    def check_adj_factor(
+    def detect_split_in_batch(
         self,
         code: str,
-        new_adj_factor: float | None,
-    ) -> bool:
-        """Check if AdjFactor has changed for a stock (split detection).
+        api_data: list[dict],
+    ) -> str | None:
+        """Scan a freshly-fetched batch of daily bars for a split/consolidation/
+        rights-issue event the cache does not already reflect.
+
+        AdjFactor is a per-date event flag (1.0 on ordinary days, the split
+        ratio only on the effective date) rather than a cumulative running
+        value, so this inspects every row in the batch instead of diffing two
+        single most-recent scalars — comparing only the batch's last row
+        (the previous implementation) missed splits that occurred earlier in
+        the batch and could also misfire on reversal-to-1.0 transitions that
+        are not new events (jquants-mcp#597).
 
         Returns:
-            True if cache is valid (no split detected), False if invalidation needed
+            The effective date (YYYY-MM-DD) of the first new event found in
+            the batch, or None if no new event is present.
         """
-        if new_adj_factor is None:
-            return True
-
         conn = self._ensure_connection()
         if conn is None:
-            return True  # DB not ready → cannot check splits, treat as cache miss
+            return None  # DB not ready → cannot check splits, treat as cache miss
 
         _adj_sql = (
             "SELECT COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
-            "FROM equities_bars_daily WHERE code = ? ORDER BY date DESC LIMIT 1"
+            "FROM equities_bars_daily WHERE code = ? AND date = ?"
         )
-        row = conn.execute(_adj_sql, (code,)).fetchone()
+        for row in api_data:
+            adj_factor = row.get("AdjFactor")
+            if adj_factor is None or adj_factor in (1.0, 0.0):
+                continue
+            row_date = row.get("Date")
+            if row_date is None:
+                continue
 
-        if row is None:
-            return True  # no cached data → nothing to invalidate
+            cached = conn.execute(_adj_sql, (code, row_date)).fetchone()
+            cached_adj = cached["adj_factor"] if cached else None
+            if cached_adj is None or abs(cached_adj - adj_factor) > 1e-10:
+                logger.info(
+                    "Stock split detected: code=%s date=%s (AdjFactor: %s -> %s)",
+                    code,
+                    row_date,
+                    cached_adj,
+                    adj_factor,
+                )
+                return row_date
 
-        cached_adj = row["adj_factor"]
-        if cached_adj is not None and abs(cached_adj - new_adj_factor) > 1e-10:
-            logger.info(
-                "Stock split detected: code=%s (AdjFactor: %s -> %s)",
-                code,
-                cached_adj,
-                new_adj_factor,
-            )
-            return False
-
-        return True
+        return None
 
     def get_cumulative_split_factor(self, code: str, target_date: str) -> float:
         """Get the cumulative split adjustment factor for a stock after target_date.
