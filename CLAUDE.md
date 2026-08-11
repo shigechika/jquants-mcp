@@ -77,8 +77,11 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 ## Deployment Targets
 
 - **Local (stdio)**: `jquants-mcp` — single user, env/config API key. This is
-  the **only** transport the code still speaks; `serve` has no `--transport`,
-  `--host` or `--port` flags any more (#601).
+  the **only** transport the code still speaks. Running the command with no
+  subcommand starts the server, and it takes no transport options at all:
+  `--transport`, `--host`, `--port`, `--ssl-*`, `--bearer-token`,
+  `--github-client-*` and `--oauth-base-url` are gone (#601). Only `login`
+  and `logout` remain as subcommands.
 - **Remote (self-hosted)**: front the stdio server with a gateway
   (`mcp-stdio serve`, as Cloud Run does below). The in-process
   Streamable-HTTP + TLS + Bearer-token listener that used to serve this role

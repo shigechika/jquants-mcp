@@ -564,8 +564,9 @@ async def register_api_key(api_key: str) -> dict[str, Any]:
     """Register or update your J-Quants API key (multi-user mode).
 
     ⚠️ SECURITY WARNING: The API key is transmitted in plaintext via the MCP
-    protocol and may be logged by the MCP client or LLM provider. Use the
-    browser-based /settings page instead for secure key registration.
+    protocol and may be logged by the MCP client or LLM provider. Treat the
+    key as exposed to every hop in that chain, and rotate it from the
+    J-Quants console if that is not acceptable.
 
     Stores your J-Quants API key encrypted in the server's user database,
     associated with your OAuth identity. The server probes plan-specific

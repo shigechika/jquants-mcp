@@ -32,8 +32,8 @@ cloud-run = [
     "google-cloud-storage>=2.0.0",
     "google-cloud-firestore>=2.0.0",
     # cache.db is published to GCS zstd-compressed; the Cloud Run startup copy
-    # and the Pub/Sub reload stream-decompress it (falling back to the
-    # uncompressed object when absent). See scripts/gcs_sync.py / server.py.
+    # stream-decompresses it (falling back to the uncompressed object when
+    # absent). See scripts/gcs_sync.py.
     "zstandard>=0.21.0",
     # Fronts the stdio-only server over HTTP for the mcp-stdio/serve Cloud
     # Run deployment (entrypoint-stdio.sh). PyPI package; see mcp-stdio#400
