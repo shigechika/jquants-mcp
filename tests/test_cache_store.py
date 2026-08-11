@@ -162,6 +162,55 @@ class TestTier1RowCache:
         batch = [{"Code": "72030", "Date": "2024-01-05", "O": 10, "AdjFactor": 0.1}]
         assert cache_store.detect_split_in_batch("72030", batch) is None
 
+    def test_detect_split_in_batch_same_date_reversal_to_ordinary_is_detected(
+        self, cache_store: CacheStore
+    ):
+        """jquants-mcp#598 ai-review R1F1 の回帰: 同一日付の AdjFactor が
+        後日 J-Quants 側で取り消され 1.0 へ遡及修正されるパターン
+        （実例: jpx-short-report 側で確認済みのライツイシュー 5.0→1.0 遡及
+        修正と同型）。新値が「通常値（1.0/0.0/None）」であることを理由に
+        比較そのものをスキップすると、この遡及修正を見逃す。
+        """
+        rows = [{"Code": "72030", "Date": "2024-01-05", "O": 10, "AdjFactor": 0.1}]
+        cache_store.put_rows(
+            "equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor"
+        )
+        # 同じ日付 2024-01-05 が再取得され、AdjFactor が 0.1 → 1.0 へ訂正された
+        batch = [{"Code": "72030", "Date": "2024-01-05", "O": 100, "AdjFactor": 1.0}]
+        assert cache_store.detect_split_in_batch("72030", batch) == "2024-01-05", (
+            "同一日付の AdjFactor 遡及修正（非1.0→1.0）が検知されなかった"
+        )
+
+    def test_detect_split_in_batch_cold_cache_historical_split_is_not_flagged(
+        self, cache_store: CacheStore
+    ):
+        """jquants-mcp#598 ai-review R1F2 の回帰: このコードのキャッシュが
+        1件も無い状態（初回フェッチ）で過去の分割イベントを含む全履歴を
+        取得しても、無駄な invalidate+再フェッチを起こさないこと
+        （put_rows() でこれから正しく投入されるだけなので「変化」ではない）。
+        """
+        batch = [
+            {"Code": "72030", "Date": "2016-01-04", "O": 1000, "AdjFactor": 1.0},
+            {"Code": "72030", "Date": "2018-05-01", "O": 200, "AdjFactor": 0.2},  # 過去の分割
+            {"Code": "72030", "Date": "2024-01-05", "O": 210, "AdjFactor": 1.0},
+        ]
+        assert cache_store.detect_split_in_batch("72030", batch) is None, (
+            "コールドキャッシュへの初回フェッチが不要な再フェッチを起こした"
+        )
+
+    def test_detect_split_in_batch_new_split_on_warm_cache_still_detected(
+        self, cache_store: CacheStore
+    ):
+        """コールドキャッシュ救済（R1F2対応）が、既存キャッシュがある通常の
+        新規分割検知（本来の機能）を巻き添えで壊していないことの確認。
+        """
+        rows = [{"Code": "72030", "Date": "2024-01-04", "O": 100, "AdjFactor": 1.0}]
+        cache_store.put_rows(
+            "equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor"
+        )
+        batch = [{"Code": "72030", "Date": "2024-01-05", "O": 10, "AdjFactor": 0.1}]
+        assert cache_store.detect_split_in_batch("72030", batch) == "2024-01-05"
+
     def test_upsert_overwrites(self, cache_store: CacheStore):
         """同じキーで INSERT すると上書きされること。"""
         rows1 = [{"Code": "72030", "Date": "2024-01-04", "O": 100, "AdjFactor": 1.0}]

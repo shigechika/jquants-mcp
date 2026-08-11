@@ -1699,35 +1699,79 @@ class CacheStore:
         the batch and could also misfire on reversal-to-1.0 transitions that
         are not new events (jquants-mcp#597).
 
+        For each row, compares against the *cache's own value for that exact
+        date* rather than skipping whenever the newly-fetched value looks
+        "ordinary" (1.0/0.0/None) — J-Quants does retroactively correct a
+        previously-reported non-1.0 AdjFactor back to 1.0 on the same date
+        (confirmed in production for a rights-issue reversal), and that
+        correction must still trigger invalidation (jquants-mcp#598 R1F1).
+        A date with no prior cached row at all is only treated as a new
+        event if this code already has *some* cached history — an initial
+        full-history fetch into an empty cache is not a "change" and would
+        otherwise trigger a redundant duplicate fetch for every historical
+        split in that code's history (jquants-mcp#598 R1F2).
+
         Returns:
-            The effective date (YYYY-MM-DD) of the first new event found in
-            the batch, or None if no new event is present.
+            The effective date (YYYY-MM-DD) of the first new/changed event
+            found in the batch, or None if none is present.
         """
         conn = self._ensure_connection()
         if conn is None:
             return None  # DB not ready → cannot check splits, treat as cache miss
 
-        _adj_sql = (
-            "SELECT COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
-            "FROM equities_bars_daily WHERE code = ? AND date = ?"
+        dates = [row.get("Date") for row in api_data if row.get("Date") is not None]
+        if not dates:
+            return None
+
+        cached_by_date: dict[str, float | None] = {}
+        # SQLite の変数上限（既定999）を踏まえ、900件ずつに分割してクエリする
+        # （get_cumulative_split_factor と同じ既存のチャンク方式に合わせる）。
+        for i in range(0, len(dates), 900):
+            chunk = dates[i : i + 900]
+            placeholders = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT date, COALESCE(adj_factor, json_extract(data, '$.AdjFactor')) AS adj_factor "
+                f"FROM equities_bars_daily WHERE code = ? AND date IN ({placeholders})",
+                (code, *chunk),
+            ).fetchall()
+            cached_by_date.update({r["date"]: r["adj_factor"] for r in rows})
+
+        has_any_cache = bool(cached_by_date) or (
+            conn.execute(
+                "SELECT 1 FROM equities_bars_daily WHERE code = ? LIMIT 1", (code,)
+            ).fetchone()
+            is not None
         )
+
         for row in api_data:
-            adj_factor = row.get("AdjFactor")
-            if adj_factor is None or adj_factor in (1.0, 0.0):
-                continue
             row_date = row.get("Date")
             if row_date is None:
                 continue
+            adj_factor = row.get("AdjFactor")
+            was_cached = row_date in cached_by_date
 
-            cached = conn.execute(_adj_sql, (code, row_date)).fetchone()
-            cached_adj = cached["adj_factor"] if cached else None
-            if cached_adj is None or abs(cached_adj - adj_factor) > 1e-10:
+            if not was_cached:
+                if not has_any_cache:
+                    continue  # コールドキャッシュへの初回投入は「変化」ではない
+                if adj_factor is None or adj_factor in (1.0, 0.0):
+                    continue
+                logger.info(
+                    "Stock split detected: code=%s date=%s (new event, AdjFactor=%s)",
+                    code,
+                    row_date,
+                    adj_factor,
+                )
+                return row_date
+
+            cached_adj = cached_by_date[row_date]
+            effective_new = 1.0 if adj_factor is None else adj_factor
+            if cached_adj is None or abs(cached_adj - effective_new) > 1e-10:
                 logger.info(
                     "Stock split detected: code=%s date=%s (AdjFactor: %s -> %s)",
                     code,
                     row_date,
                     cached_adj,
-                    adj_factor,
+                    effective_new,
                 )
                 return row_date
 
