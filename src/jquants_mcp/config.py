@@ -90,7 +90,7 @@ _TYPE_MAP: dict[str, type] = {
 }
 
 # Boolean settings — treated as bool after string conversion.
-_BOOL_SETTINGS: frozenset[str] = frozenset({"oauth_require_consent", "cache_bypass_auth"})
+_BOOL_SETTINGS: frozenset[str] = frozenset({"cache_bypass_auth"})
 
 # J-Quants official config file default path. Tests patch this directly,
 # so keep it as a plain module-level constant.
@@ -196,9 +196,12 @@ class Settings:
             elif attr in _BOOL_SETTINGS and not isinstance(value, bool):
                 s = str(value).strip().lower()
                 if s == "":
-                    # An explicitly empty env var (e.g. OAUTH_REQUIRE_CONSENT="")
-                    # means "unset" → fall back to the declared default rather
-                    # than silently coercing a True-default flag to False.
+                    # An explicitly empty value (e.g. CACHE_BYPASS_AUTH="") means
+                    # "unset" → re-read the declared default rather than reading
+                    # the empty string as False. Today's only bool defaults to
+                    # "false", so the two agree; the branch is what would keep a
+                    # future True-default flag from being switched off by an
+                    # empty assignment.
                     s = str(default).strip().lower()
                 value = s not in ("false", "0", "no", "off")
 
