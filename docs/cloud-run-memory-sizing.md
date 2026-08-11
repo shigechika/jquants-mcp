@@ -321,9 +321,22 @@ Filed as a future polish.
 > **synchronously, before the server starts** — the full CPU allocation
 > during the startup window is what lets the download actually finish. There
 > is no longer a live-API-fallback window at cold start, and no SIGHUP is
-> involved in this path (SIGHUP is still installed for the unrelated
-> manually-triggered reload case). See PR #457 for the incident that
-> motivated this change.
+> involved in this path. See PR #457 for the incident that motivated this
+> change.
+
+> **Correction (HTTP surface removal, 1.0.0):** the parenthetical that used to
+> end the note above — "SIGHUP is still installed for the unrelated
+> manually-triggered reload case" — is no longer true. The `SIGHUP` handler and
+> the `/internal/reload` push endpoint were both removed with the rest of the
+> HTTP surface; push-based refresh had already been evaluated and rejected
+> (#584). **There is now no in-process reload lever at all**: an instance serves
+> the `cache.db` it downloaded at startup for its whole life, and only picks up a
+> new snapshot by being replaced. Consequently the 2× `cache.db` tmpfs peak in
+> gotcha #4 above is driven solely by the cold-start download, not by a live
+> reload. The current deployment's startup script is
+> [`scripts/entrypoint-stdio.sh`](../scripts/entrypoint-stdio.sh); see
+> [the cache-db-missing runbook](runbooks/cache-db-missing.md) for the operational
+> consequences.
 
 ## Future considerations
 

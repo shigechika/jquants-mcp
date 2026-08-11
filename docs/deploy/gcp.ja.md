@@ -6,12 +6,19 @@ Cloud Run のマルチユーザーデプロイは構成要素が多いため手�
 
 ## アーキテクチャ
 
-Cloud Run が HTTPS サーバーを担い、ステートは以下のマネージドストアに分散します:
+`jquants-mcp` は **stdio のみ** を話し、自前の HTTP サーフェスを持ちません。Cloud Run では 1 つのサービスを 2 コンテナ構成にし、その後段で動きます:
 
-- **`cache.db`**（市場データ）— セルフホスト publisher が GCS バケットに公開し、Cloud Run のコールドスタート時に `/tmp` へダウンロード。Cloud Run は読み取り専用。
-- **`users`**（ユーザーごとの暗号化 J-Quants API キー）— Firestore `users` コレクション。
-- **`oauth_state`**（OAuth セッション・PKCE・動的クライアント登録）— Firestore `oauth_state` コレクション。
-- **Secrets**（OAuth クライアントシークレット・暗号化キー・allowlist）— Google Secret Manager。
+1. **`oauth2-proxy`（ingress コンテナ）** — サービスのユーザーサインインを終端します。`^/mcp(/|$)` は skip-auth の対象です（MCP パスは後段に独自の OAuth ゲートを持つため）。
+2. **`mcp-stdio serve`（app コンテナ）** — MCP ゲートウェイ。[`scripts/entrypoint-stdio.sh`](../../scripts/entrypoint-stdio.sh) が起動します。`/mcp` で MCP OAuth 2.1 を終端し、認証済みユーザーごとに `jquants-mcp` の子プロセスを起動して、`X-Forwarded-Email` ヘッダー由来の identity を環境変数 `JQUANTS_MCP_USER` として子プロセスに注入します。
+
+ステートはインスタンスがステートレスであり続けるよう、以下のマネージドストアに分散します:
+
+- **`cache.db`**（市場データ）— セルフホスト publisher が GCS バケットに公開し、コンテナ起動時に **同期的に** `/tmp` へダウンロード。Cloud Run は読み取り専用で、その場での更新も行いません。インスタンスは起動時のスナップショットを、置き換えられるまで serve し続けます。
+- **`users`**（ユーザーごとの暗号化 J-Quants API キー）— Firestore `users` コレクション。`register_api_key` MCP ツールが書き込みます。
+- **OAuth トークン** — Firestore の `FIRESTORE_TOKEN_STORE`（既定 `mcp_stdio_oauth/state`）で指定したドキュメント。所有者は `mcp-stdio serve` であり、本パッケージではありません。
+- **Secrets**（暗号化キー・allowlist・J-Quants フォールバックキー）— Google Secret Manager。
+
+> **このガイドの範囲。** 以下の GCP プロジェクト・GCS バケット・Firestore・WIF・CD の配線は本リポジトリから再現できます。一方で 2 コンテナのサービス定義そのもの（`oauth2-proxy` サイドカーとその環境変数・シークレット）は本リポジトリの外でプロビジョニングします — `cd.yml` は既存サービスの **app** コンテナのイメージを更新するだけです。[ステップ 12](#12-デプロイ) を参照。
 
 ## 想定コスト
 
@@ -22,7 +29,7 @@ Cloud Run が HTTPS サーバーを担い、ステートは以下のマネージ
 | Cloud Run | $0（無料枠で個人利用はほぼカバー） |
 | Firestore | $0（無料枠: 50k reads + 20k writes/日） |
 | GCS | ~$0.07/月（3 GiB、us-west1） |
-| Secret Manager | ~$0.30/月（6 secrets × $0.06） |
+| Secret Manager | ~$0.18/月（3 secrets × $0.06） |
 | Cloud DNS | $0.20/月 per hosted zone（カスタムドメイン使用時） |
 | **合計** | **個人・家族利用なら < $1/月** |
 
@@ -130,7 +137,7 @@ gcloud firestore databases create \
   --type=firestore-native
 ```
 
-スキーマ設定は不要です。サーバーが初回書き込み時に `users` / `oauth_state` コレクションを自動作成します。
+スキーマ設定は不要です。`users` コレクションは初回の `register_api_key` 呼び出しで、`mcp-stdio serve` のトークンストアドキュメントは初回サインインで、それぞれ自動作成されます。
 
 ## 7. Workload Identity Federation（WIF）の設定
 
@@ -164,47 +171,36 @@ gcloud iam service-accounts add-iam-policy-binding "${SA}" \
 
 Provider の `attribute-condition` はセキュリティ境界です。リポジトリを rename / 移管した場合はこの条件を更新してください。
 
-## 8. OAuth クライアントの作成
+## 8. サインイン層用 Google OAuth クライアントの作成
 
-### Google OAuth（Cloud Run では必須）
+ユーザーサインインを担うのは `oauth2-proxy` サイドカーであり、`jquants-mcp` ではありません。本パッケージは OAuth クライアント資格情報を一切持たず、コールバックルートも公開しません。
 
 1. GCP コンソールの [API とサービス → 認証情報](https://console.cloud.google.com/apis/credentials) を開く
 2. OAuth 同意画面を設定（ユーザータイプ: 外部、スコープ: `openid email profile`）
 3. OAuth 2.0 クライアント ID を作成 → ウェブアプリケーション
-4. 承認済みリダイレクト URI: `https://<Cloud Run URL>/oauth/callback`（初回デプロイ後に URL が決まるので後で設定）
-5. クライアント ID とシークレットを控える
+4. 承認済みリダイレクト URI: サービスの公開 URL 配下の、`oauth2-proxy` 設定で使うコールバックパス（初回デプロイ後に URL が決まるので後で設定）
+5. クライアント ID とシークレットを控える — これらは **サイドカーコンテナ側** に他の環境変数・シークレットと並べて設定します。`cd.yml` はこれらを読みも書きもしません
 
-### GitHub OAuth（オプション）
-
-1. GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
-2. Authorization callback URL: `https://<Cloud Run URL>/oauth/callback`
-3. クライアント ID とシークレットを控える
+MCP クライアントの認証はこれとは別に、`mcp-stdio serve` が `/mcp` で提供する OAuth 2.1 エンドポイントに対して行われます。そちらはクライアントを動的登録するため、ここで作成するものはありません。
 
 ## 9. Secret Manager への登録
 
 ```bash
-# J-Quants API キー
+# J-Quants API キー（自分のキーを未登録のユーザー向けフォールバック。
+# ユーザーごとのキーは Firestore に暗号化保存される）
 echo -n "<YOUR_JQUANTS_API_KEY>" | gcloud secrets create jquants-api-key --data-file=-
-
-# Google OAuth クライアントシークレット
-echo -n "<GOOGLE_OAUTH_CLIENT_SECRET>" | gcloud secrets create google-oauth-client-secret --data-file=-
-
-# GitHub OAuth クライアントシークレット（オプション）
-echo -n "<GITHUB_OAUTH_CLIENT_SECRET>" | gcloud secrets create github-oauth-client-secret --data-file=-
 
 # ユーザー API キー暗号化用ランダムキー（AES-256-GCM）
 python3 -c "import secrets; print(secrets.token_hex(32))" | \
   tr -d '\n' | gcloud secrets create mcp-encryption-key --data-file=-
-
-# OAuth セッショントークン署名キー
-python3 -c "import secrets; print(secrets.token_urlsafe(48))" | \
-  tr -d '\n' | gcloud secrets create OAUTH_JWT_SIGNING_KEY --data-file=-
 
 # allowlist: サインインを許可するメールアドレス（カンマ区切り）
 # 空にすると認証済みユーザー全員が使用可能
 echo -n "you@example.com,family@example.com" | \
   gcloud secrets create jquants-allowed-emails --data-file=-
 ```
+
+`oauth2-proxy` サイドカー自身のシークレット（Google クライアントシークレットと cookie secret）は、サイドカーとともに本ガイドの範囲外で管理します。
 
 シークレットの更新:
 
@@ -222,8 +218,6 @@ fork したリポジトリの **Settings → Secrets and variables → Actions**
 |---|---|
 | `WIF_PROVIDER` | ステップ 7 で出力した `${WIF_PROVIDER}` |
 | `WIF_SERVICE_ACCOUNT` | `${SA}`（フルメールアドレス） |
-| `GOOGLE_CLIENT_ID` | ステップ 8 の Google OAuth クライアント ID |
-| `GH_OAUTH_CLIENT_ID` | ステップ 8 の GitHub OAuth クライアント ID |
 
 **Variables**（平文、ログに表示される）:
 
@@ -233,8 +227,7 @@ fork したリポジトリの **Settings → Secrets and variables → Actions**
 | `GCP_REGION` | `us-west1` | Cloud Run リージョン |
 | `GCP_SERVICE_ACCOUNT` | `jquants-mcp@my-gcp-project.iam.gserviceaccount.com` | 実行時サービスアカウント |
 | `GCS_BUCKET` | `my-gcp-project-jquants-mcp` | `cache.db` 用 GCS バケット |
-| `PUBSUB_INVOKER_SA` | `pubsub-invoker@my-gcp-project.iam.gserviceaccount.com` | Pub/Sub push invoker SA |
-| `OAUTH_BASE_URL` | `https://your-domain.example.com` | OAuth エンドポイントの公開ベース URL |
+| `OAUTH_BASE_URL` | `https://your-domain.example.com` | サービスの公開ベース URL。CD がデプロイ後のスモークテスト URL（`${OAUTH_BASE_URL}/mcp`）をここから組み立てる |
 | `CLOUDRUN_SERVICE` | `jquants-mcp` | Cloud Run サービス名 |
 
 `gh` CLI でまとめて設定できます:
@@ -244,12 +237,11 @@ gh variable set GCP_PROJECT        --body "my-gcp-project"
 gh variable set GCP_REGION         --body "us-west1"
 gh variable set GCP_SERVICE_ACCOUNT --body "jquants-mcp@my-gcp-project.iam.gserviceaccount.com"
 gh variable set GCS_BUCKET         --body "my-gcp-project-jquants-mcp"
-gh variable set PUBSUB_INVOKER_SA  --body "pubsub-invoker@my-gcp-project.iam.gserviceaccount.com"
 gh variable set OAUTH_BASE_URL     --body "https://your-domain.example.com"
 gh variable set CLOUDRUN_SERVICE   --body "jquants-mcp"
 ```
 
-> **`OAUTH_BASE_URL`**: Cloud Run サービスの最終的な公開 URL が必要です。カスタムドメインがまだ無ければ、まず OAuth 無し（bearer トークンモード）で初回デプロイし、`*.run.app` の URL を確認してから `OAUTH_BASE_URL` に設定し、ステップ 8 の OAuth リダイレクト URI を更新した上で再デプロイしてください。
+> **`OAUTH_BASE_URL`**: サービスの最終的な公開 URL を、末尾スラッシュ無しで指定します。カスタムドメインがまだ無ければ、一度デプロイして `*.run.app` の URL を確認し、`OAUTH_BASE_URL` と app コンテナの `PUBLIC_URL` に設定し、ステップ 8 のサインイン層のリダイレクト URI を更新した上で再デプロイしてください。名前に反して、本パッケージの OAuth コードがこの値を読むことはありません — CD がデプロイ後に叩くベース URL です。
 
 ## 11. 初期 `cache.db` のアップロード
 
@@ -270,7 +262,18 @@ Cloud Run が常に新鮮なスナップショットを持てるよう、ロー�
 
 ## 12. デプロイ
 
-**Actions** タブ → **CD** → **Run workflow** から手動で初回デプロイを実行します。初回ビルドは 5〜10 分かかります。
+> **CD が更新するのはイメージであって、サービスを作成するものではありません。**
+> デプロイステップが実行するのは `gcloud run services update --container app --image …`
+> で、既存サービスの **app** コンテナのイメージを差し替えるだけです。2 コンテナの
+> サービス定義 — `oauth2-proxy` サイドカー、app コンテナの `PUBLIC_URL` /
+> `GCS_BUCKET` / シークレットのバインド、`scripts/entrypoint-stdio.sh` を選ぶ
+> `--command` — は、初回 CD 実行より前に一度だけ、CD の外で作成しておく必要が
+> あります。これは意図的な設計です: このサービスのスケーリングと CPU の設定は
+> 課金に直結し、かつ動作上も重要（`min-instances=0`、CPU 常時割り当て）なので、
+> CD はこれらを設定するのではなく **アサート** します。CD の外での変更は黙って
+> 上書きされるのではなく、デプロイを失敗させます。
+
+サービスが存在する状態で、**Actions** タブ → **CD** → **Run workflow** から手動でデプロイを実行します。初回ビルドは 5〜10 分かかります。
 
 デプロイ成功後、URL を確認:
 
@@ -281,25 +284,29 @@ gcloud run services describe "${SERVICE}" --region "${REGION}" \
 
 以下の順に更新:
 1. `OAUTH_BASE_URL` 変数をこの URL に設定: `gh variable set OAUTH_BASE_URL --body "<URL>"`
-2. Google / GitHub OAuth クライアントのリダイレクト URI を `<URL>/oauth/callback` に更新
-3. CD ワークフローを再実行（`gh workflow run cd.yml`）して新しい変数を反映
+2. app コンテナの `PUBLIC_URL` 環境変数を同じ URL に設定（`mcp-stdio serve` はここから OAuth メタデータを広告します）
+3. サインイン層（ステップ 8）のリダイレクト URI を、この URL 配下のコールバックパスに更新
+4. CD ワークフローを再実行（`gh workflow run cd.yml`）して新しい変数を反映
 
 ## 13. 動作確認
+
+プレーンな HTTP ヘルスエンドポイントはありません。`oauth2-proxy` は `^/mcp(/|$)` を skip-auth しており、`mcp-stdio serve` 自身の OAuth 層がそこを守ります。したがって **未認証の `POST /mcp` が 401 を返すのが成功** です。5xx（または接続失敗）はリビジョンが不健全であることを意味します。
 
 ```bash
 URL=$(gcloud run services describe "${SERVICE}" --region "${REGION}" \
   --format="value(status.url)")
 
-# 1. 401 が返れば OAuth が有効な証拠
-curl -i -s -o /dev/null -w "%{http_code}\n" "${URL}/mcp"
+# 1. MCP エンドポイントが serve できている（401 を期待）
+curl -s -o /dev/null -w "%{http_code}\n" -X POST "${URL}/mcp"
 
-# 2. /settings が OAuth にリダイレクト
-curl -i -s -o /dev/null -w "%{http_code}\n" "${URL}/settings"
-
-# 3. 起動ログを確認
+# 2. ゲートウェイが起動したか確認
 gcloud run services logs read "${SERVICE}" --region "${REGION}" --limit=50 \
-  | grep -E "SIGHUP handler installed|Initializing .* OAuth"
+  | grep -E "Starting mcp-stdio serve|starting \(transport=stdio\)"
 ```
+
+デプロイ直後のリビジョンで出るのは 1 行目だけです。`starting (transport=stdio)` を出すのは `jquants-mcp` の子プロセスであり、ゲートウェイは **認証済みユーザーごとに** 子プロセスを起動するため、この行は起動時ではなく初回サインイン後に現れます。まだ誰も接続していないリビジョンで出ないのは正常です。
+
+デプロイ直後は 1〜2 分ほどチェック 1 をリトライしてください。Cloud Run の readiness は ingress（`oauth2-proxy`）コンテナで判定されるため、app コンテナがまだ `cache.db` の同期ダウンロード中でもトラフィックが切り替わることがあり、その間 `oauth2-proxy` は 502 を返します。CD の検証ステップがリトライしているのもこの理由です。
 
 Claude クライアントからの完全な検証は [ステップ 15](#15-claude-クライアントから接続) で行います。
 
@@ -347,16 +354,27 @@ gcloud dns record-sets create jquants-mcp.example.com. \
 
 TLS 証明書は Cloud Run が自動発行します。DNS + 証明書の反映に 15〜60 分かかります。
 
-ドメインが使えるようになったら `OAUTH_BASE_URL` と OAuth リダイレクト URI をカスタムドメインに更新して再デプロイ。
+ドメインが使えるようになったら `OAUTH_BASE_URL`・app コンテナの `PUBLIC_URL`・サインイン層のリダイレクト URI をカスタムドメインに更新して再デプロイ。
 
 ## 15. Claude クライアントから接続
+
+### J-Quants API キーの登録
+
+そのための Web ページはありません — 設定 UI は 1.0.0 で削除されました。各ユーザーは、コネクタでサインインした後、通常のチャットで Claude に **`register_api_key`** MCP ツールを呼ばせることで自分のキーを登録します:
+
+```text
+register_api_key を api_key="<J-Quants API キー>" で呼んで
+# → {"status": "ok", "plan": "light", ...}
+```
+
+キーは `MCP_ENCRYPTION_KEY` で暗号化され、自分の identity に紐づけて Firestore の `users` コレクションに保存されます。`health_check()` で確認できます。
 
 ### Claude Desktop（Connectors UI）
 
 1. Settings → Connectors → カスタムコネクタを追加
 2. URL: `https://jquants-mcp.example.com/mcp`
 3. Google でサインイン — 初回サインインで Firestore にユーザーレコードが作成される
-4. `/settings` ページで J-Quants API キーを登録
+4. `register_api_key` ツールで J-Quants API キーを登録（上記）
 
 ### Claude モバイル（iOS / Android）
 
@@ -365,11 +383,11 @@ TLS 証明書は Cloud Run が自動発行します。DNS + 証明書の反映�
 1. アプリの **Settings → Connectors → 追加**
 2. Claude Desktop と同じ URL を入力
 3. Google でサインイン
-4. モバイルブラウザで `/settings` ページを開いて J-Quants API キーを登録
+4. `register_api_key` ツールで J-Quants API キーを登録（上記）
 
 ### Claude Code（mcp-stdio 経由）
 
-Claude Code には HTTP トランスポートで Bearer ヘッダーが落ちるバグがあります。[mcp-stdio](https://pypi.org/project/mcp-stdio/) をプロキシとして使用:
+Claude Code には HTTP トランスポートで `Authorization` ヘッダーが落ちるバグがあります。[mcp-stdio](https://pypi.org/project/mcp-stdio/) をプロキシとして使用:
 
 ```bash
 claude mcp add jquants-mcp \
@@ -457,9 +475,9 @@ gcloud run services logs read "${SERVICE}" --region "${REGION}" --limit=100
 ```
 
 主な原因:
-- `cache.db` が GCS からまだダウンロードされていない → コールドスタート後 1〜2 分待つ、またはバケットにオブジェクトが存在するか確認
-- 環境変数 / シークレットの設定ミス → `cd.yml` をチェック
-- OAuth の設定ミス → `OAUTH_BASE_URL` が Cloud Run URL と一致しているか、リダイレクト URI が正しいか確認
+- `cache.db` が GCS からまだダウンロードされていない → app コンテナは起動時に同期ダウンロードするので完了を待つ（その間 `oauth2-proxy` は 502 を返す）、またはバケットにオブジェクトが存在するか確認
+- app コンテナの環境変数 / シークレットの設定漏れ → サービス定義をチェック
+- サインインの設定ミス → app コンテナの `PUBLIC_URL` が実際の公開 URL と一致しているか、サインイン層のリダイレクト URI もそれに一致しているか確認
 
 ### `cache_status` の返値が最小限（行数なし）
 

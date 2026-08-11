@@ -2,11 +2,15 @@
 
 jquants-mcp は 4 つの形態でデプロイできます。用途に合ったものを選んでください。
 
+サーバー自体は常に **stdio のみ** を話します。以下のリモート形態はすべて同じ仕組みで、
+前段にゲートウェイ（[mcp-stdio](https://pypi.org/project/mcp-stdio/)）を置き、そこで
+HTTP と認証を終端して、認証済みユーザーごとに `jquants-mcp` の子プロセスを起動します。
+
 | 形態 | 運用者 | コスト | セットアップ | 適した用途 |
 |---|---|---|---|---|
 | **stdio**（ローカル） | 1 人・1 台 | 無料 | < 5 分 | Claude Code / Claude Desktop での単一ユーザー利用 |
-| **Docker Compose**（ローカル） | 1 人・1 台 | 無料 | < 10 分 | Python 不要でローカル HTTP サーバーを立てたい、キャッシュを永続化したい |
-| **セルフホスト HTTP** | 少数の信頼ユーザー | ホスト代 + J-Quants | ~1 時間 | 常時稼働サーバーからモバイルや他端末に接続したい |
+| **Docker で stdio**（ローカル） | 1 人・1 台 | 無料 | < 10 分 | Python 不要で同じことをしたい、キャッシュを named volume に永続化したい |
+| **セルフホストゲートウェイ** | 少数の信頼ユーザー | ホスト代 + J-Quants | ~1 時間 | 常時稼働サーバーからモバイルや他端末に接続したい |
 | **Cloud Run**（GCP） | 複数ユーザー、OAuth 認証 | GCP 代（低トラフィックで ~$0–$10/月）+ J-Quants | 初回 2〜4 時間 | 家族・チーム利用、モバイル対応、ユーザーごとの OAuth ログイン |
 
 ## 選択フローチャート
@@ -18,10 +22,10 @@ flowchart TD
     Q1 -->|はい| Q3{"個別に認証管理をする？"}
 
     Q2 -->|いいえ| Q4{"Docker 環境ある？"}
-    Q2 -->|はい| R3["セルフホスト HTTP"]
+    Q2 -->|はい| R3["セルフホストゲートウェイ"]
 
     Q4 -->|いいえ| R2["stdio"]
-    Q4 -->|はい| R1["Docker Compose"]
+    Q4 -->|はい| R1["Docker で stdio"]
 
     Q3 -->|いいえ| R3
     Q3 -->|はい| R4["Cloud Run"]
@@ -53,7 +57,7 @@ graph BT
 
 セットアップ: [README](../../README.md#installation) を参照。
 
-## Docker Compose
+## Docker で stdio
 
 ```mermaid
 graph BT
@@ -61,38 +65,42 @@ graph BT
     B["jquants-mcp（Docker コンテナ）"]
     A["Claude Code / Claude Desktop"]
 
-    A -->|"HTTP localhost:8080"| B
+    A -->|stdio| B
     B -->|HTTPS| C
 
     style B fill:#4a5,stroke:#333,color:#fff
 ```
 
 - Python インストール不要 — Docker だけで動く
-- `http://localhost:8080/mcp` でローカル HTTP サーバーとして常駐
+- MCP クライアントがセッションごとにコンテナを起動。バインドするポートもトークンも不要
 - キャッシュは Docker named volume に保存 → コンテナ再起動後も維持
-- `ENABLE_DAILY_FETCH=true` で平日の自動キャッシュ更新が有効になる
+- キャッシュ更新は同じ volume に対する単発の `daily_fetch.py` コンテナで実行
 
 セットアップ: [local.ja.md](local.ja.md)（Option A）を参照。
 
-## セルフホスト HTTP
+## セルフホストゲートウェイ
 
 ```mermaid
 graph BT
-    D["J-Quants API v2"]
-    C["jquants-mcp（自ホスト）"]
-    B["mcp-stdio（プロキシ）"]
-    A["Claude Code / Claude Desktop"]
+    E["J-Quants API v2"]
+    D["jquants-mcp（stdio 子プロセス）"]
+    C["mcp-stdio serve（ゲートウェイ）"]
+    B["TLS リバースプロキシ"]
+    A["Claude Code / Claude Desktop / Claude モバイル"]
 
-    A -->|stdio| B
-    B -->|"HTTPS + Bearer"| C
-    C -->|HTTPS| D
+    A -->|"HTTPS + OAuth"| B
+    B -->|HTTP| C
+    C -->|stdio| D
+    D -->|HTTPS| E
 
     style C fill:#4a5,stroke:#333,color:#fff
+    style D fill:#4a5,stroke:#333,color:#fff
 ```
+
 - TLS 証明書を取得できるホスト（自宅ラップトップ・NUC・VPS）で動作
-- Streamable HTTP トランスポート、Bearer トークン認証
+- `mcp-stdio serve` が MCP OAuth を終端。TLS はその前段のリバースプロキシで終端する
+- 認証済みユーザーごとに `jquants-mcp` 子プロセスが 1 つ起動し、identity は `JQUANTS_MCP_USER` で注入される
 - ホスト上の SQLite キャッシュを複数セッションで共有
-- Claude Code のヘッダーバグ回避のため `mcp-stdio` プロキシ経由でモバイルからも接続可能
 
 セットアップ: [local.ja.md](local.ja.md)（Option B）を参照。
 
@@ -102,8 +110,8 @@ graph BT
 graph BT
     C["J-Quants API v2"]
     D["GCS（cache.db）"]
-    E["Firestore\n（users, oauth_state）"]
-    B["Cloud Run jquants-mcp"]
+    E["Firestore\n（users, OAuth トークン）"]
+    B["Cloud Run jquants\n（oauth2-proxy → mcp-stdio serve → jquants-mcp）"]
     A["Claude モバイル / Claude Desktop / Claude Code"]
     F["セルフホスト publisher（cron）"]
 
@@ -117,7 +125,8 @@ graph BT
 ```
 
 - Google Cloud Run によるマネージド運用、オートスケーリング、HTTPS 標準対応
-- マルチユーザー: ユーザーごとの J-Quants API キーを Firestore に暗号化保存、OAuth 2.1 ログイン
+- コンテナは 2 つ: ユーザーサインイン用の `oauth2-proxy` サイドカーと、`jquants-mcp` の前段で `mcp-stdio serve` を動かす app コンテナ
+- マルチユーザー: ユーザーごとの J-Quants API キーを Firestore に暗号化保存し、登録は `register_api_key` MCP ツールで行う
 - `JQUANTS_ALLOWED_EMAILS` でサインイン可能なユーザーを制限
 - GCS に `cache.db` を定期アップロードするセルフホスト publisher が必要
 - Claude Desktop Connectors UI・Claude モバイル・Claude Code に対応

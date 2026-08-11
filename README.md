@@ -10,7 +10,7 @@ User-facing documentation site: <https://shigechika.github.io/jquants-mcp/> (als
 
 Release history and changelog: [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases).
 
-Deployment shapes (stdio / Docker Compose / self-hosted HTTP / Cloud Run) and how to pick between them: see [docs/deploy/](docs/deploy/).
+Deployment shapes and how to pick between them: see [docs/deploy/](docs/deploy/).
 
 ## Demo
 
@@ -97,17 +97,8 @@ MCP-specific settings (cache, client behavior):
 # max_pages = 10
 
 [server]
-# ssl_certfile = /path/to/fullchain.pem
-# ssl_keyfile = /path/to/privkey.pem
-# bearer_token = <secret>
 # encryption_key = <random-secret>   # enables per-user API key storage (multi-user mode)
-
-[oauth]
-# github_client_id = <your-github-client-id>
-# github_client_secret = <your-github-client-secret>
-# base_url = https://mcp.example.com
-# jwt_signing_key = <random-secret>  # optional: auto-generated if blank
-# require_consent = true
+# allowed_emails = alice@example.com,bob@example.com
 ```
 
 ### Environment Variables
@@ -122,22 +113,12 @@ MCP-specific settings (cache, client behavior):
 | `MAX_RETRIES` | No | `5` | Max retry attempts for failed requests |
 | `RETRY_BASE_DELAY` | No | `1.0` | Base delay (seconds) for exponential backoff |
 | `MAX_PAGES` | No | `10` | Max pages to fetch per paginated request |
-| `SSL_CERTFILE` | No | — | Path to SSL certificate file (HTTP transport) |
-| `SSL_KEYFILE` | No | — | Path to SSL private key file (HTTP transport) |
-| `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication |
-| `GITHUB_CLIENT_ID` | No | — | GitHub OAuth App client ID (enables GitHub OAuth 2.1) |
-| `GITHUB_CLIENT_SECRET` | No | — | GitHub OAuth App client secret |
-| `GOOGLE_CLIENT_ID` | No | — | Google OAuth 2.0 client ID (enables Google OAuth 2.1) |
-| `GOOGLE_CLIENT_SECRET` | No | — | Google OAuth 2.0 client secret |
-| `OAUTH_PROVIDER` | No | `github` | OAuth provider: `github` or `google` |
-| `OAUTH_BASE_URL` | No | — | Public base URL of the server (e.g. `https://mcp.example.com`) |
-| `OAUTH_JWT_SIGNING_KEY` | No | auto | Secret for JWT signing; auto-generated if blank |
-| `OAUTH_REQUIRE_CONSENT` | No | `true` | Show OAuth consent screen on every login (`true`/`false`) |
+| `JQUANTS_MCP_USER` | No | — | Identity of the authenticated user, injected by the gateway (see [Authentication](#authentication)). Never set this by hand |
 | `MCP_ENCRYPTION_KEY` | No | — | Passphrase for AES-256-GCM encryption of per-user API keys |
 | `MCP_ENCRYPTION_KEY_PREVIOUS` | No | — | Previous encryption passphrase — enables dual-key decrypt during a rotation window. See [secrets rotation runbook](docs/runbooks/secrets-rotation.md) |
-| `RATE_LIMIT_PER_MINUTE` | No | `60` | Per-user request ceiling (multi-user mode). Applies per OAuth user |
+| `RATE_LIMIT_PER_MINUTE` | No | `60` | Per-user request ceiling (multi-user mode). Applies per `JQUANTS_MCP_USER` identity |
 | `RATE_LIMIT_BURST` | No | `20` | Per-user burst allowance (token-bucket capacity) |
-| `JQUANTS_ALLOWED_EMAILS` | No | — | Comma-separated allowlist of emails. Empty = allow any authenticated user (self-host default). Set this on public Cloud Run instances to restrict access; unauthorized users get a 403-style message pointing them to self-host |
+| `JQUANTS_ALLOWED_EMAILS` | No | — | Comma-separated allowlist of emails. Empty = allow any user the gateway authenticated (self-host default). Set this on public Cloud Run instances to restrict access; unauthorized users get a 403-style message pointing them to self-host |
 
 \* API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `JQUANTS_API_KEY` only to override.
 
@@ -145,7 +126,7 @@ Environment variables override both `config.ini` and `jquants-api.toml`. This al
 
 ### macOS launchd note
 
-If you run `jquants-mcp` as a **macOS LaunchAgent** and the API key lives in `~/.jquants-api/jquants-api.toml`, the server may silently hang during startup on macOS 26 or later. The TCC sandbox applied to launchd-spawned processes blocks `open()` on some dotfiles under `$HOME` (mode `600`), and the process never reaches the port-bind step.
+If you run `jquants-mcp` as a **macOS LaunchAgent** and the API key lives in `~/.jquants-api/jquants-api.toml`, the server may silently hang during startup on macOS 26 or later. The TCC sandbox applied to launchd-spawned processes blocks `open()` on some dotfiles under `$HOME` (mode `600`), and the process never finishes starting.
 
 Workaround: copy the toml outside the sandboxed home hierarchy and point the server at it via `JQUANTS_API_TOML_PATH`:
 
@@ -169,172 +150,28 @@ Linux/systemd and other init systems are not affected.
 
 ## Authentication
 
-jquants-mcp supports four authentication modes:
+The server speaks **stdio only** and binds no network socket, so it performs no authentication of its own — there is no listener to authenticate against. Access control is a property of whoever starts the process:
 
-| Mode | When to use |
+| Deployment | Who controls access |
 |---|---|
-| None | Local stdio or trusted LAN (single user) |
-| Bearer Token | Single-user remote access over HTTPS |
-| GitHub OAuth 2.1 | Multi-user access / Claude Desktop Connectors |
-| Google OAuth 2.1 | Multi-user access via Google account |
+| Local (Claude Code, Claude Desktop) | The OS. The MCP client spawns the server as a subprocess; the API key comes from `config.ini` / `jquants-api.toml` / `JQUANTS_API_KEY` |
+| Remote | A gateway in front of the server. The gateway terminates authentication and spawns the stdio server per session |
 
-The mode is selected automatically at startup:
+### Gateway identity
 
-1. **Google OAuth 2.1** — when `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `OAUTH_BASE_URL` are all set, and `OAUTH_PROVIDER=google`
-2. **GitHub OAuth 2.1** — when `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and `OAUTH_BASE_URL` are all set
-3. **Bearer Token** — when `MCP_BEARER_TOKEN` (or `bearer_token` in `config.ini`) is set
-4. **None** — no authentication (stdio transport or trusted environment)
+For remote or multi-user deployments, put a gateway in front of the stdio server. [`mcp-stdio serve`](https://github.com/shigechika/mcp-stdio) is the gateway both production deployments use: it accepts MCP over HTTP, authenticates the caller, and spawns one `jquants-mcp` child process per session.
 
-### GitHub OAuth 2.1
+The gateway passes the authenticated identity down to that child as the `JQUANTS_MCP_USER` environment variable (`mcp-stdio serve --trusted-user-header X-Forwarded-Email --user-env JQUANTS_MCP_USER`). One child process serves exactly one principal for its whole lifetime, and the server reads `JQUANTS_MCP_USER` as that principal's verified email — it applies the `JQUANTS_ALLOWED_EMAILS` allowlist and per-user rate limits to it, and looks up that user's stored API key.
 
-The server acts as an OAuth 2.1 authorization server using GitHub as the upstream identity provider (IdP). Clients are redirected to GitHub's login page; the server exchanges the authorization code for a signed JWT that identifies the user across requests.
+> **Trust model:** `JQUANTS_MCP_USER` is trusted as-is; the server does no verification of its own. Whoever can set the child process's environment *is* that user, so the variable must be injected by the gateway and never by a user-supplied value.
 
-#### 1. Create a GitHub OAuth App
+When `JQUANTS_MCP_USER` is absent — the normal local case — the server runs single-user against the globally configured API key.
 
-1. Go to **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App**
-2. Fill in:
-   - **Application name**: `jquants-mcp` (or any name)
-   - **Homepage URL**: your server's public base URL (e.g. `https://mcp.example.com`)
-   - **Authorization callback URL**: `https://mcp.example.com/oauth/callback`
-3. Click **Register application**, then click **Generate a new client secret**
-4. Copy the **Client ID** and the generated **Client secret**
-
-#### 2. Configure the server
-
-**Via environment variables:**
-
-```bash
-export GITHUB_CLIENT_ID=Ov23liXXXXXXXXXXXXXX
-export GITHUB_CLIENT_SECRET=<your-client-secret>
-export OAUTH_BASE_URL=https://mcp.example.com      # must be publicly reachable
-export OAUTH_JWT_SIGNING_KEY=<random-secret>       # optional: auto-generated if blank
-export MCP_ENCRYPTION_KEY=<random-secret>          # required for per-user API key storage
-```
-
-**Via `config.ini`:**
-
-```ini
-[oauth]
-github_client_id = Ov23liXXXXXXXXXXXXXX
-github_client_secret = <your-client-secret>
-base_url = https://mcp.example.com
-# jwt_signing_key = <random-secret>   # optional: auto-generated if blank
-# require_consent = true              # default: true
-
-[server]
-encryption_key = <random-secret>      # required for per-user API key storage
-```
-
-#### 3. Start the server with OAuth
-
-```bash
-jquants-mcp -t streamable-http --port 8080 \
-  --ssl-certfile /path/to/fullchain.pem \
-  --ssl-keyfile /path/to/privkey.pem \
-  --github-client-id <ID> \
-  --github-client-secret <SECRET> \
-  --oauth-base-url https://mcp.example.com
-```
-
-When all OAuth settings are configured via environment variables or `config.ini`, CLI flags are optional — OAuth is activated automatically on startup.
-
-| CLI Option | Description |
-|---|---|
-| `--github-client-id` | GitHub OAuth App client ID |
-| `--github-client-secret` | GitHub OAuth App client secret |
-| `--oauth-base-url` | Public base URL of the server (used to build redirect URIs) |
-
-### Google OAuth 2.1
-
-The server supports Google as an alternative OAuth 2.1 identity provider. Users are redirected to Google's Sign-In page; the server exchanges the authorization code for a signed JWT.
-
-#### 1. Create a Google OAuth 2.0 Client
-
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) → **APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID**
-2. Select **Web application** and fill in:
-   - **Authorized JavaScript origins**: `https://mcp.example.com`
-   - **Authorized redirect URIs**: `https://mcp.example.com/oauth/callback`
-3. Click **Create**, then copy the **Client ID** and **Client secret**
-
-#### 2. Configure the server
-
-**Via environment variables:**
-
-```bash
-export GOOGLE_CLIENT_ID=<your-client-id>
-export GOOGLE_CLIENT_SECRET=<your-client-secret>
-export OAUTH_PROVIDER=google
-export OAUTH_BASE_URL=https://mcp.example.com
-export MCP_ENCRYPTION_KEY=<random-secret>          # required for per-user API key storage
-```
-
-**Via `config.ini`:**
-
-```ini
-[oauth]
-google_client_id = <your-client-id>
-google_client_secret = <your-client-secret>
-provider = google
-base_url = https://mcp.example.com
-
-[server]
-encryption_key = <random-secret>
-```
-
-### /settings Web UI
-
-When OAuth is enabled, the server provides a browser-based settings page at `https://mcp.example.com/settings`.
-
-1. Open `https://mcp.example.com/settings` in a browser
-2. Click **Sign in with GitHub** (or **Sign in with Google** when `provider = google` in `config.ini`)
-3. After authentication, enter your J-Quants API key and plan, then click **Save**
-
-This is equivalent to calling `register_api_key` via Claude, but accessible directly from any browser without an MCP client.
-
-### Reverse Proxy with Path Prefix
-
-When serving jquants-mcp under a path prefix (e.g. `https://mcp.example.com/jquants-mcp/mcp`) via a reverse proxy, two things are required — no code changes needed:
-
-**1. Strip the prefix in the reverse proxy:**
-
-Caddy:
-
-```caddy
-handle /jquants-mcp/* {
-    uri strip_prefix /jquants-mcp
-    reverse_proxy localhost:8080
-}
-```
-
-nginx (named capture group avoids numbered-backreference vulnerabilities):
-
-```nginx
-location /jquants-mcp/ {
-    rewrite ^/jquants-mcp(?<path>/.*)$ $path break;
-    proxy_pass http://localhost:8080;
-}
-```
-
-**2. Set `OAUTH_BASE_URL` to the full prefixed URL:**
-
-```bash
-export OAUTH_BASE_URL=https://mcp.example.com/jquants-mcp
-```
-
-Or via `config.ini`:
-
-```ini
-[oauth]
-base_url = https://mcp.example.com/jquants-mcp
-```
-
-FastMCP derives all OAuth endpoints (`/oauth/callback`, `/settings`, `/.well-known/oauth-authorization-server`) from `OAUTH_BASE_URL`, so setting it to the prefixed public URL ensures the OAuth flow and settings page work correctly after the proxy strips the prefix.
-
-> **Google OAuth note:** Add both `https://mcp.example.com` to *Authorized JavaScript origins* and `https://mcp.example.com/jquants-mcp/oauth/callback` to *Authorized redirect URIs* in the Google Cloud Console.
+A worked example of the whole shape (auth proxy in front, gateway, stdio child, cache download) is [`scripts/entrypoint-stdio.sh`](scripts/entrypoint-stdio.sh), the entrypoint of the Cloud Run deployment described below. There is no other documented remote-access story: the server itself has no transport, TLS, or token options.
 
 ## Multi-user Mode
 
-When GitHub OAuth 2.1 and `MCP_ENCRYPTION_KEY` are both configured, the server operates in **multi-user mode**: each authenticated user stores their own J-Quants API key on the server, and all data tools use that key automatically. All users share the read cache; each user gets an independent J-Quants client with isolated rate limiting.
+When the server receives a gateway identity (`JQUANTS_MCP_USER`, see [Authentication](#authentication)) and `MCP_ENCRYPTION_KEY` is configured, it operates in **multi-user mode**: each user stores their own J-Quants API key on the server, and all data tools use that key automatically. All users share the read cache; each user gets an independent J-Quants client with isolated rate limiting and their own plan's date-range window.
 
 ### User flow
 
@@ -342,14 +179,15 @@ When GitHub OAuth 2.1 and `MCP_ENCRYPTION_KEY` are both configured, the server o
 sequenceDiagram
     participant U as User
     participant C as Claude
-    participant S as jquants-mcp
-    participant G as GitHub
+    participant G as Gateway (mcp-stdio serve)
+    participant S as jquants-mcp (stdio child)
     participant J as J-Quants API
-    U->>C: Connect (Connectors UI / Claude Code)
-    C->>G: OAuth 2.1 Authorization
-    G-->>C: Access token (JWT)
+    U->>C: Connect
+    C->>G: Authenticate (gateway's own auth layer)
+    G->>S: Spawn child with JQUANTS_MCP_USER = verified email
     U->>C: "Register my J-Quants API key: <key>"
-    C->>S: register_api_key(api_key="<key>")
+    C->>G: register_api_key(api_key="<key>")
+    G->>S: forward over stdio
     S->>J: Probe plan-specific endpoints (auto-detect)
     J-->>S: Detected plan
     S->>S: Encrypt & store key + plan (AES-256-GCM)
@@ -365,8 +203,10 @@ sequenceDiagram
 
 | Tool | Required | Description |
 |---|---|---|
-| `register_api_key` | OAuth 2.1 + `MCP_ENCRYPTION_KEY` | Encrypt and store your J-Quants API key |
-| `delete_api_key` | OAuth 2.1 + `MCP_ENCRYPTION_KEY` | Remove your stored key |
+| `register_api_key` | `JQUANTS_MCP_USER` + `MCP_ENCRYPTION_KEY` | Encrypt and store your J-Quants API key |
+| `delete_api_key` | `JQUANTS_MCP_USER` + `MCP_ENCRYPTION_KEY` | Remove your stored key |
+
+Both tools return an explanatory error instead of failing silently when either requirement is missing.
 
 **Registering a key** (tell Claude):
 
@@ -374,21 +214,22 @@ sequenceDiagram
 
 Claude calls `register_api_key(api_key="...")`. The server probes plan-specific endpoints with the key to auto-detect the plan (`free` / `light` / `standard` / `premium`) and stores it alongside the encrypted key — no manual selection needed. Subsequent tool calls use the detected plan for rate limiting and date-range restrictions.
 
+This is the only way to register a key on a multi-user deployment; the server exposes no web form and no HTTP endpoint of any kind.
+
 ### Security
 
 - API keys are encrypted with **AES-256-GCM** (authenticated encryption — integrity-protected)
-- The encryption key is derived via **PBKDF2-HMAC-SHA256** (600,000 iterations) from `MCP_ENCRYPTION_KEY`
+- The encryption key is derived via **PBKDF2-HMAC-SHA256** (200,000 iterations) from `MCP_ENCRYPTION_KEY`, with a random 16-byte salt per encryption
 - Each ciphertext uses a unique random 12-byte nonce — encrypting the same key twice produces different ciphertext
 - Tampered or truncated ciphertexts are rejected before decryption
 
-### Backward compatibility
+### Single-user fallback
 
 | Configuration | Behavior |
 |---|---|
-| No auth, no `MCP_ENCRYPTION_KEY` | Single-user: global `JQUANTS_API_KEY` for all connections |
-| Bearer token | Single-user: same as above, with HTTP authentication |
-| OAuth + no `MCP_ENCRYPTION_KEY` | OAuth authentication, but all users share the global `JQUANTS_API_KEY` |
-| OAuth + `MCP_ENCRYPTION_KEY` | Full multi-user: each user has an independent encrypted API key |
+| No `JQUANTS_MCP_USER` (local stdio) | Single-user: global `JQUANTS_API_KEY` for all calls |
+| `JQUANTS_MCP_USER`, no `MCP_ENCRYPTION_KEY` | Gateway-authenticated, but all users share the global `JQUANTS_API_KEY` |
+| `JQUANTS_MCP_USER` + `MCP_ENCRYPTION_KEY` | Full multi-user: each user has an independent encrypted API key |
 
 ## Usage
 
@@ -459,123 +300,48 @@ Restart Claude Desktop after editing.
 jquants-mcp
 ```
 
-### Streamable HTTP (remote access)
+### Remote access
 
-Run the server over HTTP so that MCP clients on other machines can connect:
-
-```bash
-jquants-mcp --transport streamable-http --port 8080
-```
-
-This exposes the MCP endpoint at `http://<host>:8080/mcp`. Clients on the same LAN (or via SSH tunnel) can connect to the server.
-
-**Claude Code (remote):**
+The server has no network transport of its own — no `--transport`, no `--host`/`--port`, no TLS options. To reach it from another machine, front the stdio server with a gateway that terminates authentication and spawns `jquants-mcp` per session. With [`mcp-stdio serve`](https://github.com/shigechika/mcp-stdio) that looks like:
 
 ```bash
-claude mcp add jquants-mcp \
-  --transport http http://192.0.2.1:8080/mcp
+mcp-stdio serve --host 127.0.0.1 --port 8081 --path /mcp \
+  --enable-oauth --public-url https://mcp.example.com \
+  --trusted-user-header X-Forwarded-Email --user-env JQUANTS_MCP_USER \
+  -- jquants-mcp
 ```
 
-| Option | Default | Description |
-|---|---|---|
-| `--transport`, `-t` | `stdio` | Transport type: `stdio` or `streamable-http` |
-| `--host` | `127.0.0.1` | Bind address |
-| `--port`, `-p` | `8080` | Port number |
-| `--ssl-certfile` | — | Path to SSL certificate file |
-| `--ssl-keyfile` | — | Path to SSL private key file |
-| `--bearer-token` | — | Bearer token for authentication |
+Behind a TLS-terminating proxy (as in the Cloud Run deployment below), that gateway serves the MCP endpoint at `https://mcp.example.com/mcp` and hands each session's authenticated identity to its `jquants-mcp` child (see [Authentication](#authentication)). [`scripts/entrypoint-stdio.sh`](scripts/entrypoint-stdio.sh) is the worked example: it is the entrypoint of the Cloud Run deployment described below, and shows the gateway running behind an `oauth2-proxy` sidecar together with the startup cache download.
 
-### TLS + Bearer Token Authentication
+That is the whole remote-access story. How clients connect depends only on the gateway you chose; the sections below cover the two shapes used with `mcp-stdio serve`.
 
-For secure remote access over the internet (e.g., IPv6), enable TLS encryption and Bearer token authentication:
+#### Claude Code / Claude Desktop (remote via mcp-stdio)
 
-```bash
-# Generate a bearer token
-python3 -c "import secrets; print(secrets.token_hex(32))"
-
-# Start with TLS and authentication
-jquants-mcp -t streamable-http --port 8080 \
-  --ssl-certfile /path/to/fullchain.pem \
-  --ssl-keyfile /path/to/privkey.pem \
-  --bearer-token <TOKEN>
-```
-
-Or configure via `config.ini` (no CLI flags needed):
-
-```ini
-[server]
-ssl_certfile = /path/to/fullchain.pem
-ssl_keyfile = /path/to/privkey.pem
-bearer_token = <TOKEN>
-```
-
-**Claude Code (remote with TLS):**
-
-> **Note:** `claude mcp add --transport http --header "Authorization: Bearer ..."` does not send the header during health checks ([claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)). Use [mcp-stdio](https://github.com/shigechika/mcp-stdio) as a workaround:
+Claude Desktop does not speak Streamable HTTP directly, and `claude mcp add --transport http --header "Authorization: Bearer ..."` drops the header during health checks ([claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)). The [mcp-stdio](https://pypi.org/project/mcp-stdio/) client bridges stdio to the remote endpoint in both cases:
 
 ```bash
 pip install mcp-stdio  # or: uvx mcp-stdio
 
-claude mcp add jquants-mcp -- \
-  mcp-stdio https://192.0.2.1:8080/mcp --bearer-token <TOKEN>
+# Claude Code — --oauth drives the gateway's OAuth flow in your browser
+claude mcp add jquants-mcp -- mcp-stdio --oauth https://mcp.example.com/mcp
 ```
-
-### Claude Desktop (remote via mcp-stdio)
-
-Claude Desktop does not support Streamable HTTP transport directly. Use [mcp-stdio](https://pypi.org/project/mcp-stdio/) to bridge stdio to a remote MCP server:
 
 ```json
 {
   "mcpServers": {
     "jquants-mcp": {
       "command": "mcp-stdio",
-      "args": [
-        "http://192.0.2.1:8080/mcp"
-      ]
+      "args": ["--oauth", "https://mcp.example.com/mcp"]
     }
   }
 }
 ```
 
-To connect to a TLS-enabled server with Bearer token authentication:
+Restart Claude Desktop after editing. Use `--bearer-token <TOKEN>` instead of `--oauth` if your gateway authenticates with a static token.
 
-```json
-{
-  "mcpServers": {
-    "jquants-mcp": {
-      "command": "mcp-stdio",
-      "args": [
-        "https://192.0.2.1:8080/mcp",
-        "--bearer-token", "<TOKEN>"
-      ]
-    }
-  }
-}
-```
+#### Claude Desktop Connectors
 
-Restart Claude Desktop after editing.
-
-### Claude Desktop Connectors (OAuth 2.1)
-
-Claude Desktop's **Connectors** feature provides a native OAuth 2.1 authentication flow. Users click **Connect** in the Connectors panel and are redirected to GitHub's login page automatically — no manual token management required.
-
-> **Requirements:**
-> - Server accessible over **HTTPS** (TLS certificate required)
-> - GitHub or Google OAuth 2.1 configured (see [GitHub OAuth 2.1](#github-oauth-21) / [Google OAuth 2.1](#google-oauth-21))
-> - `MCP_ENCRYPTION_KEY` set on the server (for per-user API key storage)
-
-**Server-side startup:**
-
-```bash
-jquants-mcp -t streamable-http --port 8080 \
-  --ssl-certfile /path/to/fullchain.pem \
-  --ssl-keyfile /path/to/privkey.pem \
-  --github-client-id <ID> \
-  --github-client-secret <SECRET> \
-  --oauth-base-url https://mcp.example.com
-```
-
-**`claude_desktop_config.json` (Connectors UI):**
+When the gateway speaks OAuth 2.1 over HTTPS (`mcp-stdio serve --enable-oauth`), Claude Desktop's **Connectors** panel can connect natively — click **Connect** and complete the login in the browser; the token is stored and reused silently.
 
 ```json
 {
@@ -588,9 +354,7 @@ jquants-mcp -t streamable-http --port 8080 \
 }
 ```
 
-On first use, Claude Desktop opens a browser window for GitHub OAuth. After authentication, the token is stored automatically and subsequent connections use it silently.
-
-> **Note:** Claude Desktop Connectors support (`"type": "http"` with OAuth) is rolling out gradually. If it is not yet available in your version, use the [stdio proxy method](#claude-desktop-remote-via-mcp-stdio) as a fallback.
+Per-user API keys additionally require `MCP_ENCRYPTION_KEY` on the server — see [Multi-user Mode](#multi-user-mode). If `"type": "http"` is not yet available in your Claude Desktop version, use the mcp-stdio bridge above instead.
 
 ## Available Tools
 
@@ -723,8 +487,8 @@ Indicator options for `get_candlestick_data`:
 | `health_check` | — | Server health and API key status |
 | `cache_status` | — | Cache statistics |
 | `cache_clear` | — | Clear cached data |
-| `register_api_key` | OAuth 2.1 | Store your J-Quants API key (multi-user mode) |
-| `delete_api_key` | OAuth 2.1 | Remove your stored J-Quants API key |
+| `register_api_key` | Gateway identity | Store your J-Quants API key (multi-user mode) |
+| `delete_api_key` | Gateway identity | Remove your stored J-Quants API key |
 
 ## Caching
 
@@ -827,20 +591,22 @@ Useful before a plan downgrade to confirm all currently-covered data has been fe
 
 ## Cloud Run Deployment
 
-This server can be deployed to [Google Cloud Run](https://cloud.google.com/run). The deployment splits state across two managed stores:
+This server can be deployed to [Google Cloud Run](https://cloud.google.com/run). Because the server is stdio-only, the service is two containers: an `oauth2-proxy` sidecar handles Google login, and the app container runs [`scripts/entrypoint-stdio.sh`](scripts/entrypoint-stdio.sh) — `mcp-stdio serve` fronting a per-session `jquants-mcp` child process (see [Authentication](#authentication)).
+
+State is split across two managed stores:
 
 - **`cache.db`** — published to a GCS bucket by the self-hosted server and downloaded to `/tmp` (tmpfs) on every cold start. Cloud Run reads it but never writes back.
-- **`users` / `oauth_state`** — stored in Firestore (Native mode). Strongly consistent and multi-writer safe, so Cloud Run can scale horizontally without SQLite write conflicts.
+- **`users`** — per-user encrypted J-Quants API keys, stored in Firestore (Native mode). Strongly consistent and multi-writer safe, so no SQLite write conflicts. The gateway keeps its own OAuth token state in a separate Firestore collection.
 
 Details: see [GCS and Firestore integration](#gcs-and-firestore-integration) below.
 
-> For a fork-and-deploy walkthrough (WIF, OAuth clients, custom domain, Claude mobile setup, allowlist), see [docs/deploy/gcp.md](docs/deploy/gcp.md). The sections below summarise the moving parts; the deploy guide is the canonical step-by-step.
+> For a fork-and-deploy walkthrough (WIF, OAuth client, custom domain, Claude mobile setup, allowlist), see [docs/deploy/gcp.md](docs/deploy/gcp.md). The sections below summarise the moving parts; the deploy guide is the canonical step-by-step.
 
 ### Prerequisites
 
 - [Google Cloud SDK](https://cloud.google.com/sdk/docs/install)
 - A GCS bucket holding a read-only snapshot of `cache.db` (updated out-of-band by the self-hosted server)
-- Firestore in Native mode enabled on the project (stores per-user API keys and OAuth session state)
+- Firestore in Native mode enabled on the project (stores per-user API keys, and the gateway's OAuth token state)
 - A service account with:
   - `roles/storage.objectViewer` on the GCS bucket (read-only access to `cache.db`)
   - `roles/datastore.user` on the project (Firestore read/write)
@@ -863,25 +629,11 @@ gcloud firestore databases create \
 
 ### Deploy
 
-The recommended path is to fork the repository and rely on the GitHub Actions CD workflow at [.github/workflows/cd.yml](.github/workflows/cd.yml), which calls `gcloud run deploy --source .` with the correct flags (memory, CPU, env vars, secrets). That workflow is the single source of truth for production deployment — do not run ad-hoc `gcloud run services update` commands, as they will be overwritten on the next CD run.
+The recommended path is to fork the repository and rely on the GitHub Actions CD workflow at [.github/workflows/cd.yml](.github/workflows/cd.yml). It builds the image with Cloud Build and then updates **only the app container's image** (`gcloud run services update --container app --image …`); the sidecar, scaling, CPU, env vars and secrets are set once by hand and deliberately never touched by CD.
 
-For a one-off manual deploy (e.g. testing a fork), run the same command locally:
+The two-container service itself is created once, out of band, with the app container started as `--command /app/scripts/entrypoint-stdio.sh`. [docs/deploy/gcp.md](docs/deploy/gcp.md) is the canonical step-by-step for that initial setup.
 
-```bash
-gcloud run deploy jquants-mcp \
-  --project "${PROJECT_ID}" \
-  --region "${REGION}" \
-  --source . \
-  --execution-environment gen2 \
-  --memory 8Gi \
-  --cpu 2 \
-  --cpu-boost \
-  --max-instances 3 \
-  --set-env-vars "GCS_BUCKET=YOUR_BUCKET,JQUANTS_CACHE_DIR=/tmp" \
-  --set-secrets "JQUANTS_API_KEY=jquants-api-key:latest"
-```
-
-Memory sizing notes are in [Memory requirements](#memory-requirements) below.
+Memory and scaling sizing notes are in [Memory requirements](#memory-requirements) below.
 
 ### Environment variables
 
@@ -890,14 +642,16 @@ Memory sizing notes are in [Memory requirements](#memory-requirements) below.
 | `GCS_BUCKET` | Yes | — | GCS bucket holding the `cache.db` snapshot |
 | `GCS_PREFIX` | No | `jquants-mcp/` | Object key prefix in the bucket |
 | `JQUANTS_CACHE_DIR` | No | `/tmp` | Local directory where `cache.db` is materialized (tmpfs on Cloud Run) |
-| `PORT` | No | `8000` | HTTP port (set by Cloud Run) |
+| `PUBLIC_URL` | Yes | — | Public base URL of the service (e.g. `https://mcp.example.com`); passed to `mcp-stdio serve --public-url` |
+| `PORT` | No | `8081` | Port the gateway listens on (the `oauth2-proxy` sidecar is the ingress container) |
+| `FIRESTORE_TOKEN_STORE` | No | `mcp_stdio_oauth/state` | Firestore path for the gateway's OAuth token store |
 | `JQUANTS_API_KEY` | Yes | — | J-Quants API key (use Secret Manager) |
 | `JQUANTS_PLAN` | No | auto-detect | Plan: `free` / `light` / `standard` / `premium` (auto-detected from the API key unless overridden) |
-| `MCP_BEARER_TOKEN` | No | — | Bearer token for HTTP authentication (single-user mode only) |
+| `MCP_ENCRYPTION_KEY` | No | — | Enables per-user API key storage (multi-user mode); use Secret Manager |
+| `JQUANTS_ALLOWED_EMAILS` | No | — | Restrict which authenticated users may use the service |
 | `GOOGLE_CLOUD_PROJECT` | Yes | — | GCP project ID. Required for Firestore (user DB) and Secret Manager access. Set via `vars.GCP_PROJECT` in the CD workflow |
-| `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | No | — | OAuth configuration for multi-user mode |
 
-Firestore uses Application Default Credentials from the Cloud Run service account.
+Firestore uses Application Default Credentials from the Cloud Run service account. The `oauth2-proxy` sidecar carries its own configuration (Google OAuth client, cookie secret) — see [docs/deploy/gcp.md](docs/deploy/gcp.md).
 
 ### GCS and Firestore integration
 
@@ -907,7 +661,7 @@ Cloud Run deployments depend on two managed stores, not an in-container SQLite s
 |---|---|---|
 | `cache.db` (market data) | GCS object, materialized to `/tmp/cache.db` on startup | Read-only from Cloud Run |
 | `users` (per-user encrypted J-Quants API keys) | Firestore `users` collection | Read/write |
-| `oauth_state` (OAuth sessions, PKCE verifiers, dynamic client registrations) | Firestore `oauth_state` collection | Read/write |
+| OAuth tokens and client registrations | Firestore, `FIRESTORE_TOKEN_STORE` path — owned by the gateway, not by this server | Read/write |
 
 `cache.db` is owned by a self-hosted publisher (a cron / scheduled task running `scripts/daily_fetch.py` or `scripts/bulk_fetch_all.py` + `scripts/gcs_export_cache.py`) that pushes a fresh snapshot to GCS on each run. Cloud Run never writes back to GCS.
 
@@ -915,24 +669,24 @@ Cloud Run deployments depend on two managed stores, not an in-container SQLite s
 
 ```mermaid
 sequenceDiagram
-    participant E as entrypoint.sh
+    participant E as entrypoint-stdio.sh
     participant G as GCS
-    participant M as MCP server
+    participant M as mcp-stdio serve
 
     E->>G: download cache.db.zst to /tmp (synchronous)
     Note right of E: runs in the startup window,<br/>where CPU is fully allocated
     G-->>E: ~1.2 GiB compressed
     Note right of E: stream-decompressed to ~3 GiB;<br/>falls back to uncompressed cache.db
-    E->>M: start (cache.db already present)
+    E->>M: start gateway (cache.db already present)
     activate M
-    Note right of M: serve from Tier 1 cache<br/>(live J-Quants API only if the<br/>download was skipped/failed)
+    Note right of M: each session spawns a stdio child<br/>serving from the Tier 1 cache<br/>(live J-Quants API only if the<br/>download was skipped/failed)
     deactivate M
 ```
 
 Notes:
-- `cache.db` is downloaded **synchronously during container startup**, before the server binds the port. It is published zstd-compressed as `cache.db.zst` (~1.2 GiB on the wire, stream-decompressed to ~3 GiB) because the Cloud Run instance's GCS read bandwidth (~60 MB/s) is the bottleneck; the downloader falls back to the uncompressed `cache.db` when `.zst` is absent. Under Cloud Run request-based billing the CPU is throttled to ~0 between requests, so a download started *after* the server is ready would be starved and never finish; the startup window has full CPU (plus `--cpu-boost`). The trade-off is a longer cold start — the first request after a scale-to-zero waits for the download.
+- `cache.db` is downloaded **synchronously during container startup**, before the gateway starts accepting sessions. It is published zstd-compressed as `cache.db.zst` (~1.2 GiB on the wire, stream-decompressed to ~3 GiB) because the Cloud Run instance's GCS read bandwidth (~60 MB/s) is the bottleneck; the downloader falls back to the uncompressed `cache.db` when `.zst` is absent. It runs in the container-startup window, where CPU is fully allocated (plus `--cpu-boost`): under Cloud Run's request-based CPU allocation a download started *after* the server is ready can be throttled to ~0 between requests and never finish. The trade-off is a longer cold start — the first request after a scale-to-zero waits for the download.
 - If the download fails, startup continues and the server serves via the live J-Quants API (slower, counts against rate limits). `cache_status` then returns a minimal payload (`db_path` + `plan` only) until a cache is loaded.
-- Firestore is strongly consistent, so multiple Cloud Run instances can run concurrently without data races. There is no `maxScale: 1` restriction — scale as needed.
+- Firestore is strongly consistent, so per-user data survives instance recycling and is safe against concurrent writers. Sessions, however, are held in-instance by the gateway (one child process per session), so the production service runs with `max-instances=1`; scaling out is a gateway-level concern, not a storage one.
 
 #### Daily cache refresh
 
@@ -980,7 +734,7 @@ The service account needs `roles/datastore.user` on the project.
 
 **`cache_status` returns only `db_path` and `plan` (no row counts):**
 
-The cache.db background download has not finished yet. Normal during the first 1–2 minutes after a cold start. Check the logs for `cache.db download complete; signaling MCP server to reload`.
+The startup download did not complete, or the integrity prewarm is still running. Check the container log for `cache.db download complete` (emitted by `entrypoint-stdio.sh` after the synchronous download); its absence means the download was skipped or failed and the server is on the live-API fallback.
 
 **`cache.db` not found in GCS on first deploy:**
 
@@ -1000,7 +754,7 @@ gcloud storage buckets add-iam-policy-binding gs://YOUR_BUCKET \
   --member "serviceAccount:${SA}" \
   --role "roles/storage.objectViewer"
 
-# Firestore access for users / oauth_state collections
+# Firestore access for the users collection and the gateway's token store
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member "serviceAccount:${SA}" \
   --role "roles/datastore.user"
@@ -1029,17 +783,17 @@ gcloud storage cp ~/.cache/jquants-mcp/cache.db \
 > gcloud config set storage/parallel_composite_upload_enabled False
 > ```
 
-No manual Firestore setup is required — the server creates the `users` and `oauth_state` collections on first write.
+No manual Firestore setup is required — collections are created on first write.
 
 ### Memory requirements
 
 Cloud Run materializes `cache.db` into `/tmp` (a tmpfs, i.e. RAM). The memory limit therefore must cover:
 
 - `cache.db` size (currently ~3 GiB)
-- Python runtime + fastmcp + sqlite + httpx overhead (~300 MiB)
+- Python runtime + mcp SDK + sqlite + httpx overhead (~300 MiB)
 - Request-time JSON serialization headroom
 
-Current production sizing (see [.github/workflows/cd.yml](.github/workflows/cd.yml)) is `--memory 8Gi --cpu 2 --max-instances 3` with CPU throttling left at the default. CPU throttling means **request-based billing** — compute is billed only while a request is being processed — which keeps this near-idle service within the monthly free tier; `--no-cpu-throttling` would instead bill every second an instance stays alive (idle keepalive included). Under request-based billing memory is billed only during active requests too, so the larger limit is effectively free (it stays within the free tier). Cloud Run gen2 is required for memory allocations above 4 Gi, and >4 GiB also forces ≥2 vCPU (8 GiB is the ceiling for 2 vCPU).
+Current production sizing is `--memory 8Gi --cpu 2`, with `min-instances=0` (scale to zero), `max-instances=1`, and CPU always allocated. Those three billing-relevant settings are never passed by the CD workflow; they are set once by hand and asserted before and after every deploy by [.github/workflows/scripts/assert-jquants-billing-settings.sh](.github/workflows/scripts/assert-jquants-billing-settings.sh), so an out-of-band change fails the next deploy instead of persisting silently. Scale-to-zero is load-bearing for correctness as well as cost — every cold start re-downloads a current `cache.db` (see [Daily cache refresh](#daily-cache-refresh)). Cloud Run gen2 is required for memory allocations above 4 Gi, and >4 GiB also forces ≥2 vCPU (8 GiB is the ceiling for 2 vCPU).
 
 Memory is 8 GiB because a cache reload briefly holds **~2× `cache.db`** in `/tmp` (which is tmpfs, i.e. RAM): the new snapshot downloads to a temp file while the current `cache.db` is still mapped, then atomically replaces it. At ~3 GiB per snapshot that peak (~6 GiB) plus the Python/SQLite RSS exceeds a 6 GiB limit and tmpfs writes fail with **SIGBUS** (observed as `Container terminated on signal 7`), so the limit is 8 GiB. If `cache.db` grows materially, raise the limit further (and keep ≥2 vCPU; >8 GiB needs ≥4 vCPU).
 

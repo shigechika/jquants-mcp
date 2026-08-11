@@ -10,9 +10,10 @@ nine-nines reliability.
   Firestore, GCS bucket `${BUCKET}`) live there.
 - **RTO** (time to recover from a regional outage): **hours** — requires
   manual redeploy to a standby region plus DNS / OAuth redirect updates.
-- **RPO** (data loss on catastrophic failure): **0** for `users` and
-  `oauth_state` (Firestore writes are synchronous and backed up daily);
-  **up to 1 day** for `cache.db` (depending on self-hosted publisher cadence).
+- **RPO** (data loss on catastrophic failure): **0** for `users` and the
+  gateway's OAuth token store (Firestore writes are synchronous and backed up
+  daily); **up to 1 day** for `cache.db` (depending on self-hosted publisher
+  cadence).
 - **No automated failover.** This is a conscious choice for the current
   user count and cost envelope.
 
@@ -69,8 +70,12 @@ If `us-west1` is down for extended period and we decide to fail over:
    verbatim with `--region=<STANDBY>`.
 3. **Firestore**: restore latest managed backup into a new database in the
    standby region, point Cloud Run at it via env var.
-4. **OAuth**: update `OAUTH_BASE_URL` and the Google/GitHub OAuth client's
-   authorized redirect URIs to the new Cloud Run URL.
+4. **Public URL**: point everything that hard-codes the service URL at the new
+   one — the app container's `PUBLIC_URL` env var (`mcp-stdio serve` advertises
+   its OAuth metadata from it), the `OAUTH_BASE_URL` repo Variable (CD's
+   post-deploy smoke test), and the authorized redirect URI on the sign-in
+   layer's Google OAuth client. The sign-in layer is the `oauth2-proxy` sidecar,
+   configured on the service; no OAuth client credentials live in this package.
 5. **cache.db**: if the publisher is also down, Cloud Run serves via live
    J-Quants API fallback; otherwise repoint the publisher at the new
    region's bucket.

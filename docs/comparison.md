@@ -19,7 +19,7 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 |---|---|---|---|---|
 | Purpose | API docs reference & code generation | Data retrieval for free plan | V2 API endpoint calls | Full-plan data retrieval + multi-user service |
 | Developer | JPX (Japan Exchange Group) | cygkichi (individual) | umicho (individual) | shigechika (individual) |
-| Framework | Python | Python | Python | Python (FastMCP v3) |
+| Framework | Python | Python | Python | Python (official MCP SDK) |
 | License | MIT | MIT | Unknown | MIT |
 | Last Updated | 2026-03-09 (v0.9.0) | Unknown | Unknown | 2026-07-04 (active) |
 
@@ -47,9 +47,8 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 | Item | JPX Official | cygkichi | umicho | **jquants-mcp** |
 |---|:---:|:---:|:---:|:---:|
 | stdio (local) | Yes | Yes | Yes | Yes |
-| Streamable HTTP (remote) | No | No | No | **Yes** |
-| TLS + Bearer token | No | No | No | **Yes** |
-| OAuth 2.1 | No | No | No | **Yes** (Google / GitHub) |
+| Remote access | No | No | No | **Yes** (via an `mcp-stdio` gateway in front of the stdio server) |
+| OAuth 2.1 | No | No | No | **Yes** (terminated by the gateway; one server process per authenticated user) |
 | Supported clients | Claude Desktop, Cursor | Claude Desktop | LobeHub, Claude Desktop | Claude Desktop, Claude Code, Cursor, Connectors UI, generic |
 
 ## Caching & Performance
@@ -66,7 +65,7 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 | Item | JPX Official | cygkichi | umicho | **jquants-mcp** |
 |---|:---:|:---:|:---:|:---:|
 | Multi-user | No | No | No | **Yes** |
-| Auth method | N/A (docs only) | ID_TOKEN env var | API_KEY env var | Google/GitHub OAuth + per-user API key registration |
+| Auth method | N/A (docs only) | ID_TOKEN env var | API_KEY env var | Gateway OAuth + per-user API key registration (`register_api_key` tool) |
 | API key encryption | — | No (plaintext env) | No (plaintext env) | **AES-256-GCM + random salt** |
 | Plan auto-detection | — | No | No | **Yes** (API probe) |
 | Daily API key validation | — | No | No | **Yes** (24h cycle) |
@@ -74,7 +73,6 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 | SQL injection protection | — | — | — | **Yes** (whitelist-based) |
 | Audit logging | No | No | No | **Yes** (structured JSON) |
 | Error message safety | — | — | — | **Yes** (no internal ID leakage) |
-| CSRF protection | — | — | — | **Yes** (/settings forms) |
 
 ## Deployment & Operations
 
@@ -84,7 +82,6 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 | Cloud deploy | No | No | No | **Yes** (Cloud Run + GCS) |
 | Docker | No | No | No | **Yes** (Dockerfile included) |
 | GCS persistence | — | — | — | **Yes** (SQLite writeback) |
-| Settings Web UI | No | No | No | **Yes** (/settings) |
 
 ## Testing & Code Quality
 
@@ -102,7 +99,7 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 | **JPX Official** | Official backing from JPX; V1→V2 migration support; code generation |
 | **cygkichi** | Minimal setup; free plan focus |
 | **umicho** | Registered on LobeHub MCP registry; V2 endpoint support |
-| **jquants-mcp** | Production-grade architecture; 2-tier cache (3.5 GB proven); multi-user OAuth; AES-256-GCM encryption; audit logging; Cloud Run deployment; 1,200+ automated tests |
+| **jquants-mcp** | Production-grade architecture; 2-tier cache (3.5 GB proven); multi-user via a gateway-fronted stdio server, one process per authenticated user; AES-256-GCM encryption; audit logging; Cloud Run deployment; 1,200+ automated tests |
 
 ## Summary
 
@@ -116,7 +113,7 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 
 ## Positioning
 
-There is effectively no competition in the "remote HTTP/SSE multi-user J-Quants MCP server" category — **jquants-mcp is the only one**.
+There is effectively no competition in the "remotely reachable, multi-user J-Quants MCP server" category — **jquants-mcp is the only one**. Since 1.0.0 the server itself is deliberately stdio-only; the remote and multi-user properties come from the `mcp-stdio` gateway deployed in front of it, which is what the Cloud Run deployment ships.
 
 Future differentiation opportunities: MCP registry listings (LobeHub, etc.), custom domain, expanded documentation, community building.
 

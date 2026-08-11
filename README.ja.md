@@ -10,7 +10,7 @@
 
 リリース履歴・変更履歴は [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases) を参照してください。
 
-デプロイ形態（stdio / Docker Compose / セルフホスト HTTP / Cloud Run）の選び方は [docs/deploy/README.ja.md](docs/deploy/README.ja.md) を参照。
+デプロイ形態（stdio / Docker Compose / ゲートウェイ経由のセルフホスト / Cloud Run）の選び方は [docs/deploy/README.ja.md](docs/deploy/README.ja.md) を参照。
 
 ## デモ
 
@@ -97,17 +97,7 @@ MCP 固有の設定（キャッシュ、クライアント動作）:
 # max_pages = 10
 
 [server]
-# ssl_certfile = /path/to/fullchain.pem
-# ssl_keyfile = /path/to/privkey.pem
-# bearer_token = <secret>
 # encryption_key = <ランダムな秘密値>   # ユーザーごとの API キー保存を有効化（マルチユーザーモード）
-
-[oauth]
-# github_client_id = <GitHub OAuth App のクライアント ID>
-# github_client_secret = <クライアントシークレット>
-# base_url = https://mcp.example.com
-# jwt_signing_key = <ランダムな秘密値>  # 省略可: 省略時は自動生成
-# require_consent = true
 ```
 
 ### 環境変数
@@ -122,20 +112,10 @@ MCP 固有の設定（キャッシュ、クライアント動作）:
 | `MAX_RETRIES` | いいえ | `5` | リクエスト失敗時の最大リトライ回数 |
 | `RETRY_BASE_DELAY` | いいえ | `1.0` | 指数バックオフの基本遅延（秒） |
 | `MAX_PAGES` | いいえ | `10` | ページネーション時の最大ページ数 |
-| `SSL_CERTFILE` | いいえ | — | SSL 証明書ファイルのパス（HTTP トランスポート用） |
-| `SSL_KEYFILE` | いいえ | — | SSL 秘密鍵ファイルのパス（HTTP トランスポート用） |
-| `MCP_BEARER_TOKEN` | いいえ | — | HTTP 認証用の Bearer トークン |
-| `GITHUB_CLIENT_ID` | いいえ | — | GitHub OAuth App のクライアント ID（GitHub OAuth 2.1 を有効化） |
-| `GITHUB_CLIENT_SECRET` | いいえ | — | GitHub OAuth App のクライアントシークレット |
-| `GOOGLE_CLIENT_ID` | いいえ | — | Google OAuth 2.0 クライアント ID（Google OAuth 2.1 を有効化） |
-| `GOOGLE_CLIENT_SECRET` | いいえ | — | Google OAuth 2.0 クライアントシークレット |
-| `OAUTH_PROVIDER` | いいえ | `github` | OAuth プロバイダー: `github` または `google` |
-| `OAUTH_BASE_URL` | いいえ | — | サーバーの公開ベース URL（例: `https://mcp.example.com`） |
-| `OAUTH_JWT_SIGNING_KEY` | いいえ | 自動 | JWT 署名用シークレット。省略時は起動ごとに自動生成 |
-| `OAUTH_REQUIRE_CONSENT` | いいえ | `true` | ログインのたびに OAuth 同意画面を表示（`true`/`false`） |
+| `JQUANTS_MCP_USER` | いいえ | — | 認証済みユーザーの識別子。前段のゲートウェイが子プロセス起動時に注入する（`mcp-stdio serve --user-env JQUANTS_MCP_USER`）ため、手動設定は不要。未設定ならシングルユーザーとして動作 |
 | `MCP_ENCRYPTION_KEY` | いいえ | — | ユーザー API キーの AES-256-GCM 暗号化に使うパスフレーズ |
 | `MCP_ENCRYPTION_KEY_PREVIOUS` | いいえ | — | 前世代の暗号化パスフレーズ — ローテーション中の dual-key 復号用。[secrets rotation runbook](docs/runbooks/secrets-rotation.md) 参照 |
-| `RATE_LIMIT_PER_MINUTE` | いいえ | `60` | マルチユーザー時のユーザー別リクエスト上限（OAuth ユーザー単位） |
+| `RATE_LIMIT_PER_MINUTE` | いいえ | `60` | マルチユーザー時のユーザー別リクエスト上限（認証済みユーザー単位） |
 | `RATE_LIMIT_BURST` | いいえ | `20` | ユーザー別バースト許容量（トークンバケット容量） |
 | `JQUANTS_ALLOWED_EMAILS` | いいえ | — | カンマ区切りの許可 email リスト。空 = 認証されたユーザー全員を許可（セルフホスト既定）。公開 Cloud Run で特定ユーザーのみに絞りたい場合に設定。未許可ユーザーには 403 相当のメッセージでセルフホストを案内 |
 
@@ -169,172 +149,32 @@ Linux/systemd 等は影響を受けません。
 
 ## 認証
 
-jquants-mcp は 4 つの認証モードに対応しています:
+jquants-mcp は **stdio トランスポート専用**で、ネットワークソケットを一切 bind しません。TLS 終端・トークン検証・OAuth フローはサーバープロセスの外側、前段のゲートウェイの責務です。
 
 | モード | 用途 |
 |---|---|
-| なし | ローカル stdio または信頼済み LAN（シングルユーザー） |
-| Bearer Token | HTTPS 経由のシングルユーザーリモートアクセス |
-| GitHub OAuth 2.1 | マルチユーザー / Claude Desktop Connectors |
-| Google OAuth 2.1 | Google アカウントによるマルチユーザーアクセス |
+| なし | ローカル stdio（シングルユーザー）。API キーは `jquants-api.toml` / `config.ini` / 環境変数から読み込み |
+| ゲートウェイ終端 | リモートアクセス・マルチユーザー。[mcp-stdio](https://github.com/shigechika/mcp-stdio) の `serve` が HTTP と認証を終端し、認証済みユーザーごとに stdio の子プロセスを起動する |
 
-起動時に設定に基づいて自動的にモードが選択されます:
+### ゲートウェイによる識別
 
-1. **Google OAuth 2.1** — `GOOGLE_CLIENT_ID`・`GOOGLE_CLIENT_SECRET`・`OAUTH_BASE_URL` がすべて設定され、`OAUTH_PROVIDER=google` の場合
-2. **GitHub OAuth 2.1** — `GITHUB_CLIENT_ID`・`GITHUB_CLIENT_SECRET`・`OAUTH_BASE_URL` がすべて設定されている場合
-3. **Bearer Token** — `MCP_BEARER_TOKEN`（または `config.ini` の `bearer_token`）が設定されている場合
-4. **なし** — 認証なし（stdio トランスポートまたは信頼済み環境）
+ゲートウェイ構成では、認証済みユーザーの識別子（検証済み email）が環境変数 `JQUANTS_MCP_USER` として子プロセスに注入されます（`mcp-stdio serve --trusted-user-header X-Forwarded-Email --user-env JQUANTS_MCP_USER`）。1 つの子プロセスは生存期間を通じて 1 ユーザーだけを担当し、サーバーはこの値を検証済みの email として扱って `JQUANTS_ALLOWED_EMAILS` の許可リスト判定・ユーザーごとのレート制限・保存済み API キーの参照に用います。`JQUANTS_MCP_USER` が未設定の場合はシングルユーザーとして扱われ、共通の `JQUANTS_API_KEY` とデフォルトプランで動作します。
 
-### GitHub OAuth 2.1
+> **信頼モデル**: `JQUANTS_MCP_USER` は検証なしでそのまま信頼されます。サーバー自身は一切の検証を行いません。つまり**子プロセスの環境変数を設定できる者は、そのままそのユーザーになれます**。この変数は必ずゲートウェイが注入するものであり、ユーザー入力に由来する値を渡してはいけません。
 
-サーバーが OAuth 2.1 認可サーバーとして機能し、GitHub を上流 IdP（identity provider）として使用します。クライアントは GitHub のログイン画面にリダイレクトされ、サーバーが認可コードを署名済み JWT と交換してユーザーを識別します。
+Cloud Run 本番構成（[scripts/entrypoint-stdio.sh](scripts/entrypoint-stdio.sh)）の例:
 
-#### 1. GitHub OAuth App を作成する
-
-1. **GitHub → Settings → Developer settings → OAuth Apps → New OAuth App** へ移動
-2. 以下を入力:
-   - **Application name**: `jquants-mcp`（任意の名前でも可）
-   - **Homepage URL**: サーバーの公開ベース URL（例: `https://mcp.example.com`）
-   - **Authorization callback URL**: `https://mcp.example.com/oauth/callback`
-3. **Register application** をクリック後、**Generate a new client secret** でシークレットを生成
-4. **Client ID** と生成した **Client secret** をコピーしておく
-
-#### 2. サーバーを設定する
-
-**環境変数で設定:**
-
-```bash
-export GITHUB_CLIENT_ID=Ov23liXXXXXXXXXXXXXX
-export GITHUB_CLIENT_SECRET=<クライアントシークレット>
-export OAUTH_BASE_URL=https://mcp.example.com      # 外部から到達可能な URL
-export OAUTH_JWT_SIGNING_KEY=<ランダムな秘密値>    # 省略可: 省略時は自動生成
-export MCP_ENCRYPTION_KEY=<ランダムな秘密値>       # ユーザーごとの API キー保存に必要
+```
+oauth2-proxy（Google OAuth）
+  → mcp-stdio serve --enable-oauth --trusted-user-header X-Forwarded-Email --user-env JQUANTS_MCP_USER
+    → jquants-mcp（stdio、ユーザーごとの子プロセス）
 ```
 
-**`config.ini` で設定:**
-
-```ini
-[oauth]
-github_client_id = Ov23liXXXXXXXXXXXXXX
-github_client_secret = <クライアントシークレット>
-base_url = https://mcp.example.com
-# jwt_signing_key = <ランダムな秘密値>   # 省略可: 省略時は自動生成
-# require_consent = true              # デフォルト: true
-
-[server]
-encryption_key = <ランダムな秘密値>    # ユーザーごとの API キー保存に必要
-```
-
-#### 3. OAuth 付きでサーバーを起動する
-
-```bash
-jquants-mcp -t streamable-http --port 8080 \
-  --ssl-certfile /path/to/fullchain.pem \
-  --ssl-keyfile /path/to/privkey.pem \
-  --github-client-id <ID> \
-  --github-client-secret <SECRET> \
-  --oauth-base-url https://mcp.example.com
-```
-
-環境変数や `config.ini` で OAuth 設定が完了している場合、CLI フラグは省略可能です。起動時に自動的に OAuth が有効化されます。
-
-| CLI オプション | 説明 |
-|---|---|
-| `--github-client-id` | GitHub OAuth App のクライアント ID |
-| `--github-client-secret` | GitHub OAuth App のクライアントシークレット |
-| `--oauth-base-url` | サーバーの公開ベース URL（リダイレクト URI の構築に使用） |
-
-### Google OAuth 2.1
-
-GitHub の代わりに Google を OAuth 2.1 の IdP として使用できます。ユーザーは Google のサインインページにリダイレクトされ、サーバーが認可コードを署名済み JWT と交換してユーザーを識別します。
-
-#### 1. Google OAuth 2.0 クライアントを作成する
-
-1. [Google Cloud Console](https://console.cloud.google.com/) → **API とサービス → 認証情報 → 認証情報を作成 → OAuth 2.0 クライアント ID** へ移動
-2. **ウェブ アプリケーション** を選択し、以下を入力:
-   - **Authorized JavaScript origins**: `https://mcp.example.com`
-   - **Authorized redirect URIs**: `https://mcp.example.com/oauth/callback`
-3. **作成** をクリックし、**クライアント ID** と **クライアントシークレット** をコピーする
-
-#### 2. サーバーを設定する
-
-**環境変数で設定:**
-
-```bash
-export GOOGLE_CLIENT_ID=<クライアント ID>
-export GOOGLE_CLIENT_SECRET=<クライアントシークレット>
-export OAUTH_PROVIDER=google
-export OAUTH_BASE_URL=https://mcp.example.com
-export MCP_ENCRYPTION_KEY=<ランダムな秘密値>    # ユーザーごとの API キー保存に必要
-```
-
-**`config.ini` で設定:**
-
-```ini
-[oauth]
-google_client_id = <クライアント ID>
-google_client_secret = <クライアントシークレット>
-provider = google
-base_url = https://mcp.example.com
-
-[server]
-encryption_key = <ランダムな秘密値>
-```
-
-### /settings Web UI
-
-OAuth が有効な場合、`https://mcp.example.com/settings` でブラウザからAPIキーを登録できます。
-
-1. ブラウザで `https://mcp.example.com/settings` を開く
-2. **Sign in with GitHub**（`config.ini` で `provider = google` の場合は **Sign in with Google**）をクリック
-3. 認証後、J-Quants API キーとプランを入力して **Save** をクリック
-
-MCP クライアントなしでブラウザから直接 `register_api_key` 相当の操作が可能です。
-
-### リバースプロキシ（パスプレフィックス）
-
-`https://mcp.example.com/jquants-mcp/mcp` のようにパスプレフィックス配下で動かす場合、コード変更は不要で以下の 2 点だけ設定します。
-
-**① リバースプロキシでプレフィックスをストリップ：**
-
-Caddy：
-
-```caddy
-handle /jquants-mcp/* {
-    uri strip_prefix /jquants-mcp
-    reverse_proxy localhost:8080
-}
-```
-
-nginx（番号付きバックリファレンスの脆弱性を避けるため named capture group を使用）：
-
-```nginx
-location /jquants-mcp/ {
-    rewrite ^/jquants-mcp(?<path>/.*)$ $path break;
-    proxy_pass http://localhost:8080;
-}
-```
-
-**② `OAUTH_BASE_URL` をプレフィックス込みの公開 URL に設定：**
-
-```bash
-export OAUTH_BASE_URL=https://mcp.example.com/jquants-mcp
-```
-
-または `config.ini` で：
-
-```ini
-[oauth]
-base_url = https://mcp.example.com/jquants-mcp
-```
-
-FastMCP はすべての OAuth エンドポイント（`/oauth/callback`、`/settings`、`/.well-known/oauth-authorization-server`）を `OAUTH_BASE_URL` から導出します。プレフィックス込みの公開 URL を設定することで、プロキシがプレフィックスをストリップした後も OAuth フローと settings ページが正しく動作します。
-
-> **Google OAuth の注意：** Google Cloud Console で *Authorized JavaScript origins* に `https://mcp.example.com`、*Authorized redirect URIs* に `https://mcp.example.com/jquants-mcp/oauth/callback` を追加してください。
+ユーザーごとの API キー登録を有効にするには、サーバー側で `MCP_ENCRYPTION_KEY` を設定します（[マルチユーザーモード](#マルチユーザーモード) 参照）。`JQUANTS_ALLOWED_EMAILS` を設定すると、ゲートウェイが認証したユーザーのうち許可リストに載っているものだけにアクセスを絞れます。
 
 ## マルチユーザーモード
 
-GitHub OAuth 2.1 と `MCP_ENCRYPTION_KEY` を両方設定すると、**マルチユーザーモード**で動作します。認証された各ユーザーが自分の J-Quants API キーをサーバーに登録でき、データ取得ツールは自動的にそのキーを使用します。キャッシュは全ユーザーで共有され、レート制限はユーザーごとに独立します。
+前段のゲートウェイが認証を終端する構成で `MCP_ENCRYPTION_KEY` を設定すると、**マルチユーザーモード**で動作します。認証された各ユーザーが自分の J-Quants API キーを `register_api_key` ツールで登録でき、データ取得ツールは自動的にそのキーを使用します。キャッシュは全ユーザーで共有され、レート制限はユーザーごとに独立します。
 
 ### ユーザーフロー
 
@@ -342,12 +182,12 @@ GitHub OAuth 2.1 と `MCP_ENCRYPTION_KEY` を両方設定すると、**マルチ
 sequenceDiagram
     participant U as ユーザー
     participant C as Claude
+    participant G as ゲートウェイ
     participant S as jquants-mcp
-    participant G as GitHub
     participant J as J-Quants API
     U->>C: 接続（Connectors UI / Claude Code）
-    C->>G: OAuth 2.1 認可
-    G-->>C: アクセストークン（JWT）
+    C->>G: 認証（ゲートウェイが終端）
+    G->>S: stdio 子プロセスを起動（JQUANTS_MCP_USER=検証済み email）
     U->>C: "J-Quants API キーを登録して: <key>"
     C->>S: register_api_key(api_key="<key>")
     S->>J: プラン固有エンドポイントをプローブ（自動検出）
@@ -365,8 +205,8 @@ sequenceDiagram
 
 | ツール | 必要条件 | 説明 |
 |---|---|---|
-| `register_api_key` | OAuth 2.1 + `MCP_ENCRYPTION_KEY` | J-Quants API キーを暗号化して登録 |
-| `delete_api_key` | OAuth 2.1 + `MCP_ENCRYPTION_KEY` | 登録済みの API キーを削除 |
+| `register_api_key` | ゲートウェイ認証 + `MCP_ENCRYPTION_KEY` | J-Quants API キーを暗号化して登録 |
+| `delete_api_key` | ゲートウェイ認証 + `MCP_ENCRYPTION_KEY` | 登録済みの API キーを削除 |
 
 **キーの登録**（Claude に伝える）:
 
@@ -385,10 +225,9 @@ Claude が `register_api_key(api_key="...")` を呼び出します。サーバ�
 
 | 設定状態 | 動作 |
 |---|---|
-| 認証なし・`MCP_ENCRYPTION_KEY` なし | シングルユーザー: 全接続で共通の `JQUANTS_API_KEY` を使用 |
-| Bearer Token のみ | シングルユーザー: 同上（HTTP 認証あり） |
-| OAuth + `MCP_ENCRYPTION_KEY` なし | OAuth 認証あり、全ユーザーで共通の `JQUANTS_API_KEY` を使用 |
-| OAuth + `MCP_ENCRYPTION_KEY` あり | フルマルチユーザー: ユーザーごとに独立した暗号化 API キー |
+| ゲートウェイなし（`JQUANTS_MCP_USER` 未設定） | シングルユーザー: 全接続で共通の `JQUANTS_API_KEY` を使用 |
+| ゲートウェイ認証あり・`MCP_ENCRYPTION_KEY` なし | ユーザーは識別されるが、全ユーザーで共通の `JQUANTS_API_KEY` を使用 |
+| ゲートウェイ認証あり・`MCP_ENCRYPTION_KEY` あり | フルマルチユーザー: ユーザーごとに独立した暗号化 API キー |
 
 ## 使い方
 
@@ -459,70 +298,9 @@ Claude Desktop の設定ファイルに追加:
 jquants-mcp
 ```
 
-### Streamable HTTP（リモートアクセス）
-
-HTTP トランスポートで起動すると、他のマシンの MCP クライアントから接続できます:
-
-```bash
-jquants-mcp --transport streamable-http --port 8080
-```
-
-MCP エンドポイントは `http://<host>:8080/mcp` で公開されます。同一 LAN 内（または SSH トンネル経由）のクライアントから接続可能です。
-
-**Claude Code（リモート接続）:**
-
-```bash
-claude mcp add jquants-mcp \
-  --transport http http://192.0.2.1:8080/mcp
-```
-
-| オプション | デフォルト | 説明 |
-|---|---|---|
-| `--transport`, `-t` | `stdio` | トランスポート: `stdio` または `streamable-http` |
-| `--host` | `127.0.0.1` | バインドアドレス |
-| `--port`, `-p` | `8080` | ポート番号 |
-| `--ssl-certfile` | — | SSL 証明書ファイルのパス |
-| `--ssl-keyfile` | — | SSL 秘密鍵ファイルのパス |
-| `--bearer-token` | — | Bearer トークン認証 |
-
-### TLS + Bearer Token 認証
-
-インターネット経由（IPv6 等）で安全にリモートアクセスするには、TLS 暗号化と Bearer token 認証を有効にします:
-
-```bash
-# Bearer トークンを生成
-python3 -c "import secrets; print(secrets.token_hex(32))"
-
-# TLS + 認証付きで起動
-jquants-mcp -t streamable-http --port 8080 \
-  --ssl-certfile /path/to/fullchain.pem \
-  --ssl-keyfile /path/to/privkey.pem \
-  --bearer-token <TOKEN>
-```
-
-または `config.ini` で設定（CLI フラグ不要）:
-
-```ini
-[server]
-ssl_certfile = /path/to/fullchain.pem
-ssl_keyfile = /path/to/privkey.pem
-bearer_token = <TOKEN>
-```
-
-**Claude Code（TLS 付きリモート接続）:**
-
-> **注意:** `claude mcp add --transport http --header "Authorization: Bearer ..."` はヘルスチェック時にヘッダーを送信しません（[claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)）。ワークアラウンドとして [mcp-stdio](https://github.com/shigechika/mcp-stdio) 経由で接続してください:
-
-```bash
-pip install mcp-stdio  # または: uvx mcp-stdio
-
-claude mcp add jquants-mcp -- \
-  mcp-stdio https://192.0.2.1:8080/mcp --bearer-token <TOKEN>
-```
-
 ### Claude Desktop（mcp-stdio 経由のリモート接続）
 
-Claude Desktop は Streamable HTTP トランスポートに直接対応していません。[mcp-stdio](https://pypi.org/project/mcp-stdio/) を使って stdio とリモート MCP サーバーを中継できます:
+Claude Desktop はリモート MCP サーバーへの HTTP 接続に直接対応していません。[mcp-stdio](https://pypi.org/project/mcp-stdio/) を使うと、stdio とゲートウェイが公開するリモート MCP エンドポイント（`mcp-stdio serve` の `--path` 配下）を中継できます:
 
 ```json
 {
@@ -530,23 +308,7 @@ Claude Desktop は Streamable HTTP トランスポートに直接対応してい
     "jquants-mcp": {
       "command": "mcp-stdio",
       "args": [
-        "http://192.0.2.1:8080/mcp"
-      ]
-    }
-  }
-}
-```
-
-TLS + Bearer token 認証付きサーバーに接続する場合:
-
-```json
-{
-  "mcpServers": {
-    "jquants-mcp": {
-      "command": "mcp-stdio",
-      "args": [
-        "https://192.0.2.1:8080/mcp",
-        "--bearer-token", "<TOKEN>"
+        "https://mcp.example.com/mcp"
       ]
     }
   }
@@ -554,43 +316,6 @@ TLS + Bearer token 認証付きサーバーに接続する場合:
 ```
 
 設定後、Claude Desktop を再起動してください。
-
-### Claude Desktop Connectors（OAuth 2.1）
-
-Claude Desktop の **Connectors** 機能を使うと、ネイティブな OAuth 2.1 認証フローが利用できます。Connectors パネルで **Connect** をクリックすると、自動的に GitHub のログイン画面にリダイレクトされます。トークンの手動管理は不要です。
-
-> **必要条件:**
-> - **HTTPS** でアクセス可能なサーバー（TLS 証明書が必要）
-> - GitHub または Google OAuth 2.1 の設定済み（[GitHub OAuth 2.1](#github-oauth-21) / [Google OAuth 2.1](#google-oauth-21) を参照）
-> - サーバー側で `MCP_ENCRYPTION_KEY` を設定済み（ユーザーごとの API キー保存に必要）
-
-**サーバー側の起動コマンド:**
-
-```bash
-jquants-mcp -t streamable-http --port 8080 \
-  --ssl-certfile /path/to/fullchain.pem \
-  --ssl-keyfile /path/to/privkey.pem \
-  --github-client-id <ID> \
-  --github-client-secret <SECRET> \
-  --oauth-base-url https://mcp.example.com
-```
-
-**`claude_desktop_config.json`（Connectors UI）:**
-
-```json
-{
-  "mcpServers": {
-    "jquants-mcp": {
-      "type": "http",
-      "url": "https://mcp.example.com/mcp"
-    }
-  }
-}
-```
-
-初回接続時に GitHub OAuth のブラウザウィンドウが開きます。認証後はトークンが自動保存され、以降の接続はサイレントに行われます。
-
-> **注意:** Claude Desktop の Connectors 対応（`"type": "http"` + OAuth）は段階的にロールアウト中です。まだ利用できない場合は、上記の **Claude Desktop（mcp-stdio 経由のリモート接続）** セクションをフォールバックとして使用してください。
 
 ## 提供ツール一覧
 
@@ -722,8 +447,8 @@ jquants-mcp -t streamable-http --port 8080 \
 | `health_check` | — | サーバー稼働状態・API キー設定確認 |
 | `cache_status` | — | キャッシュ統計情報 |
 | `cache_clear` | — | キャッシュクリア |
-| `register_api_key` | OAuth 2.1 | J-Quants API キーを暗号化して登録（マルチユーザーモード） |
-| `delete_api_key` | OAuth 2.1 | 登録済みの J-Quants API キーを削除 |
+| `register_api_key` | ゲートウェイ認証 | J-Quants API キーを暗号化して登録（マルチユーザーモード） |
+| `delete_api_key` | ゲートウェイ認証 | 登録済みの J-Quants API キーを削除 |
 
 ## キャッシュ
 
@@ -892,9 +617,8 @@ gcloud run deploy jquants-mcp \
 | `PORT` | いいえ | `8000` | HTTP ポート（Cloud Run が自動設定） |
 | `JQUANTS_API_KEY` | はい | — | J-Quants API キー（Secret Manager 推奨） |
 | `JQUANTS_PLAN` | いいえ | 自動検出 | プラン: `free` / `light` / `standard` / `premium`（API キーから自動検出、明示設定はオーバーライド） |
-| `MCP_BEARER_TOKEN` | いいえ | — | HTTP 認証用 Bearer トークン（単一ユーザーモードのみ） |
 | `GOOGLE_CLOUD_PROJECT` | はい | — | GCP プロジェクト ID。Firestore（ユーザー DB）および Secret Manager アクセスに必須。CD ワークフローで `vars.GCP_PROJECT` 経由で設定。 |
-| `OAUTH_PROVIDER`, `OAUTH_BASE_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, … | いいえ | — | マルチユーザーモード時の OAuth 設定 |
+| `MCP_ENCRYPTION_KEY` | いいえ | — | ユーザーごとの API キー保存（マルチユーザーモード）を有効化 |
 
 Firestore は Cloud Run サービスアカウントの Application Default Credentials を使います。
 
@@ -914,7 +638,7 @@ Cloud Run デプロイはコンテナ内 SQLite セットではなく、2 つの
 
 ```mermaid
 sequenceDiagram
-    participant E as entrypoint.sh
+    participant E as entrypoint-stdio.sh
     participant G as GCS
     participant M as MCP サーバー
 
@@ -1035,7 +759,7 @@ Firestore 側の事前セットアップは不要です。サーバーが初回�
 Cloud Run は `cache.db` を `/tmp`（tmpfs = RAM）に展開します。したがってメモリ上限は以下を収容できる必要があります:
 
 - `cache.db` のサイズ（現状 約 3 GiB）
-- Python runtime + fastmcp + sqlite + httpx のオーバーヘッド（~300 MiB）
+- Python runtime + mcp SDK + sqlite + httpx のオーバーヘッド（~300 MiB）
 - リクエスト処理中の JSON シリアライズ用ヘッドルーム
 
 本番の現行サイジング（[.github/workflows/cd.yml](.github/workflows/cd.yml) 参照）は `--memory 8Gi --cpu 2 --max-instances 3` で、CPU スロットリングはデフォルト（有効）のままです。CPU スロットリング有効＝**リクエストベース課金**で、リクエスト処理中だけ課金されるため、ほぼ idle な本サービスを月次フリーティア内に収められます。`--no-cpu-throttling` を付けるとインスタンスが生存している全秒（idle キープアライブ含む）が課金対象になります。**リクエストベース課金ではメモリもアクティブ処理中のみ課金**されるため、上限を上げても実質無料（フリーティア内）です。4 GiB を超えるメモリ割り当てには Cloud Run gen2 が必要で、かつ >4 GiB は ≥2 vCPU が強制されます（2 vCPU の上限は 8 GiB）。

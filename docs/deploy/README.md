@@ -2,11 +2,16 @@
 
 jquants-mcp can be deployed in four shapes. Pick the one that matches your usage pattern.
 
+The server itself always speaks **stdio only**. Every remote shape below works
+the same way: a gateway ([mcp-stdio](https://pypi.org/project/mcp-stdio/)) sits
+in front, terminates HTTP and authentication, and spawns one `jquants-mcp`
+child process per authenticated user.
+
 | Shape | Who runs it | Cost | Setup effort | Best for |
 |---|---|---|---|---|
-| **stdio** (local) | One user, one machine | Free | < 5 min | Single-user desktop via Claude Code / Claude Desktop; no persistent cache needed |
-| **Docker Compose** (local) | One user, one machine | Free | < 10 min | Local HTTP server without installing Python; cache persists across restarts |
-| **Self-hosted HTTP** | One or a few trusted users, one host | Host + J-Quants plan | ~1 hour | Homelab / always-on server reachable from mobile or other machines |
+| **stdio** (local) | One user, one machine | Free | < 5 min | Single-user desktop via Claude Code / Claude Desktop |
+| **stdio in Docker** (local) | One user, one machine | Free | < 10 min | Same, without installing Python; cache persists in a named volume |
+| **Self-hosted gateway** | One or a few trusted users, one host | Host + J-Quants plan | ~1 hour | Homelab / always-on server reachable from mobile or other machines |
 | **Cloud Run** (GCP) | Multiple users, OAuth auth | GCP (~\$0–\$10/mo for low traffic) + J-Quants plan | 2–4 hours first time | Family / team, mobile clients, OAuth login per user |
 
 ## Decision flowchart
@@ -18,10 +23,10 @@ flowchart TD
     Q1 -->|Yes| Q3{"Manage auth per user?"}
 
     Q2 -->|No| Q4{"Have Docker?"}
-    Q2 -->|Yes| R3["self-hosted HTTP"]
+    Q2 -->|Yes| R3["self-hosted gateway"]
 
     Q4 -->|No| R2["stdio"]
-    Q4 -->|Yes| R1["Docker Compose"]
+    Q4 -->|Yes| R1["stdio in Docker"]
 
     Q3 -->|No| R3
     Q3 -->|Yes| R4["Cloud Run"]
@@ -53,7 +58,7 @@ graph BT
 
 Set up: see the main [README](../../README.md#installation).
 
-## Docker Compose
+## stdio in Docker
 
 ```mermaid
 graph BT
@@ -61,39 +66,42 @@ graph BT
     B["jquants-mcp (Docker container)"]
     A["Claude Code / Claude Desktop"]
 
-    A -->|"HTTP localhost:8080"| B
+    A -->|stdio| B
     B -->|HTTPS| C
 
     style B fill:#4a5,stroke:#333,color:#fff
 ```
 
 - No Python installation required — just Docker
-- Runs as a persistent local HTTP server on `http://localhost:8080/mcp`
+- The MCP client launches a container per session; no port to bind, no token to manage
 - Cache stored in a named Docker volume; survives container restarts
-- Optional: set `ENABLE_DAILY_FETCH=true` for automatic weekday cache updates
+- Refresh the cache with a one-off `daily_fetch.py` container against the same volume
 
 Set up: see [local.md](local.md) (Option A).
 
-## Self-hosted HTTP
+## Self-hosted gateway
 
 ```mermaid
 graph BT
-    D["J-Quants API v2"]
-    C["jquants-mcp (your host)"]
-    B["mcp-stdio (proxy)"]
-    A["Claude Code / Claude Desktop"]
+    E["J-Quants API v2"]
+    D["jquants-mcp (stdio child)"]
+    C["mcp-stdio serve (gateway)"]
+    B["TLS reverse proxy"]
+    A["Claude Code / Claude Desktop / Claude mobile"]
 
-    A -->|stdio| B
-    B -->|"HTTPS + Bearer"| C
-    C -->|HTTPS| D
+    A -->|"HTTPS + OAuth"| B
+    B -->|HTTP| C
+    C -->|stdio| D
+    D -->|HTTPS| E
 
     style C fill:#4a5,stroke:#333,color:#fff
+    style D fill:#4a5,stroke:#333,color:#fff
 ```
 
 - Runs on any host that can hold a TLS cert (laptop at home, NUC, VPS)
-- Streamable HTTP transport, Bearer token authentication
+- `mcp-stdio serve` terminates MCP OAuth; TLS is terminated by a reverse proxy in front of it
+- One `jquants-mcp` child process per authenticated user, identity injected as `JQUANTS_MCP_USER`
 - One SQLite cache on the host, shared between invocations
-- Mobile clients work via `mcp-stdio` proxy (Claude Code header bug workaround)
 
 Set up: see [local.md](local.md) (Option B).
 
@@ -103,8 +111,8 @@ Set up: see [local.md](local.md) (Option B).
 graph BT
     C["J-Quants API v2"]
     D["GCS (cache.db)"]
-    E["Firestore\n(users, oauth_state)"]
-    B["Cloud Run jquants-mcp"]
+    E["Firestore\n(users, oauth tokens)"]
+    B["Cloud Run jquants\n(oauth2-proxy → mcp-stdio serve → jquants-mcp)"]
     A["Claude mobile / Claude Desktop / Claude Code"]
     F["Self-hosted publisher (cron)"]
 
@@ -118,7 +126,8 @@ graph BT
 ```
 
 - Managed by Google Cloud Run, autoscaling, HTTPS out-of-the-box
-- Multi-user: per-user encrypted J-Quants API keys in Firestore, OAuth 2.1 login
+- Two containers: an `oauth2-proxy` sidecar for user sign-in, and the app container running `mcp-stdio serve` in front of `jquants-mcp`
+- Multi-user: per-user encrypted J-Quants API keys in Firestore, registered with the `register_api_key` MCP tool
 - Allowlist (`JQUANTS_ALLOWED_EMAILS`) controls who can sign in
 - Requires a self-hosted publisher to populate `cache.db` in GCS
 - Compatible with Claude Desktop Connectors, Claude mobile, Claude Code

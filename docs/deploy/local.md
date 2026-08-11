@@ -2,41 +2,44 @@
 
 Run jquants-mcp on a host you control and connect from Claude Desktop or Claude Code.
 
-For OAuth-based multi-user deployment, see [gcp.md](gcp.md) instead.
+For the multi-user Cloud Run deployment, see [gcp.md](gcp.md) instead.
+
+> **The server speaks stdio only.** Since 1.0.0 there is no HTTP transport, no
+> TLS termination, and no Bearer-token mode inside `jquants-mcp` — the
+> `--transport`, `--host`, `--port`, `--ssl-certfile`, `--ssl-keyfile` and
+> `--bearer-token` flags were removed along with the `[oauth]` config section.
+> Remote access is provided by a **gateway in front of the server**
+> ([mcp-stdio](https://pypi.org/project/mcp-stdio/)), which terminates HTTP and
+> authentication and spawns one `jquants-mcp` child process per authenticated
+> user. Option B below covers that shape.
 
 ---
 
 ## Option A: Docker (no Python required)
 
-If you have Docker installed, this is the fastest path to a running local MCP server.
-No Python, no TLS certificate, and no GCS account needed.
+If you have Docker installed, this is the fastest path to a running local MCP
+server. No Python, no TLS certificate, and no GCS account needed.
+
+The MCP client launches a container per session and talks to it over stdio, so
+there is no port to bind and no token to manage.
 
 ### Prerequisites
 
 - Docker Desktop (macOS / Windows) or Docker Engine (Linux)
 - A J-Quants account + API key
 
-### 1. Start the server
+### 1. Create a cache volume
+
+The cache lives in a Docker named volume so it survives across sessions:
 
 ```bash
-JQUANTS_API_KEY=xxx docker compose up -d
-# → MCP endpoint: http://localhost:8080/mcp
+docker volume create jquants-mcp-cache
 ```
 
-The server listens on `127.0.0.1:8080` only.
-Cache data is stored in a Docker named volume (`jquants-mcp_cache`) and persists across restarts.
+### 2. Connect from Claude Desktop
 
-To add Bearer token authentication (recommended when not using `mcp-stdio`):
-
-```bash
-JQUANTS_API_KEY=xxx MCP_BEARER_TOKEN=$(python3 -c "import secrets; print(secrets.token_hex(32))") \
-  docker compose up -d
-```
-
-### 2. Connect from Claude Desktop (stdio)
-
-Each Claude Desktop session spawns a fresh container.
-Edit your Claude Desktop MCP config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
+Edit your Claude Desktop MCP config
+(`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
 
 ```json
 {
@@ -48,7 +51,7 @@ Edit your Claude Desktop MCP config (`~/Library/Application Support/Claude/claud
         "--entrypoint", "jquants-mcp",
         "-e", "JQUANTS_API_KEY=xxx",
         "-e", "JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp",
-        "-v", "jquants-mcp_cache:/home/appuser/.cache/jquants-mcp",
+        "-v", "jquants-mcp-cache:/home/appuser/.cache/jquants-mcp",
         "ghcr.io/shigechika/jquants-mcp:latest"
       ]
     }
@@ -56,77 +59,87 @@ Edit your Claude Desktop MCP config (`~/Library/Application Support/Claude/claud
 }
 ```
 
-No TLS or Bearer token needed; the container exits when the session ends.
-The named volume `jquants-mcp_cache` is shared with the compose stack, so cache populated
-via `docker compose exec ... daily_fetch.py --all` is also available in stdio sessions.
+`--entrypoint jquants-mcp` is required: it bypasses the image's default
+entrypoint script and runs the stdio server directly. The container exits when
+the session ends.
 
-### 3. Connect from Claude Code (HTTP)
-
-```bash
-claude mcp add jquants-mcp --transport http http://localhost:8080/mcp
-```
-
-If you set `MCP_BEARER_TOKEN`, add:
+### 3. Connect from Claude Code
 
 ```bash
-claude mcp add jquants-mcp --transport http http://localhost:8080/mcp \
-  --header "Authorization: Bearer <TOKEN>"
-```
-
-Claude Code has a known bug that drops the `Authorization` header on some HTTP transports
-([claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)).
-Use [mcp-stdio](https://pypi.org/project/mcp-stdio/) as a proxy if you hit it:
-
-```bash
-claude mcp add jquants-mcp --env MCP_BEARER_TOKEN=<TOKEN> \
-  -- uvx mcp-stdio http://localhost:8080/mcp
+claude mcp add jquants -- docker run --rm -i \
+  --entrypoint jquants-mcp \
+  -e JQUANTS_API_KEY=xxx \
+  -e JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp \
+  -v jquants-mcp-cache:/home/appuser/.cache/jquants-mcp \
+  ghcr.io/shigechika/jquants-mcp:latest
 ```
 
 ### 4. Populate the cache (first run)
 
-The container starts with an empty cache DB.
-Run a full historical fetch (takes 1–3 hours depending on your J-Quants plan):
+The volume starts empty. Run a full historical fetch (takes 1–3 hours depending
+on your J-Quants plan) as a one-off container against the same volume:
 
 ```bash
-docker compose exec jquants-mcp python /app/scripts/daily_fetch.py --all
+docker run --rm \
+  --entrypoint python \
+  -e JQUANTS_API_KEY=xxx \
+  -e JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp \
+  -v jquants-mcp-cache:/home/appuser/.cache/jquants-mcp \
+  ghcr.io/shigechika/jquants-mcp:latest \
+  /app/scripts/daily_fetch.py --all
 ```
 
-**Automatic daily updates:** Set `ENABLE_DAILY_FETCH=true` to run incremental updates
-automatically inside the container on weekdays at 17:30 JST (08:30 UTC):
+**Daily updates:** run the same command without `--all` for an incremental
+update, and schedule it from the host (cron / launchd / systemd timer):
 
 ```bash
-JQUANTS_API_KEY=xxx ENABLE_DAILY_FETCH=true docker compose up -d
-```
-
-This starts [supercronic](https://github.com/aptible/supercronic) alongside the MCP server.
-No host-side cron or launchd configuration is needed.
-
-**Manual updates** (without `ENABLE_DAILY_FETCH`):
-
-```bash
-docker compose exec jquants-mcp python /app/scripts/daily_fetch.py
+docker run --rm \
+  --entrypoint python \
+  -e JQUANTS_API_KEY=xxx \
+  -e JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp \
+  -v jquants-mcp-cache:/home/appuser/.cache/jquants-mcp \
+  ghcr.io/shigechika/jquants-mcp:latest \
+  /app/scripts/daily_fetch.py
 ```
 
 ### 5. Useful commands
 
 ```bash
-docker compose logs -f          # follow logs
-docker compose stop             # graceful stop
-docker compose pull             # upgrade to latest image
-docker compose down -v          # stop and delete cache volume (data loss!)
+docker pull ghcr.io/shigechika/jquants-mcp:latest   # upgrade the image
+docker volume inspect jquants-mcp-cache             # where the cache lives
+docker volume rm jquants-mcp-cache                  # delete the cache (data loss!)
 ```
 
 ---
 
-## Option B: Python install (TLS + remote access)
+## Option B: Self-hosted gateway (remote access)
 
-This option lets you expose the server over a public domain with TLS, so you can
-connect from laptops, mobile, and other machines outside your local network.
+This option exposes the server over the network so you can connect from
+laptops, mobile, and other machines outside the host.
+
+`jquants-mcp` itself is not reachable over the network. You run
+[mcp-stdio](https://pypi.org/project/mcp-stdio/)'s `serve` command as a
+gateway: it listens for MCP over HTTP, terminates OAuth, and spawns a
+`jquants-mcp` child process per authenticated user, injecting that user's
+identity into the child as the `JQUANTS_MCP_USER` environment variable.
+
+```mermaid
+graph LR
+    A["Claude client"]
+    B["TLS reverse proxy"]
+    C["mcp-stdio serve"]
+    D["jquants-mcp (stdio child)"]
+    E["J-Quants API v2"]
+
+    A -->|"HTTPS + OAuth"| B
+    B -->|HTTP| C
+    C -->|stdio| D
+    D -->|HTTPS| E
+```
 
 This guide assumes:
-- You are the only user (or a small group of trusted users sharing one Bearer token)
 - You can get a TLS certificate for a domain that points to the host
-- The host is always on (cron / launchd / systemd keeps the server alive)
+- The host is always on (launchd / systemd keeps the gateway alive)
 
 ### Prerequisites
 
@@ -135,57 +148,79 @@ This guide assumes:
 - A TLS certificate. [acme.sh](https://github.com/acmesh-official/acme.sh) with DNS-01 challenge works well (supports IPv6-only hosts and wildcard certs)
 - A J-Quants account + API key
 
-### 1. Install jquants-mcp
+### 1. Install jquants-mcp and the gateway
 
 ```bash
 uv tool install jquants-mcp      # or: pipx install jquants-mcp
+uv tool install mcp-stdio        # or: pipx install mcp-stdio
 ```
 
-### 2. Configure
+### 2. Configure jquants-mcp
 
-Either `~/.config/jquants-mcp/config.ini`:
+The gateway passes its own environment to each child process, so configure the
+server exactly as you would for local stdio use — either
+`~/.config/jquants-mcp/config.ini`:
 
 ```ini
 [jquants]
 api_key = <your J-Quants API key>
-
-[server]
-ssl_certfile = /etc/letsencrypt/live/mcp.example.com/fullchain.pem
-ssl_keyfile = /etc/letsencrypt/live/mcp.example.com/privkey.pem
-bearer_token = <generated token>
 ```
 
-Or via environment variables (`JQUANTS_API_KEY`, `SSL_CERTFILE`, `SSL_KEYFILE`, `MCP_BEARER_TOKEN`).
+or the `JQUANTS_API_KEY` environment variable.
 
-Generate a Bearer token:
+For a multi-user gateway, set `MCP_ENCRYPTION_KEY` instead and let each user
+register their own J-Quants key with the `register_api_key` MCP tool; keys are
+stored encrypted per user. Restrict who may sign in with
+`JQUANTS_ALLOWED_EMAILS` (comma-separated; empty means any authenticated user).
+
+### 3. Run the gateway
 
 ```bash
-python3 -c "import secrets; print(secrets.token_hex(32))"
+mcp-stdio serve \
+  --enable-oauth \
+  --public-url https://mcp.example.com \
+  --path /mcp \
+  --user-env JQUANTS_MCP_USER \
+  --allow-redirect-uri https://claude.ai/api/mcp/auth_callback \
+  --host 127.0.0.1 \
+  --port 8080 \
+  -- jquants-mcp
 ```
 
-### 3. Run
+Everything after `--` is the command the gateway spawns per user.
 
-```bash
-jquants-mcp --transport streamable-http --host 0.0.0.0 --port 8080
-```
-
-`--host 0.0.0.0` binds on all interfaces. Use `--host ::` for IPv6 dual-stack, or stick with the default `127.0.0.1` if you only need local access.
+`mcp-stdio serve` binds plain HTTP; terminate TLS in front of it with a reverse
+proxy (nginx, Caddy, Cloudflare Tunnel, …) that forwards to
+`127.0.0.1:8080`. See mcp-stdio's own documentation for the full flag set —
+session limits, token TTLs, and persistent token stores are configured there,
+not in jquants-mcp.
 
 ### Run as a background service
 
-**macOS (launchd):** Create `~/Library/LaunchAgents/com.example.jquants-mcp.plist` with KeepAlive + RunAtLoad. Point `JQUANTS_API_TOML_PATH` at a non-sandboxed path if you hit the macOS 26+ TCC issue — see the [macOS launchd note](../../README.md#macos-launchd-note) in README.
+**macOS (launchd):** Create `~/Library/LaunchAgents/com.example.jquants-mcp.plist`
+with KeepAlive + RunAtLoad, invoking the same `mcp-stdio serve` command. Point
+`JQUANTS_API_TOML_PATH` at a non-sandboxed path if you hit the macOS 26+ TCC
+issue — see the [macOS launchd note](../../README.md#macos-launchd-note) in README.
 
 **Linux (systemd):** Create `/etc/systemd/system/jquants-mcp.service`:
 
 ```ini
 [Unit]
-Description=jquants-mcp
+Description=jquants-mcp gateway
 After=network-online.target
 
 [Service]
 Type=simple
 User=mcp
-ExecStart=/home/mcp/.local/bin/jquants-mcp --transport streamable-http --host :: --port 8080
+Environment=JQUANTS_API_KEY=<your J-Quants API key>
+ExecStart=/home/mcp/.local/bin/mcp-stdio serve \
+  --enable-oauth \
+  --public-url https://mcp.example.com \
+  --path /mcp \
+  --user-env JQUANTS_MCP_USER \
+  --allow-redirect-uri https://claude.ai/api/mcp/auth_callback \
+  --host 127.0.0.1 --port 8080 \
+  -- /home/mcp/.local/bin/jquants-mcp
 Restart=on-failure
 RestartSec=5s
 
@@ -199,33 +234,25 @@ sudo systemctl enable --now jquants-mcp
 
 ### 4. Connect from Claude clients
 
-#### Claude Code / Claude Desktop via mcp-stdio
+**Claude Desktop (Connectors UI) / Claude mobile:** add a custom connector
+pointing at `https://mcp.example.com/mcp` and sign in when prompted.
 
-Claude Code has a bug that drops the `Authorization` header on HTTP transports ([claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)). Use [mcp-stdio](https://pypi.org/project/mcp-stdio/) as a proxy:
-
-```bash
-# Claude Code
-claude mcp add jquants-mcp --env MCP_BEARER_TOKEN=<TOKEN> \
-  -- uvx mcp-stdio https://mcp.example.com:8080/mcp
-```
-
-For Claude Desktop, edit the MCP config to spawn `mcp-stdio` with the same env var.
-
-#### Claude Code (direct HTTP)
-
-Once the header bug is fixed, direct HTTP transport will work:
+**Claude Code:** use `mcp-stdio` on the client side as well, so the OAuth flow
+runs locally and the token is cached:
 
 ```bash
-claude mcp add jquants-mcp \
-  --transport http https://mcp.example.com:8080/mcp \
-  --header "Authorization: Bearer <TOKEN>"
+claude mcp add jquants -- uvx mcp-stdio --oauth https://mcp.example.com/mcp
 ```
+
+Claude Code has a known bug that drops the `Authorization` header on some HTTP
+transports ([claude-code#28293](https://github.com/anthropics/claude-code/issues/28293));
+routing through `mcp-stdio` avoids it.
 
 ### 5. Operate
 
 - Logs: `journalctl -u jquants-mcp -f` (systemd) or `/tmp/jquants-mcp.err.log` (launchd default)
 - Cache DB: `~/.cache/jquants-mcp/cache.db` grows as you fetch data — see [Caching](../../README.md#caching) in README
-- Populate cache: `jquants-mcp daily-fetch` or `uv run scripts/daily_fetch.py` (schedule daily via cron / launchd timer)
+- Populate cache: `uv run scripts/daily_fetch.py` (schedule daily via cron / launchd timer)
 
 ---
 
@@ -233,8 +260,7 @@ claude mcp add jquants-mcp \
 
 Move to [gcp.md](gcp.md) when:
 - You want to share the server with people who have their own J-Quants accounts
-- You want proper OAuth login instead of a shared Bearer token
-- You want Claude Desktop Connectors UI / Claude mobile OAuth flow
+- You want managed HTTPS and a hosted sign-in layer instead of running your own reverse proxy
 - The host is unreliable and you need autoscaling / zero-ops
 
 Everything else stays the same — the same J-Quants API, the same cache schema, the same tools.
