@@ -1743,6 +1743,13 @@ class CacheStore:
             is not None
         )
 
+        def _is_ordinary(value: float | None) -> bool:
+            # None/0.0/1.0 はいずれも「その日はイベントなし」を表す同値の表現
+            # （None=未取得・未計算、0.0=一部の古い応答、1.0=通常の event flag）。
+            # cached 側と new 側で異なる「通常値」表現を使っていても、両方が
+            # 通常値なら実際には変化が無い（jquants-mcp#598 R2F1）。
+            return value is None or value in (0.0, 1.0)
+
         for row in api_data:
             row_date = row.get("Date")
             if row_date is None:
@@ -1753,7 +1760,7 @@ class CacheStore:
             if not was_cached:
                 if not has_any_cache:
                     continue  # コールドキャッシュへの初回投入は「変化」ではない
-                if adj_factor is None or adj_factor in (1.0, 0.0):
+                if _is_ordinary(adj_factor):
                     continue
                 logger.info(
                     "Stock split detected: code=%s date=%s (new event, AdjFactor=%s)",
@@ -1764,13 +1771,17 @@ class CacheStore:
                 return row_date
 
             cached_adj = cached_by_date[row_date]
+            if _is_ordinary(cached_adj) and _is_ordinary(adj_factor):
+                continue  # どちらも通常値の別表現なだけで、実際の変化ではない
+
+            effective_cached = 1.0 if cached_adj is None else cached_adj
             effective_new = 1.0 if adj_factor is None else adj_factor
-            if cached_adj is None or abs(cached_adj - effective_new) > 1e-10:
+            if abs(effective_cached - effective_new) > 1e-10:
                 logger.info(
                     "Stock split detected: code=%s date=%s (AdjFactor: %s -> %s)",
                     code,
                     row_date,
-                    cached_adj,
+                    effective_cached,
                     effective_new,
                 )
                 return row_date

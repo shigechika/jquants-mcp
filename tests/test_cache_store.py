@@ -211,6 +211,34 @@ class TestTier1RowCache:
         batch = [{"Code": "72030", "Date": "2024-01-05", "O": 10, "AdjFactor": 0.1}]
         assert cache_store.detect_split_in_batch("72030", batch) == "2024-01-05"
 
+    def test_detect_split_in_batch_null_cached_vs_ordinary_new_is_not_a_false_positive(
+        self, cache_store: CacheStore
+    ):
+        """jquants-mcp#598 ai-review R2F1 の回帰: キャッシュ済みの AdjFactor が
+        NULL（None）で、再取得した新値が別の「通常値」表現（1.0）だった場合、
+        どちらも「イベントなし」を意味するのに値としては食い違うため、
+        単純な数値比較だけでは誤検知してしまう。
+        """
+        rows = [{"Code": "72030", "Date": "2024-01-05", "O": 100, "AdjFactor": None}]
+        cache_store.put_rows(
+            "equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor"
+        )
+        batch = [{"Code": "72030", "Date": "2024-01-05", "O": 100, "AdjFactor": 1.0}]
+        assert cache_store.detect_split_in_batch("72030", batch) is None, (
+            "NULL と 1.0 はどちらも通常値なのに誤検知した"
+        )
+
+    def test_detect_split_in_batch_zero_cached_vs_none_new_is_not_a_false_positive(
+        self, cache_store: CacheStore
+    ):
+        """同上（R2F1）: 0.0 と None の組み合わせでも同様に誤検知しないこと。"""
+        rows = [{"Code": "72030", "Date": "2024-01-05", "O": 100, "AdjFactor": 0.0}]
+        cache_store.put_rows(
+            "equities_bars_daily", rows, ["Code", "Date"], adj_factor_key="AdjFactor"
+        )
+        batch = [{"Code": "72030", "Date": "2024-01-05", "O": 100, "AdjFactor": None}]
+        assert cache_store.detect_split_in_batch("72030", batch) is None
+
     def test_upsert_overwrites(self, cache_store: CacheStore):
         """同じキーで INSERT すると上書きされること。"""
         rows1 = [{"Code": "72030", "Date": "2024-01-04", "O": 100, "AdjFactor": 1.0}]
