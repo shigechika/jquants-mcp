@@ -13,7 +13,7 @@ dependencies = [
     # tools/ modules import mcp.server.fastmcp.FastMCP, and scripts/
     # smoke_test.py drives deployments through its client side. The
     # standalone fastmcp package was dropped once the HTTP/OAuth surface
-    # (auth.py, settings/) was deleted (#601, #568). The <2 bound guards
+    # (auth.py, settings/) was deleted (#568). The <2 bound guards
     # against SDK 2.0 API changes; the >=1.24 floor is inherited from the
     # fastmcp era and is deliberately conservative (the lock resolves 1.28.x).
     "mcp>=1.24,<2",

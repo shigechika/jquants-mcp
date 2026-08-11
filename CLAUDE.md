@@ -7,7 +7,7 @@ The server is **stdio-only** and is built on the official `mcp` SDK's `mcp.serve
 (`server.py` + `tools/`). The standalone FastMCP v3 package (`fastmcp`) is **no longer a dependency**:
 its last in-repo users — the HTTP/OAuth surface (`auth.py`, `settings/`, `oauth_kv_store.py`, the
 non-stdio branch of `run_server()`) and `scripts/smoke_test.py`'s client — were deleted or ported to
-the official SDK in #601. httpx, SQLite cache. Multi-user OAuth is terminated **upstream** by the
+the official SDK in #568. httpx, SQLite cache. Multi-user OAuth is terminated **upstream** by the
 Cloud Run gateway (`oauth2-proxy` + `mcp-stdio serve`), not in this process — see "Deployment Targets".
 
 ## Commands
@@ -44,9 +44,9 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   - `rotate_encryption_key.py` — Re-encrypt user API keys during MCP_ENCRYPTION_KEY rotation
   - `collect_metrics.py` / `load_test.py` — Cloud Run sizing helpers
   - `smoke_test.py` — Live smoke test: runs **every registered tool** against real data (in-process, or `--url` against a deployment) and fails on empty/stale/error answers. `smoke_harness.py` is the server-agnostic engine; `smoke_probes.py` holds the per-tool specs. Needs a populated cache + API key, so it runs on the host that has them — not in CI. CI enforces only the coverage half (`tests/test_smoke_probes.py`: a new tool without a probe spec fails the build)
-  - `entrypoint.sh` — Docker/Cloud Run entrypoint for the `jquants-mcp` service (streamable-http, no longer CD-deployed — see "Deployment Targets")
+  - `entrypoint.sh` — Docker/Cloud Run entrypoint for the `jquants-mcp` service (streamable-http, no longer CD-deployed — see "Deployment Targets"). Still the Dockerfile's default `ENTRYPOINT`, so the docker-compose self-hosting path inherits it and crash-loops (#601)
   - `entrypoint-stdio.sh` — Docker/Cloud Run entrypoint for the `jquants` service (`mcp-stdio serve`, behind an `oauth2-proxy` sidecar); downloads cache.db synchronously at startup like `entrypoint.sh`, then backgrounds `verify_cache.py` to warm the integrity sidecar. It has **no in-container refresh mechanism** (#584 removed the 15-minute `cache-poll.crontab` supercronic poll): with `min-instances=0` every cold start already re-downloads a current cache.db, and the only window a refresh could help is an instance staying warm across the publisher's once-a-weekday export. There, not-yet-cached days fall through to the live API (correct, just slower), while **corrections to already-cached rows do not** — the cache-vs-API decision is presence-based and Tier 1 `get_rows` applies no TTL, so a restated statement or retroactive split adjustment stays stale until the instance recycles (measured lifetimes 15-26 min under `min-instances=0`, i.e. the same order as the 15-minute poll it replaces). `entrypoint.sh`'s Pub/Sub-pushed reload route has no equivalent here because a stdio-only server exposes no HTTP route for a push to land on; push-based alternatives were designed and rejected as not worth the moving parts (see #584)
-- `tests/` — pytest + pytest-asyncio tests (1272 tests as of 2026-08, after the HTTP/OAuth removal in #601)
+- `tests/` — pytest + pytest-asyncio tests (1272 tests as of 2026-08, after the HTTP/OAuth removal in #568)
 
 ## Key Patterns
 
@@ -65,7 +65,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 - Cloud Run secrets must use Secret Manager, not plain env vars
 - User API keys encrypted with AES-256-GCM (crypto.py)
 - All tool exception handlers must catch DecryptionError
-- The server binds no network socket at all (stdio-only since #601), so there is no
+- The server binds no network socket at all (stdio-only since #568), so there is no
   `--host`/`--port` to get wrong; exposure decisions belong to the gateway in front of it
 - Dockerfile runs as non-root user (appuser)
 
@@ -80,7 +80,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   the **only** transport the code still speaks. Running the command with no
   subcommand starts the server, and it takes no transport options at all:
   `--transport`, `--host`, `--port`, `--ssl-*`, `--bearer-token`,
-  `--github-client-*` and `--oauth-base-url` are gone (#601). Only `login`
+  `--github-client-*` and `--oauth-base-url` are gone (#568). Only `login`
   and `logout` remain as subcommands.
 - **Remote (self-hosted)**: front the stdio server with a gateway
   (`mcp-stdio serve`, as Cloud Run does below). The in-process
@@ -91,9 +91,11 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   (streamable-http transport). That transport was removed from `server.py`
   in #566 (official mcp SDK migration, stdio-only), and its Google OAuth
   provider (`auth.py`, via the upstream FastMCP `GoogleProvider`), the
-  `/settings` web UI and `oauth_kv_store.py` were **deleted** in #601 —
+  `/settings` web UI and `oauth_kv_store.py` were **deleted** in #568 —
   `entrypoint.sh` was never updated to match, so it can no longer start a
-  server at all and this service's revisions are frozen at whatever was
+  server at all (it has crash-looped since #566, and now fails on
+  `unrecognized arguments: --transport` rather than deep inside the SDK
+  — #601) and this service's revisions are frozen at whatever was
   last manually deployed; `cd.yml` no longer targets it (#588).
   Existing deployed revisions are unaffected — Cloud Run's atomic
   cutover keeps them serving. Scheduled for decommissioning (#568).

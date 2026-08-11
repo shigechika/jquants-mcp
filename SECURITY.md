@@ -26,8 +26,14 @@ areas matter most:
 
 - **Per-user J-Quants API keys** are stored encrypted with AES-256-GCM
   (`crypto.py`). Issues in key storage, encryption, or key rotation are in scope.
-- **OAuth / authentication** — token verification, the email allowlist, session
-  cookies, and the `/settings` flow.
+- **Authentication happens outside this process.** The server is stdio-only,
+  binds no network socket, and verifies no tokens itself. On the hosted
+  deployment an `oauth2-proxy` + `mcp-stdio serve` gateway authenticates the
+  user and passes the verified email to a per-session child process; a flaw in
+  that gateway belongs to the gateway's project, not here. What *is* in scope
+  here is what this server does with the identity it is handed — above all the
+  `JQUANTS_ALLOWED_EMAILS` email allowlist (`allowlist.py`), and any way to
+  make the process act on an identity the gateway did not issue.
 - **Multi-user isolation** — one user reading or acting as another.
 
 Out of scope: vulnerabilities in the upstream J-Quants API itself, and findings
