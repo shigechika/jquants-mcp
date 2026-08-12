@@ -5,6 +5,17 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.0.0](https://github.com/shigechika/jquants-mcp/compare/v0.56.0...v1.0.0) (2026-08-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* the server is stdio-only. The in-process Streamable-HTTP listener, its bearer/Google/GitHub OAuth providers, the /settings web UI and the serve --transport/--host/--port flags are all removed; front the stdio server with a gateway (mcp-stdio serve) instead.
+
+### Features
+
+* remove the HTTP/OAuth surface and drop the standalone fastmcp dependency ([#603](https://github.com/shigechika/jquants-mcp/issues/603)) ([f24e914](https://github.com/shigechika/jquants-mcp/commit/f24e9141b43a94885488c9c38af4a61e7a15f39e))
+
 ## [0.56.0](https://github.com/shigechika/jquants-mcp/compare/v0.55.4...v0.56.0) (2026-08-11)
 
 
