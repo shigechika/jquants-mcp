@@ -1,6 +1,6 @@
 # Service Level Objectives
 
-Minimal SLO set for the Cloud Run `jquants-mcp` deployment. Three
+Minimal SLO set for the Cloud Run `jquants` deployment. Three
 numbers, 30-day rolling window. The goal is to have *a* principled
 answer to "is the service healthy?", not to chase nines.
 
@@ -28,14 +28,14 @@ leave generous headroom.
 ## Measurement
 
 All via Cloud Monitoring on resource `cloud_run_revision` filtered to
-`service_name=jquants-mcp`.
+`service_name=jquants`.
 
 ### Availability
 
 ```
 fetch cloud_run_revision
 | metric 'run.googleapis.com/request_count'
-| filter resource.service_name == 'jquants-mcp'
+| filter resource.service_name == 'jquants'
 | align rate(1m)
 | {
     total: group_by [], sum(val());
@@ -55,7 +55,7 @@ well before the 99.5% / 30-day budget is fully burned.
 ```
 fetch cloud_run_revision
 | metric 'run.googleapis.com/request_latencies'
-| filter resource.service_name == 'jquants-mcp'
+| filter resource.service_name == 'jquants'
 | align percentile(95, 1m)   # or percentile(99, 1m)
 | group_by [], max(val())
 | every 1m

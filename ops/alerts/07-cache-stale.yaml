@@ -7,11 +7,16 @@ documentation:
     falls back to the live J-Quants API for missing days (slower, rate-limit
     prone), so this is a WARNING, not a CRITICAL.
 
-    Scope: this fires only when a stale snapshot is loaded (startup or a
-    Pub/Sub-triggered reload). It does NOT detect a publisher that silently
-    stops AFTER a good load, because no reload fires in that case — detecting
-    that requires an external periodic check (e.g. a Cloud Scheduler job that
-    calls health_check and inspects today_cache_ready). Tracked separately.
+    Scope: this fires only when a stale snapshot is loaded, which since 1.0.0
+    means container startup — the Pub/Sub-triggered reload endpoint was
+    removed with the rest of the HTTP surface. With min-instances=0 a cold
+    start is the normal way a snapshot gets loaded, so coverage is unchanged
+    in practice.
+
+    It does NOT detect a publisher that silently stops AFTER a good load,
+    because nothing reloads in that case — detecting that requires an external
+    periodic check (e.g. a Cloud Scheduler job that calls health_check and
+    inspects today_cache_ready). Tracked separately.
 
     Runbook: https://github.com/shigechika/jquants-mcp/blob/main/docs/runbooks/cache-db-missing.md
   mimeType: text/markdown
@@ -24,7 +29,7 @@ conditions:
       # by tests/test_cache_freshness.py so the alert cannot silently go dead.
       filter: |
         resource.type="cloud_run_revision"
-        resource.labels.service_name="jquants-mcp"
+        resource.labels.service_name="jquants"
         textPayload:"cache.db is stale"
 alertStrategy:
   notificationRateLimit:

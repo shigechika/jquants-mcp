@@ -1,6 +1,6 @@
 # Cloud Run alert policies
 
-Declarative alert policies for the Cloud Run `jquants-mcp` deployment.
+Declarative alert policies for the Cloud Run `jquants` deployment.
 Each `*.yaml` is a single policy; `__CHANNEL__` is a placeholder substituted
 at deploy time.
 
@@ -16,12 +16,17 @@ at deploy time.
 | `06-no-instances.yaml` | WARNING (disabled) | instance_count == 0 for 1 h |
 | `07-cache-stale.yaml` | WARNING | stale cache.db loaded (latest equities date > 1 week behind) log match |
 
-`06` is disabled by default — cold-scale-to-zero is normal. Enable only if
-you want to be paged when the service is idle longer than expected.
+`06` is disabled and should stay that way. `min-instances=0` is deliberate —
+scaling to zero is what keeps the cache fresh, since every cold start
+re-downloads a current `cache.db` (#584). Zero instances for an hour is the
+normal idle state, so enabling this policy pages on healthy behaviour.
+Answering "is the service reachable?" needs a probe that tells idle apart from
+broken, not an instance-count threshold.
 
-`07` fires only when a stale snapshot is loaded (startup / reload); it cannot
-detect a publisher that stops *after* a good load. See the policy's
-`documentation` block for the external-check follow-up.
+`07` fires only when a stale snapshot is loaded, which since 1.0.0 means
+container startup — the Pub/Sub reload endpoint was removed with the rest of
+the HTTP surface. It cannot detect a publisher that stops *after* a good load.
+See the policy's `documentation` block for the external-check follow-up.
 
 ## Deploy
 

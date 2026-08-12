@@ -1,7 +1,7 @@
 displayName: "Cloud Run memory > 90%"
 documentation:
   content: |
-    jquants-mcp memory utilisation has been above 90% for 5 minutes.
+    jquants memory utilisation has been above 90% for 5 minutes.
     Baseline after #72/#73 load testing is ~47% (cache.db + runtime) on 6 GiB.
     Sustained 90%+ means either a leak, runaway cache growth, or cache.db
     bloat. Check recent deploys and `/metrics` cache stats.
@@ -14,7 +14,7 @@ conditions:
     conditionThreshold:
       filter: |
         resource.type = "cloud_run_revision" AND
-        resource.labels.service_name = "jquants-mcp" AND
+        resource.labels.service_name = "jquants" AND
         metric.type = "run.googleapis.com/container/memory/utilizations"
       aggregations:
         - alignmentPeriod: 60s
