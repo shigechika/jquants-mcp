@@ -22,40 +22,38 @@ plan = free
 # Max pages per paginated request
 # max_pages = 10
 
+# ---------------------------------------------------------------------------
+# [server] — multi-user settings.
+#
+# The server speaks stdio only: there is no TLS, no HTTP listener and no
+# built-in authentication to configure here. Remote access is provided by a
+# gateway in front of the server (`mcp-stdio serve`), which terminates HTTP
+# and OAuth and injects the authenticated identity as JQUANTS_MCP_USER.
+# The settings below apply once such a gateway is supplying identities.
+# ---------------------------------------------------------------------------
 [server]
-# Path to TLS certificate file (PEM) for HTTPS
-# ssl_certfile = /etc/ssl/certs/server.crt
-
-# Path to TLS private key file (PEM) for HTTPS
-# ssl_keyfile = /etc/ssl/private/server.key
-
-# Bearer token for single-user remote authentication (env: MCP_BEARER_TOKEN)
-# bearer_token = your_secret_token_here
-
 # AES-256-GCM encryption key for per-user API key storage in multi-user mode (env: MCP_ENCRYPTION_KEY)
 # Generate with: python3 -c "import secrets, base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
 # encryption_key = your_base64_encoded_32byte_key_here
 
-[oauth]
-# OAuth provider: "github" or "google"
-# provider = github
+# Previous encryption key, accepted for decryption during a rotation window
+# (env: MCP_ENCRYPTION_KEY_PREVIOUS). Leave empty outside a rotation.
+# See docs/runbooks/secrets-rotation.md.
+# encryption_key_previous = your_previous_key_here
 
-# GitHub OAuth App credentials (env: GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET)
-# github_client_id = your_github_client_id
-# github_client_secret = your_github_client_secret
+# Comma-separated emails allowed to sign in (env: JQUANTS_ALLOWED_EMAILS).
+# Empty means "allow any authenticated user" (self-host default).
+# allowed_emails = you@example.com,family@example.com
 
-# Google OAuth 2.0 credentials (env: GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET)
-# google_client_id = your_google_client_id
-# google_client_secret = your_google_client_secret
+# Per-user rate limiting, multi-user mode only
+# (env: RATE_LIMIT_PER_MINUTE / RATE_LIMIT_BURST)
+# rate_limit_per_minute = 60
+# rate_limit_burst = 20
 
-# Public base URL used for OAuth callback URLs (env: OAUTH_BASE_URL)
-# base_url = https://example.com
-
-# Optional JWT signing key for session tokens (env: OAUTH_JWT_SIGNING_KEY)
-# jwt_signing_key = your_jwt_signing_key
-
-# Prompt the OAuth consent screen every login (env: OAUTH_REQUIRE_CONSENT)
-# require_consent = true
+# Let gateway-authenticated users without a registered API key fall back to the
+# global client instead of erroring (env: CACHE_BYPASS_AUTH). Intended for
+# self-hosted deployments with a pre-populated, read-only cache.db.
+# cache_bypass_auth = false
 
 # ---------------------------------------------------------------------------
 # GCS (Google Cloud Storage) bulk-download settings — env vars only

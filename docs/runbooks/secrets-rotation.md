@@ -1,6 +1,6 @@
 # Secrets rotation
 
-Procedures for rotating the two load-bearing secrets.
+Procedure for rotating this package's one load-bearing secret.
 
 ## `MCP_ENCRYPTION_KEY` (AES-256-GCM passphrase for stored API keys)
 
@@ -44,42 +44,25 @@ Procedures for rotating the two load-bearing secrets.
 
 Same flow but skip the dual-key window: deploy with the new key only,
 accept that all stored API keys become unreadable, notify users to
-re-register. Users re-run `register_api_key` through the MCP tool or
-the `/settings` page.
+re-register. Users re-run the `register_api_key` MCP tool — asking Claude
+to call it in a normal chat is the whole procedure; there is no web page
+for it.
 
-## `OAUTH_JWT_SIGNING_KEY` (JWT signer for OAuth sessions)
+## Session-signing keys
 
-Cloud Run is stateless per request, so rotation is simpler.
+**Not this package's secret any more.** The in-process OAuth flow — and
+with it `OAUTH_JWT_SIGNING_KEY` — was removed in 1.0.0. Sessions are
+issued and signed by the layers in front of the stdio server:
 
-### Planned rotation
+- **`mcp-stdio serve`** issues the MCP OAuth tokens on `/mcp` and persists
+  them in Firestore (`--token-store-firestore`, see
+  `scripts/entrypoint-stdio.sh`). Because they are persisted, a redeploy
+  or instance recycle no longer invalidates issued tokens.
+- **`oauth2-proxy`** (Cloud Run ingress sidecar) holds the user sign-in
+  cookie secret and the Google OAuth client secret.
 
-Accept that all existing sessions are invalidated on deploy. Users will
-see one "please log in again" flow and recover. For this user base the
-operational cost is acceptable.
-
-1. **Generate a new key**:
-   ```sh
-   openssl rand -base64 48 \
-     | gcloud secrets versions add OAUTH_JWT_SIGNING_KEY \
-         --data-file=- --project=${PROJECT}
-   ```
-2. **Redeploy via CD** — `workflow_dispatch` on the CD workflow, or push
-   any main commit. The new revision picks up `OAUTH_JWT_SIGNING_KEY:latest`.
-3. **Notify affected users** if the user count warrants it; otherwise
-   rely on the "please log in again" UX.
-
-### Emergency rotation (suspected leak)
-
-Identical to planned: generate, push, redeploy. The key loss window is
-capped at the redeploy time (a few minutes).
-
-### Parallel validation (dual-`kid` JWT) — deferred
-
-True zero-downtime JWT rotation would require `kid`-based multi-key
-validation in the upstream FastMCP `GoogleProvider`. That is a larger
-surgery than the current session-invalidation cost justifies. Revisit
-if the user base grows past the point where "re-login" is a noticeable
-outage.
+Rotate either one through that layer's own configuration on the Cloud Run
+service. Neither secret is referenced by this repo's code or by `cd.yml`.
 
 ## Post-rotation checklist
 

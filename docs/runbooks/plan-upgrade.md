@@ -14,12 +14,11 @@ After completing the J-Quants plan upgrade on the J-Quants web console,
 register the (new or same) API key:
 
 ```text
-# Via MCP tool
+# Via MCP tool — ask Claude to call it in a normal chat.
+# This is the only registration path; there is no web UI.
 register_api_key(api_key="<key>")
 # → expected: {"plan": "standard", ...}
 ```
-
-Or via the `/settings` web UI on Cloud Run.
 
 Confirm plan detection:
 
@@ -112,7 +111,7 @@ changes needed.
 
 ## Downgrade: Standard/Premium → Light
 
-1. Re-register the (downgraded) API key via `register_api_key()` or `/settings`.
+1. Re-register the (downgraded) API key via the `register_api_key()` MCP tool.
    Plan is auto-detected everywhere; no config changes needed.
 2. Restart the MCP server (or trigger CD).
 3. Confirm `health_check()` returns `"plan": "light"`.
