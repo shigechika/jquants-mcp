@@ -5,6 +5,19 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.1.0](https://github.com/shigechika/jquants-mcp/compare/v1.0.1...v1.1.0) (2026-08-13)
+
+
+### Features
+
+* rebuild the compose path on mcp-stdio serve ([#612](https://github.com/shigechika/jquants-mcp/issues/612)) ([e08ad63](https://github.com/shigechika/jquants-mcp/commit/e08ad635166da0808444dcb0acd0ab750e24f977))
+
+
+### Bug Fixes
+
+* fall back to dpkg when TARGETARCH is unset ([#613](https://github.com/shigechika/jquants-mcp/issues/613)) ([549a3bf](https://github.com/shigechika/jquants-mcp/commit/549a3bf341231b44862f5788ceadb993c043f759))
+* stop paging on cold starts ([#609](https://github.com/shigechika/jquants-mcp/issues/609)) ([5f44cd3](https://github.com/shigechika/jquants-mcp/commit/5f44cd3d5ecfde889c6f399fbbb078d378a1ef07))
+
 ## [1.0.1](https://github.com/shigechika/jquants-mcp/compare/v1.0.0...v1.0.1) (2026-08-13)
 
 
