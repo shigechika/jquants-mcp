@@ -233,7 +233,7 @@ In your fork, go to **Settings → Secrets and variables → Actions** and add:
 | `GCP_SERVICE_ACCOUNT` | `jquants-mcp@my-gcp-project.iam.gserviceaccount.com` | Runtime service account |
 | `GCS_BUCKET` | `my-gcp-project-jquants-mcp` | GCS bucket for `cache.db` |
 | `OAUTH_BASE_URL` | `https://your-domain.example.com` | Public base URL of the service. CD builds its post-deploy smoke-test URL from it (`${OAUTH_BASE_URL}/mcp`) |
-| `CLOUDRUN_SERVICE` | `jquants` | Cloud Run service name |
+| `CLOUDRUN_SERVICE` | whatever you set `$SERVICE` to in step 2 | Cloud Run service name. Must match the service you actually created, or CD updates a service that does not exist and fails with `NOT_FOUND` |
 
 You can set them all at once with the `gh` CLI:
 
@@ -243,7 +243,7 @@ gh variable set GCP_REGION         --body "us-west1"
 gh variable set GCP_SERVICE_ACCOUNT --body "jquants-mcp@my-gcp-project.iam.gserviceaccount.com"
 gh variable set GCS_BUCKET         --body "my-gcp-project-jquants-mcp"
 gh variable set OAUTH_BASE_URL     --body "https://your-domain.example.com"
-gh variable set CLOUDRUN_SERVICE   --body "jquants-mcp"
+gh variable set CLOUDRUN_SERVICE   --body "${SERVICE}"
 ```
 
 > **`OAUTH_BASE_URL`**: the final public URL of your service, with no trailing slash. If you don't have a custom domain yet, deploy once, note the `*.run.app` URL, set `OAUTH_BASE_URL` and the app container's `PUBLIC_URL` to it, update the sign-in layer's redirect URI from step 8, then redeploy. Despite the name it is not consumed by any OAuth code in this package — it is the base URL CD probes after a deploy.
@@ -439,10 +439,31 @@ gcloud alpha monitoring channels create \
 # Grab the channel ID from:
 gcloud alpha monitoring channels list --format="value(name)"
 
-# Edit ops/alerts/*.yaml to reference the channel ID, then:
-for f in ops/alerts/*.yaml; do
-  gcloud alpha monitoring policies create --policy-from-file="$f"
-done
+CHANNEL="projects/${PROJECT_ID}/notificationChannels/<ID>" ./ops/alerts/deploy.sh
+```
+
+`deploy.sh` substitutes the channel and reconciles by `displayName`, so
+re-running it updates the existing policies instead of creating duplicates.
+
+Two things to check before you run it:
+
+- **The service name in the YAML must match `$SERVICE`.** The policies ship
+  filtering on the name this project deploys under. If yours differs, edit
+  `resource.labels.service_name` (and the MQL filter in `02-5xx-rate.yaml`)
+  first — a filter naming a service that does not exist is syntactically valid
+  and silently matches nothing.
+- **Re-run `deploy.sh` after any rename.** Renaming the service in the repo
+  changes nothing in Cloud Monitoring until the policies are pushed again.
+  This repo left four months of alerts pointing at a superseded name that way,
+  and the failure is invisible: the policies stay green because nothing ever
+  matches their filter.
+
+After deploying, confirm the filters resolve against real data rather than
+just parsing:
+
+```bash
+gcloud alpha monitoring policies list --format=json \
+  | grep -o 'service_name[^,]*'   # every hit should name $SERVICE
 ```
 
 ## 18. Upgrade (keep your fork in sync)

@@ -228,7 +228,7 @@ fork したリポジトリの **Settings → Secrets and variables → Actions**
 | `GCP_SERVICE_ACCOUNT` | `jquants-mcp@my-gcp-project.iam.gserviceaccount.com` | 実行時サービスアカウント |
 | `GCS_BUCKET` | `my-gcp-project-jquants-mcp` | `cache.db` 用 GCS バケット |
 | `OAUTH_BASE_URL` | `https://your-domain.example.com` | サービスの公開ベース URL。CD がデプロイ後のスモークテスト URL（`${OAUTH_BASE_URL}/mcp`）をここから組み立てる |
-| `CLOUDRUN_SERVICE` | `jquants-mcp` | Cloud Run サービス名 |
+| `CLOUDRUN_SERVICE` | ステップ 2 で `$SERVICE` に設定した値 | Cloud Run サービス名。実際に作成したサービスと一致させること。ずれていると CD が存在しないサービスを更新しようとして `NOT_FOUND` で失敗する |
 
 `gh` CLI でまとめて設定できます:
 
@@ -238,7 +238,7 @@ gh variable set GCP_REGION         --body "us-west1"
 gh variable set GCP_SERVICE_ACCOUNT --body "jquants-mcp@my-gcp-project.iam.gserviceaccount.com"
 gh variable set GCS_BUCKET         --body "my-gcp-project-jquants-mcp"
 gh variable set OAUTH_BASE_URL     --body "https://your-domain.example.com"
-gh variable set CLOUDRUN_SERVICE   --body "jquants-mcp"
+gh variable set CLOUDRUN_SERVICE   --body "${SERVICE}"
 ```
 
 > **`OAUTH_BASE_URL`**: サービスの最終的な公開 URL を、末尾スラッシュ無しで指定します。カスタムドメインがまだ無ければ、一度デプロイして `*.run.app` の URL を確認し、`OAUTH_BASE_URL` と app コンテナの `PUBLIC_URL` に設定し、ステップ 8 のサインイン層のリダイレクト URI を更新した上で再デプロイしてください。名前に反して、本パッケージの OAuth コードがこの値を読むことはありません — CD がデプロイ後に叩くベース URL です。
@@ -427,10 +427,29 @@ gcloud alpha monitoring channels create \
 # チャンネル ID を取得
 gcloud alpha monitoring channels list --format="value(name)"
 
-# ops/alerts/*.yaml にチャンネル ID を記入してから:
-for f in ops/alerts/*.yaml; do
-  gcloud alpha monitoring policies create --policy-from-file="$f"
-done
+CHANNEL="projects/${PROJECT_ID}/notificationChannels/<ID>" ./ops/alerts/deploy.sh
+```
+
+`deploy.sh` はチャンネルを埋め込み、`displayName` で既存ポリシーを照合して更新します。
+再実行しても重複を作りません。
+
+実行前に 2 点確認してください:
+
+- **YAML のサービス名が `$SERVICE` と一致しているか。** ポリシーはこのプロジェクトが
+  デプロイするサービス名でフィルタする形で同梱されています。異なる名前を使う場合は
+  先に `resource.labels.service_name`（および `02-5xx-rate.yaml` の MQL フィルタ）を
+  書き換えてください。存在しないサービス名を指すフィルタは構文的には正しく、
+  黙って何にもマッチしません。
+- **リネームしたら `deploy.sh` を再実行する。** リポジトリ側でサービス名を変えても、
+  ポリシーを push し直すまで Cloud Monitoring 側は一切変わりません。このリポジトリは
+  実際にそれで 4 か月間、古い名前を指したままのアラートを放置しました。しかも
+  この故障は見えません — フィルタに何もマッチしないので、ポリシーは正常に見えます。
+
+デプロイ後は、フィルタが構文として通るだけでなく実データに当たっているか確認します:
+
+```bash
+gcloud alpha monitoring policies list --format=json \
+  | grep -o 'service_name[^,]*'   # すべて $SERVICE を指すはず
 ```
 
 ## 18. アップグレード（fork を最新に保つ）
