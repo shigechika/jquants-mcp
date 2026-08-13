@@ -45,8 +45,8 @@ At this request volume, "502s that never stop" is not distinguishable from
 "two cold starts in half an hour" by rate arithmetic. Detecting a crash-loop
 needs a signal that does not depend on someone happening to send a request —
 a log match on the app container failing to start, in the style of `03` and
-`05`, or an external probe. Tracked as follow-up; do not re-introduce a
-rate-based version without measuring it against live traffic first.
+`05`, or an external probe. Tracked in #610; do not re-introduce a rate-based
+version without measuring it against live traffic first.
 
 `07` fires when a session's child process first opens a stale `cache.db`, not
 at container startup — `verify_cache.py` never constructs a `CacheStore`, so a

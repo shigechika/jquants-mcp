@@ -20,8 +20,8 @@ documentation:
     volume (eight requests in six hours) a sustained-502 rate condition cannot
     tell a crash-loop from two cold starts half an hour apart, and the version
     drafted alongside this change would have paged CRITICAL on the very cold
-    starts described above. See `ops/alerts/README.md` for the measurement and
-    the follow-up.
+    starts described above. See `ops/alerts/README.md` for the measurement,
+    tracked in #610.
 
     Why `duration` is 0s. On this service the ratio series is gap-dominated:
     12 hours of production yielded four points, all of them violating. The
