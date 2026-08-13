@@ -23,16 +23,22 @@ FROM python:3.12-slim-bookworm
 WORKDIR /app
 
 ARG SUPERCRONIC_VERSION=0.2.33
-# TARGETARCH is set by BuildKit (amd64 / arm64). It matters for the compose
-# path: `docker compose up --build` on an Apple Silicon host produces an arm64
-# image, and a hardcoded amd64 binary would fail with an exec format error the
-# moment ENABLE_DAILY_FETCH is turned on — while the MCP server itself kept
-# running, so the scheduled refresh would silently never happen. An unset value
-# yields a 404 from curl -f, which fails the build loudly rather than quietly.
+# Architecture for the supercronic download. It matters for the compose path:
+# `docker compose up --build` on an Apple Silicon host produces an arm64 image,
+# and a hardcoded amd64 binary would fail with an exec format error the moment
+# ENABLE_DAILY_FETCH is turned on — while the MCP server itself kept running,
+# so the scheduled refresh would silently never happen.
+#
+# TARGETARCH is a BuildKit built-in and is EMPTY on the legacy builder, which is
+# what `gcloud builds submit` uses — an earlier version relied on it alone and
+# broke the Cloud Build deploy with `curl: (22) ... 404` on an empty arch. The
+# dpkg fallback covers that: Debian's architecture names (amd64, arm64) are
+# exactly the ones supercronic publishes.
 ARG TARGETARCH
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
-    && curl -fsSL "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH}" \
+    && ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+    && curl -fsSL "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${ARCH}" \
        -o /usr/local/bin/supercronic \
     && chmod +x /usr/local/bin/supercronic \
     && apt-get remove -y --autoremove curl \
