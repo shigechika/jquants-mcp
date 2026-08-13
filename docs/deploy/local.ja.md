@@ -133,14 +133,29 @@ claude mcp add --transport http jquants http://localhost:8080/mcp
 キャッシュ用ボリュームは空の状態から始まり、ツールを呼ぶたびに埋まっていきます。
 キャッシュに無いデータは J-Quants API から直接取得するため、最初のリクエストから
 そのまま使えます。定期的に温めておきたい場合は `ENABLE_DAILY_FETCH=true`
-（平日 17:30 JST）を設定するか、手順 4 の全期間取得を compose のボリュームに対して
-実行してください。
+（平日 17:30 JST）を設定するか、compose が作ったボリュームに対して全期間取得を
+実行してください。ボリューム名は手順 4 の `jquants-mcp-cache` ではなく、
+プロジェクト名が付いた `jquants-mcp_cache` である点に注意してください。
+
+```bash
+docker run --rm \
+  --entrypoint python \
+  -e JQUANTS_API_KEY=xxx \
+  -e JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp \
+  -v jquants-mcp_cache:/home/appuser/.cache/jquants-mcp \
+  ghcr.io/shigechika/jquants-mcp:latest \
+  /app/scripts/daily_fetch.py --all
+```
 
 **localhost の外に公開する前に**（`compose.yml` のポート公開範囲を広げる前に）、
 必ずベアラートークンを設定してください。既定ではサーバー自身は認証を要求しません。
+インラインで渡さず `.env` に書きます。MCP クライアント側に設定するため値が必要で、
+`up` のたびに `openssl rand` し直すとクライアント側の値が無効になるためです。
 
 ```bash
-MCP_STDIO_SERVE_TOKEN=$(openssl rand -hex 32) docker compose up -d --build
+echo "MCP_STDIO_SERVE_TOKEN=$(openssl rand -hex 32)" >> .env
+docker compose up -d --build
+grep MCP_STDIO_SERVE_TOKEN .env   # クライアントに設定する値
 ```
 
 他マシンからのアクセスには Option B を推奨します。共有トークン1本ではなく、

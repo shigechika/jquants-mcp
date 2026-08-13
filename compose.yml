@@ -10,8 +10,10 @@
 # the key on the command line works too but leaves it in your shell history.
 #
 # Building from the checkout is the default because it always matches the code
-# you have. To use the published image instead, drop `--build`; compose then
-# pulls ghcr.io/shigechika/jquants-mcp:latest.
+# you have. Dropping `--build` does NOT switch to the published image: with
+# both `image:` and `build:` set, compose builds whenever the image is absent
+# locally. Run `docker compose pull` first to actually fetch
+# ghcr.io/shigechika/jquants-mcp:latest.
 #
 # With bearer token auth — required before exposing this beyond localhost,
 # e.g. by changing the port mapping below to "0.0.0.0:8080:8080":

@@ -52,8 +52,19 @@ COPY scripts/ ./scripts/
 # at deploy time — see jquants-mcp#568)
 RUN chmod +x /app/scripts/entrypoint-compose.sh /app/scripts/entrypoint-stdio.sh
 
-# Run as non-root user
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+# Run as non-root user.
+#
+# The cache directory is created here, before the chown, because a named volume
+# mounted at a path that does not exist in the image is created by Docker as
+# root:root — and this container runs as uid 1000, so it could not write to it.
+# The failure is silent: CacheStore catches the sqlite error and returns None,
+# so the server would run live-API-only forever, filling nothing and spending
+# plan quota on every call. Docker copies the ownership of an existing
+# directory into a new volume, so creating it here is what makes the mount
+# writable. See compose.yml and docs/deploy/local.md, which both mount there.
+RUN useradd -m -u 1000 appuser \
+    && mkdir -p /home/appuser/.cache/jquants-mcp \
+    && chown -R appuser:appuser /app /home/appuser
 USER appuser
 
 # Add venv to PATH

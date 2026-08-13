@@ -137,15 +137,30 @@ the host. The port is published on `127.0.0.1` only.
 The cache volume starts empty and fills as tools are called; anything not
 cached is fetched from the live J-Quants API, so it works from the first
 request. Set `ENABLE_DAILY_FETCH=true` to keep it warm on a schedule
-(weekdays 17:30 JST), or run the one-off historical fetch from step 4 against
-the compose volume.
+(weekdays 17:30 JST), or run the one-off historical fetch against the volume
+compose created — note that it is `jquants-mcp_cache`, the project-scoped
+name, not the `jquants-mcp-cache` used in step 4:
+
+```bash
+docker run --rm \
+  --entrypoint python \
+  -e JQUANTS_API_KEY=xxx \
+  -e JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp \
+  -v jquants-mcp_cache:/home/appuser/.cache/jquants-mcp \
+  ghcr.io/shigechika/jquants-mcp:latest \
+  /app/scripts/daily_fetch.py --all
+```
 
 **Before exposing it beyond localhost** — that is, before widening the port
 mapping in `compose.yml` — set a bearer token, because the server itself
-requires no authentication by default:
+requires no authentication by default. Write it to `.env` rather than passing
+it inline: you need the value to configure your MCP client, and a fresh
+`openssl rand` on each `up` would invalidate whatever the client already has.
 
 ```bash
-MCP_STDIO_SERVE_TOKEN=$(openssl rand -hex 32) docker compose up -d --build
+echo "MCP_STDIO_SERVE_TOKEN=$(openssl rand -hex 32)" >> .env
+docker compose up -d --build
+grep MCP_STDIO_SERVE_TOKEN .env   # the value to give the client
 ```
 
 For access from other machines, prefer Option B: it adds TLS and per-user
