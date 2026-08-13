@@ -1,37 +1,79 @@
 displayName: "Cloud Run 5xx rate > 1%"
 documentation:
   content: |
-    jquants is returning 5xx responses at >1% over 10 minutes.
-    Check logs for the top error, recent deploys, and Firestore / J-Quants
-    API availability.
+    jquants is returning non-502 5xx responses. Check logs for the top error,
+    recent deploys, and Firestore / J-Quants API availability.
 
-    Sensitivity caveat: the condition needs the ratio to hold for 600s, but
-    with min-instances=0 request_count is gappy — an idle stretch drops the
-    joined series, and a real fault on a lightly-used service may not sustain
-    long enough to fire. Threshold and duration were derived from the load
-    tests in #72/#73, before scale-to-zero. Re-tune against observed traffic
-    rather than assuming this fires.
+    502 is excluded on purpose. With min-instances=0 a cold start spends ~17s
+    downloading cache.db before the gateway can accept a connection, and the
+    oauth2-proxy sidecar answers 502 for that whole window. That is the
+    designed behaviour of scale-to-zero — the download is what keeps the cache
+    fresh (#584) — so paging on it means paging on the service working as
+    intended. It fired exactly that way on 2026-08-13: three of four requests
+    to a cold instance were 502, giving a ratio of 0.75 at 07:05-07:06 UTC and
+    an incident at 07:20 UTC. Querying the last 12 hours of this metric with
+    502 excluded returns no data points at all, so every 5xx observed in that
+    window was a cold start.
+
+    What this exclusion gives up is the crash-looping app container, whose
+    sidecar 502s never stop. No policy currently covers that: at this traffic
+    volume (eight requests in six hours) a sustained-502 rate condition cannot
+    tell a crash-loop from two cold starts half an hour apart, and the version
+    drafted alongside this change would have paged CRITICAL on the very cold
+    starts described above. See `ops/alerts/README.md` for the measurement,
+    tracked in #610.
+
+    Why `duration` is 0s. On this service the ratio series is gap-dominated:
+    12 hours of production yielded four points, all of them violating. The
+    join emits a point only at moments that had a 5xx, so a healthy period is
+    an absence of measurements rather than a measurement of zero, and absent
+    measurements do not contradict the condition. A `duration` therefore does
+    not require sustained errors here; it only delays the page while nothing
+    argues against it, which is precisely how the 07:20 incident opened ten
+    minutes after the burst that caused it. Setting it to 0s makes the real
+    contract explicit: any genuine (non-502) 5xx pages immediately, at
+    WARNING. For a service this quiet that is the intended behaviour — a
+    single unexplained 500 is worth looking at.
+
+    The 15-minute aligner dilutes a burst only when other traffic shares the
+    window, which is the right way round: the same burst matters more when
+    almost nothing else is happening than when it is a rounding error against
+    heavy successful traffic.
+
+    Possible refinement, not implemented: replacing `join` with `outer_join 0`
+    would give the ratio a zero baseline so that recovery becomes observable
+    instead of merely unmeasured. It is unverified — reproducing a genuine
+    non-502 5xx on demand is not possible here, and MQL's behaviour around
+    empty streams did not match expectations during testing — so it is left as
+    a follow-up rather than shipped on theory.
+
+    Threshold derived from the #72/#73 load tests, before scale-to-zero.
+    Re-tune against observed traffic.
 
     Runbook: https://github.com/shigechika/jquants-mcp/blob/main/docs/runbooks/5xx-spike.md
   mimeType: text/markdown
 combiner: OR
 conditions:
-  - displayName: "5xx ratio > 0.01 for 10min"
+  - displayName: "non-502 5xx ratio > 0.01"
     conditionMonitoringQueryLanguage:
+      # response_code is a String label, not an Int — `!= 502` is rejected at
+      # policy-create time with "Operands of '!=' do not have same type:
+      # 'String' and 'Int'". Keep the quotes.
       query: |
         fetch cloud_run_revision
         | metric 'run.googleapis.com/request_count'
         | filter resource.service_name == 'jquants'
-        | align rate(1m)
+        | align rate(15m)
         | {
             total: group_by [], sum(val());
             errs:  filter metric.response_code_class == '5xx'
+                          && metric.response_code != '502'
                    | group_by [], sum(val())
           }
         | join
         | value [ratio: val(1) / val(0)]
         | condition val() > 0.01
-      duration: 600s
+      duration: 0s
       trigger:
         count: 1
 alertStrategy:
