@@ -1,0 +1,44 @@
+displayName: "Cloud Run upstream 502 sustained"
+documentation:
+  content: |
+    The oauth2-proxy sidecar has been answering 502 continuously for 15
+    minutes, meaning it cannot reach the app container on localhost.
+
+    A brief 502 is normal: with min-instances=0 a cold start spends ~17s
+    downloading cache.db before the gateway binds, and every request in that
+    window gets 502 from the sidecar. `02-5xx-rate` excludes 502 for exactly
+    that reason. This policy covers the opposite case — 502s that do not stop,
+    which means the app container is failing to start or crash-looping
+    (bad config, missing secret, OOM at startup, a broken image).
+
+    Check the app container's startup logs first; a crash-loop shows the
+    startup banner repeating. `03-oom-kill` covers the memory-specific case.
+
+    Runbook: https://github.com/shigechika/jquants-mcp/blob/main/docs/runbooks/5xx-spike.md
+  mimeType: text/markdown
+combiner: OR
+conditions:
+  - displayName: "502 rate > 0 for 15min"
+    conditionMonitoringQueryLanguage:
+      # Absolute count, not a ratio: during a real upstream outage every
+      # request 502s, so a ratio stays at 1.0 and tells you nothing about
+      # duration. What distinguishes a cold start from an outage is that the
+      # cold start stops on its own well inside this window.
+      query: |
+        fetch cloud_run_revision
+        | metric 'run.googleapis.com/request_count'
+        | filter resource.service_name == 'jquants'
+                 && metric.response_code == 502
+        | align rate(1m)
+        | group_by [], sum(val())
+        | condition val() > 0
+      duration: 900s
+      trigger:
+        count: 1
+alertStrategy:
+  notificationRateLimit:
+    period: 3600s
+  autoClose: 86400s
+notificationChannels:
+  - __CHANNEL__
+severity: CRITICAL
