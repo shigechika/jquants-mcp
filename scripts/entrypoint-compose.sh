@@ -43,6 +43,14 @@ if [ -n "${MCP_STDIO_SERVE_TOKEN_FILE:-}" ]; then
         exit 1
     fi
     MCP_STDIO_SERVE_TOKEN="$(cat "${MCP_STDIO_SERVE_TOKEN_FILE}")"
+    # An empty file would export an empty token, which serve treats as "no
+    # --auth-token given" — i.e. exactly the silent fallback to no
+    # authentication that the readability check above refuses. Same treatment.
+    if [ -z "${MCP_STDIO_SERVE_TOKEN}" ]; then
+        echo "FATAL: MCP_STDIO_SERVE_TOKEN_FILE=${MCP_STDIO_SERVE_TOKEN_FILE} is empty." >&2
+        echo "       Refusing to start: an empty token means no authentication." >&2
+        exit 1
+    fi
     export MCP_STDIO_SERVE_TOKEN
 fi
 
