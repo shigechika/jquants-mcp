@@ -1,10 +1,20 @@
 displayName: "Cloud Run instance count == 0 for 1h"
 documentation:
   content: |
-    jquants-mcp has had zero serving instances for over an hour.
-    Usually fine (cold-scaled to zero), but prolonged zero during market
-    hours plus no recent requests can signal routing or deploy issues.
-    Tune / silence if noisy.
+    jquants has had zero serving instances for over an hour.
+
+    ⚠️ Kept `enabled: false` deliberately — do not turn this on as-is.
+    The service runs with min-instances=0 on purpose: scaling to zero is
+    load-bearing for cache freshness, because every cold start re-downloads a
+    current cache.db (#584). Zero instances for an hour is therefore the normal
+    state outside of use, and enabling this alert would page on healthy
+    behaviour.
+
+    It is retained because the underlying question — "is the service reachable
+    when someone actually calls it?" — is still worth answering. Answering it
+    needs a probe that distinguishes idle from broken (e.g. a scheduled
+    request, or uptime checks against the public endpoint), not an
+    instance-count threshold.
   mimeType: text/markdown
 combiner: OR
 conditions:
@@ -12,7 +22,7 @@ conditions:
     conditionThreshold:
       filter: |
         resource.type = "cloud_run_revision" AND
-        resource.labels.service_name = "jquants-mcp" AND
+        resource.labels.service_name = "jquants" AND
         metric.type = "run.googleapis.com/container/instance_count"
       aggregations:
         - alignmentPeriod: 60s

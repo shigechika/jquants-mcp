@@ -12,7 +12,7 @@
 # Recent Firestore errors
 gcloud logging read \
   'resource.type="cloud_run_revision"
-   resource.labels.service_name="jquants-mcp"
+   resource.labels.service_name="jquants"
    (textPayload:"firestore" OR jsonPayload.message:"firestore")
    severity>=ERROR' \
   --project=${PROJECT} --limit=20 --freshness=1h

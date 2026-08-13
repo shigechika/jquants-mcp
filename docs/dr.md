@@ -19,7 +19,7 @@ nine-nines reliability.
 
 ## Components and their failure modes
 
-### Cloud Run (`jquants-mcp`, `us-west1`)
+### Cloud Run (`jquants`, `us-west1`)
 
 | Risk | Impact | Mitigation today |
 |---|---|---|
@@ -61,13 +61,17 @@ If `us-west1` is down for extended period and we decide to fail over:
 
 1. **Pick a region** with GCP Cloud Run + Firestore support, e.g.
    `us-east1` or `asia-northeast1` (Tokyo) for latency.
-2. **Deploy Cloud Run** from the same source via a one-off workflow_dispatch:
-   ```sh
-   gcloud run deploy jquants-mcp \
-     --project=${PROJECT} --region=<STANDBY> --source=. ...
-   ```
-   Reuse the CD workflow as the spec — copy `.github/workflows/cd.yml`
-   verbatim with `--region=<STANDBY>`.
+2. **Create the service in the standby region.** It is a **two-container**
+   service — an `oauth2-proxy` sidecar as ingress plus the app container
+   started with `--command /app/scripts/entrypoint-stdio.sh`. A single
+   `gcloud run deploy --source=.` will not reproduce it: that yields one
+   container with no auth in front, reachable by anyone.
+
+   [`docs/deploy/gcp.md`](deploy/gcp.md) is the canonical creation procedure —
+   follow it against `<STANDBY>`. `cd.yml` is not a substitute: it only
+   updates an existing service's app image (`services update --container app
+   --image`) and deliberately never touches the sidecar, scaling, env or
+   secrets.
 3. **Firestore**: restore latest managed backup into a new database in the
    standby region, point Cloud Run at it via env var.
 4. **Public URL**: point everything that hard-codes the service URL at the new

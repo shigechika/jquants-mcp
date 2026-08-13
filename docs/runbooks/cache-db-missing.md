@@ -37,7 +37,7 @@ gcloud storage ls -l gs://${BUCKET}/cache.db
 # entrypoint.sh download logs
 gcloud logging read \
   'resource.type="cloud_run_revision"
-   resource.labels.service_name="jquants-mcp"
+   resource.labels.service_name="jquants"
    (textPayload:"cache.db" OR textPayload:"gcs_sync")' \
   --project=${PROJECT} --limit=30 --freshness=1h
 
@@ -49,7 +49,7 @@ gcloud storage buckets get-iam-policy gs://${BUCKET} \
 # download-failure error in the same window
 gcloud logging read \
   'resource.type="cloud_run_revision"
-   resource.labels.service_name="jquants-mcp"
+   resource.labels.service_name="jquants"
    textPayload:"cache.db is stale"' \
   --project=${PROJECT} --limit=5 --freshness=1h
 ```
