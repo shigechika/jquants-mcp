@@ -110,6 +110,62 @@ docker volume inspect jquants-mcp-cache             # where the cache lives
 docker volume rm jquants-mcp-cache                  # delete the cache (data loss!)
 ```
 
+### 6. Always-on local endpoint (Docker Compose)
+
+The setup above launches a container per session. If you would rather have one
+long-running server on a fixed URL — useful for Claude Code, or for several
+clients on the same machine — `compose.yml` in the repository root packages
+that shape:
+
+```bash
+git clone https://github.com/shigechika/jquants-mcp.git
+cd jquants-mcp
+echo 'JQUANTS_API_KEY=xxx' > .env
+docker compose up -d --build
+```
+
+The endpoint is `http://localhost:8080/mcp`:
+
+```bash
+claude mcp add --transport http jquants http://localhost:8080/mcp
+```
+
+Internally the container runs `mcp-stdio serve` in front of the stdio server —
+the same gateway shape as Option B, minus TLS and OAuth, since nothing leaves
+the host. The port is published on `127.0.0.1` only.
+
+The cache volume starts empty and fills as tools are called; anything not
+cached is fetched from the live J-Quants API, so it works from the first
+request. Set `ENABLE_DAILY_FETCH=true` to keep it warm on a schedule
+(weekdays 17:30 JST), or run the one-off historical fetch against the volume
+compose created — note that it is `jquants-mcp_cache`, the project-scoped
+name, not the `jquants-mcp-cache` used in step 4:
+
+```bash
+docker run --rm \
+  --entrypoint python \
+  -e JQUANTS_API_KEY=xxx \
+  -e JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp \
+  -v jquants-mcp_cache:/home/appuser/.cache/jquants-mcp \
+  ghcr.io/shigechika/jquants-mcp:latest \
+  /app/scripts/daily_fetch.py --all
+```
+
+**Before exposing it beyond localhost** — that is, before widening the port
+mapping in `compose.yml` — set a bearer token, because the server itself
+requires no authentication by default. Write it to `.env` rather than passing
+it inline: you need the value to configure your MCP client, and a fresh
+`openssl rand` on each `up` would invalidate whatever the client already has.
+
+```bash
+echo "MCP_STDIO_SERVE_TOKEN=$(openssl rand -hex 32)" >> .env
+docker compose up -d --build
+grep MCP_STDIO_SERVE_TOKEN .env   # the value to give the client
+```
+
+For access from other machines, prefer Option B: it adds TLS and per-user
+OAuth rather than a single shared token.
+
 ---
 
 ## Option B: Self-hosted gateway (remote access)

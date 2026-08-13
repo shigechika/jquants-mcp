@@ -34,7 +34,7 @@ degraded mode, not an outage.
 # GCS object exists and is recent?
 gcloud storage ls -l gs://${BUCKET}/cache.db
 
-# entrypoint.sh download logs
+# entrypoint-stdio.sh download logs
 gcloud logging read \
   'resource.type="cloud_run_revision"
    resource.labels.service_name="jquants"

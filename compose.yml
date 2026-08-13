@@ -1,25 +1,48 @@
 # Local Docker Compose deployment for jquants-mcp.
-# Starts an HTTP MCP server on http://localhost:8080/mcp.
-# No TLS, GCS, or OAuth required.
+# Starts an MCP server on http://localhost:8080/mcp — no TLS, GCS, or OAuth.
 #
-# Quick start:
-#   JQUANTS_API_KEY=xxx docker compose up -d
-#   # → MCP endpoint: http://localhost:8080/mcp
+# Quick start (build from this checkout):
+#   echo 'JQUANTS_API_KEY=xxx' > .env
+#   docker compose up -d --build
+#   # → point your MCP client at http://localhost:8080/mcp
 #
-# With Bearer token auth (recommended if exposed beyond localhost):
-#   JQUANTS_API_KEY=xxx MCP_BEARER_TOKEN=yyy docker compose up -d
+# `docker compose` reads .env automatically, and .env is gitignored. Passing
+# the key on the command line works too but leaves it in your shell history.
 #
-# With automatic daily cache fetch (weekdays 17:30 JST):
-#   JQUANTS_API_KEY=xxx ENABLE_DAILY_FETCH=true docker compose up -d
+# Building from the checkout is the default because it always matches the code
+# you have. Dropping `--build` does NOT switch to the published image: with
+# both `image:` and `build:` set, compose builds whenever the image is absent
+# locally. Run `docker compose pull` first to actually fetch
+# ghcr.io/shigechika/jquants-mcp:latest.
+#
+# With bearer token auth — required before exposing this beyond localhost,
+# e.g. by changing the port mapping below to "0.0.0.0:8080:8080":
+#   MCP_STDIO_SERVE_TOKEN=yyy docker compose up -d --build
+#
+# With a scheduled cache refresh (weekdays 17:30 JST):
+#   ENABLE_DAILY_FETCH=true docker compose up -d --build
+#
+# The cache starts empty and fills as tools are called; uncached data is
+# fetched from the live J-Quants API, so it works from the first request.
 
 services:
   jquants-mcp:
     image: ghcr.io/shigechika/jquants-mcp:latest
+    build: .
     ports:
+      # Host-side 127.0.0.1 is the only thing restricting exposure — the
+      # server itself requires no authentication unless MCP_STDIO_SERVE_TOKEN
+      # is set. Do not widen this without setting that token.
       - "127.0.0.1:8080:8080"
     environment:
       JQUANTS_API_KEY: ${JQUANTS_API_KEY}
-      MCP_BEARER_TOKEN: ${MCP_BEARER_TOKEN:-}
+      # Read directly by `mcp-stdio serve`. Unset = no authentication.
+      # A value set here is baked into the container config and visible in
+      # `docker inspect`. To keep it out of there, mount the token as a compose
+      # secret and point MCP_STDIO_SERVE_TOKEN_FILE at it instead; the
+      # entrypoint reads the file and exports the value.
+      MCP_STDIO_SERVE_TOKEN: ${MCP_STDIO_SERVE_TOKEN:-}
+      MCP_STDIO_SERVE_TOKEN_FILE: ${MCP_STDIO_SERVE_TOKEN_FILE:-}
       # Override the Cloud Run default (/tmp) so the cache persists in the volume.
       JQUANTS_CACHE_DIR: /home/appuser/.cache/jquants-mcp
       PORT: "8080"
