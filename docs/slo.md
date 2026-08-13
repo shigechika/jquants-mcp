@@ -22,8 +22,8 @@ leave generous headroom.
 **Excluded from SLO scope:**
 
 - **API fallback latency** — depends on J-Quants upstream, not under our control. We measure it but do not target it.
-- **Cold-start cache.db download window** — ~2 min of degraded (API-only) service after a revision deploy or scale-from-zero. No requests fail, they just skip the Tier 1 cache. Accepted.
-- **OAuth flow success rate** — dominated by known Claude Desktop bug #40102 (client-side). A server-side `/token` success SLO could be added if we want to monitor *our* contribution.
+- **Cold-start cache.db download window** — the download is synchronous and completes before the gateway accepts sessions, so this is added latency on the first request after a scale-from-zero, not a window of degraded service. Accepted.
+- **OAuth flow success rate** — sign-in happens in the `oauth2-proxy` sidecar and the `mcp-stdio serve` gateway, not in this package, so there is no server-side `/token` endpoint of ours to measure. Any SLO here belongs to the gateway layer.
 
 ## Measurement
 

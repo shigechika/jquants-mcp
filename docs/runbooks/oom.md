@@ -11,7 +11,7 @@
 # Recent OOM kills
 gcloud logging read \
   'resource.type="cloud_run_revision"
-   resource.labels.service_name="jquants-mcp"
+   resource.labels.service_name="jquants"
    (textPayload:"Memory limit" OR textPayload:"OOMKilled")' \
   --project=${PROJECT} --limit=10 --format=json --freshness=1h
 
@@ -20,7 +20,7 @@ mcp call health_check   # via CLI or Claude
 mcp call cache_status
 
 # Recent deploys
-gcloud run revisions list --service=jquants-mcp \
+gcloud run revisions list --service=jquants \
   --region=us-west1 --project=${PROJECT} --limit=5
 ```
 

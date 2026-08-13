@@ -1,7 +1,9 @@
 displayName: "cache.db download failed"
 documentation:
   content: |
-    The background cache.db download from GCS failed on startup.
+    The cache.db download from GCS failed on startup. It runs
+    synchronously, before the gateway accepts sessions, so a failure here means
+    the instance came up without a cache rather than losing one later.
     Without cache.db the server falls back to live J-Quants API — slower and
     rate-limit-prone. Check GCS bucket ACLs and the gcs_sync.py log.
 

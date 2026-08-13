@@ -233,7 +233,7 @@ In your fork, go to **Settings → Secrets and variables → Actions** and add:
 | `GCP_SERVICE_ACCOUNT` | `jquants-mcp@my-gcp-project.iam.gserviceaccount.com` | Runtime service account |
 | `GCS_BUCKET` | `my-gcp-project-jquants-mcp` | GCS bucket for `cache.db` |
 | `OAUTH_BASE_URL` | `https://your-domain.example.com` | Public base URL of the service. CD builds its post-deploy smoke-test URL from it (`${OAUTH_BASE_URL}/mcp`) |
-| `CLOUDRUN_SERVICE` | `jquants-mcp` | Cloud Run service name |
+| `CLOUDRUN_SERVICE` | `jquants` | Cloud Run service name |
 
 You can set them all at once with the `gh` CLI:
 

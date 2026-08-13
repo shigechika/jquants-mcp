@@ -23,10 +23,13 @@ normal idle state, so enabling this policy pages on healthy behaviour.
 Answering "is the service reachable?" needs a probe that tells idle apart from
 broken, not an instance-count threshold.
 
-`07` fires only when a stale snapshot is loaded, which since 1.0.0 means
-container startup — the Pub/Sub reload endpoint was removed with the rest of
-the HTTP surface. It cannot detect a publisher that stops *after* a good load.
-See the policy's `documentation` block for the external-check follow-up.
+`07` fires when a session's child process first opens a stale `cache.db`, not
+at container startup — `verify_cache.py` never constructs a `CacheStore`, so a
+cold start that pulls a stale snapshot and is never queried logs nothing. In
+practice the first real tool call surfaces it, and a snapshot nobody queries is
+one nobody is served from. It cannot detect a publisher that stops *after* a
+good load. See the policy's `documentation` block for the external-check
+follow-up.
 
 ## Deploy
 

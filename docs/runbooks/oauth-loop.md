@@ -26,7 +26,7 @@ registration. Send them to `register_api_key` (see
 # ever reached mcp-stdio serve's OAuth layer at all
 gcloud logging read \
   'resource.type="cloud_run_revision"
-   resource.labels.service_name="jquants-mcp"
+   resource.labels.service_name="jquants"
    httpRequest.requestUrl:"/mcp"
    httpRequest.status>=400' \
   --project=${PROJECT} --limit=30 --freshness=1h --format=json \
