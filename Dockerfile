@@ -39,10 +39,11 @@ COPY --from=builder /app/.venv /app/.venv
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 
-# Make entrypoints executable (entrypoint.sh: streamable-http deployment;
-# entrypoint-stdio.sh: mcp-stdio/serve deployment, selected via Cloud Run
-# --command at deploy time — see jquants-mcp#568)
-RUN chmod +x /app/scripts/entrypoint.sh /app/scripts/entrypoint-stdio.sh
+# Make entrypoints executable (entrypoint-compose.sh: self-hosted docker
+# compose deployment, the default ENTRYPOINT below; entrypoint-stdio.sh:
+# Cloud Run deployment with oauth2-proxy, selected via a --command override
+# at deploy time — see jquants-mcp#568)
+RUN chmod +x /app/scripts/entrypoint-compose.sh /app/scripts/entrypoint-stdio.sh
 
 # Run as non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
@@ -57,6 +58,10 @@ ENV JQUANTS_CACHE_DIR=/tmp
 # Unbuffered Python output for Cloud Run logging
 ENV PYTHONUNBUFFERED=1
 
-EXPOSE 8000
+EXPOSE 8080
 
-ENTRYPOINT ["/app/scripts/entrypoint.sh"]
+# Default to the self-hosted compose deployment, so `docker run` on this image
+# yields a working MCP server. Cloud Run overrides this with a --command
+# pointing at entrypoint-stdio.sh; that entrypoint is the one with the OAuth
+# layer, and entrypoint-compose.sh refuses to start when it detects Cloud Run.
+ENTRYPOINT ["/app/scripts/entrypoint-compose.sh"]

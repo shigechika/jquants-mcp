@@ -107,6 +107,45 @@ docker volume inspect jquants-mcp-cache             # キャッシュの実体�
 docker volume rm jquants-mcp-cache                  # キャッシュを削除（データ消失注意！）
 ```
 
+### 6. 常時起動のローカルエンドポイント（Docker Compose）
+
+上の構成はセッションごとにコンテナを起動します。固定 URL で常駐させたい場合
+（Claude Code から使う、同じマシンの複数クライアントから使う、など）は、
+リポジトリ直下の `compose.yml` がその形をまとめています。
+
+```bash
+git clone https://github.com/shigechika/jquants-mcp.git
+cd jquants-mcp
+echo 'JQUANTS_API_KEY=xxx' > .env
+docker compose up -d --build
+```
+
+エンドポイントは `http://localhost:8080/mcp` です。
+
+```bash
+claude mcp add --transport http jquants http://localhost:8080/mcp
+```
+
+コンテナ内部では stdio サーバーの前段に `mcp-stdio serve` が立ちます。Option B と
+同じゲートウェイ構成から、ホスト外に出ないぶん TLS と OAuth を省いた形です。
+ポートは `127.0.0.1` にのみ公開されます。
+
+キャッシュ用ボリュームは空の状態から始まり、ツールを呼ぶたびに埋まっていきます。
+キャッシュに無いデータは J-Quants API から直接取得するため、最初のリクエストから
+そのまま使えます。定期的に温めておきたい場合は `ENABLE_DAILY_FETCH=true`
+（平日 17:30 JST）を設定するか、手順 4 の全期間取得を compose のボリュームに対して
+実行してください。
+
+**localhost の外に公開する前に**（`compose.yml` のポート公開範囲を広げる前に）、
+必ずベアラートークンを設定してください。既定ではサーバー自身は認証を要求しません。
+
+```bash
+MCP_STDIO_SERVE_TOKEN=$(openssl rand -hex 32) docker compose up -d --build
+```
+
+他マシンからのアクセスには Option B を推奨します。共有トークン1本ではなく、
+TLS とユーザーごとの OAuth が付きます。
+
 ---
 
 ## Option B: セルフホストゲートウェイ（リモートアクセス）

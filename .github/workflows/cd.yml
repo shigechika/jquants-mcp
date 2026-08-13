@@ -308,8 +308,10 @@ jobs:
 
       # docs/deploy/local.md and compose.yml document
       # ghcr.io/shigechika/jquants-mcp:latest as the self-hosted
-      # docker-compose image (streamable-http entrypoint.sh, or entrypoint.sh
-      # with ENABLE_DAILY_FETCH) -- unrelated to *which* Cloud Run service is
+      # docker-compose image, whose default ENTRYPOINT is
+      # entrypoint-compose.sh (mcp-stdio serve, optional ENABLE_DAILY_FETCH;
+      # #601 replaced the streamable-http entrypoint.sh that crash-looped
+      # here) -- unrelated to *which* Cloud Run service is
       # deployed above, but still gated by the same should_deploy condition
       # and still skipped if an earlier step in this job fails (pre-existing
       # sequencing, unchanged by this PR).
