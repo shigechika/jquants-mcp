@@ -30,6 +30,22 @@ set -euo pipefail
 PORT="${PORT:-8080}"
 ENABLE_DAILY_FETCH="${ENABLE_DAILY_FETCH:-}"
 
+# Accept the bearer token from a file as well as from the environment, using
+# the *_FILE convention the postgres/mysql images established. A value passed
+# through `environment:` is baked into the container config and shows up in
+# `docker inspect`; a compose `secrets:` entry is a file, and this is what lets
+# one be used. Only worth bothering with when the endpoint is exposed beyond
+# localhost — see compose.yml.
+if [ -n "${MCP_STDIO_SERVE_TOKEN_FILE:-}" ]; then
+    if [ ! -r "${MCP_STDIO_SERVE_TOKEN_FILE}" ]; then
+        echo "FATAL: MCP_STDIO_SERVE_TOKEN_FILE=${MCP_STDIO_SERVE_TOKEN_FILE} is not readable." >&2
+        echo "       Refusing to start: falling back to no authentication would be worse." >&2
+        exit 1
+    fi
+    MCP_STDIO_SERVE_TOKEN="$(cat "${MCP_STDIO_SERVE_TOKEN_FILE}")"
+    export MCP_STDIO_SERVE_TOKEN
+fi
+
 # This entrypoint carries no OAuth layer and no identity plumbing: it does not
 # pass --enable-oauth or --user-env, so the child runs single-user against
 # JQUANTS_API_KEY. On Cloud Run the authentication lives in the oauth2-proxy
@@ -100,8 +116,11 @@ mcp-stdio serve \
 SERVE_PID=$!
 echo "mcp-stdio serve started (PID=${SERVE_PID})"
 
-wait "${SERVE_PID}"
-SERVE_EXIT=$?
+# `|| SERVE_EXIT=$?` rather than a bare `wait`: under `set -e` a non-zero wait
+# terminates the script right here, so the exit-code log and the supercronic
+# cleanup below would never run when the gateway fails (a bad PORT, say).
+SERVE_EXIT=0
+wait "${SERVE_PID}" || SERVE_EXIT=$?
 echo "mcp-stdio serve exited with code ${SERVE_EXIT}"
 
 if [ -n "${SUPERCRONIC_PID:-}" ]; then

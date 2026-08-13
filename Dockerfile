@@ -23,9 +23,16 @@ FROM python:3.12-slim-bookworm
 WORKDIR /app
 
 ARG SUPERCRONIC_VERSION=0.2.33
+# TARGETARCH is set by BuildKit (amd64 / arm64). It matters for the compose
+# path: `docker compose up --build` on an Apple Silicon host produces an arm64
+# image, and a hardcoded amd64 binary would fail with an exec format error the
+# moment ENABLE_DAILY_FETCH is turned on — while the MCP server itself kept
+# running, so the scheduled refresh would silently never happen. An unset value
+# yields a 404 from curl -f, which fails the build loudly rather than quietly.
+ARG TARGETARCH
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
-    && curl -fsSL "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-amd64" \
+    && curl -fsSL "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH}" \
        -o /usr/local/bin/supercronic \
     && chmod +x /usr/local/bin/supercronic \
     && apt-get remove -y --autoremove curl \

@@ -35,7 +35,12 @@ services:
     environment:
       JQUANTS_API_KEY: ${JQUANTS_API_KEY}
       # Read directly by `mcp-stdio serve`. Unset = no authentication.
+      # A value set here is baked into the container config and visible in
+      # `docker inspect`. To keep it out of there, mount the token as a compose
+      # secret and point MCP_STDIO_SERVE_TOKEN_FILE at it instead; the
+      # entrypoint reads the file and exports the value.
       MCP_STDIO_SERVE_TOKEN: ${MCP_STDIO_SERVE_TOKEN:-}
+      MCP_STDIO_SERVE_TOKEN_FILE: ${MCP_STDIO_SERVE_TOKEN_FILE:-}
       # Override the Cloud Run default (/tmp) so the cache persists in the volume.
       JQUANTS_CACHE_DIR: /home/appuser/.cache/jquants-mcp
       PORT: "8080"
