@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.0.1](https://github.com/shigechika/jquants-mcp/compare/v1.0.0...v1.0.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* point the alert policies at the service that actually runs ([#606](https://github.com/shigechika/jquants-mcp/issues/606)) ([31eb97d](https://github.com/shigechika/jquants-mcp/commit/31eb97d8750a496697bce64af0c448c0bd86c87f)), closes [#586](https://github.com/shigechika/jquants-mcp/issues/586)
+
 ## [1.0.0](https://github.com/shigechika/jquants-mcp/compare/v0.56.0...v1.0.0) (2026-08-12)
 
 
