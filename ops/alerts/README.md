@@ -43,10 +43,39 @@ back-to-back queries of the same data disagreed for exactly this reason.
 
 At this request volume, "502s that never stop" is not distinguishable from
 "two cold starts in half an hour" by rate arithmetic. Detecting a crash-loop
-needs a signal that does not depend on someone happening to send a request —
-a log match on the app container failing to start, in the style of `03` and
-`05`, or an external probe. Tracked in #610; do not re-introduce a rate-based
-version without measuring it against live traffic first.
+needs a signal that does not depend on someone happening to send a request.
+
+**#610 investigated the alternatives: the two log-based routes cannot see this
+failure at all, and the external probe can but was declined on cost. The gap is
+accepted deliberately — do not re-open it without new evidence.**
+
+*A log match on the app container restarting* does not exist. Same-revision
+restarts at a regular 4.0-minute interval do appear in the logs, but only on
+2026-08-08, caused by `STARTUP TCP probe failed ... for container "app"`. That
+probe was removed the same day (non-ingress containers cannot be TCP-probed on
+Cloud Run). Today only `oauth2-proxy` is probed, so **if `app` dies the instance
+is not recycled at all** — oauth2-proxy stays healthy and answers 502 forever.
+There is no second startup banner to match. Steady-state same-revision startup
+gaps are 16.7 minutes minimum over 29 samples, i.e. the only thing such a policy
+would measure is cold starts.
+
+*A log match on a crash signature* does not exist either. Since 2026-08-09
+(current config) the logs contain no `Traceback`, no `FATAL`, and no app-side
+ERROR text; every `severity>=ERROR` entry has an empty `textPayload` and is a
+cold-start 502 request log.
+
+*An external probe* is the only remaining option and costs roughly $1/month at
+a 6-hour cadence (~120 wake-ups × ~2 min at 2 vCPU / 8 GiB), while working
+against the `min-instances=0` design that keeps the cache fresh. Declined: the
+failure has never occurred in this configuration, and an over-sensitive or
+cost-bearing monitor is worse than a known gap in a service whose breakage is
+noticed on use.
+
+If new evidence reopens this — an actual crash observed in production, or a
+configuration change that makes a dead `app` container recycle the instance —
+re-measure before writing a policy. In particular, do not re-introduce a
+rate-based sustained-502 version without measuring it against live traffic
+first; the arithmetic above is why.
 
 `07` fires when a session's child process first opens a stale `cache.db`, not
 at container startup — `verify_cache.py` never constructs a `CacheStore`, so a
