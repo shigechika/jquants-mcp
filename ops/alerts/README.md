@@ -45,8 +45,9 @@ At this request volume, "502s that never stop" is not distinguishable from
 "two cold starts in half an hour" by rate arithmetic. Detecting a crash-loop
 needs a signal that does not depend on someone happening to send a request.
 
-**#610 investigated both alternatives and neither works. The gap is accepted
-deliberately — do not re-open it without new evidence.**
+**#610 investigated the alternatives: the two log-based routes cannot see this
+failure at all, and the external probe can but was declined on cost. The gap is
+accepted deliberately — do not re-open it without new evidence.**
 
 *A log match on the app container restarting* does not exist. Same-revision
 restarts at a regular 4.0-minute interval do appear in the logs, but only on
