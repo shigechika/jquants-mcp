@@ -70,8 +70,11 @@ failure has never occurred in this configuration, and an over-sensitive or
 cost-bearing monitor is worse than a known gap in a service whose breakage is
 noticed on use.
 
-Do not re-introduce a rate-based
-version without measuring it against live traffic first.
+If new evidence reopens this — an actual crash observed in production, or a
+configuration change that makes a dead `app` container recycle the instance —
+re-measure before writing a policy. In particular, do not re-introduce a
+rate-based sustained-502 version without measuring it against live traffic
+first; the arithmetic above is why.
 
 `07` fires when a session's child process first opens a stale `cache.db`, not
 at container startup — `verify_cache.py` never constructs a `CacheStore`, so a
