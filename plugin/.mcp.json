@@ -5,11 +5,7 @@
       "command": "uvx",
       "args": ["jquants-mcp"],
       "env": {
-        "JQUANTS_API_TOML_PATH": "${JQUANTS_API_TOML_PATH:-}",
-        "JQUANTS_BASE_URL": "${JQUANTS_BASE_URL:-https://api.jquants.com/v2}",
-        "MAX_RETRIES": "${MAX_RETRIES:-5}",
-        "RETRY_BASE_DELAY": "${RETRY_BASE_DELAY:-1.0}",
-        "MAX_PAGES": "${MAX_PAGES:-10}"
+        "JQUANTS_API_TOML_PATH": "${JQUANTS_API_TOML_PATH:-}"
       }
     }
   }

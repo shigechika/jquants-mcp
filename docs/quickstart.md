@@ -81,6 +81,11 @@ api_key = YOUR_API_KEY_HERE
     /plugin install jquants-mcp@jquants-mcp
     ```
 
+    The plugin launches `uvx`, so it must be on the `PATH` of the process
+    that runs Claude Code — a login shell usually has it, but a
+    GUI-launched app may not; install [uv](https://docs.astral.sh/uv/)
+    system-wide if the plugin fails to start.
+
     Reads the same environment variables as
     [step 2](#2-get-your-j-quants-api-key) above. The plugin's own
     `.mcp.json` intentionally leaves out `JQUANTS_API_KEY` so the key you

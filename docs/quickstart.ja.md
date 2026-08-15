@@ -79,6 +79,12 @@ api_key = YOUR_API_KEY_HERE
     /plugin install jquants-mcp@jquants-mcp
     ```
 
+    プラグインは `uvx` を起動するため、Claude Code を実行するプロセスの
+    `PATH` に `uvx` が通っている必要があります。ログインシェルなら通常
+    問題ありませんが、GUI から起動した場合は通っていないことがあります。
+    プラグインが起動しない場合は [uv](https://docs.astral.sh/uv/) を
+    システム全体にインストールしてください。
+
     上の[手順 2](#2-j-quants-api)と同じ環境変数を読みます。プラグイン
     自身の `.mcp.json` には `JQUANTS_API_KEY` をあえて含めていません。
     ちょうど設定したキー ── `jquants-mcp login` で保存した
