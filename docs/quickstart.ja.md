@@ -69,6 +69,24 @@ api_key = YOUR_API_KEY_HERE
        追加のプロンプトなしで正しいレイアウトが得られる。
     4. 数分以内に、ブラウザ / デスクトップ版の設定がスマホアプリに自動連携する。
 
+=== "Claude Code（プラグイン）"
+
+    このリポジトリはプラグイン 1 個のマーケットプレイスも兼ねているので、
+    Claude Code からそのまま導入できます:
+
+    ```
+    /plugin marketplace add shigechika/jquants-mcp
+    /plugin install jquants-mcp@jquants-mcp
+    ```
+
+    上の[手順 2](#2-j-quants-api)と同じ環境変数を読みます。プラグイン
+    自身の `.mcp.json` には `JQUANTS_API_KEY` をあえて含めていません。
+    ちょうど設定したキー ── `jquants-mcp login` で保存した
+    `~/.config/jquants-mcp/config.ini`、または既存の
+    `~/.jquants-api/jquants-api.toml` ── がそのまま見つかるようにするためです。
+    両方とも上書きしたい場合のみ、Claude Code を起動する前に自分で
+    `JQUANTS_API_KEY` を export してください。
+
 === "Claude Code（CLI）"
 
     ```bash
