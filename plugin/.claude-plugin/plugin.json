@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "jquants-mcp",
+  "displayName": "J-Quants MCP",
+  "description": "Japanese stock market data via J-Quants API v2, for Claude Code. 55 tools covering equities, financials, indices, derivatives, margin/short-selling data, market-wide screeners, technical indicators, and JSON chart data, backed by a local SQLite cache. Zero-config on a machine that already runs jquants-api-client (auto-reads ~/.jquants-api/jquants-api.toml); otherwise run `jquants-mcp login` or set JQUANTS_API_KEY.",
+  "author": {
+    "name": "AIKAWA Shigechika",
+    "url": "https://github.com/shigechika"
+  },
+  "homepage": "https://shigechika.github.io/jquants-mcp/",
+  "repository": "https://github.com/shigechika/jquants-mcp",
+  "license": "MIT",
+  "keywords": [
+    "jquants",
+    "stocks",
+    "japan",
+    "market-data",
+    "finance",
+    "trading",
+    "screener"
+  ]
+}

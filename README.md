@@ -233,7 +233,30 @@ This is the only way to register a key on a multi-user deployment; the server ex
 
 ## Usage
 
-### Claude Code
+### Claude Code (plugin)
+
+This repository doubles as a single-plugin marketplace, so Claude Code can install
+the server for you:
+
+```
+/plugin marketplace add shigechika/jquants-mcp
+/plugin install jquants-mcp@jquants-mcp
+```
+
+The plugin launches `uvx`, so it must be on the `PATH` of the process that
+runs Claude Code — a login shell usually has it, but a GUI-launched app may
+not; install [uv](https://docs.astral.sh/uv/) system-wide if the plugin
+fails to start.
+
+The plugin launches `uvx jquants-mcp` and reads the same environment variables
+described in [Configuration](#configuration). `JQUANTS_API_KEY` is deliberately
+left out of the plugin's own `.mcp.json` so the key you already have — from
+`jquants-mcp login` (`~/.config/jquants-mcp/config.ini`) or the J-Quants
+official `~/.jquants-api/jquants-api.toml` — is still found; export it
+yourself before starting Claude Code only if you want to override both of
+those.
+
+### Claude Code (manual)
 
 Register the MCP server with `claude mcp add`:
 

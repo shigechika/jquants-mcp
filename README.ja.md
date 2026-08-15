@@ -235,7 +235,29 @@ Claude が `register_api_key(api_key="...")` を呼び出します。サーバ�
 
 ## 使い方
 
-### Claude Code
+### Claude Code（プラグイン）
+
+このリポジトリはプラグイン 1 個のマーケットプレイスも兼ねているので、Claude Code から
+そのまま導入できます:
+
+```
+/plugin marketplace add shigechika/jquants-mcp
+/plugin install jquants-mcp@jquants-mcp
+```
+
+プラグインは `uvx` を起動するため、Claude Code を実行するプロセスの `PATH` に
+`uvx` が通っている必要があります。ログインシェルなら通常問題ありませんが、
+GUI から起動した場合は通っていないことがあります。プラグインが起動しない場合は
+[uv](https://docs.astral.sh/uv/) をシステム全体にインストールしてください。
+
+プラグインは `uvx jquants-mcp` を起動し、[設定](#設定)と同じ環境変数を読みます。
+`JQUANTS_API_KEY` はプラグイン自身の `.mcp.json` にはあえて含めていません。
+すでにお持ちのキー ── `jquants-mcp login`（`~/.config/jquants-mcp/config.ini`
+に保存）経由、または J-Quants 公式の `~/.jquants-api/jquants-api.toml` ──
+がそのまま見つかるようにするためです。両方とも上書きしたい場合のみ、
+Claude Code を起動する前に自分で export してください。
+
+### Claude Code（手動）
 
 `claude mcp add` で MCP サーバーを登録:
 

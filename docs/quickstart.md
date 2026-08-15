@@ -71,6 +71,29 @@ api_key = YOUR_API_KEY_HERE
     4. The project settings (including the MCP connection) sync automatically
        to the Claude mobile app within a few minutes.
 
+=== "Claude Code (plugin)"
+
+    This repository doubles as a single-plugin marketplace, so Claude Code
+    can install the server for you:
+
+    ```
+    /plugin marketplace add shigechika/jquants-mcp
+    /plugin install jquants-mcp@jquants-mcp
+    ```
+
+    The plugin launches `uvx`, so it must be on the `PATH` of the process
+    that runs Claude Code — a login shell usually has it, but a
+    GUI-launched app may not; install [uv](https://docs.astral.sh/uv/)
+    system-wide if the plugin fails to start.
+
+    Reads the same environment variables as
+    [step 2](#2-get-your-j-quants-api-key) above. The plugin's own
+    `.mcp.json` intentionally leaves out `JQUANTS_API_KEY` so the key you
+    just set up — `~/.config/jquants-mcp/config.ini` from `jquants-mcp
+    login`, or a pre-existing `~/.jquants-api/jquants-api.toml` — is still
+    found; export `JQUANTS_API_KEY` yourself before starting Claude Code
+    only if you'd rather override both of those.
+
 === "Claude Code (CLI)"
 
     ```bash

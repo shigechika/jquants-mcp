@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "jquants-mcp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["jquants-mcp"],
+      "env": {
+        "JQUANTS_API_TOML_PATH": "${JQUANTS_API_TOML_PATH:-}"
+      }
+    }
+  }
+}
