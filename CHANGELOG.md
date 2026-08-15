@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.2.0](https://github.com/shigechika/jquants-mcp/compare/v1.1.0...v1.2.0) (2026-08-15)
+
+
+### Features
+
+* package the server as a Claude Code plugin ([#615](https://github.com/shigechika/jquants-mcp/issues/615)) ([dc88926](https://github.com/shigechika/jquants-mcp/commit/dc88926281d69fa6030fcb31795cdc3dd0a5a04d))
+
 ## [1.1.0](https://github.com/shigechika/jquants-mcp/compare/v1.0.1...v1.1.0) (2026-08-13)
 
 
