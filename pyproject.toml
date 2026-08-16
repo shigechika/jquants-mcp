@@ -45,6 +45,20 @@ cloud-run = [
     # relying on that coincidence.
     "mcp-stdio[firestore]>=0.42.0",
 ]
+fetch = [
+    # scripts/daily_fetch.py and scripts/screener_populate_history.py are the
+    # only two consumers of jquantsapi (jquants-api-client) in this repo; the
+    # server itself never imports it, so it stays out of the core deps to
+    # keep that install lean. On a self-hosted deployment jquantsapi
+    # typically lived in the venv only via a manual `uv pip install`, so a
+    # routine `uv sync` (including one run by a service manager on start)
+    # would silently remove it (#526). Floor is >=2.4.0, not the lower bound
+    # that would otherwise satisfy this import: jquants-api-client<2.4.0 is
+    # missing the native ROE field and validators.py's ROE resolution
+    # (see its docstring, #565) silently falls back to a less precise
+    # EPS/BPS approximation on older resolves.
+    "jquants-api-client>=2.4.0,<3",
+]
 [project.scripts]
 jquants-mcp = "jquants_mcp.cli:main"
 

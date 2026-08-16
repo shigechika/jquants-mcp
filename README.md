@@ -562,6 +562,8 @@ The CSV sideload script (`import_csv_to_cache.py`) is maintained by the publishe
 
 `scripts/daily_fetch.py` fetches additional J-Quants data via `jquantsapi.ClientV2` and inserts it directly into the SQLite cache. Designed to be called from an external daily pipeline (e.g. a cron job or shell script).
 
+`jquants-api-client` is not a core dependency (the MCP server itself never imports it) — install it with the `fetch` extra: `uv sync --extra fetch`. Without it, a routine `uv sync` on a self-hosted deployment will silently remove a manually-installed copy.
+
 The script reads the plan from `~/.config/jquants-mcp/config.ini` (or `JQUANTS_PLAN` env var) and automatically determines which endpoints to fetch:
 
 | Plan | Endpoints |
