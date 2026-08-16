@@ -518,6 +518,8 @@ CSV サイドロードスクリプト（`import_csv_to_cache.py`）はこのキ�
 
 `scripts/daily_fetch.py` は `jquantsapi.ClientV2` で追加データを取得し、SQLite キャッシュに直接投入するスクリプトです。外部の日次パイプライン（cron やシェルスクリプト）から呼び出す想定です。
 
+`jquants-api-client` はコア依存には含まれません（MCPサーバ本体は import しません）。`fetch` extra でインストールしてください: `uv sync --extra fetch`。入れないまま運用すると、手動インストールしたコピーがセルフホスト環境での通常の `uv sync` 実行時に無警告で消えます。
+
 `~/.config/jquants-mcp/config.ini`（または `JQUANTS_PLAN` 環境変数）からプランを読み取り、取得対象を自動決定します:
 
 | プラン | 取得対象 |
