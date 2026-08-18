@@ -31,10 +31,12 @@ from daily_fetch import (  # noqa: E402
     TTL_90D,
     _available_endpoints,
     _detect_plan_from_api,
+    _earnings_api_call,
     _ensure_tables,
     _fetch_earnings_calendar_sweep,
     _fetch_markets_tier1,
     _load_plan,
+    _map_earnings_record,
     _sanitize_row,
     _store_response_cache,
     _store_tier1,
@@ -63,6 +65,21 @@ class _FakeHTTPError(Exception):
 
     def __init__(self, status_code: int) -> None:
         self.response = MagicMock(status_code=status_code)
+
+
+class RetryError(Exception):
+    """Stand-in for requests.exceptions.RetryError.
+
+    Named ``RetryError`` (not ``_FakeRetryError``) because ``_earnings_api_call``
+    duck-types on the class name, mirroring what requests actually raises when
+    urllib3's own ``Retry(status_forcelist=[429,...])`` is exhausted: unlike
+    ``HTTPError``, ``RetryError.response`` is ``None`` (verified empirically
+    against the real requests/urllib3 stack — no HTTP response object survives
+    to attach), so callers can't recover a status code from it.
+    """
+
+    def __init__(self) -> None:
+        self.response = None
 
 
 # ============================================================
@@ -900,6 +917,128 @@ class TestFetchEarningsCalendarSweep:
         sweep_cli.get_eq_earnings_cal.assert_not_called()
         assert sweep_cli.get_fin_earnings_date.called
 
+    def test_plan_dispatch_light_boundary(self, db_conn):
+        """ "light" itself (the lowest sweep-eligible plan) must use the sweep,
+        not just plans strictly above it."""
+        sweep_cli = self._sweep_cli({})
+        fetch_earnings_calendar(sweep_cli, db_conn, "light")
+        sweep_cli.get_eq_earnings_cal.assert_not_called()
+        assert sweep_cli.get_fin_earnings_date.called
+
+    def test_bare_key_window_never_exceeds_actual_sweep_coverage(self, db_conn, monkeypatch):
+        """The bare Tier2 key's near-term window must be clamped to what the
+        sweep actually covers (EARNINGS_SWEEP_BACK_DAYS/AHEAD_DAYS) — a fixed
+        -7/+14 window silently drops days when the sweep's own back window is
+        narrower, which it is by default (3 < 7)."""
+        monkeypatch.setattr(daily_fetch, "EARNINGS_SWEEP_BACK_DAYS", 1)
+        monkeypatch.setattr(daily_fetch, "EARNINGS_SWEEP_AHEAD_DAYS", 1)
+        today_dt = datetime.today()
+        today = today_dt.strftime("%Y%m%d")
+        today_iso = today_dt.strftime("%Y-%m-%d")
+        cli = self._sweep_cli(
+            {today: [{"Code": "72030", "SchDate": today_iso, "FQName": "1Q", "FYE": "0331"}]}
+        )
+        _fetch_earnings_calendar_sweep(cli, db_conn)
+
+        bare = db_conn.execute(
+            "SELECT data FROM response_cache WHERE cache_key=?",
+            ("/equities/earnings-calendar",),
+        ).fetchone()
+        # Only ever asked the API about a 1-day-back/1-day-ahead window, so
+        # the bare key's near-term union can't legitimately hold more than
+        # that even though its nominal default is -7/+14.
+        requested = {
+            call.kwargs["scheduled_date_yyyymmdd"]
+            for call in cli.get_fin_earnings_date.call_args_list
+        }
+        expected = {d.replace("-", "") for d in daily_fetch._earnings_sweep_dates(today_dt, 1, 1)}
+        assert requested == expected
+        assert len(json.loads(bare[0])) == 1
+
+
+class TestEarningsApiCall:
+    """_earnings_api_call の 429/RetryError リトライ挙動。"""
+
+    @pytest.fixture(autouse=True)
+    def _no_sleep(self, monkeypatch):
+        monkeypatch.setattr(daily_fetch.time, "sleep", lambda *_: None)
+
+    def test_retries_on_429_http_error(self):
+        cli = MagicMock()
+        cli.get_fin_earnings_date.side_effect = [
+            _FakeHTTPError(429),
+            FakeDataFrame([{"Code": "72030"}]),
+        ]
+        result = _earnings_api_call(cli, "2026-08-20")
+        assert result is not None
+        assert cli.get_fin_earnings_date.call_count == 2
+
+    def test_retries_on_retry_error_with_no_response(self):
+        """When jquantsapi's own urllib3 retry (status_forcelist=[429,...]) is
+        exhausted by a sustained 429 storm, requests raises RetryError with
+        response=None (verified against the real requests/urllib3 stack) —
+        not the HTTPError(response=...) shape the status-code check expects.
+        Before the fix, this aborted the sweep immediately instead of backing
+        off, defeating the very mechanism this function exists to provide."""
+        cli = MagicMock()
+        cli.get_fin_earnings_date.side_effect = [
+            RetryError(),
+            FakeDataFrame([{"Code": "72030"}]),
+        ]
+        result = _earnings_api_call(cli, "2026-08-20")
+        assert result is not None
+        assert cli.get_fin_earnings_date.call_count == 2
+
+    def test_non_retryable_error_raises_immediately(self):
+        cli = MagicMock()
+        cli.get_fin_earnings_date.side_effect = _FakeHTTPError(500)
+        with pytest.raises(_FakeHTTPError):
+            _earnings_api_call(cli, "2026-08-20")
+        assert cli.get_fin_earnings_date.call_count == 1
+
+    def test_exhausts_retries_and_raises(self):
+        cli = MagicMock()
+        cli.get_fin_earnings_date.side_effect = RetryError()
+        with pytest.raises(RetryError):
+            _earnings_api_call(cli, "2026-08-20", max_retries=3)
+        assert cli.get_fin_earnings_date.call_count == 3
+
+    def test_non_numeric_retry_after_falls_back_to_exponential_backoff(self):
+        """Retry-After may be HTTP-date formatted per RFC 9110, not just
+        delay-seconds — float() on that raises ValueError, which must not
+        propagate out and abort the sweep."""
+        err = _FakeHTTPError(429)
+        err.response.headers = {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}
+        cli = MagicMock()
+        cli.get_fin_earnings_date.side_effect = [err, FakeDataFrame([{"Code": "72030"}])]
+        result = _earnings_api_call(cli, "2026-08-20")
+        assert result is not None
+
+
+class TestMapEarningsRecord:
+    """_map_earnings_record の Code 欠損ガード。"""
+
+    def test_none_code_is_skipped(self):
+        """raw.get('Code') can be None after _sanitize_row's NaN->None
+        conversion; str(None) == "None" is truthy, so a naive `if not code`
+        check on the stringified value silently accepts a garbage code
+        instead of skipping the record as the docstring promises."""
+        assert _map_earnings_record({"Code": None, "SchDate": "2026-08-20"}, "2026-08-20") is None
+
+    def test_missing_code_key_is_skipped(self):
+        assert _map_earnings_record({"SchDate": "2026-08-20"}, "2026-08-20") is None
+
+    def test_blank_code_is_skipped(self):
+        assert _map_earnings_record({"Code": "  ", "SchDate": "2026-08-20"}, "2026-08-20") is None
+
+    def test_valid_code_is_kept(self):
+        rec = _map_earnings_record(
+            {"Code": "72030", "SchDate": "2026-08-20", "FQName": "1Q", "FYE": "0331"},
+            "2026-08-20",
+        )
+        assert rec is not None
+        assert rec["Code"] == "72030"
+
 
 # ============================================================
 # 投資部門別売買動向
@@ -1259,6 +1398,68 @@ class TestMainExitCode:
         monkeypatch.setitem(FETCH_REGISTRY, "fins_summary", ("Financial summaries", _ok))
         # No failed step => main returns normally (no SystemExit).
         main()
+
+    def test_earnings_back_ahead_flags_override_sweep_window(self, monkeypatch, tmp_path):
+        """--earnings-back/--earnings-ahead widen the sweep for a manual
+        backfill run, per the plan's post-merge backfill step."""
+        # main() mutates these module globals directly (not via monkeypatch),
+        # so pin them here to guarantee pytest restores the pre-test value —
+        # otherwise this test would permanently widen the window for every
+        # test that runs after it in the same process.
+        monkeypatch.setattr(
+            daily_fetch, "EARNINGS_SWEEP_BACK_DAYS", daily_fetch.EARNINGS_SWEEP_BACK_DAYS
+        )
+        monkeypatch.setattr(
+            daily_fetch, "EARNINGS_SWEEP_AHEAD_DAYS", daily_fetch.EARNINGS_SWEEP_AHEAD_DAYS
+        )
+        monkeypatch.setenv("JQUANTS_PLAN", "premium")
+        db = tmp_path / "cache.db"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "daily_fetch.py",
+                "--earnings-cal",
+                "--earnings-back",
+                "365",
+                "--earnings-ahead",
+                "120",
+                "--skip-screener-results",
+                "--db",
+                str(db),
+            ],
+        )
+        seen: dict[str, int] = {}
+
+        def _capture(cli, conn, plan):
+            seen["back"] = daily_fetch.EARNINGS_SWEEP_BACK_DAYS
+            seen["ahead"] = daily_fetch.EARNINGS_SWEEP_AHEAD_DAYS
+            return 0
+
+        monkeypatch.setitem(FETCH_REGISTRY, "earnings_cal", ("Earnings calendar", _capture))
+        main()
+        assert seen == {"back": 365, "ahead": 120}
+
+    def test_earnings_back_ahead_flags_omitted_keep_default_window(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("JQUANTS_PLAN", "premium")
+        db = tmp_path / "cache.db"
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["daily_fetch.py", "--earnings-cal", "--skip-screener-results", "--db", str(db)],
+        )
+        default_back = daily_fetch.EARNINGS_SWEEP_BACK_DAYS
+        default_ahead = daily_fetch.EARNINGS_SWEEP_AHEAD_DAYS
+        seen: dict[str, int] = {}
+
+        def _capture(cli, conn, plan):
+            seen["back"] = daily_fetch.EARNINGS_SWEEP_BACK_DAYS
+            seen["ahead"] = daily_fetch.EARNINGS_SWEEP_AHEAD_DAYS
+            return 0
+
+        monkeypatch.setitem(FETCH_REGISTRY, "earnings_cal", ("Earnings calendar", _capture))
+        main()
+        assert seen == {"back": default_back, "ahead": default_ahead}
 
 
 # ============================================================

@@ -293,6 +293,11 @@ def register(
         fiscal-year issues only (the older /equities/earnings-calendar), since
         the newer endpoint's Free-tier window excludes the last 12 weeks by
         publication date.
+        No-argument query defaults to a -7/+14 day window around today. The
+        Light+ all-issues coverage described above assumes daily_fetch's
+        /fins/earnings-date sweep has already populated the cache; a
+        same-plan live-fallback still queries the narrower legacy endpoint
+        (jquants-mcp#621).
         Falls back to one live fetch on a cache miss (code queries always;
         date queries only for today/future dates, #523; the no-argument query
         when nothing is scheduled from today onwards, #536).

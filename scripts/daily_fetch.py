@@ -396,7 +396,12 @@ def _map_earnings_record(raw: dict, swept_date_iso: str) -> dict | None:
     Date falls back to the day being swept, which is always the authoritative
     date for that record under scheduled_date= queries.
     """
-    code = str(raw.get("Code", "")).strip()
+    code_raw = raw.get("Code")
+    if code_raw is None:
+        # _sanitize_row turns a NaN Code into None; str(None) == "None" is
+        # truthy, so this must be checked before stringifying.
+        return None
+    code = str(code_raw).strip()
     if not code:
         return None
     sch_date = str(raw.get("SchDate", ""))[:10]
@@ -436,30 +441,45 @@ def _earnings_api_call(cli: jquantsapi.ClientV2, date_iso: str, *, max_retries: 
     has no backoff_factor and does not actually avoid a 429 storm — see the
     EARNINGS_SWEEP_MIN_INTERVAL_S comment. This wrapper paces every call and,
     on a 429 that survives jquantsapi's built-in retries, backs off further.
+
+    When jquantsapi's own retry is itself exhausted by a sustained 429 storm,
+    requests raises ``RetryError`` with ``response=None`` (verified against
+    the real requests/urllib3 stack — no HTTP response object survives to
+    attach), not the ``HTTPError(response=...)`` shape a plain status-code
+    check expects. That case is treated as retryable too, just without a
+    Retry-After header to read.
     """
     date_ymd = date_iso.replace("-", "")
+    time.sleep(EARNINGS_SWEEP_MIN_INTERVAL_S)
     for attempt in range(max_retries):
-        time.sleep(EARNINGS_SWEEP_MIN_INTERVAL_S)
         try:
             return cli.get_fin_earnings_date(scheduled_date_yyyymmdd=date_ymd)
         except Exception as e:  # noqa: BLE001 — duck-typed HTTP status below; any
             # other failure is retried the same way since jquantsapi's own
             # exception types are not part of its stable import surface.
             status = getattr(getattr(e, "response", None), "status_code", None)
-            if status != 429 or attempt == max_retries - 1:
+            retryable = status == 429 or type(e).__name__ == "RetryError"
+            if not retryable or attempt == max_retries - 1:
                 raise
             retry_after = None
             headers = getattr(getattr(e, "response", None), "headers", None)
             if headers:
                 retry_after = headers.get("Retry-After")
-            wait = (
-                float(retry_after) if retry_after else EARNINGS_SWEEP_MIN_INTERVAL_S * (2**attempt)
-            )
+            wait = None
+            if retry_after:
+                try:
+                    wait = float(retry_after)
+                except ValueError:
+                    pass  # Retry-After can be HTTP-date formatted (RFC 9110)
+            if wait is None:
+                wait = EARNINGS_SWEEP_MIN_INTERVAL_S * (2**attempt)
             print(
-                f"  {date_iso}: 429, retrying in {wait:.1f}s (attempt {attempt + 1}/{max_retries})"
+                f"  {date_iso}: {status or 'retry exhausted'}, retrying in {wait:.1f}s "
+                f"(attempt {attempt + 1}/{max_retries})"
             )
+            # This sleep also serves as the pacing delay before the next
+            # attempt — no separate pacing sleep is added per retry.
             time.sleep(wait)
-    raise RuntimeError(f"earnings sweep: exhausted retries for {date_iso}")
 
 
 def _fetch_earnings_calendar_legacy(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
@@ -609,7 +629,11 @@ def _fetch_earnings_calendar_sweep(cli: jquantsapi.ClientV2, conn: sqlite3.Conne
 
     # Bare no-params key: kept narrow (near-term window) to match the tool's
     # no-arg branch and avoid a ~1MB blob now that coverage is much larger.
-    near_back, near_ahead = 7, 14
+    # Clamped to the sweep's actual coverage (EARNINGS_SWEEP_BACK_DAYS is 3,
+    # narrower than the tool's -7) — requesting a wider window than what was
+    # actually swept would silently omit those days rather than error.
+    near_back = min(7, EARNINGS_SWEEP_BACK_DAYS)
+    near_ahead = min(14, EARNINGS_SWEEP_AHEAD_DAYS)
     near_dates = _earnings_sweep_dates(today, near_back, near_ahead)
     near_records = [rec for d in near_dates for rec in fetched.get(d, [])]
     conn.execute(
@@ -1168,6 +1192,7 @@ _TIER1_TABLES = [
 
 
 def main() -> None:
+    global EARNINGS_SWEEP_BACK_DAYS, EARNINGS_SWEEP_AHEAD_DAYS
     configured_plan = _load_plan()
     auto_detect = configured_plan is None
 
@@ -1183,6 +1208,18 @@ def main() -> None:
     )
     parser.add_argument(
         "--earnings-cal", action="store_true", help="fetch earnings calendar (Free+)"
+    )
+    parser.add_argument(
+        "--earnings-back",
+        type=int,
+        metavar="DAYS",
+        help=f"earnings sweep: days to look back, Light+ only (default: {EARNINGS_SWEEP_BACK_DAYS})",
+    )
+    parser.add_argument(
+        "--earnings-ahead",
+        type=int,
+        metavar="DAYS",
+        help=f"earnings sweep: days to look ahead, Light+ only (default: {EARNINGS_SWEEP_AHEAD_DAYS})",
     )
     parser.add_argument(
         "--investor-types", action="store_true", help="fetch investor types (Light+)"
@@ -1221,6 +1258,13 @@ def main() -> None:
         help=f"cache DB path (default: {DEFAULT_DB_PATH})",
     )
     args = parser.parse_args()
+
+    # Backfill/one-off widening of the earnings sweep window (Light+ only;
+    # _fetch_earnings_calendar_sweep reads these as module globals).
+    if args.earnings_back is not None:
+        EARNINGS_SWEEP_BACK_DAYS = args.earnings_back
+    if args.earnings_ahead is not None:
+        EARNINGS_SWEEP_AHEAD_DAYS = args.earnings_ahead
 
     # Use explicit options if given, otherwise auto-decide based on the plan
     explicit = {
