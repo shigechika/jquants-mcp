@@ -87,6 +87,20 @@ TTL_24H = 24 * 3600
 TTL_7D = 7 * 24 * 3600
 TTL_90D = 90 * 24 * 3600
 
+# Earnings calendar sweep window (Light+ plans only; see fetch_earnings_calendar).
+# BACK covers the weekend gap for the weekday-only cron (30 8 * * 1-5): Monday's
+# run needs to pick up Fri-Sun. AHEAD is roughly one reporting cycle so "next
+# earnings date" stays answerable for effectively every issue.
+EARNINGS_SWEEP_BACK_DAYS = 3
+EARNINGS_SWEEP_AHEAD_DAYS = 90
+EARNINGS_MAX_CONSECUTIVE_ERRORS = 3
+# jquantsapi's own urllib3.Retry(total=3, status_forcelist=[429,...]) has no
+# backoff_factor, so it retries near-instantly and does not actually avoid a
+# 429 storm. A sequential sweep at 0.4s spacing was observed to trip a 429
+# lockout after ~30 requests that persisted through a 20s cooldown retry, so
+# pacing is not derived from the (unreliable) auto-detected plan tier.
+EARNINGS_SWEEP_MIN_INTERVAL_S = 1.5
+
 
 def _load_plan() -> str | None:
     """Load plan from environment variable or config file.
@@ -346,12 +360,116 @@ def fetch_fins_summary(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan:
     return count
 
 
-def fetch_earnings_calendar(
-    cli: jquantsapi.ClientV2,
-    conn: sqlite3.Connection,
-    plan: str,
-) -> int:
+# /fins/earnings-date's FQName/FYE are machine-friendly ("1Q"/"0331"); the
+# legacy /equities/earnings-calendar (and everything downstream that reads its
+# stored records — get_earnings_this_week's fiscal_quarter/fiscal_year_end have
+# no fallback for these two) expects the old display strings. Mapping at write
+# time means no reader, cache schema, or test needs to change. Verified against
+# 4,040 production rows: these are the only five FQ values on record ("本決算"
+# is the annual label, not "通期"), and FY always renders as month+day.
+_FQ_NAME_TO_LEGACY = {
+    "1Q": "第１四半期",
+    "2Q": "第２四半期",
+    "3Q": "第３四半期",
+    "4Q": "第４四半期",
+    "FY": "本決算",
+}
+
+
+def _fye_to_legacy_fy(fye: str) -> str | None:
+    """Render "0331" as "3月31日" (the legacy FY string). None if unparseable."""
+    if not fye or len(fye) != 4 or not fye.isdigit():
+        return None
+    month, day = int(fye[:2]), int(fye[2:])
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return None
+    return f"{month}月{day}日"
+
+
+def _map_earnings_record(raw: dict, swept_date_iso: str) -> dict | None:
+    """Map a /fins/earnings-date record onto the legacy record shape.
+
+    Returns None when there is no usable Code (mirrors the legacy skip at the
+    Tier 1 write site). SchDate can be "" (未定) — via jquantsapi this becomes
+    NaT, and str(NaT)[:10] == "NaT" (isinstance(NaT, float) is False, so the
+    usual _sanitize_row NaN handling does not catch it) — so an unparseable
+    Date falls back to the day being swept, which is always the authoritative
+    date for that record under scheduled_date= queries.
+    """
+    code = str(raw.get("Code", "")).strip()
+    if not code:
+        return None
+    sch_date = str(raw.get("SchDate", ""))[:10]
+    if len(sch_date) != 10 or not sch_date[0].isdigit():
+        sch_date = swept_date_iso
+    fq_name = raw.get("FQName", "")
+    fye = str(raw.get("FYE", ""))
+    return {
+        "Date": sch_date,
+        "Code": code,
+        "CoName": raw.get("CoName"),
+        "FQ": _FQ_NAME_TO_LEGACY.get(fq_name, fq_name),
+        "FY": _fye_to_legacy_fy(fye) or fye,
+        # Additive, new — not present in the legacy payload.
+        "PubDate": str(raw.get("PubDate", ""))[:10] or None,
+        "CoNameEn": raw.get("CoNameEn"),
+    }
+
+
+def _earnings_sweep_dates(today: datetime, back: int, ahead: int) -> list[str]:
+    """ISO dates from today-back to today+ahead, weekends excluded.
+
+    Verified against production data: 4,040 rows, zero on Saturday/Sunday.
+    """
+    dates = []
+    for delta in range(-back, ahead + 1):
+        d = today + timedelta(days=delta)
+        if d.weekday() < 5:  # Mon-Fri
+            dates.append(d.strftime("%Y-%m-%d"))
+    return dates
+
+
+def _earnings_api_call(cli: jquantsapi.ClientV2, date_iso: str, *, max_retries: int = 5):
+    """Paced, 429-retrying single-day scheduled_date= call.
+
+    jquantsapi's own retry (urllib3.Retry(total=3, status_forcelist=[429,...]))
+    has no backoff_factor and does not actually avoid a 429 storm — see the
+    EARNINGS_SWEEP_MIN_INTERVAL_S comment. This wrapper paces every call and,
+    on a 429 that survives jquantsapi's built-in retries, backs off further.
+    """
+    date_ymd = date_iso.replace("-", "")
+    for attempt in range(max_retries):
+        time.sleep(EARNINGS_SWEEP_MIN_INTERVAL_S)
+        try:
+            return cli.get_fin_earnings_date(scheduled_date_yyyymmdd=date_ymd)
+        except Exception as e:  # noqa: BLE001 — duck-typed HTTP status below; any
+            # other failure is retried the same way since jquantsapi's own
+            # exception types are not part of its stable import surface.
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status != 429 or attempt == max_retries - 1:
+                raise
+            retry_after = None
+            headers = getattr(getattr(e, "response", None), "headers", None)
+            if headers:
+                retry_after = headers.get("Retry-After")
+            wait = (
+                float(retry_after) if retry_after else EARNINGS_SWEEP_MIN_INTERVAL_S * (2**attempt)
+            )
+            print(
+                f"  {date_iso}: 429, retrying in {wait:.1f}s (attempt {attempt + 1}/{max_retries})"
+            )
+            time.sleep(wait)
+    raise RuntimeError(f"earnings sweep: exhausted retries for {date_iso}")
+
+
+def _fetch_earnings_calendar_legacy(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
     """Fetch earnings calendar and store in Tier 2 response cache by date.
+
+    Free-plan path: /equities/earnings-calendar covers only March/September
+    fiscal-year issues and only the next business day (see
+    fetch_earnings_calendar's docstring for why Light+ uses a different
+    endpoint instead of gating this one out). Kept verbatim from before the
+    /fins/earnings-date migration so Free-plan behaviour is unchanged.
 
     The API returns earnings announcements for the next business day.
     Stored with date-keyed entries to accumulate ~3 months of data (TTL 90 days).
@@ -414,6 +532,125 @@ def fetch_earnings_calendar(
     conn.commit()
 
     return len(records)
+
+
+def _fetch_earnings_calendar_sweep(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
+    """Fetch earnings calendar via /fins/earnings-date (Light+ plans).
+
+    Sweeps scheduled_date= over a forward window and replaces Tier 1 rows PER
+    DAY. scheduled_date= is server-resolved to "currently valid", so a given
+    day's response is authoritative for that day — a reschedule away from a
+    date is corrected the moment that date is next swept, with no supersession
+    logic or identity key needed (contrast the (Code,FQName,FYE)-keyed state
+    machine a PubDate-delta approach would require, verified against production
+    data to have real reschedule cases). This is what makes the per-day
+    delete-and-replace safe against phantom rows without a schema change.
+
+    Two-phase to guard against a misdetected plan or an entitlement change
+    silently emptying the table: fetch every day into memory first, and if the
+    WHOLE sweep came back with zero rows across every day, write nothing.
+    A day that legitimately has zero scheduled announcements still wipes that
+    day once the whole-sweep-empty guard has passed — that is intentional; it
+    is the mechanism that removes phantoms.
+    """
+    today = datetime.today()
+    dates = _earnings_sweep_dates(today, EARNINGS_SWEEP_BACK_DAYS, EARNINGS_SWEEP_AHEAD_DAYS)
+
+    fetched: dict[str, list[dict]] = {}
+    consecutive_errors = 0
+    for date_iso in dates:
+        try:
+            df = _earnings_api_call(cli, date_iso)
+        except Exception as e:  # noqa: BLE001 — see EARNINGS_MAX_CONSECUTIVE_ERRORS:
+            # a handful of bad days should not abort a ~90-day sweep, but a
+            # sustained failure (e.g. exhausted rate limit, bad key) should
+            # stop early rather than burn through the remaining slow no-ops.
+            consecutive_errors += 1
+            print(f"  {date_iso}: error ({e})")
+            if consecutive_errors >= EARNINGS_MAX_CONSECUTIVE_ERRORS:
+                raise RuntimeError(
+                    f"earnings sweep: {consecutive_errors} consecutive failures, aborting"
+                ) from e
+            continue
+        consecutive_errors = 0
+        records = [
+            _map_earnings_record(_sanitize_row(r.to_dict()), date_iso) for _, r in df.iterrows()
+        ]
+        fetched[date_iso] = [r for r in records if r is not None]
+
+    total = sum(len(rows) for rows in fetched.values())
+    if total == 0:
+        print(f"  no rows across {len(dates)} days — skipping replace")
+        return 0
+
+    now = time.time()
+    for date_iso, records in fetched.items():
+        conn.execute("DELETE FROM equities_earnings_calendar WHERE date = ?", (date_iso,))
+        for rec in records:
+            code = str(rec.get("Code", ""))
+            ann_date = str(rec.get("Date", ""))[:10]
+            if not code or len(ann_date) < 10:
+                continue
+            conn.execute(
+                "INSERT OR REPLACE INTO equities_earnings_calendar "
+                "(code, date, data, fetched_at) VALUES (?, ?, ?, ?)",
+                (code, ann_date, json.dumps(rec, ensure_ascii=False, default=str), now),
+            )
+        # Tier 2: these are cache keys, not an endpoint declaration — the data
+        # now comes from /fins/earnings-date, but readers (_search_earnings_by_code's
+        # LIKE scan, the no-arg branch's bare-key fallback) still look under the
+        # legacy key shape, so keep writing it.
+        response_data = json.dumps(records, ensure_ascii=False, default=str)
+        date_key = date_iso.replace("-", "")
+        conn.execute(
+            "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
+            (f"/equities/earnings-calendar?date={date_key}", response_data, now, TTL_90D),
+        )
+
+    # Bare no-params key: kept narrow (near-term window) to match the tool's
+    # no-arg branch and avoid a ~1MB blob now that coverage is much larger.
+    near_back, near_ahead = 7, 14
+    near_dates = _earnings_sweep_dates(today, near_back, near_ahead)
+    near_records = [rec for d in near_dates for rec in fetched.get(d, [])]
+    conn.execute(
+        "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
+        (
+            "/equities/earnings-calendar",
+            json.dumps(near_records, ensure_ascii=False, default=str),
+            now,
+            TTL_90D,
+        ),
+    )
+
+    conn.commit()
+    print(f"  swept {len(dates)} days, {total} rows")
+    return total
+
+
+def fetch_earnings_calendar(
+    cli: jquantsapi.ClientV2,
+    conn: sqlite3.Connection,
+    plan: str,
+) -> int:
+    """Fetch earnings calendar; source depends on plan.
+
+    Free: /equities/earnings-calendar (legacy). Its two long-standing limits
+    (March/September fiscal-year issues only, next-business-day only) are
+    unrelated to the 2026-08-03 J-Quants release, which only renamed the
+    endpoint's display label ("機能・レスポンスの変更はありません") — see
+    jquants-mcp#618. Kept for Free because the newer endpoint's Free-tier
+    window is delayed by publication date (12 weeks), so a Free key would see
+    an empty 200 for anything recent rather than an error — silently going
+    dark is worse than staying on the endpoint that has always worked here.
+
+    Light+: /fins/earnings-date via a scheduled_date= forward sweep (see
+    _fetch_earnings_calendar_sweep). All listed issues incl. REITs, any
+    fiscal year-end, and the ~10:05 JST daily update removes the #523 timing
+    race entirely (the legacy feed updated ~19:00 JST, irregularly).
+    """
+    if PLAN_LEVELS.get(plan, 0) < PLAN_LEVELS["light"]:
+        return _fetch_earnings_calendar_legacy(cli, conn)
+    return _fetch_earnings_calendar_sweep(cli, conn)
 
 
 def fetch_investor_types(

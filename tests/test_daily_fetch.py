@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -21,6 +22,7 @@ sys.modules.setdefault("jquantsapi", _jquantsapi_mock)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
+import daily_fetch  # noqa: E402  — module object needed for monkeypatch.setattr
 from daily_fetch import (  # noqa: E402
     ENDPOINT_MIN_PLAN,
     FETCH_REGISTRY,
@@ -30,6 +32,7 @@ from daily_fetch import (  # noqa: E402
     _available_endpoints,
     _detect_plan_from_api,
     _ensure_tables,
+    _fetch_earnings_calendar_sweep,
     _fetch_markets_tier1,
     _load_plan,
     _sanitize_row,
@@ -559,8 +562,8 @@ class TestFetchFinsSummary:
 # ============================================================
 
 
-class TestFetchEarningsCalendar:
-    """fetch_earnings_calendar のテスト。"""
+class TestFetchEarningsCalendarLegacyFree:
+    """fetch_earnings_calendar の Free プラン経路（legacy /equities/earnings-calendar）。"""
 
     def test_basic_fetch(self, db_conn):
         df = FakeDataFrame(
@@ -571,8 +574,9 @@ class TestFetchEarningsCalendar:
         )
         cli = _mock_cli(get_eq_earnings_cal=df)
 
-        n = fetch_earnings_calendar(cli, db_conn, "light")
+        n = fetch_earnings_calendar(cli, db_conn, "free")
         assert n == 2
+        cli.get_fin_earnings_date.assert_not_called()
 
         # パラメータなしキー（最新データ用）
         row = db_conn.execute(
@@ -599,7 +603,7 @@ class TestFetchEarningsCalendar:
             ]
         )
         cli = _mock_cli(get_eq_earnings_cal=df)
-        fetch_earnings_calendar(cli, db_conn, "light")
+        fetch_earnings_calendar(cli, db_conn, "free")
 
         rows = db_conn.execute(
             "SELECT code, date FROM equities_earnings_calendar ORDER BY code"
@@ -615,7 +619,7 @@ class TestFetchEarningsCalendar:
 
         df = FakeDataFrame([{"Code": "72030", "Date": "2026-03-01", "FQ": "3Q"}])
         cli = _mock_cli(get_eq_earnings_cal=df)
-        fetch_earnings_calendar(cli, db_conn, "light")
+        fetch_earnings_calendar(cli, db_conn, "free")
 
         row = db_conn.execute(
             "SELECT data FROM equities_earnings_calendar WHERE code=? AND date=?",
@@ -627,8 +631,274 @@ class TestFetchEarningsCalendar:
 
     def test_empty_response(self, db_conn):
         cli = _mock_cli(get_eq_earnings_cal=FakeDataFrame())
-        n = fetch_earnings_calendar(cli, db_conn, "light")
+        n = fetch_earnings_calendar(cli, db_conn, "free")
         assert n == 0
+
+
+class TestFetchEarningsCalendarSweep:
+    """fetch_earnings_calendar の Light+ プラン経路（/fins/earnings-date スイープ）。"""
+
+    @pytest.fixture(autouse=True)
+    def _narrow_window_and_no_sleep(self, monkeypatch):
+        # Keep the sweep small (today +/- 2 days = 3-5 weekday dates) and
+        # instant so this class runs in milliseconds, not tens of seconds.
+        monkeypatch.setattr(daily_fetch, "EARNINGS_SWEEP_BACK_DAYS", 2)
+        monkeypatch.setattr(daily_fetch, "EARNINGS_SWEEP_AHEAD_DAYS", 2)
+        monkeypatch.setattr(daily_fetch.time, "sleep", lambda *_: None)
+
+    @staticmethod
+    def _sweep_cli(day_rows: dict[str, list[dict]]) -> MagicMock:
+        """A cli whose get_fin_earnings_date response depends on the swept day."""
+        cli = MagicMock()
+        cli.get_fin_earnings_date.side_effect = lambda **kw: FakeDataFrame(
+            day_rows.get(kw["scheduled_date_yyyymmdd"], [])
+        )
+        return cli
+
+    def _today_ymd(self) -> str:
+        return datetime.today().strftime("%Y%m%d")
+
+    def test_field_mapping(self, db_conn):
+        today = self._today_ymd()
+        cli = self._sweep_cli(
+            {
+                today: [
+                    {
+                        "Code": "72030",
+                        "CoName": "トヨタ自動車",
+                        "SchDate": "2026-11-06",
+                        "PubDate": "2026-09-30",
+                        "FQName": "2Q",
+                        "FYE": "0331",
+                        "CoNameEn": "TOYOTA MOTOR CORPORATION",
+                    },
+                    {
+                        "Code": "89510",
+                        "CoName": "日本ビルファンド投資法人",
+                        "SchDate": "2026-11-13",
+                        "PubDate": "2026-08-15",
+                        "FQName": "FY",
+                        "FYE": "0630",
+                        "CoNameEn": "",
+                    },
+                ]
+            }
+        )
+        n = _fetch_earnings_calendar_sweep(cli, db_conn)
+        assert n == 2
+
+        rec = json.loads(
+            db_conn.execute(
+                "SELECT data FROM equities_earnings_calendar WHERE code=?", ("72030",)
+            ).fetchone()[0]
+        )
+        assert rec["Date"] == "2026-11-06"
+        assert rec["FQ"] == "第２四半期"
+        assert rec["FY"] == "3月31日"
+        assert rec["PubDate"] == "2026-09-30"
+        assert rec["CoNameEn"] == "TOYOTA MOTOR CORPORATION"
+        assert "SectorNm" not in rec
+        assert "Section" not in rec
+
+        rec2 = json.loads(
+            db_conn.execute(
+                "SELECT data FROM equities_earnings_calendar WHERE code=?", ("89510",)
+            ).fetchone()[0]
+        )
+        assert rec2["FQ"] == "本決算"
+        assert rec2["FY"] == "6月30日"
+
+    def test_unknown_fq_name_passes_through(self, db_conn):
+        today = self._today_ymd()
+        cli = self._sweep_cli(
+            {today: [{"Code": "72030", "SchDate": "2026-11-06", "FQName": "5Q", "FYE": "0331"}]}
+        )
+        _fetch_earnings_calendar_sweep(cli, db_conn)
+        rec = json.loads(
+            db_conn.execute(
+                "SELECT data FROM equities_earnings_calendar WHERE code=?", ("72030",)
+            ).fetchone()[0]
+        )
+        assert rec["FQ"] == "5Q"
+
+    def test_per_day_replace_removes_phantom(self, db_conn):
+        """A stale row at a swept date is replaced, not merely appended to."""
+        today_dt = datetime.today()
+        today = today_dt.strftime("%Y%m%d")
+        today_iso = today_dt.strftime("%Y-%m-%d")
+
+        # Seed a phantom row: some other code that a prior run left at today.
+        db_conn.execute(
+            "INSERT INTO equities_earnings_calendar (code, date, data, fetched_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("99999", today_iso, json.dumps({"Code": "99999", "Date": today_iso}), 0),
+        )
+        db_conn.commit()
+
+        cli = self._sweep_cli(
+            {today: [{"Code": "72030", "SchDate": today_iso, "FQName": "1Q", "FYE": "0331"}]}
+        )
+        _fetch_earnings_calendar_sweep(cli, db_conn)
+
+        rows = db_conn.execute(
+            "SELECT code FROM equities_earnings_calendar WHERE date=?", (today_iso,)
+        ).fetchall()
+        codes = {r[0] for r in rows}
+        assert codes == {"72030"}
+        assert "99999" not in codes
+
+    def test_empty_day_wipes_that_day_when_sweep_total_positive(self, db_conn):
+        """A day with zero scheduled announcements wipes prior rows at that
+        date, as long as the sweep overall returned something — this is the
+        phantom-removal mechanism, not a bug."""
+        today_dt = datetime.today()
+        tomorrow_iso = (today_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+        today_iso = today_dt.strftime("%Y-%m-%d")
+        today = today_dt.strftime("%Y%m%d")
+        tomorrow = (today_dt + timedelta(days=1)).strftime("%Y%m%d")
+        if datetime.strptime(tomorrow, "%Y%m%d").weekday() >= 5:
+            pytest.skip("tomorrow is a weekend; sweep dates would skip it")
+
+        db_conn.execute(
+            "INSERT INTO equities_earnings_calendar (code, date, data, fetched_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("99999", tomorrow_iso, json.dumps({"Code": "99999", "Date": tomorrow_iso}), 0),
+        )
+        db_conn.commit()
+
+        # tomorrow's response is empty, but today has a row, so the sweep total > 0.
+        cli = self._sweep_cli(
+            {today: [{"Code": "72030", "SchDate": today_iso, "FQName": "1Q", "FYE": "0331"}]}
+        )
+        _fetch_earnings_calendar_sweep(cli, db_conn)
+
+        remaining = db_conn.execute(
+            "SELECT code FROM equities_earnings_calendar WHERE date=?", (tomorrow_iso,)
+        ).fetchall()
+        assert remaining == []
+
+    def test_whole_sweep_empty_leaves_existing_rows_untouched(self, db_conn):
+        """Guard against a misdetected plan / entitlement change wiping the
+        table on empty 200s: if EVERY swept day is empty, write nothing."""
+        today_iso = datetime.today().strftime("%Y-%m-%d")
+        db_conn.execute(
+            "INSERT INTO equities_earnings_calendar (code, date, data, fetched_at) "
+            "VALUES (?, ?, ?, ?)",
+            ("11110", today_iso, json.dumps({"Code": "11110", "Date": today_iso}), 0),
+        )
+        db_conn.commit()
+
+        cli = self._sweep_cli({})  # every day returns []
+        n = _fetch_earnings_calendar_sweep(cli, db_conn)
+        assert n == 0
+
+        rows = db_conn.execute(
+            "SELECT code FROM equities_earnings_calendar WHERE code=?", ("11110",)
+        ).fetchall()
+        assert len(rows) == 1
+
+    def test_consecutive_errors_abort(self, db_conn, monkeypatch):
+        monkeypatch.setattr(daily_fetch, "EARNINGS_MAX_CONSECUTIVE_ERRORS", 3)
+        cli = MagicMock()
+        cli.get_fin_earnings_date.side_effect = RuntimeError("boom")
+        with pytest.raises(RuntimeError, match="consecutive failures"):
+            _fetch_earnings_calendar_sweep(cli, db_conn)
+
+    def test_recovers_after_fewer_than_max_errors(self, db_conn, monkeypatch):
+        monkeypatch.setattr(daily_fetch, "EARNINGS_MAX_CONSECUTIVE_ERRORS", 3)
+        today = self._today_ymd()
+        call_log: list[str] = []
+
+        def _side_effect(**kw):
+            date = kw["scheduled_date_yyyymmdd"]
+            call_log.append(date)
+            if date != today:
+                raise RuntimeError("boom")
+            return FakeDataFrame(
+                [{"Code": "72030", "SchDate": today, "FQName": "1Q", "FYE": "0331"}]
+            )
+
+        cli = MagicMock()
+        cli.get_fin_earnings_date.side_effect = _side_effect
+        n = _fetch_earnings_calendar_sweep(cli, db_conn)
+        assert n == 1  # only `today` ever returns rows; the failing days are skipped
+
+    def test_weekend_dates_never_requested(self, db_conn, monkeypatch):
+        monkeypatch.setattr(daily_fetch, "EARNINGS_SWEEP_BACK_DAYS", 7)
+        monkeypatch.setattr(daily_fetch, "EARNINGS_SWEEP_AHEAD_DAYS", 7)
+        cli = self._sweep_cli({})
+        _fetch_earnings_calendar_sweep(cli, db_conn)
+        requested = [
+            call.kwargs["scheduled_date_yyyymmdd"]
+            for call in cli.get_fin_earnings_date.call_args_list
+        ]
+        weekdays = {datetime.strptime(d, "%Y%m%d").weekday() for d in requested}
+        assert weekdays.issubset({0, 1, 2, 3, 4})
+
+    def test_both_tier2_keys_written(self, db_conn):
+        today_dt = datetime.today()
+        today = today_dt.strftime("%Y%m%d")
+        today_iso = today_dt.strftime("%Y-%m-%d")
+        cli = self._sweep_cli(
+            {today: [{"Code": "72030", "SchDate": today_iso, "FQName": "1Q", "FYE": "0331"}]}
+        )
+        _fetch_earnings_calendar_sweep(cli, db_conn)
+
+        dated = db_conn.execute(
+            "SELECT ttl_seconds FROM response_cache WHERE cache_key=?",
+            (f"/equities/earnings-calendar?date={today}",),
+        ).fetchone()
+        assert dated is not None
+        assert dated[0] == TTL_90D
+
+        bare = db_conn.execute(
+            "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
+            ("/equities/earnings-calendar",),
+        ).fetchone()
+        assert bare is not None
+        assert bare[1] == TTL_90D
+        assert len(json.loads(bare[0])) == 1
+
+    def test_return_value_is_total_rows_written(self, db_conn):
+        today_dt = datetime.today()
+        today = today_dt.strftime("%Y%m%d")
+        tomorrow_dt = today_dt + timedelta(days=1)
+        if tomorrow_dt.weekday() >= 5:
+            pytest.skip("tomorrow is a weekend")
+        tomorrow = tomorrow_dt.strftime("%Y%m%d")
+        cli = self._sweep_cli(
+            {
+                today: [
+                    {
+                        "Code": "72030",
+                        "SchDate": today_dt.strftime("%Y-%m-%d"),
+                        "FQName": "1Q",
+                        "FYE": "0331",
+                    }
+                ],
+                tomorrow: [
+                    {
+                        "Code": "99830",
+                        "SchDate": tomorrow_dt.strftime("%Y-%m-%d"),
+                        "FQName": "2Q",
+                        "FYE": "0930",
+                    }
+                ],
+            }
+        )
+        n = _fetch_earnings_calendar_sweep(cli, db_conn)
+        assert n == 2
+
+    def test_plan_dispatch(self, db_conn):
+        legacy_cli = _mock_cli(get_eq_earnings_cal=FakeDataFrame())
+        fetch_earnings_calendar(legacy_cli, db_conn, "free")
+        legacy_cli.get_fin_earnings_date.assert_not_called()
+        legacy_cli.get_eq_earnings_cal.assert_called_once()
+
+        sweep_cli = self._sweep_cli({})
+        fetch_earnings_calendar(sweep_cli, db_conn, "standard")
+        sweep_cli.get_eq_earnings_cal.assert_not_called()
+        assert sweep_cli.get_fin_earnings_date.called
 
 
 # ============================================================

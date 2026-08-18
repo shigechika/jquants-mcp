@@ -288,7 +288,11 @@ def register(
         Use for 決算発表, 決算日, 決算スケジュール, earnings calendar, 今週決算がある銘柄,
         〇〇の次の決算はいつ, days to earnings, 決算前銘柄スクリーニング.
         Pair with get_markets_short_sale_report for 決算またぎ空売り残 / 踏み上げリスク screening.
-        Covers March/September fiscal year companies (REITs excluded); ~3 months accumulated.
+        Light+: all listed issues incl. REITs, any fiscal year-end (daily_fetch
+        sweeps /fins/earnings-date). Free: falls back to March/September
+        fiscal-year issues only (the older /equities/earnings-calendar), since
+        the newer endpoint's Free-tier window excludes the last 12 weeks by
+        publication date.
         Falls back to one live fetch on a cache miss (code queries always;
         date queries only for today/future dates, #523; the no-argument query
         when nothing is scheduled from today onwards, #536).
@@ -346,8 +350,8 @@ def register(
         # near-term announcements; Tier 1 accumulates them, so the union across
         # a bounded window around today is the freshest and fullest answer.
         today = date_cls.today()
-        window_from = (today - timedelta(days=_EARNINGS_WINDOW_DAYS)).isoformat()
-        window_to = (today + timedelta(days=_EARNINGS_WINDOW_DAYS)).isoformat()
+        window_from = (today - timedelta(days=_EARNINGS_WINDOW_BACK_DAYS)).isoformat()
+        window_to = (today + timedelta(days=_EARNINGS_WINDOW_AHEAD_DAYS)).isoformat()
 
         t1_rows = _normalize_earnings_records(cache.get_earnings_in_range(window_from, window_to))
         if not any(str(r.get("Date", ""))[:10] >= today.isoformat() for r in t1_rows):
@@ -538,10 +542,14 @@ def register(
     # writes it back. The suppression marker below only helps AFTER the first
     # fetch completes; this covers the window before that (#537).
     _earnings_refresh_lock = asyncio.Lock()
-    # Half-window (days) for the no-filter query. Upstream carries only
-    # near-term announcements; Tier 1 accumulates them, so a bounded window
-    # around today covers the accumulated set without unbounded scans.
-    _EARNINGS_WINDOW_DAYS = 90
+    # Window (days) for the no-filter query. On Light+ plans daily_fetch's
+    # /fins/earnings-date sweep covers all listed issues (not just the old
+    # March/September-fiscal-year subset), so a symmetric +/-90-day window
+    # would now hold several thousand rows (~1MB payload). Narrowed to match
+    # the sweep's own bare-key cache window (see daily_fetch.py's
+    # _fetch_earnings_calendar_sweep near_back/near_ahead).
+    _EARNINGS_WINDOW_BACK_DAYS = 7
+    _EARNINGS_WINDOW_AHEAD_DAYS = 14
 
     async def _refresh_earnings_calendar_live(client: JQuantsClient, cache: CacheStore) -> bool:
         """Fetch the latest earnings calendar and upsert it into the Tier 1 table.
