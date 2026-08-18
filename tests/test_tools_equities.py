@@ -615,6 +615,26 @@ class TestEarningsCalendarLiveFallback:
         mock_api.assert_not_called()
         assert result["count"] == 1
 
+    async def test_no_filter_window_excludes_beyond_ahead_days(self, mock_env):
+        """The no-arg window is +/- a handful of days, not +/-90: a row far
+        outside it must not appear (see _EARNINGS_WINDOW_AHEAD_DAYS)."""
+        cache = mock_env["cache"]
+        near = (date.today() + timedelta(days=10)).isoformat()
+        far = (date.today() + timedelta(days=30)).isoformat()
+        cache.put_rows(
+            "equities_earnings_calendar",
+            [
+                {"Code": "72030", "Date": near, "CoName": "トヨタ自動車"},
+                {"Code": "99830", "Date": far, "CoName": "遠い将来"},
+            ],
+            key_columns=["Code", "Date"],
+        )
+        with self._mock_api(mock_env, []) as mock_api:
+            result = await _call("get_equities_earnings_calendar")
+        mock_api.assert_not_called()
+        codes = {r["Code"] for r in result["data"]}
+        assert codes == {"72030"}
+
     async def test_live_fetch_rate_limit_degrades_gracefully(self, mock_env):
         # RateLimitError is outside TOOL_API_ERRORS; the best-effort side
         # fetch must swallow it and serve the (empty) cached result.

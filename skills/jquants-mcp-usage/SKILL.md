@@ -117,7 +117,9 @@ get_dividend_yield_ranking(min_yield=4.0)      # forward-yield ranking (Kabutan-
 get_earnings_this_week()            # upcoming schedule, grouped by day
 get_earnings_results_this_week()    # actual reported numbers with forecast progress
                                     # (empty on Free — results carry the 12-week delay)
-get_equities_earnings_calendar(code="72030")   # next earnings date for one stock (all plans)
+get_equities_earnings_calendar(code="72030")   # next earnings date for one stock
+                                    # (all plans; Light+ covers all issues incl. REITs,
+                                    # Free is limited to March/September fiscal-year issues)
 ```
 
 ## Plan Tiers and Date Ranges
@@ -157,7 +159,8 @@ Queries outside the plan's date range return an error — do not retry with the 
 - `get_equities_bars_minute` — intraday minute bars (light+ with tick add-on)
 - `get_equities_bars_daily_am` — today's morning session bars (premium)
 - `get_equities_investor_types` — weekly investor type flows (light+)
-- `get_equities_earnings_calendar` — scheduled earnings dates (all plans)
+- `get_equities_earnings_calendar` — scheduled earnings dates (all plans; Light+ covers
+  all issues incl. REITs, Free is limited to March/September fiscal-year issues)
 - `get_earnings_this_week` / `get_earnings_results_this_week` — weekly earnings schedule / results (cache-only)
 
 ### Financials

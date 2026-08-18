@@ -352,7 +352,7 @@ Claude Desktop はリモート MCP サーバーへの HTTP 接続に直接対応
 | `get_equities_bars_minute` | `/equities/bars/minute` | Light+ | 株価分足 |
 | `get_equities_bars_daily_am` | `/equities/bars/daily/am` | Premium | 前場四本値 |
 | `get_equities_investor_types` | `/equities/investor-types` | Light+ | 投資部門別売買 |
-| `get_equities_earnings_calendar` | `/equities/earnings-calendar` | Free+ | 決算発表予定（単一日・銘柄指定） |
+| `get_equities_earnings_calendar` | `/fins/earnings-date`（Light+）、`/equities/earnings-calendar`（Free） | Free+ | 決算発表予定（単一日・銘柄指定）。Light+ は REIT を含む全上場銘柄、Free は3・9月期決算銘柄限定 |
 | `get_earnings_this_week` | （キャッシュのみ） | Free+ | 期間内に決算発表する銘柄を日付別にグループ化（既定: 当日〜+7日） |
 | `search_equities` | （キャッシュのみ） | Free+ | 銘柄名による逆引き検索（例: `"住友商事"` → `8053`） |
 

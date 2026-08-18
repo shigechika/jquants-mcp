@@ -395,7 +395,7 @@ Per-user API keys additionally require `MCP_ENCRYPTION_KEY` on the server — se
 | `get_equities_bars_minute` | `/equities/bars/minute` | Light+ | Minute-level stock prices |
 | `get_equities_bars_daily_am` | `/equities/bars/daily/am` | Premium | Morning session prices |
 | `get_equities_investor_types` | `/equities/investor-types` | Light+ | Trading by investor type |
-| `get_equities_earnings_calendar` | `/equities/earnings-calendar` | Free+ | Earnings schedule (single date or by code) |
+| `get_equities_earnings_calendar` | `/fins/earnings-date` (Light+), `/equities/earnings-calendar` (Free) | Free+ | Earnings schedule (single date or by code); Light+ covers all listed issues incl. REITs, Free is limited to March/September fiscal-year issues |
 | `get_earnings_this_week` | (cache only) | Free+ | Companies reporting earnings in a date window, grouped by day (default today..+7d) |
 | `search_equities` | (cache only) | Free+ | Reverse lookup by company name (e.g. `"住友商事"` → `8053`) |
 
