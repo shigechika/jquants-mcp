@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.3.0](https://github.com/shigechika/jquants-mcp/compare/v1.2.0...v1.3.0) (2026-08-22)
+
+
+### Features
+
+* fetch the earnings calendar from /fins/earnings-date on Light+ plans ([#619](https://github.com/shigechika/jquants-mcp/issues/619)) ([fe3bcd4](https://github.com/shigechika/jquants-mcp/commit/fe3bcd49d5d3ebb8fd02ba153726f8d41cc41c81))
+
 ## [1.2.0](https://github.com/shigechika/jquants-mcp/compare/v1.1.0...v1.2.0) (2026-08-15)
 
 
