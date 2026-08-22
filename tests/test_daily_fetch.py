@@ -652,6 +652,25 @@ class TestFetchEarningsCalendarLegacyFree:
         assert n == 0
 
 
+class _FrozenToday(datetime):
+    """A fixed, deterministic "today" for the earnings-calendar sweep tests.
+
+    _fetch_earnings_calendar_sweep excludes weekends when building its sweep
+    window (see _earnings_sweep_dates), so a test that keys its mock
+    responses on the real wall-clock date breaks whenever CI happens to run
+    on a Saturday or Sunday: the day the test seeds data for is silently
+    dropped from the swept window, every day queried comes back empty, and
+    the whole-sweep-empty guard makes the function return 0 rows — not a
+    flaky retry, the same deterministic failure every time on those two days
+    out of seven (hit in CI 2026-08-22, a Saturday). Freezing "today" to a
+    known Wednesday makes the class's result independent of what day it runs.
+    """
+
+    @classmethod
+    def today(cls):
+        return cls(2026, 8, 19)
+
+
 class TestFetchEarningsCalendarSweep:
     """fetch_earnings_calendar の Light+ プラン経路（/fins/earnings-date スイープ）。"""
 
@@ -662,6 +681,7 @@ class TestFetchEarningsCalendarSweep:
         monkeypatch.setattr(daily_fetch, "EARNINGS_SWEEP_BACK_DAYS", 2)
         monkeypatch.setattr(daily_fetch, "EARNINGS_SWEEP_AHEAD_DAYS", 2)
         monkeypatch.setattr(daily_fetch.time, "sleep", lambda *_: None)
+        monkeypatch.setattr(daily_fetch, "datetime", _FrozenToday)
 
     @staticmethod
     def _sweep_cli(day_rows: dict[str, list[dict]]) -> MagicMock:
@@ -673,7 +693,7 @@ class TestFetchEarningsCalendarSweep:
         return cli
 
     def _today_ymd(self) -> str:
-        return datetime.today().strftime("%Y%m%d")
+        return _FrozenToday.today().strftime("%Y%m%d")
 
     def test_field_mapping(self, db_conn):
         today = self._today_ymd()
@@ -740,7 +760,7 @@ class TestFetchEarningsCalendarSweep:
 
     def test_per_day_replace_removes_phantom(self, db_conn):
         """A stale row at a swept date is replaced, not merely appended to."""
-        today_dt = datetime.today()
+        today_dt = _FrozenToday.today()
         today = today_dt.strftime("%Y%m%d")
         today_iso = today_dt.strftime("%Y-%m-%d")
 
@@ -768,13 +788,10 @@ class TestFetchEarningsCalendarSweep:
         """A day with zero scheduled announcements wipes prior rows at that
         date, as long as the sweep overall returned something — this is the
         phantom-removal mechanism, not a bug."""
-        today_dt = datetime.today()
+        today_dt = _FrozenToday.today()
         tomorrow_iso = (today_dt + timedelta(days=1)).strftime("%Y-%m-%d")
         today_iso = today_dt.strftime("%Y-%m-%d")
         today = today_dt.strftime("%Y%m%d")
-        tomorrow = (today_dt + timedelta(days=1)).strftime("%Y%m%d")
-        if datetime.strptime(tomorrow, "%Y%m%d").weekday() >= 5:
-            pytest.skip("tomorrow is a weekend; sweep dates would skip it")
 
         db_conn.execute(
             "INSERT INTO equities_earnings_calendar (code, date, data, fetched_at) "
@@ -797,7 +814,7 @@ class TestFetchEarningsCalendarSweep:
     def test_whole_sweep_empty_leaves_existing_rows_untouched(self, db_conn):
         """Guard against a misdetected plan / entitlement change wiping the
         table on empty 200s: if EVERY swept day is empty, write nothing."""
-        today_iso = datetime.today().strftime("%Y-%m-%d")
+        today_iso = _FrozenToday.today().strftime("%Y-%m-%d")
         db_conn.execute(
             "INSERT INTO equities_earnings_calendar (code, date, data, fetched_at) "
             "VALUES (?, ?, ?, ?)",
@@ -853,7 +870,7 @@ class TestFetchEarningsCalendarSweep:
         assert weekdays.issubset({0, 1, 2, 3, 4})
 
     def test_both_tier2_keys_written(self, db_conn):
-        today_dt = datetime.today()
+        today_dt = _FrozenToday.today()
         today = today_dt.strftime("%Y%m%d")
         today_iso = today_dt.strftime("%Y-%m-%d")
         cli = self._sweep_cli(
@@ -877,11 +894,9 @@ class TestFetchEarningsCalendarSweep:
         assert len(json.loads(bare[0])) == 1
 
     def test_return_value_is_total_rows_written(self, db_conn):
-        today_dt = datetime.today()
+        today_dt = _FrozenToday.today()
         today = today_dt.strftime("%Y%m%d")
         tomorrow_dt = today_dt + timedelta(days=1)
-        if tomorrow_dt.weekday() >= 5:
-            pytest.skip("tomorrow is a weekend")
         tomorrow = tomorrow_dt.strftime("%Y%m%d")
         cli = self._sweep_cli(
             {
@@ -932,7 +947,7 @@ class TestFetchEarningsCalendarSweep:
         narrower, which it is by default (3 < 7)."""
         monkeypatch.setattr(daily_fetch, "EARNINGS_SWEEP_BACK_DAYS", 1)
         monkeypatch.setattr(daily_fetch, "EARNINGS_SWEEP_AHEAD_DAYS", 1)
-        today_dt = datetime.today()
+        today_dt = _FrozenToday.today()
         today = today_dt.strftime("%Y%m%d")
         today_iso = today_dt.strftime("%Y-%m-%d")
         cli = self._sweep_cli(
