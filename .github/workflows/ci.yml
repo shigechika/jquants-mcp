@@ -46,6 +46,30 @@ jobs:
   # `test (3.x)` check names stay stable for branch protection, while still
   # catching Windows-only breakage (file encoding, paths) at PR time instead
   # of only at release (release.yml).
+  #
+  # This leg deliberately tracks the latest stable Python rather than pinning
+  # one. The version is irrelevant to what it tests -- encoding and path
+  # handling are platform-level -- and version coverage is the Linux matrix's
+  # job. A pin here only creates work: it has to be bumped by hand every time
+  # a new minor ships, which is what #624 was. Letting it float also means a
+  # new release is exercised on Windows the day it lands.
+  #
+  # Two of the three facts this relies on live outside this repo, so they are
+  # cited rather than asserted:
+  #   - a bare `uv python install` installs the latest stable
+  #     (https://docs.astral.sh/uv/guides/install-python/)
+  #   - `uv sync` without `--python` then selects it, being the newest managed
+  #     interpreter on a fresh runner (astral-sh/uv#21274)
+  # The third is local: `requires-python = ">=3.10"` in pyproject.toml has no
+  # upper bound, so the latest always satisfies the project.
+  #
+  # The trade-off, accepted on purpose: a Python release that breaks a
+  # dependency turns this leg red with no pinned fallback. That is the signal
+  # this job exists to produce.
+  #
+  # The line is CI legs float, publishing legs pin. docs.yml (Pages) and the
+  # release.yml matrix stay pinned so an upstream release cannot block a
+  # publish or a release.
   test-windows:
     runs-on: windows-latest
     steps:
@@ -55,7 +79,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          cache-suffix: py-windows-3.14
-      - run: uv python install 3.14
-      - run: uv sync --dev --python 3.14
+          # No version in the key, because the interpreter no longer has one.
+          # Nothing else in this workflow reads this value; it is passed to
+          # setup-uv and used for its own cache key.
+          cache-suffix: py-windows
+      - run: uv python install
+      - run: uv sync --dev
       - run: uv run pytest -v
