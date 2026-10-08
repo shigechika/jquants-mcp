@@ -16,7 +16,7 @@ dependencies = [
     # (auth.py, settings/) was deleted (#568). The <2 bound guards
     # against SDK 2.0 API changes; the >=1.24 floor is inherited from the
     # fastmcp era and is deliberately conservative (the lock resolves 1.28.x).
-    "mcp>=1.24,<2",
+    "mcp>=1.24,<3",
     "httpx>=0.25.0",
     "cryptography>=41.0.0",
     "tomli>=2.0.0; python_version < '3.11'",
