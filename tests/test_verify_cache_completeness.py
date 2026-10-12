@@ -354,7 +354,7 @@ def test_check_all_overall_ok_when_all_tables_current(conn):
         [
             (
                 (cal_base + timedelta(days=i)).isoformat(),
-                json.dumps({"HolDivision": "0"}),
+                json.dumps({"HolDiv": "1"}),
                 now,
             )
             for i in range(1095)
@@ -539,11 +539,11 @@ def test_trading_dates_in_range_excludes_weekends(conn):
 
 
 def test_trading_dates_in_range_uses_calendar(conn):
-    # Insert calendar rows: 2026-03-09 is a holiday (HolDivision='1'), 2026-03-10 is a trading day
-    for d, hol in [("2026-03-09", "1"), ("2026-03-10", "0")]:
+    # Insert calendar rows: 2026-03-09 is a holiday (HolDiv 3), 2026-03-10 is a trading day
+    for d, hol in [("2026-03-09", "3"), ("2026-03-10", "1")]:
         conn.execute(
             "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
-            (d, json.dumps({"HolDivision": hol}), time.time()),
+            (d, json.dumps({"HolDiv": hol}), time.time()),
         )
     conn.commit()
     dates = _trading_dates_in_range(conn, "2026-03-09", "2026-03-10")
@@ -552,15 +552,26 @@ def test_trading_dates_in_range_uses_calendar(conn):
 
 def test_trading_dates_in_range_all_holidays_returns_empty(conn):
     # All calendar entries are holidays → calendar is trusted → empty list (not weekday fallback)
-    for d in ["2026-03-09", "2026-03-10"]:
+    for d, hol in [("2026-03-09", "0"), ("2026-03-10", "3")]:
         conn.execute(
             "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
-            (d, json.dumps({"HolDivision": "1"}), time.time()),
+            (d, json.dumps({"HolDiv": hol}), time.time()),
         )
     conn.commit()
     dates = _trading_dates_in_range(conn, "2026-03-09", "2026-03-10")
     # Calendar says both days are holidays → no trading days; must NOT fall back to weekdays
     assert dates == []
+
+
+def test_trading_dates_in_range_unreadable_rows_fall_back_to_weekdays(conn):
+    # Rows without HolDiv / HolidayDivision cannot say which days trade (#632 review).
+    for d in ["2026-03-09", "2026-03-10"]:
+        conn.execute(
+            "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+            (d, json.dumps({"Date": d}), time.time()),
+        )
+    conn.commit()
+    assert _trading_dates_in_range(conn, "2026-03-09", "2026-03-10") == ["2026-03-09", "2026-03-10"]
 
 
 # ---------------------------------------------------------------------------

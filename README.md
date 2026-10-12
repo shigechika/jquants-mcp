@@ -524,7 +524,7 @@ The server uses a two-tier SQLite cache:
 
 - **Tier 1 (Row-level)**: Time-series data cached by date and code. Supports incremental fetching and stock split detection via AdjFactor comparison.
   - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`, `markets_margin_interest`, `markets_margin_alert`, `markets_short_ratio`, `markets_breakdown`, `markets_calendar`
-- **Tier 2 (Response-level)**: Full API responses cached with configurable TTL (6h / 24h / 7d).
+- **Tier 2 (Response-level)**: Full API responses cached with a TTL (6h / 24h / 7d by endpoint). The daily `/markets/*` answers instead expire at the endpoint's next publication time from the [J-Quants data update schedule](https://jpx-jquants.com/en/spec/data-update), and are re-checked shortly after it until the day's delivery shows up (`cache/publication.py`).
 
 Cache is stored at `~/.cache/jquants-mcp/cache.db` by default.
 

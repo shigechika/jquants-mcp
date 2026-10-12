@@ -109,6 +109,18 @@ def _normalize_fields(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def calendar_is_business_day(row: dict[str, Any]) -> bool | None:
+    """Whether a markets_calendar row is a business day, or None if it cannot tell.
+
+    V2 rows carry ``HolDiv`` and legacy V1 rows ``HolidayDivision``, with the
+    same codes: 1 = business day, 2 = half day, 0 / 3 = non-business.
+    """
+    hol = row.get("HolDiv", row.get("HolidayDivision"))
+    if hol is None:
+        return None
+    return str(hol).strip() in ("1", "2")
+
+
 # Mapping of endpoint path → TTL
 ENDPOINT_TTL: dict[str, int] = {
     "/markets/calendar": TTL_7D,
@@ -2656,11 +2668,29 @@ class CacheStore:
             return {}
         return {str(r[0])[:10]: float(r[1]) for r in rows if r[1] is not None}
 
+    def is_business_day(self, day: str) -> bool | None:
+        """Whether ``day`` (YYYY-MM-DD) is an exchange business day per markets_calendar.
+
+        None when the calendar is unavailable or has no readable row for that day.
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return None
+        try:
+            row = conn.execute(
+                "SELECT data FROM markets_calendar WHERE date = ?", (day,)
+            ).fetchone()
+            if row is None or not row[0]:
+                return None
+            return calendar_is_business_day(json.loads(row[0]))
+        except (sqlite3.Error, json.JSONDecodeError, TypeError, AttributeError):
+            return None
+
     def get_trading_date_today(self) -> str:
         """Return today's date if it is a trading day, else the most recent trading day.
 
-        Queries markets_calendar for the latest date with HolDivision='0' (trading day)
-        at or before today. Falls back to the nearest past weekday when the calendar
+        Queries markets_calendar for the latest business day (``HolDiv`` 1 or 2, see
+        ``calendar_is_business_day``) at or before today. Falls back to the nearest past weekday when the calendar
         table is unavailable.
         """
         today = date.today()
@@ -2677,7 +2707,7 @@ class CacheStore:
                 ).fetchall()
                 for row in rows:
                     cal_data = json.loads(row[1]) if row[1] else {}
-                    if str(cal_data.get("HolDivision", "")).strip() == "0":
+                    if calendar_is_business_day(cal_data):
                         return str(row[0])[:10]
             except Exception:
                 pass

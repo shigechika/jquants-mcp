@@ -480,7 +480,7 @@ Claude Desktop はリモート MCP サーバーへの HTTP 接続に直接対応
 
 - **Tier 1（行レベル）**: 時系列データを日付×コードで管理。増分取得・株式分割検知（AdjFactor 比較）に対応。
   - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`, `markets_margin_interest`, `markets_margin_alert`, `markets_short_ratio`, `markets_breakdown`, `markets_calendar`
-- **Tier 2（レスポンスレベル）**: API レスポンス全体を TTL 付きでキャッシュ（6h / 24h / 7d）。
+- **Tier 2（レスポンスレベル）**: API レスポンス全体を TTL 付きでキャッシュ（エンドポイントにより 6h / 24h / 7d）。日次の `/markets/*` は [J-Quants のデータ更新時刻](https://jpx-jquants.com/en/spec/data-update) にもとづき次の公表時刻で失効し、公表時刻の直後は当日分が届くまで取り直す（`cache/publication.py`）。
 
 キャッシュの保存先はデフォルトで `~/.cache/jquants-mcp/cache.db` です。
 
