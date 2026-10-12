@@ -2,8 +2,9 @@
 
 `jquants-mcp` is an MCP (Model Context Protocol) server exposing Japanese
 stock market data from the J-Quants API v2 to AI assistants. It is
-**stdio-only** and built on the official `mcp` SDK's FastMCP
-(`from mcp.server.fastmcp import FastMCP`, in `src/jquants_mcp/server.py`) —
+**stdio-only** and built on the official `mcp` SDK 2.x's MCPServer
+(`from mcp.server.mcpserver import MCPServer`, in `src/jquants_mcp/server.py`;
+SDK 1.x called it `mcp.server.fastmcp.FastMCP`, which 2.x removed) —
 *not* the standalone `fastmcp` package, which was dropped together with the
 HTTP/OAuth surface (#568). Other core modules: `client.py` (httpx async
 client, rate limiting, retry, pagination), `cache/store.py` (two-tier SQLite
@@ -101,9 +102,9 @@ someone passes it as a plain env var should be flagged.
 Tools in `server.py` and `tools/` return plain `dict[str, Any]` (e.g.
 `register_api_key`, `health_check`) or other JSON-serializable values. The
 official SDK converts a raw return value into the MCP `content` +
-`structuredContent` envelope on its own: `FastMCP.call_tool` passes
+`structuredContent` envelope on its own: `MCPServer.call_tool` passes
 `convert_result=True` into `Tool.run`, which applies
-`fn_metadata.convert_result` (`mcp.server.fastmcp.tools.base`). Manual
+`fn_metadata.convert_result` (`mcp.server.mcpserver.tools.base`). Manual
 `{"content": [...], "isError": ...}` construction is unnecessary and
 inconsistent with the rest of the codebase. Do not suggest wrapping a tool's
 return value in a content envelope by hand.

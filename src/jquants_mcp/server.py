@@ -8,8 +8,9 @@ import os
 import time
 from typing import Any
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.types import CallToolResult, InputRequiredResult
 
 from . import __version__
 from .cache import store
@@ -30,16 +31,33 @@ class _JQuantsMCPServer(MCPServer):
     ``AuthenticationError`` and ``RateLimitError`` escape the handlers on
     purpose (they are not in ``TOOL_API_ERRORS``) and their messages tell the
     user how to fix the key or to wait, so re-raise them as ``ToolError``.
+
+    This is an allowlist, not the ``JQuantsDatMCPError`` base: an exception
+    that escapes a handler by mistake (for example a ``DecryptionError`` from a
+    handler that forgot ``TOOL_API_ERRORS``) must keep 2.x's generic message
+    rather than expose unredacted text.
     """
 
-    async def call_tool(self, name, arguments, context=None):  # noqa: D102
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: Context | None = None,
+    ) -> CallToolResult | InputRequiredResult:
         try:
             return await super().call_tool(name, arguments, context)
         except UnexpectedToolError as exc:
+            # Walk the chain: a tool that calls another tool or reads a
+            # resource wraps the original error in a nested UnexpectedToolError.
             cause = exc.__cause__
-            if isinstance(cause, (AuthenticationError, RateLimitError)):
+            while isinstance(cause, UnexpectedToolError):
+                cause = cause.__cause__
+            if isinstance(cause, _CLIENT_FACING_ERRORS):
                 raise ToolError(f"Error executing tool {name}: {cause}") from cause
             raise
+
+
+_CLIENT_FACING_ERRORS = (AuthenticationError, RateLimitError)
 
 
 # SDK 2.x reports an empty server version unless one is passed (1.x sent the

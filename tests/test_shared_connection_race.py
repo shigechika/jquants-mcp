@@ -86,23 +86,23 @@ class TestConcurrentWrites:
 
 #: Tools that do blocking work (lazy initialization with migrations,
 #: COUNT(*) over a multi-GB database, bulk DELETE) and must therefore
-#: explicitly offload to a worker thread via ``asyncio.to_thread`` — the
-#: official mcp SDK, unlike the standalone fastmcp package this server used
-#: to run on, invokes every tool body directly on the event loop, sync or
-#: async, so there is no automatic thread offload to rely on any more.
+#: explicitly offload to a worker thread via ``asyncio.to_thread``. Every tool
+#: is ``async def``, and the SDK runs an async tool body on the event loop
+#: (SDK 2.x moves only sync ``def`` tools to a worker thread; 1.x never did),
+#: so there is no automatic thread offload to rely on.
 #: Sharing the connection from that thread is safe because CacheStore
 #: serializes its mutating paths — see #537.
 BLOCKING_BY_DESIGN = {"health_check", "cache_status", "cache_clear"}
 
 
 class TestSyncToolInventory:
-    """A new sync tool is always a bug now, not a deliberate choice.
+    """Every registered tool stays async.
 
-    The official mcp SDK calls sync tool bodies directly on the event loop
-    (no automatic worker-thread offload, unlike the fastmcp package this
-    server previously ran on) — so every registered tool must be async, and
-    the blocking-by-design tools above must explicitly offload their work via
-    ``asyncio.to_thread`` inside their async body instead.
+    SDK 2.x runs a sync ``def`` tool in a worker thread implicitly. Keeping
+    every tool async, with the blocking-by-design tools above offloading
+    explicitly via ``asyncio.to_thread``, keeps each tool's use of the shared
+    connection from another thread visible in its own body, where the #537
+    serialization can be checked.
     """
 
     async def test_no_tool_is_sync(self):

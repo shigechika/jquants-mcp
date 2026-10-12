@@ -37,3 +37,17 @@ async def test_other_exceptions_stay_generic():
     with pytest.raises(UnexpectedToolError) as info:
         await _server(RuntimeError("secret detail")).call_tool("boom", {})
     assert "secret detail" not in str(info.value)
+
+
+async def test_wrapped_anticipated_error_is_unwrapped():
+    # A nested tool call or resource read that crashed arrives as an
+    # UnexpectedToolError chained onto the original error.
+    try:
+        raise AuthenticationError("API key is invalid.")
+    except AuthenticationError as auth:
+        wrapped = UnexpectedToolError("Error executing tool inner")
+        wrapped.__cause__ = auth
+    with pytest.raises(ToolError) as info:
+        await _server(wrapped).call_tool("boom", {})
+    assert not isinstance(info.value, UnexpectedToolError)
+    assert str(info.value) == "Error executing tool boom: API key is invalid."

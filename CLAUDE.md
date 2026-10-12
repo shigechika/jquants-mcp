@@ -3,8 +3,8 @@
 ## Project Overview
 
 jquants-mcp is an MCP server that retrieves Japanese stock market data via J-Quants API v2.
-The server is **stdio-only** and is built on the official `mcp` SDK's `mcp.server.fastmcp.FastMCP`
-(`server.py` + `tools/`). The standalone FastMCP v3 package (`fastmcp`) is **no longer a dependency**:
+The server is **stdio-only** and is built on the official `mcp` SDK's `mcp.server.mcpserver.MCPServer`
+(SDK 2.x; 1.x called it `mcp.server.fastmcp.FastMCP`, which 2.x removed) (`server.py` + `tools/`). The standalone FastMCP v3 package (`fastmcp`) is **no longer a dependency**:
 its last in-repo users — the HTTP/OAuth surface (`auth.py`, `settings/`, `oauth_kv_store.py`, the
 non-stdio branch of `run_server()`) and `scripts/smoke_test.py`'s client — were deleted or ported to
 the official SDK in #568. httpx, SQLite cache. Multi-user OAuth is terminated **upstream** by the
@@ -25,7 +25,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 ## Architecture
 
 - `src/jquants_mcp/` — Main package
-  - `server.py` — Official-SDK `FastMCP` server (stdio), per-user client management, tool registration
+  - `server.py` — Official-SDK `MCPServer` server (stdio; `_JQuantsMCPServer` keeps auth / rate-limit error text that 2.x would hide), per-user client management, tool registration
   - `client.py` — httpx async client with rate limiting, retry, pagination
   - `config.py` — configparser + env vars hybrid configuration
   - `cache/store.py` — 2-tier SQLite cache (Tier1: row-level, Tier2: response-level with TTL); background `PRAGMA quick_check` integrity verification (`verify_and_record`) with a `(dev, ino)`-keyed sidecar (`cache.db.verified.json`) so a fresh per-message `CacheStore` reuses a prior generation's verdict instead of re-running the multi-second check on every claude.ai message

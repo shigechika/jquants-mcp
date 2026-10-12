@@ -83,3 +83,6 @@ packages = ["src/jquants_mcp"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "sdk_call_tool: see the real SDK 2.x call_tool result (skip the 1.x-shape adapter in conftest)",
+]

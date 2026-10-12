@@ -64,44 +64,23 @@ def _first_text(result: Any) -> str | None:
     return getattr(content[0], "text", None)
 
 
-def _field(obj: Any, snake: str, camel: str) -> Any:
-    """Read a protocol field under its SDK 2.x snake_case name, or the 1.x camelCase one.
-
-    SDK 2.x models expose ``is_error`` / ``structured_content`` / ``next_cursor``;
-    1.x exposed the wire names. A plain ``getattr(result, "isError")`` on a 2.x
-    result is always missing, which would silently report failed calls as passes.
-    """
-    value = getattr(obj, snake, None)
-    return value if value is not None else getattr(obj, camel, None)
-
-
 def _decode(result: Any) -> Any:
     """Normalise a tool result into plain Python data.
 
     ``--url``/``--stdio`` go through a real ``ClientSession`` and in-process
-    mode calls ``jquants_mcp.server.mcp.call_tool()`` directly; with SDK 2.x
-    both yield a ``CallToolResult`` (``structured_content`` / ``content``,
-    read through ``_field`` so a 1.x-built peer still decodes). The tuple and
-    list branches keep the SDK 1.x in-process shapes
-    (``(unstructured, structured)`` or a bare ``list[ContentBlock]``).
+    mode calls ``jquants_mcp.server.mcp.call_tool()`` directly; both yield a
+    ``CallToolResult``. Its fields are snake_case in SDK 2.x
+    (``is_error`` / ``structured_content``): a ``getattr(result, "isError")``
+    is always missing and would silently report failed calls as passes.
     """
-    if isinstance(result, tuple) and len(result) == 2:
-        return result[1]
-    if isinstance(result, list):
-        if result and hasattr(result[0], "text"):
-            try:
-                return json.loads(result[0].text)
-            except json.JSONDecodeError:
-                return result[0].text
-        return result
-    if _field(result, "is_error", "isError"):
+    if result.is_error:
         # ``ClientSession.call_tool`` *returns* a failed call rather than
         # raising one, but raising is what the harness is built around: it
         # turns the exception into a FAIL carrying the server's own message.
         # Decoding the error text as if it were a payload would instead report
         # the useless "text payload with nothing asserted".
         raise RuntimeError(_first_text(result) or "tool reported an error with no message")
-    structured = _field(result, "structured_content", "structuredContent")
+    structured = result.structured_content
     if structured is not None:
         return structured
     text = _first_text(result)
@@ -126,7 +105,7 @@ async def _in_process_caller() -> tuple[Caller, list[str]]:
 async def _http_caller(
     url: str, token: str, insecure: bool
 ) -> tuple[Caller, list[str], AsyncExitStack]:
-    import httpx
+    import httpx2
     from mcp.client.streamable_http import streamable_http_client
 
     verify: Any = True
@@ -136,14 +115,16 @@ async def _http_caller(
         verify.check_hostname = False
         verify.verify_mode = ssl.CERT_NONE
 
-    # The transport builds its own httpx client when not handed one, but
-    # handing it one is the only seam for both bearer auth and --insecure. The
-    # timeouts replicate the SDK's own create_mcp_http_client defaults, since
-    # httpx's 5s default would cut the slower tools off mid-probe.
-    client = httpx.AsyncClient(
+    # The transport builds its own client when not handed one, but handing it
+    # one is the only seam for both bearer auth and --insecure. SDK 2.x's
+    # transport is built on httpx2 and only recovers from httpx2's stream
+    # errors, so the client must be an httpx2 one. The timeouts replicate the
+    # SDK's own create_mcp_http_client defaults (httpx2's 5s default would cut
+    # the slower tools off mid-probe); redirects are left off like the SDK's,
+    # because the transport follows same-origin redirects itself.
+    client = httpx2.AsyncClient(
         headers={"Authorization": f"Bearer {token}"} if token else None,
-        timeout=httpx.Timeout(30.0, read=300.0),
-        follow_redirects=True,
+        timeout=httpx2.Timeout(30.0, read=300.0),
         verify=verify,
     )
     stack = AsyncExitStack()
@@ -201,7 +182,7 @@ async def _list_all_tools(session: Any) -> list[str]:
         params = PaginatedRequestParams(cursor=cursor) if cursor is not None else None
         page = await session.list_tools(params=params)
         names.extend(tool.name for tool in page.tools)
-        cursor = _field(page, "next_cursor", "nextCursor")
+        cursor = page.next_cursor
         if cursor is None:
             return names
         if cursor in seen:

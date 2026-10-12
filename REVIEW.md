@@ -80,7 +80,7 @@ reviewer also receives.
 - Suggestions to hand-build an MCP content envelope
   (`{"content": [...], "isError": ...}`). The official SDK converts a
   raw return value into the `content` + `structuredContent` envelope
-  itself, via `FastMCP.call_tool` passing `convert_result=True`.
+  itself, via `MCPServer.call_tool` passing `convert_result=True`.
 - `.github/workflows/cd.yml` deploy mechanics — Cloud Run flags, memory
   sizing, GCS and Firestore wiring. Those are operations concerns
   documented in `CLAUDE.md`, `README.md` and the runbooks under
