@@ -76,6 +76,11 @@ jobs:
   # astral-sh/uv#21274). It is not a required check and `continue-on-error`
   # keeps a red result from failing the workflow, so a new Python that breaks a
   # dependency shows up here without blocking merges.
+  #
+  # A dependency that cannot be installed yet (no wheel for the new Python, as
+  # with pydantic-core under 3.15) is upstream's to fix, not ours, so it is a
+  # warning annotation rather than a red X on every PR. Once the install works,
+  # a failing test suite is ours and stays red.
   test-windows-latest:
     runs-on: windows-latest
     continue-on-error: true
@@ -88,5 +93,10 @@ jobs:
           enable-cache: true
           cache-suffix: py-windows-latest
       - run: uv python install
-      - run: uv sync --dev
-      - run: uv run pytest -v
+      - id: sync
+        continue-on-error: true
+        run: uv sync --dev
+      - if: steps.sync.outcome == 'failure'
+        run: echo "::warning title=test-windows-latest::Dependencies do not install on the latest Python yet (see the sync step log); tests skipped."
+      - if: steps.sync.outcome == 'success'
+        run: uv run pytest -v
