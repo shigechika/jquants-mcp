@@ -47,29 +47,15 @@ jobs:
   # catching Windows-only breakage (file encoding, paths) at PR time instead
   # of only at release (release.yml).
   #
-  # This leg deliberately tracks the latest stable Python rather than pinning
-  # one. The version is irrelevant to what it tests -- encoding and path
-  # handling are platform-level -- and version coverage is the Linux matrix's
-  # job. A pin here only creates work: it has to be bumped by hand every time
-  # a new minor ships, which is what #624 was. Letting it float also means a
-  # new release is exercised on Windows the day it lands.
-  #
-  # Two of the three facts this relies on live outside this repo, so they are
-  # cited rather than asserted:
-  #   - a bare `uv python install` installs the latest stable
-  #     (https://docs.astral.sh/uv/guides/install-python/)
-  #   - `uv sync` without `--python` then selects it, being the newest managed
-  #     interpreter on a fresh runner (astral-sh/uv#21274)
-  # The third is local: `requires-python = ">=3.10"` in pyproject.toml has no
-  # upper bound, so the latest always satisfies the project.
-  #
-  # The trade-off, accepted on purpose: a Python release that breaks a
-  # dependency turns this leg red with no pinned fallback. That is the signal
-  # this job exists to produce.
-  #
-  # The line is CI legs float, publishing legs pin. docs.yml (Pages) and the
-  # release.yml matrix stay pinned so an upstream release cannot block a
-  # publish or a release.
+  # This is a required check, so it pins the newest Python of the Linux matrix
+  # (keep "3.14" below equal to the last entry of `test.strategy.matrix`; a
+  # matrix cannot read a workflow variable, so the two are bumped together).
+  # #627 let it float to the latest stable instead, but a required check that
+  # floats blocks every PR whenever a new Python ships before the dependency
+  # tree has wheels for it: Python 3.15 arrived with pywin32 311, pydantic-core
+  # 2.41 and zstandard 0.25 all lacking cp315 wheels (#633). The version is
+  # irrelevant to what this job tests -- encoding and path handling are
+  # platform-level -- so pinning loses nothing here.
   test-windows:
     runs-on: windows-latest
     steps:
@@ -79,10 +65,28 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          # No version in the key, because the interpreter no longer has one.
-          # Nothing else in this workflow reads this value; it is passed to
-          # setup-uv and used for its own cache key.
-          cache-suffix: py-windows
+          cache-suffix: py-windows-3.14
+      - run: uv python install 3.14
+      - run: uv sync --dev --python 3.14
+      - run: uv run pytest -v
+
+  # The early warning #627 wanted, kept as a non-blocking job: the latest stable
+  # Python on Windows (a bare `uv python install` installs it, and `uv sync`
+  # without `--python` then selects it; https://docs.astral.sh/uv/guides/install-python/,
+  # astral-sh/uv#21274). It is not a required check and `continue-on-error`
+  # keeps a red result from failing the workflow, so a new Python that breaks a
+  # dependency shows up here without blocking merges.
+  test-windows-latest:
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # hatch-vcs needs full history for version
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-suffix: py-windows-latest
       - run: uv python install
       - run: uv sync --dev
       - run: uv run pytest -v
