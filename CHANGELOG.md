@@ -5,6 +5,19 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.4.0](https://github.com/shigechika/jquants-mcp/compare/v1.3.0...v1.4.0) (2026-10-12)
+
+
+### Features
+
+* support mcp SDK 2.x (FastMCP -&gt; MCPServer) ([#635](https://github.com/shigechika/jquants-mcp/issues/635)) ([57ba155](https://github.com/shigechika/jquants-mcp/commit/57ba1553a125614db2ee63099a435992d1e940f6))
+
+
+### Bug Fixes
+
+* **ci:** pin the required Windows leg to 3.14, float a non-blocking latest leg ([#633](https://github.com/shigechika/jquants-mcp/issues/633)) ([ecb0c47](https://github.com/shigechika/jquants-mcp/commit/ecb0c47b1e4a5b5ad5b35e599afbf6973711265a))
+* treat margin interest as daily data (staleness in business days, docstring, TTL note) ([#631](https://github.com/shigechika/jquants-mcp/issues/631)) ([3d5404c](https://github.com/shigechika/jquants-mcp/commit/3d5404cc3b6a212f574d51fa33ab721089bae494))
+
 ## [1.3.0](https://github.com/shigechika/jquants-mcp/compare/v1.2.0...v1.3.0) (2026-08-22)
 
 
