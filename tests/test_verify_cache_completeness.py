@@ -841,3 +841,26 @@ def test_margin_interest_falls_back_to_calendar_days_without_full_calendar(conn)
     result = _check_daily_table(conn, "markets_margin_interest", "date", "2027-05-06")
     assert "gap_business_days" not in result
     assert result["status"] == "ok"  # 6 calendar days <= fallback threshold 7
+
+
+def test_margin_interest_legacy_calendar_rows_fall_back(conn):
+    """Rows without HolDiv (legacy HolDivision) must not count every day as non-business."""
+    _insert(conn, "markets_margin_interest", code="13010", date="2026-10-01")
+    for d in (
+        "2026-10-02",
+        "2026-10-03",
+        "2026-10-04",
+        "2026-10-05",
+        "2026-10-06",
+        "2026-10-07",
+        "2026-10-08",
+        "2026-10-09",
+    ):
+        conn.execute(
+            "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?, ?, ?)",
+            (d, json.dumps({"Date": d, "HolDivision": "1"}), time.time()),
+        )
+    conn.commit()
+    result = _check_daily_table(conn, "markets_margin_interest", "date", "2026-10-09")
+    assert "gap_business_days" not in result
+    assert result["status"] == "stale"  # 8 calendar days > fallback 7

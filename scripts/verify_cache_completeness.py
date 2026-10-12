@@ -240,7 +240,10 @@ def _business_days_between(conn: sqlite3.Connection, start: str, end: str) -> in
             cal = json.loads(row["data"]) if row["data"] else {}
         except (json.JSONDecodeError, TypeError):
             return None
-        if str(cal.get("HolDiv", "")).strip() in ("1", "2"):
+        hol = cal.get("HolDiv")
+        if hol is None:
+            return None  # not a V2 row (e.g. legacy HolDivision): cannot tell, use the fallback
+        if str(hol).strip() in ("1", "2"):
             n += 1
     return n
 
