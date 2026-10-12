@@ -10,6 +10,14 @@ updates:
         dependency-type: development
       runtime-dependencies:
         dependency-type: production
+    # A major mcp SDK release has renamed or removed the server API this
+    # package imports (2.0 removed mcp.server.fastmcp; see #626 / #635).
+    # Widening the "<N" cap alone then breaks every fresh install, so major
+    # SDK bumps are migrated by hand rather than bumped by Dependabot.
+    ignore:
+      - dependency-name: "mcp"
+        update-types:
+          - version-update:semver-major
     labels:
       - dependencies
 
