@@ -49,9 +49,16 @@ _STALE_THRESHOLD: dict[str, int] = {
     "indices_bars_daily_topix": 3,
     "investor_types": 10,  # published weekly
     "markets_short_ratio": 10,  # published weekly
-    "markets_margin_interest": 5,  # daily since 2026-09-28; Date lags a business day (+3-day weekend)
+    "markets_margin_interest": 7,  # fallback only; checked in business days below when possible
     "markets_margin_alert": 7,
     "markets_breakdown": 7,
+}
+
+# Tables checked in business days (via markets_calendar) instead of calendar days. Margin interest is
+# daily since the 2026-09-25 application date and its Date is the previous business day, so a gap of
+# up to 2 business days is normal; counting calendar days would flag Golden Week / year-end gaps.
+_BUSINESS_DAY_GAP: dict[str, int] = {
+    "markets_margin_interest": 2,
 }
 
 # Minimum expected rows for screener_results per tool (52w * ~3 trading days)
@@ -192,13 +199,50 @@ def _check_daily_table(
     threshold = _STALE_THRESHOLD.get(table, 7)
     gap = (date.fromisoformat(trading_day) - date.fromisoformat(latest_str)).days
     status = "ok" if gap <= threshold else "stale"
-    return {
+    result = {
         "status": status,
         "count": count,
         "latest_date": latest_str,
         "expected_latest": trading_day,
         "gap_days": gap,
     }
+    if table in _BUSINESS_DAY_GAP:
+        bgap = _business_days_between(conn, latest_str, trading_day)
+        if bgap is not None:
+            result["gap_business_days"] = bgap
+            result["status"] = "ok" if bgap <= _BUSINESS_DAY_GAP[table] else "stale"
+    return result
+
+
+def _business_days_between(conn: sqlite3.Connection, start: str, end: str) -> int | None:
+    """Business days d with start < d <= end from markets_calendar, or None if it cannot tell.
+
+    V2 rows carry ``HolDiv`` (1 = business day, 2 = half day; 0 / 3 = non-business). Returns None
+    when the table is missing or does not cover every day of the range, so the caller falls back to
+    the calendar-day threshold instead of guessing.
+    """
+    if end <= start:
+        return 0
+    if not _table_exists(conn, "markets_calendar"):
+        return None
+    try:
+        rows = conn.execute(
+            "SELECT date, data FROM markets_calendar WHERE date > ? AND date <= ?", (start, end)
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return None
+    expected = (date.fromisoformat(end) - date.fromisoformat(start)).days
+    if len(rows) < expected:
+        return None
+    n = 0
+    for row in rows:
+        try:
+            cal = json.loads(row["data"]) if row["data"] else {}
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if str(cal.get("HolDiv", "")).strip() in ("1", "2"):
+            n += 1
+    return n
 
 
 def _check_markets_calendar(conn: sqlite3.Connection) -> dict:

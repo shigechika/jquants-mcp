@@ -793,3 +793,51 @@ def test_detect_plan_from_api_network_error_returns_free(monkeypatch):
 
     monkeypatch.setattr(httpx, "get", _raise)
     assert _detect_plan_from_api("key", "https://api.jquants.com/v2") == "free"
+
+
+# ---------------------------------------------------------------------------
+# markets_margin_interest is checked in business days (daily since 2026-09-25)
+# ---------------------------------------------------------------------------
+
+
+def _calendar(conn, days: dict[str, str]) -> None:
+    for d, hol in days.items():
+        conn.execute(
+            "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?, ?, ?)",
+            (d, json.dumps({"Date": d, "HolDiv": hol}), time.time()),
+        )
+    conn.commit()
+
+
+def test_margin_interest_golden_week_gap_is_ok(conn):
+    # Newest Date 2027-04-30 (Fri); 5/1-5/5 closed; trading day 5/6 -> 1 business day behind.
+    _insert(conn, "markets_margin_interest", code="13010", date="2027-04-30")
+    _calendar(
+        conn,
+        {
+            "2027-05-01": "0",
+            "2027-05-02": "0",
+            "2027-05-03": "0",
+            "2027-05-04": "0",
+            "2027-05-05": "0",
+            "2027-05-06": "1",
+        },
+    )
+    result = _check_daily_table(conn, "markets_margin_interest", "date", "2027-05-06")
+    assert result["gap_days"] == 6 and result["gap_business_days"] == 1
+    assert result["status"] == "ok"
+
+
+def test_margin_interest_three_business_days_behind_is_stale(conn):
+    _insert(conn, "markets_margin_interest", code="13010", date="2026-10-06")
+    _calendar(conn, {"2026-10-07": "1", "2026-10-08": "1", "2026-10-09": "1"})
+    result = _check_daily_table(conn, "markets_margin_interest", "date", "2026-10-09")
+    assert result["gap_business_days"] == 3 and result["status"] == "stale"
+
+
+def test_margin_interest_falls_back_to_calendar_days_without_full_calendar(conn):
+    _insert(conn, "markets_margin_interest", code="13010", date="2027-04-30")
+    _calendar(conn, {"2027-05-06": "1"})  # 5/1-5/5 missing -> cannot count business days
+    result = _check_daily_table(conn, "markets_margin_interest", "date", "2027-05-06")
+    assert "gap_business_days" not in result
+    assert result["status"] == "ok"  # 6 calendar days <= fallback threshold 7
