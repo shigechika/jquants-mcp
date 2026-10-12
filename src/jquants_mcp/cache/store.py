@@ -114,7 +114,9 @@ ENDPOINT_TTL: dict[str, int] = {
     "/markets/calendar": TTL_7D,
     "/equities/earnings-calendar": TTL_90D,
     "/equities/investor-types": TTL_7D,
-    "/markets/margin-interest": TTL_7D,
+    # Daily since the 2026-09-28 spec change (it was weekly before), so a 7-day TTL could serve a
+    # week-old snapshot to parameterless calls.
+    "/markets/margin-interest": TTL_24H,
     "/markets/margin-alert": TTL_24H,
     "/markets/short-ratio": TTL_24H,
     "/markets/short-sale-report": TTL_24H,

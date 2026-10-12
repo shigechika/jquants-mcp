@@ -49,7 +49,7 @@ _STALE_THRESHOLD: dict[str, int] = {
     "indices_bars_daily_topix": 3,
     "investor_types": 10,  # published weekly
     "markets_short_ratio": 10,  # published weekly
-    "markets_margin_interest": 7,
+    "markets_margin_interest": 5,  # daily since 2026-09-28; Date lags a business day (+3-day weekend)
     "markets_margin_alert": 7,
     "markets_breakdown": 7,
 }
