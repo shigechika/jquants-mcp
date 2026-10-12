@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from ..cache.store import CacheStore
 from ..cache.technical import compute_bb, compute_rsi, compute_sma
@@ -79,7 +79,7 @@ def _normalize_date(date: str) -> str:
 
 
 def register(
-    mcp: FastMCP,
+    mcp: MCPServer,
     get_client: Any,
     get_cache: Any,
 ) -> None:

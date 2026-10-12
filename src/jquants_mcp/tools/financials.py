@@ -7,7 +7,7 @@ from datetime import date as date_cls
 from datetime import datetime, timedelta
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from ..cache.store import CacheStore, TTL_24H, make_cache_key
 from ..client import JQuantsClient
@@ -149,7 +149,7 @@ def _apply_split_adjustment(
 
 
 def register(
-    mcp: FastMCP,
+    mcp: MCPServer,
     get_client: callable,
     get_cache: callable,
 ) -> None:

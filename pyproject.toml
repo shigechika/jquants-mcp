@@ -10,13 +10,11 @@ requires-python = ">=3.10"
 
 dependencies = [
     # The official MCP SDK is the only MCP dependency: server.py and the
-    # tools/ modules import mcp.server.fastmcp.FastMCP, and scripts/
-    # smoke_test.py drives deployments through its client side. The
-    # standalone fastmcp package was dropped once the HTTP/OAuth surface
-    # (auth.py, settings/) was deleted (#568). The <2 bound guards
-    # against SDK 2.0 API changes; the >=1.24 floor is inherited from the
-    # fastmcp era and is deliberately conservative (the lock resolves 1.28.x).
-    "mcp>=1.24,<2",
+    # tools/ modules import mcp.server.mcpserver.MCPServer (FastMCP before
+    # SDK 2.0), and scripts/smoke_test.py drives deployments through its
+    # client side. SDK 2.0 removed mcp.server.fastmcp, so the floor is 2.1;
+    # the <3 bound guards against the next major's API changes.
+    "mcp>=2.1,<3",
     "httpx>=0.25.0",
     "cryptography>=41.0.0",
     "tomli>=2.0.0; python_version < '3.11'",

@@ -56,7 +56,7 @@ import math
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from ..cache import screener_compute
 from ..cache.screener_compute import SCREENER_CACHE_LOOKBACK_WEEKS
@@ -179,7 +179,7 @@ def _calendar_window_start(end_date: str, trading_days: int) -> str:
 
 
 def register(
-    mcp: FastMCP,
+    mcp: MCPServer,
     get_client: Any,
     get_cache: Any,
 ) -> None:

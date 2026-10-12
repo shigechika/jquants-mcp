@@ -1,4 +1,4 @@
-"""FastMCP server definition and tool registration."""
+"""MCPServer server definition and tool registration."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import os
 import time
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from . import __version__
 from .cache import store
@@ -19,7 +19,9 @@ from .tool_annotations import DESTRUCTIVE_LOCAL, READ_ONLY_LOCAL
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("jquants-mcp")
+# SDK 2.x reports an empty server version unless one is passed (1.x sent the
+# SDK's own version), so advertise this package's version explicitly.
+mcp = MCPServer("jquants-mcp", version=__version__)
 
 # Shared global state — lazily initialized on the first request.
 _settings: Settings | None = None
@@ -456,10 +458,10 @@ async def health_check() -> dict[str, Any]:
 
     Offloaded to a worker thread (see ``_health_check_impl``): the body can
     trigger the slow lazy cache initialization (connect + migrations), and
-    the official mcp SDK — unlike the standalone fastmcp package this server
-    used to run on — invokes sync tool bodies directly on the event loop
-    rather than in a worker thread, so an explicit ``asyncio.to_thread``
-    offload is required here to keep that work off the loop. Sharing the
+    every tool here is ``async def`` (the SDK runs those on the event loop; only
+    sync ``def`` handlers go to a worker thread, and only since SDK 2.x), so an
+    explicit ``asyncio.to_thread`` offload is required here to keep that work
+    off the loop. Sharing the
     SQLite connection with the loop from that thread is what caused #537;
     the store's write lock, not this offload, is what makes it safe.
 
@@ -726,7 +728,7 @@ def run_server() -> None:
     """Start the MCP server over stdio.
 
     stdio is the only transport this server supports: since the migration to
-    the official mcp SDK's ``FastMCP``, ``run()`` accepts only ``transport``
+    the official mcp SDK's ``MCPServer``, ``run()`` accepts only ``transport``
     and ``mount_path`` — no ``host``, ``port``, ``uvicorn_config`` or
     ``middleware``. HTTP is terminated upstream instead, by the ``mcp-stdio``
     gateway that spawns one child process per authenticated user.

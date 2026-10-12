@@ -64,18 +64,26 @@ def _first_text(result: Any) -> str | None:
     return getattr(content[0], "text", None)
 
 
+def _field(obj: Any, snake: str, camel: str) -> Any:
+    """Read a protocol field under its SDK 2.x snake_case name, or the 1.x camelCase one.
+
+    SDK 2.x models expose ``is_error`` / ``structured_content`` / ``next_cursor``;
+    1.x exposed the wire names. A plain ``getattr(result, "isError")`` on a 2.x
+    result is always missing, which would silently report failed calls as passes.
+    """
+    value = getattr(obj, snake, None)
+    return value if value is not None else getattr(obj, camel, None)
+
+
 def _decode(result: Any) -> Any:
     """Normalise a tool result into plain Python data.
 
-    Two distinct shapes reach here. ``--url``/``--stdio`` go through a real
-    ``ClientSession`` speaking wire JSON-RPC, which yields a ``CallToolResult``
-    (``.structuredContent``/``.content``, camel-cased because those names come
-    straight from the protocol schema) regardless of what SDK the server is
-    built on. In-process mode calls ``jquants_mcp.server.mcp.call_tool()``
-    directly — the official SDK's ``FastMCP.call_tool(..., convert_result=True)``
-    returns ``(unstructured_content, structured_content)`` for a
-    ``dict[str, Any]``-annotated tool, or a bare ``list[ContentBlock]``
-    otherwise.
+    ``--url``/``--stdio`` go through a real ``ClientSession`` and in-process
+    mode calls ``jquants_mcp.server.mcp.call_tool()`` directly; with SDK 2.x
+    both yield a ``CallToolResult`` (``structured_content`` / ``content``,
+    read through ``_field`` so a 1.x-built peer still decodes). The tuple and
+    list branches keep the SDK 1.x in-process shapes
+    (``(unstructured, structured)`` or a bare ``list[ContentBlock]``).
     """
     if isinstance(result, tuple) and len(result) == 2:
         return result[1]
@@ -86,14 +94,14 @@ def _decode(result: Any) -> Any:
             except json.JSONDecodeError:
                 return result[0].text
         return result
-    if getattr(result, "isError", False):
+    if _field(result, "is_error", "isError"):
         # ``ClientSession.call_tool`` *returns* a failed call rather than
         # raising one, but raising is what the harness is built around: it
         # turns the exception into a FAIL carrying the server's own message.
         # Decoding the error text as if it were a payload would instead report
         # the useless "text payload with nothing asserted".
         raise RuntimeError(_first_text(result) or "tool reported an error with no message")
-    structured = getattr(result, "structuredContent", None)
+    structured = _field(result, "structured_content", "structuredContent")
     if structured is not None:
         return structured
     text = _first_text(result)
@@ -151,7 +159,7 @@ async def _stdio_caller(command: str) -> tuple[Caller, list[str], AsyncExitStack
     """Speak MCP over stdio to a server launched as a subprocess.
 
     Transport-level, so it works against any MCP server regardless of which
-    SDK it is built on — the in-process mode above is FastMCP-specific. This
+    SDK it is built on — the in-process mode above is specific to this server. This
     is the mode a sibling server would use to reuse this harness.
     """
     import shlex
@@ -193,7 +201,7 @@ async def _list_all_tools(session: Any) -> list[str]:
         params = PaginatedRequestParams(cursor=cursor) if cursor is not None else None
         page = await session.list_tools(params=params)
         names.extend(tool.name for tool in page.tools)
-        cursor = page.nextCursor
+        cursor = _field(page, "next_cursor", "nextCursor")
         if cursor is None:
             return names
         if cursor in seen:
