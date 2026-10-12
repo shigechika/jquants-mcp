@@ -98,9 +98,9 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
 
 
 async def _registered_tools() -> dict:
-    """Return the FastMCP tool registry as ``{name: Tool}``.
+    """Return the MCPServer tool registry as ``{name: Tool}``.
 
-    ``list_tools`` is the public FastMCP API (returns ``Sequence[Tool]``);
+    ``list_tools`` is the public MCPServer API (returns ``Sequence[Tool]``);
     we key by ``tool.name`` for direct lookup.
     """
     tools = await server_module.mcp.list_tools()
@@ -115,11 +115,12 @@ async def test_tool_has_expected_annotations(name: str, expected: dict[str, bool
     tool = tools[name]
     annotations = tool.annotations
     assert annotations is not None, f"{name} has no annotations"
-    # FastMCP normalises dict input into a ToolAnnotations model — compare
-    # the relevant fields rather than the whole object. ``getattr`` is
-    # necessary here because the field name is dynamic per loop iteration.
+    # The SDK normalises dict input into a ToolAnnotations model whose
+    # attributes are snake_case in SDK 2.x (read_only_hint). Compare the wire
+    # form clients receive (camelCase aliases) rather than attribute names.
+    wire = annotations.model_dump(by_alias=True, mode="json")
     for key, expected_value in expected.items():
-        actual = getattr(annotations, key, None)
+        actual = wire.get(key)
         assert actual == expected_value, f"{name}.{key} expected {expected_value!r}, got {actual!r}"
 
 

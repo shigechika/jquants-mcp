@@ -21,7 +21,7 @@ import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from ..cache.store import CacheStore
 from ..exceptions import (
@@ -284,7 +284,7 @@ def _rolling_std(values: list[float | None], window: int) -> list[float | None]:
 
 
 def register(
-    mcp: FastMCP,
+    mcp: MCPServer,
     get_client: Any,  # noqa: ARG001 — signature parity with other tool modules
     get_cache: Any,
 ) -> None:

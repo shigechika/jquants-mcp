@@ -11,6 +11,38 @@ from jquants_mcp.config import Settings
 
 
 @pytest.fixture(autouse=True)
+def _v1_shaped_call_tool(request, monkeypatch):
+    """Give ``MCPServer.call_tool`` the SDK 1.x return shape inside tests.
+
+    SDK 2.x returns a ``CallToolResult``; 1.x returned ``(content, structured)``
+    for tools with an output schema and the bare ``content`` list otherwise. The
+    tool-logic tests (200 call sites) were written against the 1.x shape, so
+    this adapter keeps them unchanged. Failures already raise ``ToolError`` from
+    ``call_tool`` in 2.x (the ``CallToolResult(is_error=True)`` is built later,
+    by the request handler), so ``pytest.raises`` checks need no adapting.
+
+    Tests marked ``sdk_call_tool`` opt out and see the real 2.x path, end to end
+    through an in-process ``mcp.Client`` (``tests/test_sdk_call_path.py``).
+    """
+    if request.node.get_closest_marker("sdk_call_tool"):
+        return
+    from mcp.server.mcpserver import MCPServer
+    from mcp.types import CallToolResult
+
+    original = MCPServer.call_tool
+
+    async def call_tool(self, name, arguments, context=None):
+        result = await original(self, name, arguments, context)
+        if not isinstance(result, CallToolResult):
+            return result
+        if result.structured_content is not None:
+            return result.content, result.structured_content
+        return result.content
+
+    monkeypatch.setattr(MCPServer, "call_tool", call_tool)
+
+
+@pytest.fixture(autouse=True)
 def _reset_server_globals():
     """Reset mutable server-module globals between tests.
 

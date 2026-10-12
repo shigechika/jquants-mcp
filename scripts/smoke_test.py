@@ -67,33 +67,20 @@ def _first_text(result: Any) -> str | None:
 def _decode(result: Any) -> Any:
     """Normalise a tool result into plain Python data.
 
-    Two distinct shapes reach here. ``--url``/``--stdio`` go through a real
-    ``ClientSession`` speaking wire JSON-RPC, which yields a ``CallToolResult``
-    (``.structuredContent``/``.content``, camel-cased because those names come
-    straight from the protocol schema) regardless of what SDK the server is
-    built on. In-process mode calls ``jquants_mcp.server.mcp.call_tool()``
-    directly — the official SDK's ``FastMCP.call_tool(..., convert_result=True)``
-    returns ``(unstructured_content, structured_content)`` for a
-    ``dict[str, Any]``-annotated tool, or a bare ``list[ContentBlock]``
-    otherwise.
+    ``--url``/``--stdio`` go through a real ``ClientSession`` and in-process
+    mode calls ``jquants_mcp.server.mcp.call_tool()`` directly; both yield a
+    ``CallToolResult``. Its fields are snake_case in SDK 2.x
+    (``is_error`` / ``structured_content``): a ``getattr(result, "isError")``
+    is always missing and would silently report failed calls as passes.
     """
-    if isinstance(result, tuple) and len(result) == 2:
-        return result[1]
-    if isinstance(result, list):
-        if result and hasattr(result[0], "text"):
-            try:
-                return json.loads(result[0].text)
-            except json.JSONDecodeError:
-                return result[0].text
-        return result
-    if getattr(result, "isError", False):
+    if result.is_error:
         # ``ClientSession.call_tool`` *returns* a failed call rather than
         # raising one, but raising is what the harness is built around: it
         # turns the exception into a FAIL carrying the server's own message.
         # Decoding the error text as if it were a payload would instead report
         # the useless "text payload with nothing asserted".
         raise RuntimeError(_first_text(result) or "tool reported an error with no message")
-    structured = getattr(result, "structuredContent", None)
+    structured = result.structured_content
     if structured is not None:
         return structured
     text = _first_text(result)
@@ -118,7 +105,7 @@ async def _in_process_caller() -> tuple[Caller, list[str]]:
 async def _http_caller(
     url: str, token: str, insecure: bool
 ) -> tuple[Caller, list[str], AsyncExitStack]:
-    import httpx
+    import httpx2
     from mcp.client.streamable_http import streamable_http_client
 
     verify: Any = True
@@ -128,14 +115,16 @@ async def _http_caller(
         verify.check_hostname = False
         verify.verify_mode = ssl.CERT_NONE
 
-    # The transport builds its own httpx client when not handed one, but
-    # handing it one is the only seam for both bearer auth and --insecure. The
-    # timeouts replicate the SDK's own create_mcp_http_client defaults, since
-    # httpx's 5s default would cut the slower tools off mid-probe.
-    client = httpx.AsyncClient(
+    # The transport builds its own client when not handed one, but handing it
+    # one is the only seam for both bearer auth and --insecure. SDK 2.x's
+    # transport is built on httpx2 and only recovers from httpx2's stream
+    # errors, so the client must be an httpx2 one. The timeouts replicate the
+    # SDK's own create_mcp_http_client defaults (httpx2's 5s default would cut
+    # the slower tools off mid-probe); redirects are left off like the SDK's,
+    # because the transport follows same-origin redirects itself.
+    client = httpx2.AsyncClient(
         headers={"Authorization": f"Bearer {token}"} if token else None,
-        timeout=httpx.Timeout(30.0, read=300.0),
-        follow_redirects=True,
+        timeout=httpx2.Timeout(30.0, read=300.0),
         verify=verify,
     )
     stack = AsyncExitStack()
@@ -151,7 +140,7 @@ async def _stdio_caller(command: str) -> tuple[Caller, list[str], AsyncExitStack
     """Speak MCP over stdio to a server launched as a subprocess.
 
     Transport-level, so it works against any MCP server regardless of which
-    SDK it is built on — the in-process mode above is FastMCP-specific. This
+    SDK it is built on — the in-process mode above is specific to this server. This
     is the mode a sibling server would use to reuse this harness.
     """
     import shlex
@@ -193,7 +182,7 @@ async def _list_all_tools(session: Any) -> list[str]:
         params = PaginatedRequestParams(cursor=cursor) if cursor is not None else None
         page = await session.list_tools(params=params)
         names.extend(tool.name for tool in page.tools)
-        cursor = page.nextCursor
+        cursor = page.next_cursor
         if cursor is None:
             return names
         if cursor in seen:

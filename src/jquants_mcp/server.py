@@ -1,4 +1,4 @@
-"""FastMCP server definition and tool registration."""
+"""MCPServer server definition and tool registration."""
 
 from __future__ import annotations
 
@@ -8,18 +8,61 @@ import os
 import time
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+from mcp.types import CallToolResult, InputRequiredResult
 
 from . import __version__
 from .cache import store
 from .cache.store import CacheStore
 from .client import JQuantsClient
 from .config import Settings
+from .exceptions import AuthenticationError, RateLimitError
 from .tool_annotations import DESTRUCTIVE_LOCAL, READ_ONLY_LOCAL
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("jquants-mcp")
+
+class _JQuantsMCPServer(MCPServer):
+    """MCPServer that keeps the text of anticipated client-facing errors.
+
+    SDK 2.x reports any exception other than ``ToolError`` as a bare
+    ``Error executing tool <name>`` (1.x appended the exception text).
+    ``AuthenticationError`` and ``RateLimitError`` escape the handlers on
+    purpose (they are not in ``TOOL_API_ERRORS``) and their messages tell the
+    user how to fix the key or to wait, so re-raise them as ``ToolError``.
+
+    This is an allowlist, not the ``JQuantsDatMCPError`` base: an exception
+    that escapes a handler by mistake (for example a ``DecryptionError`` from a
+    handler that forgot ``TOOL_API_ERRORS``) must keep 2.x's generic message
+    rather than expose unredacted text.
+    """
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: Context | None = None,
+    ) -> CallToolResult | InputRequiredResult:
+        try:
+            return await super().call_tool(name, arguments, context)
+        except UnexpectedToolError as exc:
+            # Walk the chain: a tool that calls another tool or reads a
+            # resource wraps the original error in a nested UnexpectedToolError.
+            cause = exc.__cause__
+            while isinstance(cause, UnexpectedToolError):
+                cause = cause.__cause__
+            if isinstance(cause, _CLIENT_FACING_ERRORS):
+                raise ToolError(f"Error executing tool {name}: {cause}") from cause
+            raise
+
+
+_CLIENT_FACING_ERRORS = (AuthenticationError, RateLimitError)
+
+
+# SDK 2.x reports an empty server version unless one is passed (1.x sent the
+# SDK's own version), so advertise this package's version explicitly.
+mcp = _JQuantsMCPServer("jquants-mcp", version=__version__)
 
 # Shared global state — lazily initialized on the first request.
 _settings: Settings | None = None
@@ -456,10 +499,10 @@ async def health_check() -> dict[str, Any]:
 
     Offloaded to a worker thread (see ``_health_check_impl``): the body can
     trigger the slow lazy cache initialization (connect + migrations), and
-    the official mcp SDK — unlike the standalone fastmcp package this server
-    used to run on — invokes sync tool bodies directly on the event loop
-    rather than in a worker thread, so an explicit ``asyncio.to_thread``
-    offload is required here to keep that work off the loop. Sharing the
+    every tool here is ``async def`` (the SDK runs those on the event loop; only
+    sync ``def`` handlers go to a worker thread, and only since SDK 2.x), so an
+    explicit ``asyncio.to_thread`` offload is required here to keep that work
+    off the loop. Sharing the
     SQLite connection with the loop from that thread is what caused #537;
     the store's write lock, not this offload, is what makes it safe.
 
@@ -726,7 +769,7 @@ def run_server() -> None:
     """Start the MCP server over stdio.
 
     stdio is the only transport this server supports: since the migration to
-    the official mcp SDK's ``FastMCP``, ``run()`` accepts only ``transport``
+    the official mcp SDK's ``MCPServer``, ``run()`` accepts only ``transport``
     and ``mount_path`` — no ``host``, ``port``, ``uvicorn_config`` or
     ``middleware``. HTTP is terminated upstream instead, by the ``mcp-stdio``
     gateway that spawns one child process per authenticated user.

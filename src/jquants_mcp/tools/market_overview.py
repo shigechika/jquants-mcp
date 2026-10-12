@@ -29,7 +29,7 @@ import statistics
 from datetime import datetime, timedelta
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from ..cache import screener_compute
 from ..cache.store import CacheStore, make_cache_key
@@ -632,7 +632,7 @@ def _compute_sector_performance(
 
 
 def register(
-    mcp: FastMCP,
+    mcp: MCPServer,
     get_client: Any,  # noqa: ARG001
     get_cache: Any,
 ) -> None:

@@ -430,8 +430,8 @@ class CacheStore:
         self._integrity_status: str = INTEGRITY_NOT_CHECKED
         self._integrity_thread: threading.Thread | None = None
         # One sqlite3.Connection is shared by the event loop AND worker threads
-        # (the connection is opened with check_same_thread=False, and FastMCP
-        # runs sync tools such as health_check / cache_status in a thread). The
+        # (the connection is opened with check_same_thread=False, and tools such
+        # as health_check / cache_status offload their bodies to a thread). The
         # module's implicit-transaction bookkeeping is not safe under that mix:
         # two writers racing produce "cannot start a transaction within a
         # transaction" or "bad parameter or other API misuse" (#537). Every
