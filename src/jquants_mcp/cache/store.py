@@ -2686,6 +2686,26 @@ class CacheStore:
         except (sqlite3.Error, json.JSONDecodeError, TypeError, AttributeError):
             return None
 
+    def previous_business_day(self, day: str) -> str | None:
+        """Latest business day strictly before ``day`` per markets_calendar, or None."""
+        conn = self._ensure_connection()
+        if conn is None:
+            return None
+        try:
+            rows = conn.execute(
+                "SELECT date, data FROM markets_calendar WHERE date < ? ORDER BY date DESC LIMIT 14",
+                (day,),
+            ).fetchall()
+            for row in rows:
+                business = calendar_is_business_day(json.loads(row[1]) if row[1] else {})
+                if business is None:
+                    return None
+                if business:
+                    return str(row[0])[:10]
+        except (sqlite3.Error, json.JSONDecodeError, TypeError, AttributeError):
+            return None
+        return None
+
     def get_trading_date_today(self) -> str:
         """Return today's date if it is a trading day, else the most recent trading day.
 

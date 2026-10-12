@@ -519,7 +519,12 @@ def _short_sale_query_is_historical(params: dict[str, Any]) -> bool:
 def _publication_ttl(cache: CacheStore, endpoint: str, rows: list[Any] | None) -> int:
     """TTL until ``endpoint``'s next publication, with today's business-day status from the cache."""
     today = datetime.now(JST).date().isoformat()
-    return ttl_until_next_publication(endpoint, rows, business_day=cache.is_business_day(today))
+    return ttl_until_next_publication(
+        endpoint,
+        rows,
+        business_day=cache.is_business_day(today),
+        previous_business_day=cache.previous_business_day(today),
+    )
 
 
 async def _tier2_fallback(

@@ -75,12 +75,15 @@ def ttl_until_next_publication(
     *,
     now: datetime | None = None,
     business_day: bool | None = None,
+    previous_business_day: str | None = None,
 ) -> int:
     """Seconds to cache a response from ``endpoint`` holding ``rows``, fetched at ``now``.
 
     - Endpoints without a known publication time keep the 24-hour TTL.
     - Before today's publication time, or on a non-business day: until the
-      next publication time (no re-checks; nothing new can arrive).
+      next publication time, unless ``rows`` show that the previous business
+      day's delivery is still missing (it ran past midnight or into a
+      weekend); then it keeps being re-checked hourly.
     - After it on a business day: until the next publication once ``rows``
       show today's delivery; otherwise re-check (every 15 minutes for two
       hours, then hourly). When the delivery cannot be read from ``rows``
@@ -89,7 +92,8 @@ def ttl_until_next_publication(
       for the next publication.
 
     ``now`` defaults to the current time; a naive ``now`` is taken as JST.
-    ``business_day`` says whether today is an exchange business day; None
+    ``business_day`` says whether today is an exchange business day, and
+    ``previous_business_day`` (YYYY-MM-DD) is the last one before today; None
     means unknown and falls back to Monday-Friday.
     """
     publication = PUBLICATIONS.get(endpoint)
@@ -102,6 +106,11 @@ def ttl_until_next_publication(
     now = now.astimezone(JST)
     if business_day is None:
         business_day = now.weekday() < 5
+    if previous_business_day is None:
+        previous = now.date() - timedelta(days=1)
+        while previous.weekday() >= 5:
+            previous -= timedelta(days=1)
+        previous_business_day = previous.isoformat()
 
     today_publication = now.replace(
         hour=publication.hour, minute=publication.minute, second=0, microsecond=0
@@ -111,10 +120,12 @@ def ttl_until_next_publication(
         next_publication += timedelta(days=1)
     until_next = max(_MIN_TTL_SECONDS, min(int((next_publication - now).total_seconds()), TTL_24H))
 
+    newest = newest_date(rows or (), publication.date_field) if publication.date_field else None
     if not business_day or now < today_publication:
+        if newest is not None and newest < previous_business_day:
+            return min(LATE_RECHECK_SLOW_SECONDS, until_next)
         return until_next
 
-    newest = newest_date(rows or (), publication.date_field) if publication.date_field else None
     in_window = now < today_publication + LATE_WINDOW
     if newest is None:
         return min(LATE_RECHECK_SECONDS, until_next) if in_window else until_next

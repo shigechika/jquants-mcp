@@ -56,7 +56,8 @@ def test_unreadable_answer_falls_back_to_the_clock():
 
 
 def test_weekend_and_exchange_holiday_do_not_recheck():
-    assert _ttl(_at(17, 16, 45), PREVIOUS_ROWS) == 23 * 3600 + 45 * 60
+    # Saturday, with Friday 10-16's delivery already in.
+    assert _ttl(_at(17, 16, 45), [{"Date": "2026-10-16"}]) == 23 * 3600 + 45 * 60
     # A weekday exchange holiday, known from the calendar.
     assert _ttl(_at(13, 16, 45), PREVIOUS_ROWS, business_day=False) == 23 * 3600 + 45 * 60
 
@@ -142,6 +143,9 @@ class _Cache:
     def is_business_day(self, day):
         return self.business_day
 
+    def previous_business_day(self, day):
+        return "2026-10-12"
+
 
 class _Client:
     async def get_all_pages(self, endpoint, params):
@@ -153,8 +157,10 @@ async def test_tier2_fallback_passes_rows_and_business_day(monkeypatch):
 
     seen = {}
 
-    def fake(endpoint, rows, *, business_day):
-        seen.update(endpoint=endpoint, rows=rows, business_day=business_day)
+    def fake(endpoint, rows, *, business_day, previous_business_day):
+        seen.update(
+            endpoint=endpoint, rows=rows, business_day=business_day, prev=previous_business_day
+        )
         return 123
 
     monkeypatch.setattr(markets, "ttl_until_next_publication", fake)
@@ -165,6 +171,7 @@ async def test_tier2_fallback_passes_rows_and_business_day(monkeypatch):
         "endpoint": SHORT_RATIO,
         "rows": [{"Date": "2026-10-13"}],
         "business_day": False,
+        "prev": "2026-10-12",
     }
 
 
@@ -210,7 +217,7 @@ async def _call_short_sale(monkeypatch, **args):
     monkeypatch.setattr(
         markets,
         "ttl_until_next_publication",
-        lambda endpoint, rows, *, business_day: seen.setdefault("endpoint", endpoint) and 77,
+        lambda endpoint, rows, **_: seen.setdefault("endpoint", endpoint) and 77,
     )
     server = MCPServer("t")
     cache = _Cache()
@@ -250,3 +257,40 @@ def test_trading_date_today_skips_non_business_rows(tmp_path):
         )
     conn.commit()
     assert store.get_trading_date_today() == (today - timedelta(days=1)).isoformat()
+
+
+def test_missing_delivery_keeps_rechecking_past_midnight():
+    # codex review: 10-13's delivery never came; at 00:30 on 10-14 it is still pending.
+    assert _ttl(_at(14, 0, 30), [{"Date": "2026-10-12"}]) == LATE_RECHECK_SLOW_SECONDS
+    # ...and into the weekend: Friday 10-16's delivery missing on Saturday.
+    assert _ttl(_at(17, 10), [{"Date": "2026-10-15"}]) == LATE_RECHECK_SLOW_SECONDS
+    # Once it is in, the morning waits for the publication as usual.
+    assert _ttl(_at(14, 0, 30), [{"Date": "2026-10-13"}]) == 16 * 3600
+
+
+def test_previous_business_day_from_the_calendar_skips_holidays():
+    # Monday 10-12 was a holiday: Friday 10-09 is the last delivery to expect on 10-13.
+    ttl = ttl_until_next_publication(
+        SHORT_RATIO, [{"Date": "2026-10-09"}], now=_at(13, 10), previous_business_day="2026-10-09"
+    )
+    assert ttl == 6 * 3600 + 30 * 60
+
+
+def test_store_previous_business_day(tmp_path):
+    from jquants_mcp.cache.store import CacheStore
+
+    store = CacheStore(db_path=tmp_path / "c.db")
+    conn = store._ensure_connection()
+    for d, hol in (
+        ("2026-10-09", "1"),
+        ("2026-10-10", "0"),
+        ("2026-10-11", "0"),
+        ("2026-10-12", "3"),
+    ):
+        conn.execute(
+            "INSERT INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+            (d, json.dumps({"Date": d, "HolDiv": hol}), time.time()),
+        )
+    conn.commit()
+    assert store.previous_business_day("2026-10-13") == "2026-10-09"
+    assert store.previous_business_day("2026-10-09") is None
