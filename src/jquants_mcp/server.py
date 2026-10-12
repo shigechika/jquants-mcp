@@ -9,19 +9,42 @@ import time
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 
 from . import __version__
 from .cache import store
 from .cache.store import CacheStore
 from .client import JQuantsClient
 from .config import Settings
+from .exceptions import AuthenticationError, RateLimitError
 from .tool_annotations import DESTRUCTIVE_LOCAL, READ_ONLY_LOCAL
 
 logger = logging.getLogger(__name__)
 
+
+class _JQuantsMCPServer(MCPServer):
+    """MCPServer that keeps the text of anticipated client-facing errors.
+
+    SDK 2.x reports any exception other than ``ToolError`` as a bare
+    ``Error executing tool <name>`` (1.x appended the exception text).
+    ``AuthenticationError`` and ``RateLimitError`` escape the handlers on
+    purpose (they are not in ``TOOL_API_ERRORS``) and their messages tell the
+    user how to fix the key or to wait, so re-raise them as ``ToolError``.
+    """
+
+    async def call_tool(self, name, arguments, context=None):  # noqa: D102
+        try:
+            return await super().call_tool(name, arguments, context)
+        except UnexpectedToolError as exc:
+            cause = exc.__cause__
+            if isinstance(cause, (AuthenticationError, RateLimitError)):
+                raise ToolError(f"Error executing tool {name}: {cause}") from cause
+            raise
+
+
 # SDK 2.x reports an empty server version unless one is passed (1.x sent the
 # SDK's own version), so advertise this package's version explicitly.
-mcp = MCPServer("jquants-mcp", version=__version__)
+mcp = _JQuantsMCPServer("jquants-mcp", version=__version__)
 
 # Shared global state — lazily initialized on the first request.
 _settings: Settings | None = None
