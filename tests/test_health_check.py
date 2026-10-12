@@ -153,14 +153,14 @@ class TestHealthCheck:
         assert result["trading_date_today"] == "2026-04-27"
 
     async def test_trading_date_today_from_calendar(self, mock_env, monkeypatch):
-        """trading_date_today returns the last HolDivision=0 date from markets_calendar."""
+        """trading_date_today returns the last business day (HolDiv 1/2) from markets_calendar."""
         cache = mock_env["cache"]
-        # Seed calendar: 2026-04-28 is trading day, 2026-04-29 is holiday
+        # Seed calendar: 2026-04-28 is trading day (HolDiv 1), 2026-04-29 is a holiday (HolDiv 0)
         cache.put_rows(
             "markets_calendar",
             [
-                {"date": "2026-04-28", "HolDivision": "0"},
-                {"date": "2026-04-29", "HolDivision": "1"},
+                {"date": "2026-04-28", "HolDiv": "1"},
+                {"date": "2026-04-29", "HolDiv": "0"},
             ],
             key_columns=["date"],
         )

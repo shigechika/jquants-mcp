@@ -34,6 +34,7 @@ from verify_cache_completeness import (  # noqa: E402
 
 TODAY = date.today().isoformat()
 YESTERDAY = (date.today() - timedelta(days=1)).isoformat()
+TWO_DAYS_AGO = (date.today() - timedelta(days=2)).isoformat()
 OLD_DATE = (date.today() - timedelta(days=60)).isoformat()
 FUTURE_DATE = (date.today() + timedelta(days=30)).isoformat()
 
@@ -155,18 +156,34 @@ def test_table_exists_false(conn):
 
 
 def test_latest_trading_day_from_calendar(conn):
-    """Returns the most recent HolDivision=0 date from markets_calendar."""
+    """Returns the most recent HolDiv 1/2 date, skipping non-business days (#632)."""
+    for d, hol in ((TWO_DAYS_AGO, "1"), (YESTERDAY, "2"), (TODAY, "0")):
+        conn.execute(
+            "INSERT INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+            (d, json.dumps({"Date": d, "HolDiv": hol}), time.time()),
+        )
+    conn.commit()
+    assert _latest_trading_day(conn) == YESTERDAY
+
+
+def test_latest_trading_day_skips_holiday_rows(conn):
+    """A holiday (HolDiv 3) on top of business days is not a trading day."""
+    for d, hol in ((TWO_DAYS_AGO, "1"), (YESTERDAY, "3"), (TODAY, "0")):
+        conn.execute(
+            "INSERT INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+            (d, json.dumps({"Date": d, "HolDiv": hol}), time.time()),
+        )
+    conn.commit()
+    assert _latest_trading_day(conn) == TWO_DAYS_AGO
+
+
+def test_latest_trading_day_reads_legacy_holiday_division(conn):
     conn.execute(
         "INSERT INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
-        (YESTERDAY, json.dumps({"HolDivision": "0"}), time.time()),
-    )
-    conn.execute(
-        "INSERT INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
-        (TODAY, json.dumps({"HolDivision": "1"}), time.time()),
+        (YESTERDAY, json.dumps({"HolidayDivision": "1"}), time.time()),
     )
     conn.commit()
-    result = _latest_trading_day(conn)
-    assert result == YESTERDAY
+    assert _latest_trading_day(conn) == YESTERDAY
 
 
 def test_latest_trading_day_fallback_to_weekday(conn):
@@ -337,7 +354,7 @@ def test_check_all_overall_ok_when_all_tables_current(conn):
         [
             (
                 (cal_base + timedelta(days=i)).isoformat(),
-                json.dumps({"HolDivision": "0"}),
+                json.dumps({"HolDiv": "1"}),
                 now,
             )
             for i in range(1095)
@@ -522,11 +539,11 @@ def test_trading_dates_in_range_excludes_weekends(conn):
 
 
 def test_trading_dates_in_range_uses_calendar(conn):
-    # Insert calendar rows: 2026-03-09 is a holiday (HolDivision='1'), 2026-03-10 is a trading day
-    for d, hol in [("2026-03-09", "1"), ("2026-03-10", "0")]:
+    # Insert calendar rows: 2026-03-09 is a holiday (HolDiv 3), 2026-03-10 is a trading day
+    for d, hol in [("2026-03-09", "3"), ("2026-03-10", "1")]:
         conn.execute(
             "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
-            (d, json.dumps({"HolDivision": hol}), time.time()),
+            (d, json.dumps({"HolDiv": hol}), time.time()),
         )
     conn.commit()
     dates = _trading_dates_in_range(conn, "2026-03-09", "2026-03-10")
@@ -535,15 +552,26 @@ def test_trading_dates_in_range_uses_calendar(conn):
 
 def test_trading_dates_in_range_all_holidays_returns_empty(conn):
     # All calendar entries are holidays → calendar is trusted → empty list (not weekday fallback)
-    for d in ["2026-03-09", "2026-03-10"]:
+    for d, hol in [("2026-03-09", "0"), ("2026-03-10", "3")]:
         conn.execute(
             "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
-            (d, json.dumps({"HolDivision": "1"}), time.time()),
+            (d, json.dumps({"HolDiv": hol}), time.time()),
         )
     conn.commit()
     dates = _trading_dates_in_range(conn, "2026-03-09", "2026-03-10")
     # Calendar says both days are holidays → no trading days; must NOT fall back to weekdays
     assert dates == []
+
+
+def test_trading_dates_in_range_unreadable_rows_fall_back_to_weekdays(conn):
+    # Rows without HolDiv / HolidayDivision cannot say which days trade (#632 review).
+    for d in ["2026-03-09", "2026-03-10"]:
+        conn.execute(
+            "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+            (d, json.dumps({"Date": d}), time.time()),
+        )
+    conn.commit()
+    assert _trading_dates_in_range(conn, "2026-03-09", "2026-03-10") == ["2026-03-09", "2026-03-10"]
 
 
 # ---------------------------------------------------------------------------

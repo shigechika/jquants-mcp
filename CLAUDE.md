@@ -28,6 +28,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   - `server.py` — Official-SDK `MCPServer` server (stdio; `_JQuantsMCPServer` keeps auth / rate-limit error text that 2.x would hide), per-user client management, tool registration
   - `client.py` — httpx async client with rate limiting, retry, pagination
   - `config.py` — configparser + env vars hybrid configuration
+  - `cache/publication.py` — Tier 2 TTL for the daily `/markets/*` endpoints: expire at the next publication time (J-Quants data update schedule), re-check after it until the response shows today's delivery (#632)
   - `cache/store.py` — 2-tier SQLite cache (Tier1: row-level, Tier2: response-level with TTL); background `PRAGMA quick_check` integrity verification (`verify_and_record`) with a `(dev, ino)`-keyed sidecar (`cache.db.verified.json`) so a fresh per-message `CacheStore` reuses a prior generation's verdict instead of re-running the multi-second check on every claude.ai message
   - `tools/` — Tool modules registered via `register(mcp, get_client, get_cache)` pattern
   - `crypto.py` — AES-256-GCM encryption for user API keys

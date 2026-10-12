@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from ..cache.store import CacheStore, TTL_24H, make_cache_key
+from ..cache.publication import JST, ttl_until_next_publication
+from ..cache.store import TTL_24H, CacheStore, make_cache_key
 from ..client import JQuantsClient
 from ..exceptions import (
     TOOL_API_ERRORS,
@@ -270,7 +271,11 @@ def register(
         try:
             data = await client.get_all_pages("/markets/short-sale-report", params)
             result = {"count": len(data), "data": data}
-            cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
+            if _short_sale_query_is_historical(params):
+                ttl = TTL_24H  # bounded in the past: a new delivery cannot change it
+            else:
+                ttl = _publication_ttl(cache, "/markets/short-sale-report", data)
+            cache.put_response(cache_key, result, ttl_seconds=ttl)
             return result
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
@@ -496,6 +501,32 @@ def _get_latest_tier1_snapshot(
     )
 
 
+def _short_sale_query_is_historical(params: dict[str, Any]) -> bool:
+    """True when a short-sale-report query cannot include today's disclosures.
+
+    Only a disclosure date (``disc_date``) or range end (``disc_date_to``)
+    before today proves that. A past ``calc_date`` does not: positions are
+    disclosed some business days after their calculation date.
+    """
+    today = datetime.now(JST).date().isoformat()
+    for key in ("disc_date", "disc_date_to"):
+        value = str(params.get(key) or "").replace("-", "")
+        if len(value) == 8 and f"{value[:4]}-{value[4:6]}-{value[6:8]}" < today:
+            return True
+    return False
+
+
+def _publication_ttl(cache: CacheStore, endpoint: str, rows: list[Any] | None) -> int:
+    """TTL until ``endpoint``'s next publication, with today's business-day status from the cache."""
+    today = datetime.now(JST).date().isoformat()
+    return ttl_until_next_publication(
+        endpoint,
+        rows,
+        business_day=cache.is_business_day(today),
+        previous_business_day=cache.previous_business_day(today),
+    )
+
+
 async def _tier2_fallback(
     client: JQuantsClient,
     cache: CacheStore,
@@ -508,7 +539,8 @@ async def _tier2_fallback(
 
     When ``tier1_table`` is given and the API call fails, the most recent
     Tier 1 snapshot is returned so callers get cached data even on plan
-    restriction or network errors.
+    restriction or network errors. A response is cached until the endpoint's
+    next daily publication (``cache/publication.py``), not for a fixed 24h.
     """
     cache_key = make_cache_key(endpoint, params)
     cached = cache.get_response(cache_key)
@@ -518,7 +550,7 @@ async def _tier2_fallback(
     try:
         data = await client.get_all_pages(endpoint, params)
         result = {"count": len(data), "data": data}
-        cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
+        cache.put_response(cache_key, result, ttl_seconds=_publication_ttl(cache, endpoint, data))
         return result
     except TOOL_API_ERRORS as e:
         if tier1_table:

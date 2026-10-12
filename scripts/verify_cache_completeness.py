@@ -146,10 +146,25 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _latest_trading_day(conn: sqlite3.Connection) -> str:
-    """Return most recent trading day (HolDivision='0') from markets_calendar.
+def _is_business_day(cal: dict) -> bool | None:
+    """Mirror of ``jquants_mcp.cache.store.calendar_is_business_day`` (this script is standalone).
 
-    Falls back to the nearest past weekday when the table is unavailable or empty.
+    V2 ``HolDiv`` / legacy ``HolidayDivision``: 1 = business day, 2 = half day,
+    0 / 3 = non-business. None when the row carries neither field.
+    """
+    hol = cal.get("HolDiv", cal.get("HolidayDivision"))
+    if hol is None:
+        return None
+    return str(hol).strip() in ("1", "2")
+
+
+def _latest_trading_day(conn: sqlite3.Connection) -> str:
+    """Return the most recent business day on or before today from markets_calendar.
+
+    V2 rows carry ``HolDiv`` (1 = business day, 2 = half day; 0 / 3 =
+    non-business); legacy V1 rows used the same codes under
+    ``HolidayDivision``. Falls back to the nearest past weekday when the table
+    is unavailable or has no business day in the last two weeks.
     """
     today = date.today()
     today_str = today.isoformat()
@@ -165,7 +180,7 @@ def _latest_trading_day(conn: sqlite3.Connection) -> str:
                     cal = json.loads(row["data"]) if row["data"] else {}
                 except (json.JSONDecodeError, TypeError):
                     cal = {}
-                if str(cal.get("HolDivision", "")).strip() == "0":
+                if _is_business_day(cal):
                     return str(row["date"])[:10]
         except sqlite3.OperationalError:
             pass
@@ -559,14 +574,19 @@ def _trading_dates_in_range(
                 (from_iso, to_iso),
             ).fetchall()
             trading = []
+            readable = True
             for row in rows:
                 try:
                     cal = json.loads(row["data"]) if row["data"] else {}
                 except (json.JSONDecodeError, TypeError):
                     cal = {}
-                if str(cal.get("HolDivision", "")).strip() == "0":
+                business = _is_business_day(cal)
+                if business is None:
+                    readable = False  # no HolDiv / HolidayDivision: use the weekday fallback
+                    break
+                if business:
                     trading.append(str(row["date"])[:10])
-            if rows:
+            if rows and readable:
                 # Calendar has entries for this range: trust it (even if all are holidays)
                 return trading
         except sqlite3.OperationalError:
