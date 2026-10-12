@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.4.1](https://github.com/shigechika/jquants-mcp/compare/v1.4.0...v1.4.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* expire Tier 2 snapshots at the next publication; read V2 HolDiv for the latest trading day ([#639](https://github.com/shigechika/jquants-mcp/issues/639)) ([59d2369](https://github.com/shigechika/jquants-mcp/commit/59d236974d953aa072e319b289694f4d1ef446fc))
+
 ## [1.4.0](https://github.com/shigechika/jquants-mcp/compare/v1.3.0...v1.4.0) (2026-10-12)
 
 
