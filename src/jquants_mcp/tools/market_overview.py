@@ -1406,8 +1406,8 @@ def register(
         get_valuation_ranking / get_dividend_yield_ranking / detect_52w_high_low.
         Included in get_market_briefing as the value_screen section.
         Each item also carries margin_ratio (信用倍率 = LongVol/ShrtVol, latest
-        weekly margin interest) and margin_date — null on Free/Light plans or
-        when the stock has no margin data.
+        margin interest — daily from the 2026-09-25 application date, weekly before)
+        and margin_date — null on Free/Light plans or when the stock has no margin data.
 
         [Supported plans] Free / Light / Standard / Premium (cache-only, no API call)
 
