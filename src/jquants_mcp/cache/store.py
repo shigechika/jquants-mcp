@@ -114,9 +114,9 @@ ENDPOINT_TTL: dict[str, int] = {
     "/markets/calendar": TTL_7D,
     "/equities/earnings-calendar": TTL_90D,
     "/equities/investor-types": TTL_7D,
-    # Daily since the 2026-09-28 spec change (weekly before). This entry is documentation only:
-    # parameterless calls go through tools/markets.py::_tier2_fallback, which always caches for
-    # TTL_24H, so changing this value alone changes nothing.
+    # Daily since the 2026-09-28 spec change (weekly before). The /markets/* entries below are
+    # documentation only: tools/markets.py caches them until the next daily publication
+    # (cache/publication.py), so changing a value here changes nothing for them.
     "/markets/margin-interest": TTL_24H,
     "/markets/margin-alert": TTL_24H,
     "/markets/short-ratio": TTL_24H,

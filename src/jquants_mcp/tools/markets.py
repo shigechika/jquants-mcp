@@ -8,7 +8,8 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from ..cache.store import CacheStore, TTL_24H, make_cache_key
+from ..cache.publication import ttl_until_next_publication
+from ..cache.store import CacheStore, make_cache_key
 from ..client import JQuantsClient
 from ..exceptions import (
     TOOL_API_ERRORS,
@@ -270,7 +271,11 @@ def register(
         try:
             data = await client.get_all_pages("/markets/short-sale-report", params)
             result = {"count": len(data), "data": data}
-            cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
+            cache.put_response(
+                cache_key,
+                result,
+                ttl_seconds=ttl_until_next_publication("/markets/short-sale-report"),
+            )
             return result
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
@@ -508,7 +513,8 @@ async def _tier2_fallback(
 
     When ``tier1_table`` is given and the API call fails, the most recent
     Tier 1 snapshot is returned so callers get cached data even on plan
-    restriction or network errors.
+    restriction or network errors. A response is cached until the endpoint's
+    next daily publication (``cache/publication.py``), not for a fixed 24h.
     """
     cache_key = make_cache_key(endpoint, params)
     cached = cache.get_response(cache_key)
@@ -518,7 +524,7 @@ async def _tier2_fallback(
     try:
         data = await client.get_all_pages(endpoint, params)
         result = {"count": len(data), "data": data}
-        cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
+        cache.put_response(cache_key, result, ttl_seconds=ttl_until_next_publication(endpoint))
         return result
     except TOOL_API_ERRORS as e:
         if tier1_table:

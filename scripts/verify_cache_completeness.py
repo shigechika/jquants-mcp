@@ -147,9 +147,12 @@ def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
 
 
 def _latest_trading_day(conn: sqlite3.Connection) -> str:
-    """Return most recent trading day (HolDivision='0') from markets_calendar.
+    """Return the most recent business day on or before today from markets_calendar.
 
-    Falls back to the nearest past weekday when the table is unavailable or empty.
+    V2 rows carry ``HolDiv`` (1 = business day, 2 = half day; 0 / 3 =
+    non-business); legacy V1 rows used the same codes under
+    ``HolidayDivision``. Falls back to the nearest past weekday when the table
+    is unavailable or has no business day in the last two weeks.
     """
     today = date.today()
     today_str = today.isoformat()
@@ -165,7 +168,8 @@ def _latest_trading_day(conn: sqlite3.Connection) -> str:
                     cal = json.loads(row["data"]) if row["data"] else {}
                 except (json.JSONDecodeError, TypeError):
                     cal = {}
-                if str(cal.get("HolDivision", "")).strip() == "0":
+                hol = cal.get("HolDiv", cal.get("HolidayDivision"))
+                if str(hol).strip() in ("1", "2"):
                     return str(row["date"])[:10]
         except sqlite3.OperationalError:
             pass

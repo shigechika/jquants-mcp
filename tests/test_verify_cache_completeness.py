@@ -34,6 +34,7 @@ from verify_cache_completeness import (  # noqa: E402
 
 TODAY = date.today().isoformat()
 YESTERDAY = (date.today() - timedelta(days=1)).isoformat()
+TWO_DAYS_AGO = (date.today() - timedelta(days=2)).isoformat()
 OLD_DATE = (date.today() - timedelta(days=60)).isoformat()
 FUTURE_DATE = (date.today() + timedelta(days=30)).isoformat()
 
@@ -155,18 +156,34 @@ def test_table_exists_false(conn):
 
 
 def test_latest_trading_day_from_calendar(conn):
-    """Returns the most recent HolDivision=0 date from markets_calendar."""
+    """Returns the most recent HolDiv 1/2 date, skipping non-business days (#632)."""
+    for d, hol in ((TWO_DAYS_AGO, "1"), (YESTERDAY, "2"), (TODAY, "0")):
+        conn.execute(
+            "INSERT INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+            (d, json.dumps({"Date": d, "HolDiv": hol}), time.time()),
+        )
+    conn.commit()
+    assert _latest_trading_day(conn) == YESTERDAY
+
+
+def test_latest_trading_day_skips_holiday_rows(conn):
+    """A holiday (HolDiv 3) on top of business days is not a trading day."""
+    for d, hol in ((TWO_DAYS_AGO, "1"), (YESTERDAY, "3"), (TODAY, "0")):
+        conn.execute(
+            "INSERT INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+            (d, json.dumps({"Date": d, "HolDiv": hol}), time.time()),
+        )
+    conn.commit()
+    assert _latest_trading_day(conn) == TWO_DAYS_AGO
+
+
+def test_latest_trading_day_reads_legacy_holiday_division(conn):
     conn.execute(
         "INSERT INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
-        (YESTERDAY, json.dumps({"HolDivision": "0"}), time.time()),
-    )
-    conn.execute(
-        "INSERT INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
-        (TODAY, json.dumps({"HolDivision": "1"}), time.time()),
+        (YESTERDAY, json.dumps({"HolidayDivision": "1"}), time.time()),
     )
     conn.commit()
-    result = _latest_trading_day(conn)
-    assert result == YESTERDAY
+    assert _latest_trading_day(conn) == YESTERDAY
 
 
 def test_latest_trading_day_fallback_to_weekday(conn):
