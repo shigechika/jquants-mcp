@@ -55,7 +55,8 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 - Multi-user mode: per-user `JQuantsClient` instances resolved via OAuth user ID
 - Single-user mode: global `_client` with env/config API key (backward compatible)
 - Tests patch `server_module._settings`, `_client`, `_cache` globals directly
-- `_call()` test helper uses `mcp.call_tool(name, kwargs)`; unpack `_, structured = await ...` for tools annotated `-> dict[str, Any]` (the SDK returns `(unstructured, structured)`), or parse `result[0].text` for tools annotated with a bare `-> dict` (no output schema generated, so no tuple)
+- `mcp.call_tool()` returns a `CallToolResult` (SDK 2.x); production code that calls another tool reads `result.structured_content` (see `_call_json` in `get_market_briefing`)
+- Tests only: the autouse adapter in `tests/conftest.py` gives the outermost `mcp.call_tool(name, kwargs)` the old 1.x shape, so the `_call()` helper unpacks `_, structured = await ...` for tools annotated `-> dict[str, Any]`, or parses `result[0].text` for a bare `-> dict` (no output schema, so no tuple). Nested tool-to-tool calls see the real `CallToolResult`
 - Code is English-only: docstrings, inline comments, log messages, exception messages (Public repository)
 - README.md is in English, README.ja.md is the Japanese translation
 - Commit messages in English
