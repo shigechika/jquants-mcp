@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.5.0](https://github.com/shigechika/jquants-mcp/compare/v1.4.1...v1.5.0) (2026-10-26)
+
+
+### Features
+
+* allow Meta Muse OAuth callback in Cloud Run gateway ([#642](https://github.com/shigechika/jquants-mcp/issues/642)) ([919869b](https://github.com/shigechika/jquants-mcp/commit/919869b916a0c4d302f864f059656179791ccc18))
+
 ## [1.4.1](https://github.com/shigechika/jquants-mcp/compare/v1.4.0...v1.4.1) (2026-10-12)
 
 
