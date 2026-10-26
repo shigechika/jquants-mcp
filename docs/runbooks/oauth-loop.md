@@ -57,9 +57,9 @@ gcloud firestore documents list --database='(default)' \
    client is redirected somewhere it cannot complete. Check the app
    container's `PUBLIC_URL` env var against the real public URL.
 3. **Redirect URI not allowed** (`mcp-stdio serve`) — the gateway is started
-   with an explicit `--allow-redirect-uri` list
-   (`https://claude.ai/api/mcp/auth_callback` in `entrypoint-stdio.sh`). A
-   client using any other callback is rejected outright.
+   with an explicit `--allow-redirect-uri` list in `entrypoint-stdio.sh`
+   (currently claude.ai and Meta Muse). A client using any other callback is
+   rejected outright; matching is byte-for-byte.
 4. **Token store unavailable** (`mcp-stdio serve`) — if the Firestore token
    store is misconfigured or unwritable, tokens fall back to being lost on
    every restart, which users experience as "it keeps asking me to log in".
