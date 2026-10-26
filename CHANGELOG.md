@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.5.1](https://github.com/shigechika/jquants-mcp/compare/v1.5.0...v1.5.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **briefing:** read SDK 2.x CallToolResult from nested tool calls ([#646](https://github.com/shigechika/jquants-mcp/issues/646)) ([9d76a32](https://github.com/shigechika/jquants-mcp/commit/9d76a321d6636dbb00c87bbbd12eb0159eaec787))
+
 ## [1.5.0](https://github.com/shigechika/jquants-mcp/compare/v1.4.1...v1.5.0) (2026-10-26)
 
 
