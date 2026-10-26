@@ -2599,3 +2599,43 @@ class TestGetFinsDisclosuresInRange:
         assert "67580" in codes  # ~200 days old: visible
         assert "72030" not in codes  # 3 days old: embargoed
         cache.close()
+
+
+class TestLatestRowsAsOf:
+    """``as_of`` bounds the per-key latest row used by get_market_briefing."""
+
+    def test_short_ratio_as_of(self, tmp_path: Path):
+        cache = CacheStore(tmp_path / "cache.db", default_plan="premium")
+        cache.put_rows(
+            "markets_short_ratio",
+            [
+                {"S33": "7050", "Date": "2026-05-01", "ShrtWithResVa": 1},
+                {"S33": "7050", "Date": "2026-05-08", "ShrtWithResVa": 2},
+                # Only a row after as_of: absent from the result.
+                {"S33": "5250", "Date": "2026-05-08", "ShrtWithResVa": 3},
+            ],
+            key_columns=["S33", "Date"],
+        )
+        result = cache.get_all_latest_short_ratio(as_of="2026-05-02")
+        # The older row is returned with its own date when nothing is closer.
+        assert result["7050"]["Date"] == "2026-05-01"
+        assert "5250" not in result
+        assert cache.get_all_latest_short_ratio()["7050"]["Date"] == "2026-05-08"
+        cache.close()
+
+    def test_margin_interest_as_of(self, tmp_path: Path):
+        cache = CacheStore(tmp_path / "cache.db", default_plan="premium")
+        cache.put_rows(
+            "markets_margin_interest",
+            [
+                {"Code": "12340", "Date": "2026-04-24", "LongVol": 1},
+                {"Code": "12340", "Date": "2026-05-08", "LongVol": 2},
+                {"Code": "56780", "Date": "2026-05-08", "LongVol": 3},
+            ],
+            key_columns=["Code", "Date"],
+        )
+        result = cache.get_all_latest_margin_interest(as_of="2026-05-02")
+        assert result["12340"]["Date"] == "2026-04-24"
+        assert "56780" not in result
+        assert cache.get_all_latest_margin_interest()["12340"]["Date"] == "2026-05-08"
+        cache.close()

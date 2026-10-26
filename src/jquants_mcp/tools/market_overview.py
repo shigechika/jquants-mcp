@@ -1835,8 +1835,9 @@ def register(
         name_map = cache.get_name_map()
         sector_map = cache.get_sector_map()
 
-        # Market-wide margin ratio (optional — empty dict when not cached)
-        margin_map = cache.get_all_latest_margin_interest()
+        # Market-wide margin ratio (optional — empty dict when not cached),
+        # as of the briefing's session like the short-sale ratios below.
+        margin_map = cache.get_all_latest_margin_interest(as_of=today_date)
         margin_ratios = []
         for mrow in margin_map.values():
             ratio, _ = _margin_ratio_from_row(mrow)
