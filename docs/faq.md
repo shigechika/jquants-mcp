@@ -21,19 +21,19 @@ needs the full daily bars table for the day, which is one API call but multiple
 pages. Subsequent queries hit the cache and return in milliseconds.
 
 To pre-warm the cache, run `scripts/daily_fetch.py` from the repo, or just let
-it warm up naturally as you ask Claude questions.
+it warm up naturally as you ask questions.
 
 ## I see "rate limit exceeded" — what do I do?
 
-The Free plan allows only 5 requests per minute. If Claude is making bulk
+The Free plan allows only 5 requests per minute. If your assistant is making bulk
 queries (e.g. fetching daily bars for many codes), the rate limiter will
 back off automatically with exponential retry. If you keep hitting the wall,
 upgrade to Light (60 req/min) or Standard (120 req/min).
 
 ## Does it work on iPhone?
 
-Yes — install the
-[Claude iOS app](https://claude.ai/download), point it at a self-hosted
+Yes — install a mobile client that supports remote MCP servers (the
+[Claude iOS app](https://claude.ai/download), for example), point it at a self-hosted
 jquants-mcp instance fronted by an MCP gateway (`mcp-stdio serve`) over
 HTTPS, and the chart images render inline in the chat. The
 [demo on the home page](index.md) was recorded on iPhone.
@@ -51,7 +51,7 @@ process per session, injecting that user's verified email into the child
 (`--trusted-user-header X-Forwarded-Email --user-env JQUANTS_MCP_USER`) — so a
 given process only ever serves a single principal.
 
-Each user then registers their own J-Quants API key by asking Claude to call
+Each user then registers their own J-Quants API key by asking their assistant to call
 the `register_api_key` tool; the key is stored encrypted with AES-256-GCM
 (the server needs `MCP_ENCRYPTION_KEY` set for this). Cloud Run — an
 `oauth2-proxy` sidecar in front of `mcp-stdio serve` — is the supported

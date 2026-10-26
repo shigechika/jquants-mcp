@@ -9,7 +9,7 @@ child process per authenticated user.
 
 | Shape | Who runs it | Cost | Setup effort | Best for |
 |---|---|---|---|---|
-| **stdio** (local) | One user, one machine | Free | < 5 min | Single-user desktop via Claude Code / Claude Desktop |
+| **stdio** (local) | One user, one machine | Free | < 5 min | Single-user desktop via any stdio MCP client (Claude Code, Claude Desktop, Codex, …) |
 | **stdio in Docker** (local) | One user, one machine | Free | < 10 min | Same, without installing Python; cache persists in a named volume |
 | **Self-hosted gateway** | One or a few trusted users, one host | Host + J-Quants plan | ~1 hour | Homelab / always-on server reachable from mobile or other machines |
 | **Cloud Run** (GCP) | Multiple users, OAuth auth | GCP (~\$0–\$10/mo for low traffic) + J-Quants plan | 2–4 hours first time | Family / team, mobile clients, OAuth login per user |
@@ -43,7 +43,7 @@ flowchart TD
 graph BT
     C["J-Quants API v2"]
     B["jquants-mcp (local)"]
-    A["Claude Code / Claude Desktop"]
+    A["MCP client (Claude Code / Claude Desktop / Codex / …)"]
 
     A -->|stdio| B
     B -->|HTTPS| C
@@ -51,7 +51,7 @@ graph BT
     style B fill:#4a5,stroke:#333,color:#fff
 ```
 
-- Launched by the MCP client as a subprocess (`uvx jquants-mcp` or `claude mcp add`)
+- Launched by the MCP client as a subprocess (`uvx jquants-mcp`, `claude mcp add` or `codex mcp add`)
 - Single API key via env var, config file, or `jquants-mcp login` (PKCE)
 - Local SQLite cache at `~/.cache/jquants-mcp/cache.db`
 - Cannot be reached from mobile or a different machine
@@ -64,7 +64,7 @@ Set up: see the main [README](../../README.md#installation).
 graph BT
     C["J-Quants API v2"]
     B["jquants-mcp (Docker container)"]
-    A["Claude Code / Claude Desktop"]
+    A["MCP client (Claude Code / Claude Desktop / Codex / …)"]
 
     A -->|stdio| B
     B -->|HTTPS| C
@@ -87,7 +87,7 @@ graph BT
     D["jquants-mcp (stdio child)"]
     C["mcp-stdio serve (gateway)"]
     B["TLS reverse proxy"]
-    A["Claude Code / Claude Desktop / Claude mobile"]
+    A["MCP client (Claude / Codex / Meta Muse / …)"]
 
     A -->|"HTTPS + OAuth"| B
     B -->|HTTP| C
@@ -113,7 +113,7 @@ graph BT
     D["GCS (cache.db)"]
     E["Firestore\n(users, oauth tokens)"]
     B["Cloud Run jquants\n(oauth2-proxy → mcp-stdio serve → jquants-mcp)"]
-    A["Claude mobile / Claude Desktop / Claude Code"]
+    A["MCP client (Claude / Codex / Meta Muse / …)"]
     F["Self-hosted publisher (cron)"]
 
     A -->|"OAuth 2.1"| B
@@ -130,6 +130,6 @@ graph BT
 - Multi-user: per-user encrypted J-Quants API keys in Firestore, registered with the `register_api_key` MCP tool
 - Allowlist (`JQUANTS_ALLOWED_EMAILS`) controls who can sign in
 - Requires a self-hosted publisher to populate `cache.db` in GCS
-- Compatible with Claude Desktop Connectors, Claude mobile, Claude Code
+- Compatible with remote MCP clients: Claude Desktop Connectors, Claude mobile, Meta Muse, and Claude Code / Codex via mcp-stdio
 
 Set up: see [gcp.md](gcp.md).

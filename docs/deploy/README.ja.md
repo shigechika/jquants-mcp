@@ -8,7 +8,7 @@ HTTP と認証を終端して、認証済みユーザーごとに `jquants-mcp` 
 
 | 形態 | 運用者 | コスト | セットアップ | 適した用途 |
 |---|---|---|---|---|
-| **stdio**（ローカル） | 1 人・1 台 | 無料 | < 5 分 | Claude Code / Claude Desktop での単一ユーザー利用 |
+| **stdio**（ローカル） | 1 人・1 台 | 無料 | < 5 分 | stdio の MCP クライアント（Claude Code、Claude Desktop、Codex など）での単一ユーザー利用 |
 | **Docker で stdio**（ローカル） | 1 人・1 台 | 無料 | < 10 分 | Python 不要で同じことをしたい、キャッシュを named volume に永続化したい |
 | **セルフホストゲートウェイ** | 少数の信頼ユーザー | ホスト代 + J-Quants | ~1 時間 | 常時稼働サーバーからモバイルや他端末に接続したい |
 | **Cloud Run**（GCP） | 複数ユーザー、OAuth 認証 | GCP 代（低トラフィックで ~$0–$10/月）+ J-Quants | 初回 2〜4 時間 | 家族・チーム利用、モバイル対応、ユーザーごとの OAuth ログイン |
@@ -42,7 +42,7 @@ flowchart TD
 graph BT
     C["J-Quants API v2"]
     B["jquants-mcp（ローカル）"]
-    A["Claude Code / Claude Desktop"]
+    A["MCP クライアント（Claude Code / Claude Desktop / Codex / …）"]
 
     A -->|stdio| B
     B -->|HTTPS| C
@@ -50,7 +50,7 @@ graph BT
     style B fill:#4a5,stroke:#333,color:#fff
 ```
 
-- MCP クライアントがサブプロセスとして起動（`uvx jquants-mcp` または `claude mcp add`）
+- MCP クライアントがサブプロセスとして起動（`uvx jquants-mcp`、`claude mcp add`、`codex mcp add` など）
 - API キーは環境変数・設定ファイル・`jquants-mcp login`（PKCE）で設定
 - ローカル SQLite キャッシュ: `~/.cache/jquants-mcp/cache.db`
 - モバイルや別端末からはアクセス不可
@@ -63,7 +63,7 @@ graph BT
 graph BT
     C["J-Quants API v2"]
     B["jquants-mcp（Docker コンテナ）"]
-    A["Claude Code / Claude Desktop"]
+    A["MCP クライアント（Claude Code / Claude Desktop / Codex / …）"]
 
     A -->|stdio| B
     B -->|HTTPS| C
@@ -86,7 +86,7 @@ graph BT
     D["jquants-mcp（stdio 子プロセス）"]
     C["mcp-stdio serve（ゲートウェイ）"]
     B["TLS リバースプロキシ"]
-    A["Claude Code / Claude Desktop / Claude モバイル"]
+    A["MCP クライアント（Claude / Codex / Meta Muse / …）"]
 
     A -->|"HTTPS + OAuth"| B
     B -->|HTTP| C
@@ -112,7 +112,7 @@ graph BT
     D["GCS（cache.db）"]
     E["Firestore\n（users, OAuth トークン）"]
     B["Cloud Run jquants\n（oauth2-proxy → mcp-stdio serve → jquants-mcp）"]
-    A["Claude モバイル / Claude Desktop / Claude Code"]
+    A["MCP クライアント（Claude / Codex / Meta Muse / …）"]
     F["セルフホスト publisher（cron）"]
 
     A -->|"OAuth 2.1"| B
@@ -129,6 +129,6 @@ graph BT
 - マルチユーザー: ユーザーごとの J-Quants API キーを Firestore に暗号化保存し、登録は `register_api_key` MCP ツールで行う
 - `JQUANTS_ALLOWED_EMAILS` でサインイン可能なユーザーを制限
 - GCS に `cache.db` を定期アップロードするセルフホスト publisher が必要
-- Claude Desktop Connectors UI・Claude モバイル・Claude Code に対応
+- リモートの MCP クライアントに対応：Claude Desktop Connectors UI・Claude モバイル・Meta Muse、mcp-stdio 経由の Claude Code・Codex
 
 セットアップ: [gcp.ja.md](gcp.ja.md) を参照。

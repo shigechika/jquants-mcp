@@ -1,9 +1,9 @@
 # jquants-mcp
 
-**Claude で日本株壁打ちのお供に — [J-Quants API v2](https://jpx-jquants.com/) 対応**
+**Claude・Codex・Meta Muse などの AI と日本株壁打ちのお供に — [J-Quants API v2](https://jpx-jquants.com/) 対応**
 
 jquants-mcp は日本株向け [MCP (Model Context Protocol)](https://modelcontextprotocol.io/)
-サーバーです。Claude（Desktop / CLI / モバイル）に日本株ならではの
+サーバーです。Claude（Desktop / CLI / モバイル）や Codex、Meta Muse などの MCP クライアントに日本株ならではの
 55 種類のツールとキャッシュ機能を内蔵し、あなたの投資活動を支援します。
 
 <p align="center">
@@ -16,7 +16,7 @@ jquants-mcp は日本株向け [MCP (Model Context Protocol)](https://modelconte
   </video>
 </p>
 
-## Claude にできる質問
+## できる質問
 
 jquants-mcp を接続すると、以下のような自然な日本語クエリがそのまま動きます：
 
@@ -38,7 +38,7 @@ jquants-mcp を接続すると、以下のような自然な日本語クエリ�
 
 ## 特徴
 
-- 自然な日本語で壁打ちできる — Claude が適切なツールを選んで結果を返します。ツール名は覚えなくて OK。
+- 自然な日本語で壁打ちできる — AI が適切なツールを選んで結果を返します。ツール名は覚えなくて OK。
 - すぐに返ってくる — データはローカルにキャッシュされているため、ほとんどのクエリはネットワークに触れません。
 - どのプランでも動く — Free から Premium まで自動検出。
 - 複合質問もこなす — 「値上がり率トップを出してリーダーのチャートも描いて」を 1 回で。

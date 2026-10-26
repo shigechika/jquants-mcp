@@ -121,7 +121,7 @@ MCP 固有の設定（キャッシュ、クライアント動作）:
 
 \* API キーは `~/.jquants-api/jquants-api.toml` から自動検出されます。上書きが必要な場合のみ `JQUANTS_API_KEY` を設定してください。
 
-環境変数は `config.ini` と `jquants-api.toml` の両方を上書きします。普段使いの設定は `config.ini` や `jquants-api.toml` に任せ、MCP クライアント（Claude Desktop, Claude Code）からは `env` ブロックで必要な設定だけ渡すことができます。
+環境変数は `config.ini` と `jquants-api.toml` の両方を上書きします。普段使いの設定は `config.ini` や `jquants-api.toml` に任せ、MCP クライアント（Claude Desktop、Claude Code、Codex など）からは `env` ブロックで必要な設定だけ渡すことができます。
 
 ### macOS launchd 注意
 
@@ -185,11 +185,11 @@ oauth2-proxy（Google OAuth）
 ```mermaid
 sequenceDiagram
     participant U as ユーザー
-    participant C as Claude
+    participant C as MCP クライアント
     participant G as ゲートウェイ
     participant S as jquants-mcp
     participant J as J-Quants API
-    U->>C: 接続（Connectors UI / Claude Code）
+    U->>C: 接続（コネクタ / stdio クライアント）
     C->>G: 認証（ゲートウェイが終端）
     G->>S: stdio 子プロセスを起動（JQUANTS_MCP_USER=検証済み email）
     U->>C: "J-Quants API キーを登録して: <key>"
@@ -212,11 +212,11 @@ sequenceDiagram
 | `register_api_key` | ゲートウェイ認証 + `MCP_ENCRYPTION_KEY` | J-Quants API キーを暗号化して登録 |
 | `delete_api_key` | ゲートウェイ認証 + `MCP_ENCRYPTION_KEY` | 登録済みの API キーを削除 |
 
-**キーの登録**（Claude に伝える）:
+**キーの登録**（AI に伝える）:
 
 > 「J-Quants の API キー `<APIキー>` を登録して」
 
-Claude が `register_api_key(api_key="...")` を呼び出します。サーバーはキーを使ってプラン固有のエンドポイントをプローブし、プラン（`free` / `light` / `standard` / `premium`）を自動検出して暗号化済みキーと一緒に保存します。手動でのプラン指定は不要です。以降のツール呼び出しは検出されたプランに基づいてレート制限・日付範囲制約を適用します。
+AI が `register_api_key(api_key="...")` を呼び出します。サーバーはキーを使ってプラン固有のエンドポイントをプローブし、プラン（`free` / `light` / `standard` / `premium`）を自動検出して暗号化済みキーと一緒に保存します。手動でのプラン指定は不要です。以降のツール呼び出しは検出されたプランに基づいてレート制限・日付範囲制約を適用します。
 
 ### セキュリティ
 
@@ -318,15 +318,23 @@ Claude Desktop の設定ファイルに追加:
 
 設定後、Claude Desktop を再起動してください。
 
+### Codex
+
+```bash
+codex mcp add jquants-mcp -- jquants-mcp
+```
+
+API キーは `~/.jquants-api/jquants-api.toml` から自動検出されます。上書きしたい場合のみ `--env JQUANTS_API_KEY=...` を指定してください。ローカルの stdio サーバーを起動できる MCP クライアントなら、どれも同じコマンドで使えます。
+
 ### スタンドアロン（stdio）
 
 ```bash
 jquants-mcp
 ```
 
-### Claude Desktop（mcp-stdio 経由のリモート接続）
+### stdio クライアントからのリモート接続（mcp-stdio 経由。Claude Desktop・Codex など）
 
-Claude Desktop はリモート MCP サーバーへの HTTP 接続に直接対応していません。[mcp-stdio](https://pypi.org/project/mcp-stdio/) を使うと、stdio とゲートウェイが公開するリモート MCP エンドポイント（`mcp-stdio serve` の `--path` 配下）を中継できます:
+Claude Desktop はリモート MCP サーバーへの HTTP 接続に直接対応していません。[mcp-stdio](https://pypi.org/project/mcp-stdio/) を使うと、stdio とゲートウェイが公開するリモート MCP エンドポイント（`mcp-stdio serve` の `--path` 配下）を中継できます。stdio サーバーを起動できる他のクライアントも同じ形で使えます（Codex なら `codex mcp add jquants-mcp -- mcp-stdio --oauth https://mcp.example.com/mcp`）:
 
 ```json
 {
@@ -340,6 +348,19 @@ Claude Desktop はリモート MCP サーバーへの HTTP 接続に直接対応
 ```
 
 設定後、Claude Desktop を再起動してください。`--oauth` はゲートウェイの OAuth フローをブラウザで実行します（ゲートウェイ側が `--enable-oauth` の場合）。静的トークンで認証するゲートウェイなら `--oauth` の代わりに `--bearer-token <TOKEN>` を指定します。**どちらも指定しないとゲートウェイに認証情報が渡らず 401 になります。**
+
+### Web のクライアント（claude.ai・Meta Muse）
+
+ブラウザで動くクライアントは、ゲートウェイの OAuth エンドポイントに直接接続します。固定の HTTPS コールバックで Dynamic Client Registration を行うので、ゲートウェイ側でクライアントごとのコールバックを明示的に許可します（完全一致）:
+
+```bash
+mcp-stdio serve ... --enable-oauth \
+  --allow-redirect-uri https://claude.ai/api/mcp/auth_callback \
+  --allow-redirect-uri https://agent.meta.ai/api/hatch/oauth/callback \
+  -- jquants-mcp
+```
+
+1 行目が claude.ai（カスタムコネクタ。Claude のモバイルアプリもこれを使います）、2 行目が Meta Muse です。あとはクライアントにコネクタとして `https://mcp.example.com/mcp` を追加し、ブラウザでログインします。
 
 ## 提供ツール一覧
 
@@ -418,7 +439,7 @@ Claude Desktop はリモート MCP サーバーへの HTTP 接続に直接対応
 
 ### スクリーナー (Screener) — 10ツール
 
-キャッシュ済の `equities_bars_daily` から直接計算するオフラインツール。追加 API コールなし、numpy / pandas 非依存の pure Python 実装。Claude と組み合わせた銘柄スクリーニング向け。
+キャッシュ済の `equities_bars_daily` から直接計算するオフラインツール。追加 API コールなし、numpy / pandas 非依存の pure Python 実装。AI と組み合わせた銘柄スクリーニング向け。
 
 | ツール名 | 説明 |
 |---|---|

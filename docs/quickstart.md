@@ -1,13 +1,13 @@
 # Quickstart
 
-Get jquants-mcp answering Japanese stock questions in Claude in about 5 minutes.
+Get jquants-mcp answering Japanese stock questions in your MCP client in about 5 minutes.
 
 ## Prerequisites
 
 - Python 3.10 or newer (`python3 --version`)
 - A [J-Quants account](https://jpx-jquants.com/) with at least the Free plan
   (Light or above unlocks daily bars beyond the 12-week delay)
-- One of: Claude Code (CLI), Claude Desktop, or any MCP-aware client
+- One of: Claude Code (CLI), Claude Desktop, Codex, or any MCP-aware client
 
 ## 1. Install jquants-mcp
 
@@ -52,7 +52,7 @@ api_key = YOUR_API_KEY_HERE
 
 `JQUANTS_API_KEY` env var also works if you would rather not write a config file.
 
-## 3. Connect to Claude
+## 3. Connect your client
 
 === "claude.ai (browser / desktop / mobile)"
 
@@ -120,13 +120,29 @@ api_key = YOUR_API_KEY_HERE
 
     Restart Claude Desktop to pick up the change.
 
+=== "Codex"
+
+    ```bash
+    codex mcp add jquants -- jquants-mcp
+    ```
+
+    Verify with `codex mcp list`. The next Codex session has the tools.
+
+=== "Other clients"
+
+    Any MCP client that launches local stdio servers works the same way:
+    use `jquants-mcp` as the command. Web-based clients such as Meta Muse
+    instead connect to a remote deployment over OAuth — see the
+    [deployment guide](https://github.com/shigechika/jquants-mcp/blob/main/docs/deploy/README.md); the gateway must allow that client's
+    OAuth callback (`--allow-redirect-uri`).
+
 ## 4. Try it out
 
-Open Claude and ask:
+Open your client and ask:
 
 > 今日の業種別騰落率を教えて
 
-Claude calls `get_sector_performance` and returns a ranked sector table. The
+The assistant calls `get_sector_performance` and returns a ranked sector table. The
 first call seeds the local cache; subsequent queries are instant.
 
 <p align="center" markdown>
@@ -137,7 +153,7 @@ Try a chart:
 
 > キオクシア（285A）のチャートを 3 か月分
 
-Claude calls `get_candlestick_data` and renders a candlestick React artifact inline.
+The assistant calls `get_candlestick_data` and returns the candles; on claude.ai it renders them as a candlestick React artifact inline.
 
 <p align="center" markdown>
 ![Candlestick chart for KIOXIA Holdings on the Claude iPhone app](screenshots/jquants-mcp-demo5.png){ width="280" }
@@ -145,7 +161,7 @@ Claude calls `get_candlestick_data` and renders a candlestick React artifact inl
 
 ## Next steps
 
-- **[Tools →](tools.md)** — what else you can ask Claude to do.
+- **[Tools →](tools.md)** — what else you can ask for.
 - **[FAQ →](faq.md)** — common errors, plan recommendations, multi-user mode.
 - **Full reference**:
   [GitHub README](https://github.com/shigechika/jquants-mcp) covers

@@ -22,18 +22,18 @@ jquants-mcp は J-Quants のレスポンスを最初の呼び出し時にキャ�
 2 回目以降はキャッシュヒットでミリ秒オーダーで返答します。
 
 事前にキャッシュを温めたい場合はリポジトリの `scripts/daily_fetch.py` を実行してください。
-あるいは Claude に質問しながら自然に温まっていくのを待つだけでも OK です。
+あるいは質問しながら自然に温まっていくのを待つだけでも OK です。
 
 ## 「rate limit exceeded」と表示される
 
-Free プランは 1 分あたり 5 リクエストまで。Claude が大量クエリ（多銘柄の日次バー取得など）
+Free プランは 1 分あたり 5 リクエストまで。AI が大量クエリ（多銘柄の日次バー取得など）
 を作ると、レートリミッタが指数バックオフで自動的に待機します。
 頻繁に上限に当たる場合は Light（60 req/min）または Standard（120 req/min）への
 アップグレードを検討してください。
 
 ## iPhone でも動きますか？
 
-動きます。[Claude iOS アプリ](https://claude.ai/download)をインストールし、
+動きます。リモートの MCP サーバーに接続できるモバイルクライアント（たとえば [Claude iOS アプリ](https://claude.ai/download)）をインストールし、
 MCP ゲートウェイ（`mcp-stdio serve`）を前段に置いたセルフホストの jquants-mcp へ
 HTTPS で接続すれば、チャート画像がチャットに inline 表示されます。
 [トップページのデモ](index.md) は実際に iPhone で収録したものです。
@@ -52,7 +52,7 @@ jquants-mcp 自体は stdio サーバーでネットワークを待ち受けな�
 （`--trusted-user-header X-Forwarded-Email --user-env JQUANTS_MCP_USER`）。
 1 つのプロセスが扱う利用者は常に 1 人だけです。
 
-各ユーザーは Claude に `register_api_key` ツールを呼ばせて自分の J-Quants API キーを
+各ユーザーは AI に `register_api_key` ツールを呼ばせて自分の J-Quants API キーを
 登録します。キーは AES-256-GCM で暗号化保存されます（サーバー側に
 `MCP_ENCRYPTION_KEY` の設定が必要）。マネージドデプロイのサポート対象は Cloud Run で、
 `oauth2-proxy` サイドカーを `mcp-stdio serve` の前段に置く構成です。

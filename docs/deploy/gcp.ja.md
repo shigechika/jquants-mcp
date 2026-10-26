@@ -1,6 +1,6 @@
 # Cloud Run デプロイガイド（GCP）
 
-jquants-mcp を Google Cloud Run にデプロイし、OAuth 2.1 ログイン・ユーザーごとの暗号化 J-Quants API キー・Claude Desktop / Claude モバイル対応を実現します。
+jquants-mcp を Google Cloud Run にデプロイし、OAuth 2.1 ログイン・ユーザーごとの暗号化 J-Quants API キー・リモートの MCP クライアント（Claude Desktop・Claude モバイル・Meta Muse など）への対応を実現します。
 
 Cloud Run のマルチユーザーデプロイは構成要素が多いため手順が長くなります。DNS / TLS の反映待ちを含め、初回は 2〜4 時間を見込んでください。
 
@@ -308,7 +308,7 @@ gcloud run services logs read "${SERVICE}" --region "${REGION}" --limit=50 \
 
 デプロイ直後は 1〜2 分ほどチェック 1 をリトライしてください。Cloud Run の readiness は ingress（`oauth2-proxy`）コンテナで判定されるため、app コンテナがまだ `cache.db` の同期ダウンロード中でもトラフィックが切り替わることがあり、その間 `oauth2-proxy` は 502 を返します。CD の検証ステップがリトライしているのもこの理由です。
 
-Claude クライアントからの完全な検証は [ステップ 15](#15-claude-クライアントから接続) で行います。
+MCP クライアントからの完全な検証は [ステップ 15](#15-mcp-クライアントから接続) で行います。
 
 ## 14. カスタムドメイン（オプション）
 
@@ -356,11 +356,11 @@ TLS 証明書は Cloud Run が自動発行します。DNS + 証明書の反映�
 
 ドメインが使えるようになったら `OAUTH_BASE_URL`・app コンテナの `PUBLIC_URL`・サインイン層のリダイレクト URI をカスタムドメインに更新して再デプロイ。
 
-## 15. Claude クライアントから接続
+## 15. MCP クライアントから接続
 
 ### J-Quants API キーの登録
 
-そのための Web ページはありません — 設定 UI は 1.0.0 で削除されました。各ユーザーは、コネクタでサインインした後、通常のチャットで Claude に **`register_api_key`** MCP ツールを呼ばせることで自分のキーを登録します:
+そのための Web ページはありません — 設定 UI は 1.0.0 で削除されました。各ユーザーは、コネクタでサインインした後、通常のチャットで AI に **`register_api_key`** MCP ツールを呼ばせることで自分のキーを登録します:
 
 ```text
 register_api_key を api_key="<J-Quants API キー>" で呼んで
@@ -385,6 +385,13 @@ register_api_key を api_key="<J-Quants API キー>" で呼んで
 3. Google でサインイン
 4. `register_api_key` ツールで J-Quants API キーを登録（上記）
 
+### Meta Muse
+
+同じ URL でコネクタを追加し、Google でサインインします。Muse はコールバック
+`https://agent.meta.ai/api/hatch/oauth/callback` で Dynamic Client Registration を行うため、ゲートウェイ側でこれを
+許可しておく必要があります（`--allow-redirect-uri`）。`scripts/entrypoint-stdio.sh`
+は許可済みです。
+
 ### Claude Code（mcp-stdio 経由）
 
 Claude Code には HTTP トランスポートで `Authorization` ヘッダーが落ちるバグがあります。[mcp-stdio](https://pypi.org/project/mcp-stdio/) をプロキシとして使用:
@@ -395,6 +402,15 @@ claude mcp add jquants-mcp \
 ```
 
 `mcp-stdio --oauth` がブラウザで OAuth 2.1 フローを実行し、トークンをローカルにキャッシュします。
+
+### Codex（mcp-stdio 経由）
+
+```bash
+codex mcp add jquants-mcp \
+  -- uvx mcp-stdio --oauth https://jquants-mcp.example.com/mcp
+```
+
+stdio サーバーを起動できる他のクライアントも、同じ形で使えます。
 
 ## 16. allowlist のカスタマイズ
 

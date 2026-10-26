@@ -1,6 +1,6 @@
 # Local Deployment
 
-Run jquants-mcp on a host you control and connect from Claude Desktop or Claude Code.
+Run jquants-mcp on a host you control and connect from your MCP client (Claude Desktop, Claude Code, Codex, …).
 
 For the multi-user Cloud Run deployment, see [gcp.md](gcp.md) instead.
 
@@ -63,10 +63,21 @@ Edit your Claude Desktop MCP config
 entrypoint script and runs the stdio server directly. The container exits when
 the session ends.
 
-### 3. Connect from Claude Code
+### 3. Connect from Claude Code or Codex
 
 ```bash
 claude mcp add jquants -- docker run --rm -i \
+  --entrypoint jquants-mcp \
+  -e JQUANTS_API_KEY=xxx \
+  -e JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp \
+  -v jquants-mcp-cache:/home/appuser/.cache/jquants-mcp \
+  ghcr.io/shigechika/jquants-mcp:latest
+```
+
+For Codex, register the same command:
+
+```bash
+codex mcp add jquants -- docker run --rm -i \
   --entrypoint jquants-mcp \
   -e JQUANTS_API_KEY=xxx \
   -e JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp \
@@ -113,8 +124,8 @@ docker volume rm jquants-mcp-cache                  # delete the cache (data los
 ### 6. Always-on local endpoint (Docker Compose)
 
 The setup above launches a container per session. If you would rather have one
-long-running server on a fixed URL — useful for Claude Code, or for several
-clients on the same machine — `compose.yml` in the repository root packages
+long-running server on a fixed URL — useful for clients that speak Streamable HTTP (Claude Code, Codex, …), or for
+several clients on the same machine — `compose.yml` in the repository root packages
 that shape:
 
 ```bash
@@ -128,6 +139,7 @@ The endpoint is `http://localhost:8080/mcp`:
 
 ```bash
 claude mcp add --transport http jquants http://localhost:8080/mcp
+codex mcp add jquants --url http://localhost:8080/mcp
 ```
 
 Internally the container runs `mcp-stdio serve` in front of the stdio server —
@@ -181,7 +193,7 @@ identity into the child as the `JQUANTS_MCP_USER` environment variable.
 
 ```mermaid
 graph LR
-    A["Claude client"]
+    A["MCP client"]
     B["TLS reverse proxy"]
     C["mcp-stdio serve"]
     D["jquants-mcp (stdio child)"]
@@ -288,16 +300,20 @@ WantedBy=multi-user.target
 sudo systemctl enable --now jquants-mcp
 ```
 
-### 4. Connect from Claude clients
+### 4. Connect from MCP clients
 
 **Claude Desktop (Connectors UI) / Claude mobile:** add a custom connector
 pointing at `https://mcp.example.com/mcp` and sign in when prompted.
 
-**Claude Code:** use `mcp-stdio` on the client side as well, so the OAuth flow
+**Meta Muse:** the same, but the gateway must also allow Muse's callback —
+add `--allow-redirect-uri https://agent.meta.ai/api/hatch/oauth/callback` to the `mcp-stdio serve` command above.
+
+**Claude Code / Codex:** use `mcp-stdio` on the client side as well, so the OAuth flow
 runs locally and the token is cached:
 
 ```bash
 claude mcp add jquants -- uvx mcp-stdio --oauth https://mcp.example.com/mcp
+codex mcp add jquants -- uvx mcp-stdio --oauth https://mcp.example.com/mcp  # Codex
 ```
 
 Claude Code has a known bug that drops the `Authorization` header on some HTTP

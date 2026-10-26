@@ -1,6 +1,6 @@
 # セルフホストデプロイ
 
-jquants-mcp を自分で管理するホストで動かし、Claude Desktop / Claude Code から接続します。
+jquants-mcp を自分で管理するホストで動かし、MCP クライアント（Claude Desktop、Claude Code、Codex など）から接続します。
 
 マルチユーザーの Cloud Run デプロイは代わりに [gcp.ja.md](gcp.ja.md) を参照。
 
@@ -60,10 +60,21 @@ Claude Desktop の MCP 設定（macOS では `~/Library/Application Support/Clau
 `--entrypoint jquants-mcp` は必須です。イメージ既定のエントリポイントスクリプトを
 バイパスして stdio サーバーを直接起動します。セッション終了時にコンテナは終了します。
 
-### 3. Claude Code から接続
+### 3. Claude Code・Codex から接続
 
 ```bash
 claude mcp add jquants -- docker run --rm -i \
+  --entrypoint jquants-mcp \
+  -e JQUANTS_API_KEY=xxx \
+  -e JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp \
+  -v jquants-mcp-cache:/home/appuser/.cache/jquants-mcp \
+  ghcr.io/shigechika/jquants-mcp:latest
+```
+
+Codex でも同じコマンドを登録します:
+
+```bash
+codex mcp add jquants -- docker run --rm -i \
   --entrypoint jquants-mcp \
   -e JQUANTS_API_KEY=xxx \
   -e JQUANTS_CACHE_DIR=/home/appuser/.cache/jquants-mcp \
@@ -110,7 +121,7 @@ docker volume rm jquants-mcp-cache                  # キャッシュを削除�
 ### 6. 常時起動のローカルエンドポイント（Docker Compose）
 
 上の構成はセッションごとにコンテナを起動します。固定 URL で常駐させたい場合
-（Claude Code から使う、同じマシンの複数クライアントから使う、など）は、
+（Streamable HTTP を話すクライアント（Claude Code、Codex など）から使う、同じマシンの複数クライアントから使う、など）は、
 リポジトリ直下の `compose.yml` がその形をまとめています。
 
 ```bash
@@ -124,6 +135,7 @@ docker compose up -d --build
 
 ```bash
 claude mcp add --transport http jquants http://localhost:8080/mcp
+codex mcp add jquants --url http://localhost:8080/mcp
 ```
 
 コンテナ内部では stdio サーバーの前段に `mcp-stdio serve` が立ちます。Option B と
@@ -176,7 +188,7 @@ identity を環境変数 `JQUANTS_MCP_USER` として子プロセスに注入し
 
 ```mermaid
 graph LR
-    A["Claude クライアント"]
+    A["MCP クライアント"]
     B["TLS リバースプロキシ"]
     C["mcp-stdio serve"]
     D["jquants-mcp（stdio 子プロセス）"]
@@ -281,16 +293,20 @@ WantedBy=multi-user.target
 sudo systemctl enable --now jquants-mcp
 ```
 
-### 4. Claude クライアントから接続
+### 4. MCP クライアントから接続
 
 **Claude Desktop（Connectors UI）/ Claude モバイル:** カスタムコネクタとして
 `https://mcp.example.com/mcp` を追加し、プロンプトに従ってサインインします。
 
-**Claude Code:** クライアント側でも `mcp-stdio` を使うと、OAuth フローがローカルで
+**Meta Muse:** 同じ手順です。ただしゲートウェイで Muse のコールバックも許可する必要があります。
+上の `mcp-stdio serve` コマンドに `--allow-redirect-uri https://agent.meta.ai/api/hatch/oauth/callback` を追加してください。
+
+**Claude Code・Codex:** クライアント側でも `mcp-stdio` を使うと、OAuth フローがローカルで
 実行されトークンがキャッシュされます:
 
 ```bash
 claude mcp add jquants -- uvx mcp-stdio --oauth https://mcp.example.com/mcp
+codex mcp add jquants -- uvx mcp-stdio --oauth https://mcp.example.com/mcp  # Codex
 ```
 
 Claude Code には一部の HTTP トランスポートで `Authorization` ヘッダーが落ちるバグが

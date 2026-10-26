@@ -1,14 +1,14 @@
 # Tools
 
-A user-facing tour of what jquants-mcp lets Claude do. For exact parameter
+A user-facing tour of what jquants-mcp lets your AI assistant do. For exact parameter
 tables and endpoint mappings, see the
 [GitHub README](https://github.com/shigechika/jquants-mcp#available-tools).
 
 ## Asking the right way
 
-You don't have to memorise tool names — Claude picks the right one from your
+You don't have to memorise tool names — the assistant picks the right one from your
 question. The examples below show queries that map cleanly to a single tool;
-Claude can also chain several tools (e.g. screen for top movers, then chart
+it can also chain several tools (e.g. screen for top movers, then chart
 the leader) without you having to ask.
 
 ## Daily market overview & valuation
@@ -37,7 +37,7 @@ These all run against the local cache — no API call, no rate limit.
 
 ## One-call briefings
 
-Ask for a morning brief and Claude returns a composite narrative — market overview,
+Ask for a morning brief and the assistant returns a composite narrative — market overview,
 sector valuation, or single-stock detail — without you having to chain multiple tools:
 
 | Question | Tool |
@@ -139,7 +139,7 @@ Side-by-side return comparison for up to 10 codes:
 
 > Compare year-to-date returns for the five major trading houses (8001 8002 8031 8053 8058)
 
-Claude calls `get_comparison_chart_data` with `mode="return_pct"` (the default),
+The assistant calls `get_comparison_chart_data` with `mode="return_pct"` (the default),
 producing a return chart with each series normalised to 0% at the first bar.
 Add `mode="price"` if you want the raw split-adjusted close instead.
 
