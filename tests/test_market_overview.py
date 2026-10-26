@@ -1013,6 +1013,25 @@ class TestGetMarketBriefing:
         assert _call(first) == _call(second)
 
     @pytest.mark.asyncio
+    async def test_response_not_cached_when_a_sub_tool_fails(self, mock_briefing, briefing_cache):
+        """With no client the TOPIX sub-call fails; that briefing must not be
+        cached, or the null sections would be served for the next hour."""
+        from jquants_mcp.cache.store import make_cache_key
+
+        result = await mock_briefing.call_tool("get_market_briefing", {"date": "2026-05-02"})
+        assert _call(result)["summary"]["topix_change_pct"] is None
+        key = make_cache_key(
+            "tool:get_market_briefing",
+            {
+                "date": "2026-05-02",
+                "sector_type": "s33",
+                "n": 5,
+                "plan": briefing_cache.effective_plan(),
+            },
+        )
+        assert briefing_cache.get_response(key) is None
+
+    @pytest.mark.asyncio
     async def test_response_cache_not_reused_across_plans(self, mock_briefing, briefing_cache):
         """A response cached under the pre-fix (plan-agnostic) key shape must
         not leak to a differently-planned request (regression for the

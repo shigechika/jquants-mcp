@@ -1725,6 +1725,9 @@ def register(
         # and TOPIX. Every tool called here is annotated `-> dict[str, Any]`,
         # so SDK 2.x returns a CallToolResult whose structured_content is the
         # tool's dict (1.x returned an (unstructured, structured) pair).
+        # Names of sub-tool calls that failed; a briefing with any is not cached.
+        failed_calls: list[str] = []
+
         async def _call_json(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
             try:
                 result = await mcp.call_tool(tool_name, args)
@@ -1732,8 +1735,10 @@ def register(
                 # Fail-soft: a missing API key, network blip, or any other tool
                 # error must not derail the whole briefing. Caller checks
                 # `result.get("error")` and substitutes a neutral default.
+                failed_calls.append(tool_name)
                 return {"error": True, "error_type": "ToolCallFailed"}
             if not isinstance(result, CallToolResult) or result.is_error:
+                failed_calls.append(tool_name)
                 return {"error": True, "error_type": "ToolCallFailed"}
             structured = result.structured_content
             return structured if isinstance(structured, dict) else {}
@@ -1972,7 +1977,14 @@ def register(
         }
 
         # 1h response cache so reloading the briefing within the hour is instant.
-        cache.put_response(cache_key, result, ttl_seconds=3600)
+        # Skipped when a sub-tool call failed, so a transient failure is not
+        # served as null/0 sections for the next hour.
+        if failed_calls:
+            logger.warning(
+                "get_market_briefing: sub-tool calls failed: %s", ", ".join(failed_calls)
+            )
+        else:
+            cache.put_response(cache_key, result, ttl_seconds=3600)
         return result
 
 
