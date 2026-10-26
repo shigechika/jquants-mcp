@@ -208,11 +208,11 @@ sequenceDiagram
 
 Both tools return an explanatory error instead of failing silently when either requirement is missing.
 
-**Registering a key** (tell your assistant):
+**Registering a key** (tell your AI agent):
 
 > "Register my J-Quants API key: `<your-api-key>`"
 
-The assistant calls `register_api_key(api_key="...")`. The server probes plan-specific endpoints with the key to auto-detect the plan (`free` / `light` / `standard` / `premium`) and stores it alongside the encrypted key — no manual selection needed. Subsequent tool calls use the detected plan for rate limiting and date-range restrictions.
+The agent calls `register_api_key(api_key="...")`. The server probes plan-specific endpoints with the key to auto-detect the plan (`free` / `light` / `standard` / `premium`) and stores it alongside the encrypted key — no manual selection needed. Subsequent tool calls use the detected plan for rate limiting and date-range restrictions.
 
 This is the only way to register a key on a multi-user deployment; the server exposes no web form and no HTTP endpoint of any kind.
 

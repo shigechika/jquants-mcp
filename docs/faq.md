@@ -25,7 +25,7 @@ it warm up naturally as you ask questions.
 
 ## I see "rate limit exceeded" — what do I do?
 
-The Free plan allows only 5 requests per minute. If your assistant is making bulk
+The Free plan allows only 5 requests per minute. If your AI agent is making bulk
 queries (e.g. fetching daily bars for many codes), the rate limiter will
 back off automatically with exponential retry. If you keep hitting the wall,
 upgrade to Light (60 req/min) or Standard (120 req/min).
@@ -51,7 +51,7 @@ process per session, injecting that user's verified email into the child
 (`--trusted-user-header X-Forwarded-Email --user-env JQUANTS_MCP_USER`) — so a
 given process only ever serves a single principal.
 
-Each user then registers their own J-Quants API key by asking their assistant to call
+Each user then registers their own J-Quants API key by asking their AI agent to call
 the `register_api_key` tool; the key is stored encrypted with AES-256-GCM
 (the server needs `MCP_ENCRYPTION_KEY` set for this). Cloud Run — an
 `oauth2-proxy` sidecar in front of `mcp-stdio serve` — is the supported

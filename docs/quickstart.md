@@ -142,7 +142,7 @@ Open your client and ask:
 
 > 今日の業種別騰落率を教えて
 
-The assistant calls `get_sector_performance` and returns a ranked sector table. The
+The agent calls `get_sector_performance` and returns a ranked sector table. The
 first call seeds the local cache; subsequent queries are instant.
 
 <p align="center" markdown>
@@ -153,7 +153,7 @@ Try a chart:
 
 > キオクシア（285A）のチャートを 3 か月分
 
-The assistant calls `get_candlestick_data` and returns the candles; on claude.ai it renders them as a candlestick React artifact inline.
+The agent calls `get_candlestick_data` and returns the candles; on claude.ai it renders them as a candlestick React artifact inline.
 
 <p align="center" markdown>
 ![Candlestick chart for KIOXIA Holdings on the Claude iPhone app](screenshots/jquants-mcp-demo5.png){ width="280" }

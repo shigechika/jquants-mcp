@@ -140,7 +140,7 @@ api_key = YOUR_API_KEY_HERE
 
 > 今日の業種別騰落率を教えて
 
-AI が `get_sector_performance` を呼んで業種ランキング表を返します。
+AI エージェントが `get_sector_performance` を呼んで業種ランキング表を返します。
 最初の 1 回でローカルキャッシュが温まり、以後のクエリは即時返答に。
 
 <p align="center" markdown>
@@ -151,7 +151,7 @@ AI が `get_sector_performance` を呼んで業種ランキング表を返しま
 
 > キオクシア（285A）のチャートを 3 か月分
 
-AI が `get_candlestick_data` を呼んでローソク足のデータを返します。claude.ai ではローソク足 React artifact としてチャットに inline 表示されます。
+AI エージェントが `get_candlestick_data` を呼んでローソク足のデータを返します。claude.ai ではローソク足 React artifact としてチャットに inline 表示されます。
 
 <p align="center" markdown>
 ![Claude iPhone アプリ上のキオクシアホールディングスのローソク足チャート](screenshots/jquants-mcp-demo5.png){ width="280" }

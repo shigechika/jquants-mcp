@@ -371,7 +371,7 @@ Once the domain works, update `OAUTH_BASE_URL`, the app container's `PUBLIC_URL`
 
 ### Registering your J-Quants API key
 
-There is no web page for this — the settings UI was removed in 1.0.0. Each user registers their own key by asking their assistant to call the **`register_api_key`** MCP tool in a normal chat, once the connector is signed in:
+There is no web page for this — the settings UI was removed in 1.0.0. Each user registers their own key by asking their AI agent to call the **`register_api_key`** MCP tool in a normal chat, once the connector is signed in:
 
 ```text
 Call register_api_key with api_key="<your J-Quants API key>"
