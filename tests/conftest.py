@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from pathlib import Path
 
 import pytest
 
 from jquants_mcp.cache.store import CacheStore
 from jquants_mcp.config import Settings
+
+_call_tool_depth: ContextVar[int] = ContextVar("_call_tool_depth", default=0)
 
 
 @pytest.fixture(autouse=True)
@@ -21,6 +24,11 @@ def _v1_shaped_call_tool(request, monkeypatch):
     ``call_tool`` in 2.x (the ``CallToolResult(is_error=True)`` is built later,
     by the request handler), so ``pytest.raises`` checks need no adapting.
 
+    Only the outermost call is adapted. A tool that calls another tool
+    (``get_market_briefing`` -> ``_call_json``) is production code reading the
+    2.x shape, so nested calls keep the real ``CallToolResult``; adapting them
+    too hid a briefing that read every sub-tool as failed.
+
     Tests marked ``sdk_call_tool`` opt out and see the real 2.x path, end to end
     through an in-process ``mcp.Client`` (``tests/test_sdk_call_path.py``).
     """
@@ -32,8 +40,12 @@ def _v1_shaped_call_tool(request, monkeypatch):
     original = MCPServer.call_tool
 
     async def call_tool(self, name, arguments, context=None):
-        result = await original(self, name, arguments, context)
-        if not isinstance(result, CallToolResult):
+        token = _call_tool_depth.set(_call_tool_depth.get() + 1)
+        try:
+            result = await original(self, name, arguments, context)
+        finally:
+            _call_tool_depth.reset(token)
+        if _call_tool_depth.get() > 0 or not isinstance(result, CallToolResult):
             return result
         if result.structured_content is not None:
             return result.content, result.structured_content

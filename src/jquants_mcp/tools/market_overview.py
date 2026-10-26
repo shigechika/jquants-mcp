@@ -30,6 +30,8 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import CallToolResult
 
 from ..cache import screener_compute
 from ..cache.store import CacheStore, make_cache_key
@@ -51,6 +53,10 @@ logger = logging.getLogger(__name__)
 
 _MAX_N = 100
 _MAX_PERIOD = 90
+
+# get_market_briefing Tier 2 TTLs: full briefing / one with a degraded section.
+_BRIEFING_TTL = 3600
+_BRIEFING_DEGRADED_TTL = 300
 
 
 def _validate_n(n: int) -> str | None:
@@ -1719,19 +1725,47 @@ def register(
         if cached is not None:
             return cached
 
+        # Sub-tool calls whose section came back degraded (raised, error
+        # result, error payload such as CacheNotReady, or no structured
+        # content). A degraded briefing is cached only briefly; see the end.
+        degraded_calls: list[str] = []
+
         # Internal helper: call MCP tool by name and unwrap the structured
         # content. Used for screener tools (registered in screener.register)
         # and TOPIX. Every tool called here is annotated `-> dict[str, Any]`,
-        # so the SDK always returns the (unstructured, structured) pair.
+        # so SDK 2.x returns a CallToolResult whose structured_content is the
+        # tool's dict (1.x returned an (unstructured, structured) pair).
         async def _call_json(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+            failed = {"error": True, "error_type": "ToolCallFailed"}
             try:
-                _, structured = await mcp.call_tool(tool_name, args)
+                result = await mcp.call_tool(tool_name, args)
+            except ToolError:
+                # Anticipated: plan restriction, missing API key, upstream
+                # error. Fail-soft — the caller checks `result.get("error")`
+                # and substitutes a neutral default.
+                logger.debug("get_market_briefing: %s raised ToolError", tool_name, exc_info=True)
+                degraded_calls.append(tool_name)
+                return failed
             except Exception:
-                # Fail-soft: a missing API key, network blip, or any other tool
-                # error must not derail the whole briefing. Caller checks
-                # `result.get("error")` and substitutes a neutral default.
-                return {"error": True, "error_type": "ToolCallFailed"}
-            return structured if isinstance(structured, dict) else {}
+                # Unexpected (a bug, or an SDK shape change). Still fail-soft,
+                # but log the traceback so it is diagnosable.
+                logger.warning("get_market_briefing: %s failed", tool_name, exc_info=True)
+                degraded_calls.append(tool_name)
+                return failed
+            if (
+                not isinstance(result, CallToolResult)
+                or result.is_error
+                or not isinstance(result.structured_content, dict)
+            ):
+                logger.warning(
+                    "get_market_briefing: %s returned no usable structured content", tool_name
+                )
+                degraded_calls.append(tool_name)
+                return failed
+            structured = result.structured_content
+            if structured.get("error"):
+                degraded_calls.append(tool_name)
+            return structured
 
         # Fetch equities_bars_daily exactly once — a span wide enough for the
         # 25-day ADR window (period+1 = 26 session dates). today and prev are
@@ -1967,7 +2001,12 @@ def register(
         }
 
         # 1h response cache so reloading the briefing within the hour is instant.
-        cache.put_response(cache_key, result, ttl_seconds=3600)
+        # A degraded briefing gets 5 min instead: a transient failure (cold
+        # cache, network) is not served as null/0 sections for an hour, while
+        # a persistent one (e.g. TOPIX on a plan without it) is still not
+        # recomputed on every call.
+        ttl = _BRIEFING_DEGRADED_TTL if degraded_calls else _BRIEFING_TTL
+        cache.put_response(cache_key, result, ttl_seconds=ttl)
         return result
 
 

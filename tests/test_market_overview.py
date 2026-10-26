@@ -1012,6 +1012,46 @@ class TestGetMarketBriefing:
         )
         assert _call(first) == _call(second)
 
+    @staticmethod
+    def _briefing_ttls(spy) -> list[int]:
+        return [
+            c.kwargs["ttl_seconds"]
+            for c in spy.call_args_list
+            if c.args and "get_market_briefing" in str(c.args[0])
+        ]
+
+    @pytest.mark.asyncio
+    async def test_degraded_briefing_cached_briefly(self, mock_briefing, briefing_cache):
+        """With no client the TOPIX sub-call fails; that briefing is cached for
+        5 min only, so the null sections are not served for the next hour."""
+        from jquants_mcp.tools import market_overview
+
+        with patch.object(briefing_cache, "put_response", wraps=briefing_cache.put_response) as spy:
+            result = await mock_briefing.call_tool("get_market_briefing", {"date": "2026-05-02"})
+        assert _call(result)["summary"]["topix_change_pct"] is None
+        assert self._briefing_ttls(spy) == [market_overview._BRIEFING_DEGRADED_TTL]
+
+    @pytest.mark.asyncio
+    async def test_healthy_briefing_cached_for_an_hour(self, mock_briefing, briefing_cache):
+        """Positive control: every sub-tool returns a structured result -> 1h."""
+        from mcp.types import CallToolResult
+
+        from jquants_mcp.tools import market_overview
+
+        original = type(mock_briefing).call_tool
+
+        async def healthy_sub_tools(self, name, arguments, context=None):
+            if name == "get_market_briefing":
+                return await original(self, name, arguments, context)
+            return CallToolResult(content=[], structured_content={})
+
+        with (
+            patch.object(type(mock_briefing), "call_tool", healthy_sub_tools),
+            patch.object(briefing_cache, "put_response", wraps=briefing_cache.put_response) as spy,
+        ):
+            await mock_briefing.call_tool("get_market_briefing", {"date": "2026-05-02"})
+        assert self._briefing_ttls(spy) == [market_overview._BRIEFING_TTL]
+
     @pytest.mark.asyncio
     async def test_response_cache_not_reused_across_plans(self, mock_briefing, briefing_cache):
         """A response cached under the pre-fix (plan-agnostic) key shape must
