@@ -1,6 +1,6 @@
 # Cloud Run Deployment Guide (GCP)
 
-Deploy your own instance of jquants-mcp to Google Cloud Run with OAuth 2.1 login, per-user encrypted J-Quants API keys, and Claude Desktop / Claude mobile compatibility.
+Deploy your own instance of jquants-mcp to Google Cloud Run with OAuth 2.1 login, per-user encrypted J-Quants API keys, and compatibility with remote MCP clients (Claude Desktop, Claude mobile, Meta Muse, …).
 
 This is a long guide because Cloud Run multi-user deployment has real moving parts. Budget ~2–4 hours the first time, mostly spent waiting for DNS / TLS.
 
@@ -317,7 +317,7 @@ Only the first line is expected on a fresh revision. `starting (transport=stdio)
 
 Retry check 1 for a minute or two after a deploy. Cloud Run's readiness is driven by the ingress (`oauth2-proxy`) container, so traffic can cut over while the app container is still running its synchronous `cache.db` download; `oauth2-proxy` returns 502 for that window. CD's own verification step retries for exactly this reason.
 
-Full functional validation comes from connecting a Claude client — see [step 15](#15-connect-from-claude-clients).
+Full functional validation comes from connecting an MCP client — see [step 15](#15-connect-from-mcp-clients).
 
 ## 14. Custom domain (optional)
 
@@ -367,11 +367,11 @@ Cloud Run provisions a TLS cert automatically. DNS + cert propagation takes 15�
 
 Once the domain works, update `OAUTH_BASE_URL`, the app container's `PUBLIC_URL`, and the sign-in layer's redirect URI to the custom domain. Redeploy.
 
-## 15. Connect from Claude clients
+## 15. Connect from MCP clients
 
 ### Registering your J-Quants API key
 
-There is no web page for this — the settings UI was removed in 1.0.0. Each user registers their own key by asking Claude to call the **`register_api_key`** MCP tool in a normal chat, once the connector is signed in:
+There is no web page for this — the settings UI was removed in 1.0.0. Each user registers their own key by asking their assistant to call the **`register_api_key`** MCP tool in a normal chat, once the connector is signed in:
 
 ```text
 Call register_api_key with api_key="<your J-Quants API key>"
@@ -396,6 +396,13 @@ Verified working as of 2026-04-23 (Sonnet 4.6).
 3. Sign in with Google
 4. Register your J-Quants API key with the `register_api_key` tool (above)
 
+### Meta Muse
+
+Add a connector with the same URL and sign in with Google. Muse registers
+through Dynamic Client Registration with the callback `https://agent.meta.ai/api/hatch/oauth/callback`, so the
+gateway must allow it (`--allow-redirect-uri`); `scripts/entrypoint-stdio.sh`
+already does.
+
 ### Claude Code (via mcp-stdio)
 
 Claude Code currently has a bug that drops the `Authorization` header on HTTP transports and does not play nicely with Cloud Run's OAuth flow. Use [mcp-stdio](https://pypi.org/project/mcp-stdio/) as a proxy:
@@ -406,6 +413,15 @@ claude mcp add jquants-mcp \
 ```
 
 `mcp-stdio --oauth` drives the OAuth 2.1 flow in your browser and caches the token locally.
+
+### Codex (via mcp-stdio)
+
+```bash
+codex mcp add jquants-mcp \
+  -- uvx mcp-stdio --oauth https://jquants-mcp.example.com/mcp
+```
+
+Any other client that launches stdio servers can use the same bridge.
 
 ## 16. Allowlist customization
 

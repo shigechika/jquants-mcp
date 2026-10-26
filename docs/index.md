@@ -1,10 +1,10 @@
 # jquants-mcp
 
-**Talk through Japanese stocks with Claude — backed by the [J-Quants API v2](https://jpx-jquants.com/).**
+**Talk through Japanese stocks with your AI assistant — Claude, Codex, Meta Muse or any MCP client — backed by the [J-Quants API v2](https://jpx-jquants.com/).**
 
 jquants-mcp is a Japanese-equities-focused [MCP (Model Context Protocol)](https://modelcontextprotocol.io/)
-server. It gives Claude — Desktop, CLI, or mobile — 55 specialist tools and
-a local SQLite cache, turning it into a hands-on companion for your stock
+server. It gives your MCP client — Claude (Desktop, CLI, or mobile), Codex,
+Meta Muse, … — 55 specialist tools and a local SQLite cache, turning it into a hands-on companion for your stock
 research rather than a one-off query tool.
 
 <p align="center">
@@ -17,7 +17,7 @@ research rather than a one-off query tool.
   </video>
 </p>
 
-## What you can ask Claude
+## What you can ask
 
 Once jquants-mcp is connected, conversational queries like these just work:
 
@@ -51,7 +51,7 @@ Once jquants-mcp is connected, conversational queries like these just work:
 ## Get started
 
 - **[Quickstart →](quickstart.md)** — install, register your API key, and have
-  Claude answer your first stock question in 5 minutes.
+  your assistant answer your first stock question in 5 minutes.
 - **[Tools →](tools.md)** — the user-facing tour of what jquants-mcp can do.
 - **[FAQ →](faq.md)** — plan recommendations, common errors, and tips.
 

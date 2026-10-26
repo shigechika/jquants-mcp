@@ -1,12 +1,12 @@
 # クイックスタート
 
-jquants-mcp を Claude に接続して日本株のクエリに答えさせるまで、約 5 分です。
+jquants-mcp を MCP クライアントに接続して日本株のクエリに答えさせるまで、約 5 分です。
 
 ## 前提条件
 
 - Python 3.10 以上（`python3 --version` で確認）
 - [J-Quants アカウント](https://jpx-jquants.com/)（最低 Free プラン。Light 以上で 12 週遅延が解消され日次株価がリアルタイム化）
-- Claude Code（CLI）/ Claude Desktop / その他 MCP 対応クライアントのいずれか
+- Claude Code（CLI）/ Claude Desktop / Codex / その他 MCP 対応クライアントのいずれか
 
 ## 1. jquants-mcp をインストール
 
@@ -51,7 +51,7 @@ api_key = YOUR_API_KEY_HERE
 
 設定ファイルを作りたくない場合は環境変数 `JQUANTS_API_KEY` でも OK です。
 
-## 3. Claude に接続
+## 3. クライアントに接続
 
 === "claude.ai（ブラウザ / デスクトップ / スマホ）"
 
@@ -118,13 +118,29 @@ api_key = YOUR_API_KEY_HERE
 
     Claude Desktop を再起動して反映。
 
+=== "Codex"
+
+    ```bash
+    codex mcp add jquants -- jquants-mcp
+    ```
+
+    `codex mcp list` で確認。次の Codex セッションからツールが使えます。
+
+=== "その他のクライアント"
+
+    ローカルの stdio サーバーを起動できる MCP クライアントなら、どれも同じです。
+    コマンドに `jquants-mcp` を指定してください。Meta Muse のような Web の
+    クライアントは、OAuth でリモートのデプロイに接続します。
+    [デプロイガイド](https://github.com/shigechika/jquants-mcp/blob/main/docs/deploy/README.md)を参照し、ゲートウェイでそのクライアントの
+    OAuth コールバックを許可してください（`--allow-redirect-uri`）。
+
 ## 4. 試してみる
 
-Claude を開いて聞いてみる：
+クライアントを開いて聞いてみる：
 
 > 今日の業種別騰落率を教えて
 
-Claude が `get_sector_performance` を呼んで業種ランキング表を返します。
+AI が `get_sector_performance` を呼んで業種ランキング表を返します。
 最初の 1 回でローカルキャッシュが温まり、以後のクエリは即時返答に。
 
 <p align="center" markdown>
@@ -135,7 +151,7 @@ Claude が `get_sector_performance` を呼んで業種ランキング表を返�
 
 > キオクシア（285A）のチャートを 3 か月分
 
-Claude が `get_candlestick_data` を呼んでローソク足 React artifact をチャットに inline 表示します。
+AI が `get_candlestick_data` を呼んでローソク足のデータを返します。claude.ai ではローソク足 React artifact としてチャットに inline 表示されます。
 
 <p align="center" markdown>
 ![Claude iPhone アプリ上のキオクシアホールディングスのローソク足チャート](screenshots/jquants-mcp-demo5.png){ width="280" }
@@ -143,7 +159,7 @@ Claude が `get_candlestick_data` を呼んでローソク足 React artifact を
 
 ## 次のステップ
 
-- **[ツール →](tools.md)** — Claude にできることの一覧
+- **[ツール →](tools.md)** — できることの一覧
 - **[FAQ →](faq.md)** — よくあるエラー、プラン選び、マルチユーザーモード
 - **完全なリファレンス**: [GitHub README](https://github.com/shigechika/jquants-mcp)
   に設定 schema、デプロイ形態（Docker / Cloud Run / ゲートウェイ経由のセルフホスト）、

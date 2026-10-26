@@ -122,7 +122,7 @@ MCP-specific settings (cache, client behavior):
 
 \* API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `JQUANTS_API_KEY` only to override.
 
-Environment variables override both `config.ini` and `jquants-api.toml`. This allows MCP clients (Claude Desktop, Claude Code) to pass settings via their `env` block while keeping defaults elsewhere.
+Environment variables override both `config.ini` and `jquants-api.toml`. This allows MCP clients (Claude Desktop, Claude Code, Codex, …) to pass settings via their `env` block while keeping defaults elsewhere.
 
 ### macOS launchd note
 
@@ -154,7 +154,7 @@ The server speaks **stdio only** and binds no network socket, so it performs no 
 
 | Deployment | Who controls access |
 |---|---|
-| Local (Claude Code, Claude Desktop) | The OS. The MCP client spawns the server as a subprocess; the API key comes from `config.ini` / `jquants-api.toml` / `JQUANTS_API_KEY` |
+| Local (Claude Code, Claude Desktop, Codex, …) | The OS. The MCP client spawns the server as a subprocess; the API key comes from `config.ini` / `jquants-api.toml` / `JQUANTS_API_KEY` |
 | Remote | A gateway in front of the server. The gateway terminates authentication and spawns the stdio server per session |
 
 ### Gateway identity
@@ -178,7 +178,7 @@ When the server receives a gateway identity (`JQUANTS_MCP_USER`, see [Authentica
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant C as Claude
+    participant C as MCP client
     participant G as Gateway (mcp-stdio serve)
     participant S as jquants-mcp (stdio child)
     participant J as J-Quants API
@@ -208,11 +208,11 @@ sequenceDiagram
 
 Both tools return an explanatory error instead of failing silently when either requirement is missing.
 
-**Registering a key** (tell Claude):
+**Registering a key** (tell your assistant):
 
 > "Register my J-Quants API key: `<your-api-key>`"
 
-Claude calls `register_api_key(api_key="...")`. The server probes plan-specific endpoints with the key to auto-detect the plan (`free` / `light` / `standard` / `premium`) and stores it alongside the encrypted key — no manual selection needed. Subsequent tool calls use the detected plan for rate limiting and date-range restrictions.
+The assistant calls `register_api_key(api_key="...")`. The server probes plan-specific endpoints with the key to auto-detect the plan (`free` / `light` / `standard` / `premium`) and stores it alongside the encrypted key — no manual selection needed. Subsequent tool calls use the detected plan for rate limiting and date-range restrictions.
 
 This is the only way to register a key on a multi-user deployment; the server exposes no web form and no HTTP endpoint of any kind.
 
@@ -317,6 +317,14 @@ The server auto-detects the plan from your API key on startup — no need to set
 
 Restart Claude Desktop after editing.
 
+### Codex
+
+```bash
+codex mcp add jquants-mcp -- jquants-mcp
+```
+
+API key is auto-detected from `~/.jquants-api/jquants-api.toml`. Set `--env JQUANTS_API_KEY=...` only to override. Any other MCP client that launches local stdio servers uses the same command.
+
 ### Standalone (stdio)
 
 ```bash
@@ -343,15 +351,18 @@ mcp-stdio serve --host 127.0.0.1 --port 8081 --path /mcp \
 
 That is the whole remote-access story. How clients connect depends only on the gateway you chose; the sections below cover the two shapes used with `mcp-stdio serve`.
 
-#### Claude Code / Claude Desktop (remote via mcp-stdio)
+#### Stdio clients via mcp-stdio (Claude Code, Claude Desktop, Codex, …)
 
-Claude Desktop does not speak Streamable HTTP directly, and `claude mcp add --transport http --header "Authorization: Bearer ..."` drops the header during health checks ([claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)). The [mcp-stdio](https://pypi.org/project/mcp-stdio/) client bridges stdio to the remote endpoint in both cases:
+Claude Desktop does not speak Streamable HTTP directly, and `claude mcp add --transport http --header "Authorization: Bearer ..."` drops the header during health checks ([claude-code#28293](https://github.com/anthropics/claude-code/issues/28293)). The [mcp-stdio](https://pypi.org/project/mcp-stdio/) client bridges stdio to the remote endpoint in both cases, and the same bridge works for any other client that launches stdio servers:
 
 ```bash
 pip install mcp-stdio  # or: uvx mcp-stdio
 
 # Claude Code — --oauth drives the gateway's OAuth flow in your browser
 claude mcp add jquants-mcp -- mcp-stdio --oauth https://mcp.example.com/mcp
+
+# Codex
+codex mcp add jquants-mcp -- mcp-stdio --oauth https://mcp.example.com/mcp
 ```
 
 ```json
@@ -366,6 +377,19 @@ claude mcp add jquants-mcp -- mcp-stdio --oauth https://mcp.example.com/mcp
 ```
 
 Restart Claude Desktop after editing. Use `--bearer-token <TOKEN>` instead of `--oauth` if your gateway authenticates with a static token.
+
+#### Web clients (claude.ai, Meta Muse)
+
+Browser-based clients connect to the gateway's OAuth endpoint natively. They register through Dynamic Client Registration with a fixed HTTPS callback, so the gateway must allow each client's callback explicitly (matched byte-for-byte):
+
+```bash
+mcp-stdio serve ... --enable-oauth \
+  --allow-redirect-uri https://claude.ai/api/mcp/auth_callback \
+  --allow-redirect-uri https://agent.meta.ai/api/hatch/oauth/callback \
+  -- jquants-mcp
+```
+
+The first is claude.ai (custom connectors, also used by the Claude mobile apps), the second Meta Muse. Then add `https://mcp.example.com/mcp` as a connector in the client and complete the login in the browser.
 
 #### Claude Desktop Connectors
 
@@ -461,7 +485,7 @@ Cross-sectional cache-only tools that scan all listed equities. No extra API cal
 
 ### Screener (10 tools)
 
-Offline tools that compute signals directly from the SQLite cache. No extra API calls, pure Python, no numpy/pandas. Intended for Claude-assisted stock screening without hitting rate limits.
+Offline tools that compute signals directly from the SQLite cache. No extra API calls, pure Python, no numpy/pandas. Intended for AI-assisted stock screening without hitting rate limits.
 
 | Tool | Description |
 |---|---|
