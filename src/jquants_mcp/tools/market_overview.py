@@ -30,6 +30,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.types import CallToolResult
 
 from ..cache import screener_compute
 from ..cache.store import CacheStore, make_cache_key
@@ -1722,15 +1723,19 @@ def register(
         # Internal helper: call MCP tool by name and unwrap the structured
         # content. Used for screener tools (registered in screener.register)
         # and TOPIX. Every tool called here is annotated `-> dict[str, Any]`,
-        # so the SDK always returns the (unstructured, structured) pair.
+        # so SDK 2.x returns a CallToolResult whose structured_content is the
+        # tool's dict (1.x returned an (unstructured, structured) pair).
         async def _call_json(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
             try:
-                _, structured = await mcp.call_tool(tool_name, args)
+                result = await mcp.call_tool(tool_name, args)
             except Exception:
                 # Fail-soft: a missing API key, network blip, or any other tool
                 # error must not derail the whole briefing. Caller checks
                 # `result.get("error")` and substitutes a neutral default.
                 return {"error": True, "error_type": "ToolCallFailed"}
+            if not isinstance(result, CallToolResult) or result.is_error:
+                return {"error": True, "error_type": "ToolCallFailed"}
+            structured = result.structured_content
             return structured if isinstance(structured, dict) else {}
 
         # Fetch equities_bars_daily exactly once — a span wide enough for the
