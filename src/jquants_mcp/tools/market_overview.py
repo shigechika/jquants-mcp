@@ -1835,8 +1835,9 @@ def register(
         name_map = cache.get_name_map()
         sector_map = cache.get_sector_map()
 
-        # Market-wide margin ratio (optional — empty dict when not cached)
-        margin_map = cache.get_all_latest_margin_interest()
+        # Market-wide margin ratio (optional — empty dict when not cached),
+        # as of the briefing's session like the short-sale ratios below.
+        margin_map = cache.get_all_latest_margin_interest(as_of=today_date)
         margin_ratios = []
         for mrow in margin_map.values():
             ratio, _ = _margin_ratio_from_row(mrow)
@@ -1847,7 +1848,8 @@ def register(
         )
 
         # Sector short-sale ratios (optional — empty dict when not cached; Standard+)
-        short_ratio_map = cache.get_all_latest_short_ratio()
+        # As of the briefing's session, not the latest cached date.
+        short_ratio_map = cache.get_all_latest_short_ratio(as_of=today_date)
         # Build s33_code → name from sector_map for label enrichment.
         # Normalise keys through int so "0050" and "50" map to the same entry.
         s33_name_map: dict[str, str] = {}

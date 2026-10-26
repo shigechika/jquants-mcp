@@ -2094,10 +2094,14 @@ class CacheStore:
                 continue
         return out
 
-    def get_all_latest_margin_interest(self) -> dict[str, dict]:
-        """Return the most recent markets_margin_interest row for every code.
+    def get_all_latest_margin_interest(self, as_of: str | None = None) -> dict[str, dict]:
+        """Return the most recent (or as-of) markets_margin_interest row for every code.
 
         Uses a JOIN against a per-code MAX(date) subquery to avoid N+1 queries.
+
+        Args:
+            as_of: Optional YYYY-MM-DD. When given, each code's row is the
+                latest one on or before this date instead of the latest overall.
 
         Returns:
             Mapping of 5-digit code to raw JSON dict (as stored in the cache).
@@ -2117,6 +2121,9 @@ class CacheStore:
         if plan_min:
             conds.append("date >= ?")
             params.append(plan_min)
+        if as_of:
+            conds.append("date <= ?")
+            params.append(as_of)
         inner_where = ("WHERE " + " AND ".join(conds) + " ") if conds else ""
         sql = (
             "SELECT m.code, m.data FROM markets_margin_interest m "
@@ -2154,13 +2161,17 @@ class CacheStore:
         except (ValueError, TypeError):
             return raw
 
-    def get_all_latest_short_ratio(self) -> dict[str, dict]:
-        """Return the most recent markets_short_ratio row for every S33 sector.
+    def get_all_latest_short_ratio(self, as_of: str | None = None) -> dict[str, dict]:
+        """Return the most recent (or as-of) markets_short_ratio row for every S33 sector.
 
         Uses a JOIN against a per-sector MAX(date) subquery to avoid N+1 queries.
         S33 keys are normalised via ``_norm_s33`` so that legacy zero-padded
         entries (e.g. ``"0050"``) and integer-derived entries (``"50"``) are
         merged into a single key (``"50"``).
+
+        Args:
+            as_of: Optional YYYY-MM-DD. When given, each sector's row is the
+                latest one on or before this date instead of the latest overall.
 
         Returns:
             Mapping of normalised S33 sector code to raw JSON dict.
@@ -2180,6 +2191,9 @@ class CacheStore:
         if plan_min:
             conds.append("date >= ?")
             params.append(plan_min)
+        if as_of:
+            conds.append("date <= ?")
+            params.append(as_of)
         inner_where = ("WHERE " + " AND ".join(conds) + " ") if conds else ""
         sql = (
             "SELECT m.s33, m.data FROM markets_short_ratio m "

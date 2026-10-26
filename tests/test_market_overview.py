@@ -2924,6 +2924,41 @@ class TestGetMarketBriefingShortRatio:
             assert entry["short_sale_ratio"] is None
 
     @pytest.mark.asyncio
+    async def test_sector_short_ratios_as_of_briefing_date(self, briefing_cache_with_short_ratio):
+        """sector_short_ratios uses each sector's row on or before the briefing
+        date, not the latest cached one (rows after the date are ignored)."""
+        later = {"Date": "2026-05-07", "SellExShortVa": 1, "ShrtWithResVa": 1, "ShrtNoResVa": 1}
+        briefing_cache_with_short_ratio.put_rows(
+            "markets_short_ratio",
+            [
+                {"S33": "7050", **later},
+                {"S33": "5250", **later},
+                # 5250 also has an older row; the 2026-05-02 one must win.
+                {
+                    "S33": "5250",
+                    "Date": "2026-05-01",
+                    "SellExShortVa": 1,
+                    "ShrtWithResVa": 0,
+                    "ShrtNoResVa": 0,
+                },
+            ],
+            key_columns=["S33", "Date"],
+        )
+        with (
+            patch.object(server_module, "_settings", Settings(jquants_api_key="")),
+            patch.object(server_module, "_cache", briefing_cache_with_short_ratio),
+            patch.object(server_module, "_client", None),
+        ):
+            result = await server_module.mcp.call_tool(
+                "get_market_briefing", {"date": "2026-05-02"}
+            )
+        sr = {e["sector_code"]: e for e in _call(result)["sector_short_ratios"]}
+        assert sr["7050"]["date"] == "2026-05-02"
+        assert sr["7050"]["short_sale_ratio"] == pytest.approx(38.5)
+        assert sr["5250"]["date"] == "2026-05-02"
+        assert sr["5250"]["short_sale_ratio"] == pytest.approx(55.2)
+
+    @pytest.mark.asyncio
     async def test_sector_short_ratios_dedup_s33_formats(self, tmp_path):
         """sector_short_ratios deduplicates '0050' and '50' to a single entry."""
         cache = _make_cache(tmp_path)
