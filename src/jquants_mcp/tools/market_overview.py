@@ -1847,7 +1847,8 @@ def register(
         )
 
         # Sector short-sale ratios (optional — empty dict when not cached; Standard+)
-        short_ratio_map = cache.get_all_latest_short_ratio()
+        # As of the briefing's session, not the latest cached date.
+        short_ratio_map = cache.get_all_latest_short_ratio(as_of=today_date)
         # Build s33_code → name from sector_map for label enrichment.
         # Normalise keys through int so "0050" and "50" map to the same entry.
         s33_name_map: dict[str, str] = {}
