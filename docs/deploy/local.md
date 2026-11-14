@@ -211,7 +211,7 @@ This guide assumes:
 
 ### Prerequisites
 
-- Linux or macOS host with Python 3.10+
+- Linux or macOS host with Python 3.11+
 - A domain name pointing at the host (IPv4 or IPv6). For IPv6 see [shigechika/macos-ddns6](https://github.com/shigechika/macos-ddns6) for an example DDNS setup
 - A TLS certificate. [acme.sh](https://github.com/acmesh-official/acme.sh) with DNS-01 challenge works well (supports IPv6-only hosts and wildcard certs)
 - A J-Quants account + API key

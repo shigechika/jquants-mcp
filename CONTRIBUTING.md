@@ -25,7 +25,7 @@ uv sync --dev
    uv run ruff format src/ tests/
    uv run pytest -v
    ```
-   CI runs the same checks on Python 3.10–3.13.
+   CI runs the same checks on Python 3.11–3.15.
 
 4. **Open a Pull Request** against `main`. Describe *what* and *why* in the PR body.
 
@@ -50,7 +50,7 @@ docs(deploy): add Docker Compose local setup guide
 
 ## Code Style
 
-- Python 3.10+ syntax; type hints on all public functions
+- Python 3.11+ syntax; type hints on all public functions
 - `ruff` for lint and format (configured in `pyproject.toml`)
 - Tool functions are closures inside `register()`, capturing `get_client` and `get_cache`
 - Docstrings in English (for pydoc / IDE); inline comments in English
@@ -60,7 +60,7 @@ docs(deploy): add Docker Compose local setup guide
 - Tests live in `tests/` and use `pytest` + `pytest-asyncio`
 - Patch `server_module._settings`, `_client`, `_cache` globals directly (see existing tests)
 - Add tests for new tools and any bug fixes
-- All tests must pass on Python 3.10–3.13
+- All tests must pass on Python 3.11–3.15
 
 ## Reporting Issues
 

@@ -4,7 +4,7 @@ Get jquants-mcp answering Japanese stock questions in your MCP client in about 5
 
 ## Prerequisites
 
-- Python 3.10 or newer (`python3 --version`)
+- Python 3.11 or newer (`python3 --version`)
 - A [J-Quants account](https://jpx-jquants.com/) with at least the Free plan
   (Light or above unlocks daily bars beyond the 12-week delay)
 - One of: Claude Code (CLI), Claude Desktop, Codex, or any MCP-aware client

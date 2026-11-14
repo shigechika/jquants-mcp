@@ -9,7 +9,7 @@ See CONTRIBUTING.md for branch naming and the review workflow.
 
 ## Checklist
 
-- [ ] `uv run pytest` passes (Python 3.10–3.13 in CI)
+- [ ] `uv run pytest` passes (Python 3.11–3.15 in CI)
 - [ ] `uv run ruff check` and `uv run ruff format` are clean
 - [ ] Tests added/updated for new behavior or bug fixes
 - [ ] Docs / README updated if behavior or configuration changed

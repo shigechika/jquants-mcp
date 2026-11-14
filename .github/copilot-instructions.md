@@ -35,8 +35,8 @@ uv run pytest -v
 ```
 
 This mirrors `.github/workflows/ci.yml`: a `lint` job (ruff check + `ruff
-format --check`) and a `test` job matrixed over Python 3.10–3.13, plus a
-separate `test-windows` job on Python 3.12 (kept as its own job, not folded
+format --check`) and a `test` job matrixed over Python 3.11–3.15, plus a
+separate `test-windows` job on Python 3.14 (kept as its own job, not folded
 into the matrix, specifically to preserve stable `test (3.x)` check names for
 branch protection while still catching Windows-only breakage such as file
 encoding/path issues at PR time). Note CI's format check uses `--check

@@ -4,7 +4,7 @@ jquants-mcp を MCP クライアントに接続して日本株のクエリに答
 
 ## 前提条件
 
-- Python 3.10 以上（`python3 --version` で確認）
+- Python 3.11 以上（`python3 --version` で確認）
 - [J-Quants アカウント](https://jpx-jquants.com/)（最低 Free プラン。Light 以上で 12 週遅延が解消され日次株価がリアルタイム化）
 - Claude Code（CLI）/ Claude Desktop / Codex / その他 MCP 対応クライアントのいずれか
 

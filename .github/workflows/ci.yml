@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,9 +47,10 @@ jobs:
   # catching Windows-only breakage (file encoding, paths) at PR time instead
   # of only at release (release.yml).
   #
-  # This is a required check, so it pins the newest Python of the Linux matrix
-  # (keep "3.14" below equal to the last entry of `test.strategy.matrix`; a
-  # matrix cannot read a workflow variable, so the two are bumped together).
+  # This is a required check, so it pins a Python the Windows dependency tree
+  # has wheels for. It stays on 3.14 while the Linux matrix already tests 3.15:
+  # zstandard 0.25 ships no cp315 wheel on any platform, so the Linux 3.15 leg
+  # builds it from the sdist. Bump the three "3.14" below once a wheel ships.
   # #627 let it float to the latest stable instead, but a required check that
   # floats blocks every PR whenever a new Python ships before the dependency
   # tree has wheels for it: Python 3.15 arrived with pywin32 311, pydantic-core
