@@ -206,7 +206,7 @@ graph LR
 
 ### 前提条件
 
-- Python 3.10+ が使える Linux または macOS ホスト
+- Python 3.11+ が使える Linux または macOS ホスト
 - ホストに向いているドメイン名（IPv4 または IPv6）。IPv6 DDNS の例は [shigechika/macos-ddns6](https://github.com/shigechika/macos-ddns6) を参照
 - TLS 証明書。[acme.sh](https://github.com/acmesh-official/acme.sh) の DNS-01 チャレンジが IPv6 専用ホストやワイルドカード証明書に対応しておりおすすめ
 - J-Quants アカウントと API キー

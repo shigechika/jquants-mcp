@@ -40,7 +40,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+
 - [J-Quants API key](https://jpx-jquants.com/) (Free plan or above)
 
 ## Installation

@@ -89,8 +89,8 @@ Survey date: 2026-07-04 — Comparing four known J-Quants MCP server projects.
 |---|:---:|:---:|:---:|:---:|
 | Test count | Some (unknown) | None | Some (pytest) | **1,200+ tests** |
 | Linter | Ruff | Unknown | Unknown | Ruff |
-| CI/CD | GitHub Actions | No | Unknown | **GitHub Actions** (lint + test on Python 3.10–3.13) |
-| Python requirement | 3.10+ | Unknown | Unknown | 3.10+ |
+| CI/CD | GitHub Actions | No | Unknown | **GitHub Actions** (lint + test on Python 3.11–3.15) |
+| Python requirement | 3.11+ | Unknown | Unknown | 3.11+ |
 
 ## Unique Strengths
 

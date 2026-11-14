@@ -40,7 +40,7 @@ Claude iPhone アプリ上で jquants-mcp ツールを呼び出した実際の�
 
 ## 必要要件
 
-- Python 3.10+
+- Python 3.11+
 - [J-Quants API キー](https://jpx-jquants.com/)（Free プラン以上）
 
 ## インストール

@@ -73,7 +73,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 
 ## CI/CD
 
-- **CI**: GitHub Actions — ruff lint/format + pytest on Python 3.10–3.13
+- **CI**: GitHub Actions — ruff lint/format + pytest on Python 3.11–3.15
 - **CD**: GitHub Actions — deploys the `jquants` service (WIF auth, keyless; `--container app --image` only, never scaling/CPU flags) after CI passes on main, or via `workflow_dispatch`. Does **not** deploy `jquants-mcp` (the older service) at all — see "Deployment Targets" and #588
 
 ## Deployment Targets
