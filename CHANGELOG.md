@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.6.0](https://github.com/shigechika/jquants-mcp/compare/v1.5.2...v1.6.0) (2026-11-14)
+
+
+### Features
+
+* drop Python 3.10 (EOL) and add Python 3.15 support ([#651](https://github.com/shigechika/jquants-mcp/issues/651)) ([1a7a8d1](https://github.com/shigechika/jquants-mcp/commit/1a7a8d1569cd5c94e8118b3d574cbc0254aadb79))
+
 ## [1.5.2](https://github.com/shigechika/jquants-mcp/compare/v1.5.1...v1.5.2) (2026-10-26)
 
 
