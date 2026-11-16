@@ -405,6 +405,22 @@ def verify_and_record(db_path: Path) -> str:
     return status
 
 
+# A trading day in equities_bars_daily is "complete" once it holds at least this
+# share of the busiest day's row count in the recent window (#656). The natural
+# day-to-day variation is well under 1%; a per-code API fallback writes a few
+# codes out of ~4,450.
+_COMPLETE_DAY_MIN_RATIO = 0.5
+_COMPLETE_DAY_LOOKBACK_DAYS = 21
+
+
+def _complete_dates(counts: list[tuple[str, int]]) -> list[str]:
+    """Return the dates of ``counts`` whose row count looks complete, in input order."""
+    if not counts:
+        return []
+    peak = max(n for _, n in counts)
+    return [d for d, n in counts if n >= peak * _COMPLETE_DAY_MIN_RATIO]
+
+
 class CacheStore:
     """SQLite-based two-tier cache store.
 
@@ -2637,15 +2653,45 @@ class CacheStore:
         return int(row[0]) if row else 0
 
     def get_latest_equities_date(self) -> str | None:
-        """Return the most recent date in equities_bars_daily, or None when not ready."""
+        """Return the most recent *complete* date in equities_bars_daily.
+
+        A date only counts once its row count is at least
+        ``_COMPLETE_DAY_MIN_RATIO`` of the busiest day in the last
+        ``_COMPLETE_DAY_LOOKBACK_DAYS`` days. ``MAX(date)`` alone is not
+        enough: per-code tools that fall back to the live API write today's
+        rows for just the codes they were asked about, so a day can exist with
+        a handful of codes long before the bulk import lands (#656). Every
+        market-wide tool gates on this date (``CacheNotReady`` when the
+        requested date is newer), so a partial day stays invisible to them.
+
+        Returns None when the cache is not ready.
+        """
         conn = self._ensure_connection()
         if conn is None:
             return None
         try:
             row = conn.execute("SELECT MAX(date) FROM equities_bars_daily").fetchone()
-            return str(row[0])[:10] if row and row[0] else None
+            if not row or not row[0]:
+                return None
+            max_date = str(row[0])[:10]
+            try:
+                # strptime, not date.fromisoformat: tests patch this module's
+                # ``date`` to freeze "today"
+                since = (
+                    datetime.strptime(max_date, "%Y-%m-%d")
+                    - timedelta(days=_COMPLETE_DAY_LOOKBACK_DAYS)
+                ).strftime("%Y-%m-%d")
+            except ValueError:
+                return max_date
+            counts = conn.execute(
+                "SELECT date, COUNT(*) FROM equities_bars_daily WHERE date >= ? "
+                "GROUP BY date ORDER BY date DESC",
+                (since,),
+            ).fetchall()
         except sqlite3.OperationalError:
             return None
+        complete = _complete_dates([(str(d)[:10], n) for d, n in counts])
+        return complete[0] if complete else max_date
 
     def get_market_va_by_date(self, date_from: str, date_to: str) -> dict[str, float]:
         """Return total market turnover value (sum of Va) per trading date.
@@ -2672,7 +2718,7 @@ class CacheStore:
             return {}
         try:
             rows = conn.execute(
-                "SELECT date, SUM(json_extract(data, '$.Va')) AS total_va "
+                "SELECT date, SUM(json_extract(data, '$.Va')) AS total_va, COUNT(*) "
                 "FROM equities_bars_daily "
                 "WHERE date >= ? AND date <= ? "
                 "GROUP BY date ORDER BY date",
@@ -2680,7 +2726,16 @@ class CacheStore:
             ).fetchall()
         except Exception:
             return {}
-        return {str(r[0])[:10]: float(r[1]) for r in rows if r[1] is not None}
+        # A partial day (a few codes written by a per-code API fallback) would
+        # report a turnover two to three orders of magnitude too low and skew
+        # the volume confirmation of distribution / follow-through days (#656).
+        # Leave such days out so callers see "no data" rather than a wrong sum.
+        complete = set(_complete_dates([(str(r[0])[:10], r[2]) for r in rows]))
+        return {
+            str(r[0])[:10]: float(r[1])
+            for r in rows
+            if r[1] is not None and str(r[0])[:10] in complete
+        }
 
     def is_business_day(self, day: str) -> bool | None:
         """Whether ``day`` (YYYY-MM-DD) is an exchange business day per markets_calendar.
