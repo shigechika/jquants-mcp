@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.6.1](https://github.com/shigechika/jquants-mcp/compare/v1.6.0...v1.6.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* **cache:** ignore partial days when picking the latest equities date ([#657](https://github.com/shigechika/jquants-mcp/issues/657)) ([b1a44e4](https://github.com/shigechika/jquants-mcp/commit/b1a44e48b14503f465c9826184e2d36f464159ba))
+
 ## [1.6.0](https://github.com/shigechika/jquants-mcp/compare/v1.5.2...v1.6.0) (2026-11-14)
 
 
