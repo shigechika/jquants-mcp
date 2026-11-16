@@ -131,11 +131,12 @@ def _latest_scan_date(cache: Any, code: str | None) -> str | None:
     """Newest date a scan may report on (#656).
 
     A market-wide scan uses the latest *complete* day; a scan narrowed to one
-    code uses the latest cached day, since that code's row may already be
-    there while the bulk import for the day has not landed yet.
+    code uses that code's own latest cached day, since its row may already be
+    there while the bulk import for the day has not landed yet (and a partial
+    day that lacks it must still read as "not ready" for it).
     """
     if code:
-        return cache.get_latest_equities_date()
+        return cache.get_latest_equities_date(normalize_code(code))
     return cache.get_latest_complete_equities_date()
 
 
@@ -443,7 +444,7 @@ def register(
         if norm_date < _cache_window_cutoff():
             return _out_of_cache_error(norm_date)
 
-        latest_date = cache.get_latest_equities_date()
+        latest_date = _latest_scan_date(cache, code)
         if latest_date is not None and norm_date > latest_date:
             return _cache_not_ready_error(norm_date, latest_date)
 
@@ -901,7 +902,7 @@ def register(
         # Compare against the previous *session* from the TOPIX series, not the
         # previous key of va_by_date: a partial day is left out of va_by_date,
         # and skipping to an older session could confirm volume wrongly (#656).
-        session_dates = [row[0] for row in zscore_series]
+        session_dates = [row[0] for row in topix_series]
         prev_session = dict(zip(session_dates[1:], session_dates[:-1], strict=True))
 
         dist_days: list[dict[str, Any]] = []
@@ -1024,7 +1025,7 @@ def register(
         va_today = va_by_date.get(norm_date)
         # Previous session from the TOPIX series, not the previous va_by_date key
         # (see detect_distribution_days, #656).
-        ftd_sessions = [row[0] for row in zscore_series if row[0] < norm_date]
+        ftd_sessions = [row[0] for row in topix_series if row[0] < norm_date]
         va_prev_date = ftd_sessions[-1] if ftd_sessions else None
         va_prev = va_by_date.get(va_prev_date) if va_prev_date else None
         vol_confirmed = va_today is not None and va_prev is not None and va_today > va_prev

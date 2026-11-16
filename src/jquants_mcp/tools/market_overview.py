@@ -1297,7 +1297,7 @@ def register(
             return _cache_not_ready_error("latest", None)
 
         try:
-            close_map = cache.get_latest_close_map()
+            close_map = cache.get_latest_close_map(as_of_date=price_date)
             fins_map = cache.get_all_latest_fy_fins()
         except TOOL_API_ERRORS as e:
             return format_api_error(e)

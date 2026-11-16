@@ -52,12 +52,11 @@ def register(
         if cached is not None:
             return cached
 
-        # Latest close prices (determines price_date shown in output)
-        close_map = cache.get_latest_close_map()
+        # Latest close prices, pinned to the date shown in output (#656)
+        price_date = cache.get_latest_complete_equities_date() or ""
+        close_map = cache.get_latest_close_map(as_of_date=price_date or None)
         if not close_map:
             return {"error": "No price data cached. Run daily_fetch first."}
-
-        price_date = cache.get_latest_complete_equities_date() or ""
 
         # Sector membership
         sector_map = cache.get_sector_map()

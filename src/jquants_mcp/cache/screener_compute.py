@@ -320,12 +320,48 @@ def prune_old_results(conn: Any, *, retention_weeks: int = SCREENER_CACHE_LOOKBA
     return cursor.rowcount if cursor.rowcount is not None else 0
 
 
+# A trading day in equities_bars_daily is "complete" once it holds at least this
+# share of the busiest of the last COMPLETE_DAY_LOOKBACK_SESSIONS cached dates
+# (#656). Per-code tools that fall back to the live API write today's rows for
+# just the codes they were asked about (a few out of ~4,450); the natural
+# day-to-day variation is well under 1%. The window counts cached dates, not
+# calendar days, so a long gap since the last bulk import cannot leave it
+# holding only partial days. (scripts/verify_cache_completeness.py flags gaps
+# more strictly, at 80% of the median, because it audits history offline.)
+COMPLETE_DAY_MIN_RATIO = 0.5
+COMPLETE_DAY_LOOKBACK_SESSIONS = 60
+
+
+def recent_day_counts(conn: Any) -> list[tuple[str, int]]:
+    """Row counts of the last ``COMPLETE_DAY_LOOKBACK_SESSIONS`` dates, newest first."""
+    rows = conn.execute(
+        "SELECT date, COUNT(*) FROM equities_bars_daily GROUP BY date ORDER BY date DESC LIMIT ?",
+        (COMPLETE_DAY_LOOKBACK_SESSIONS,),
+    ).fetchall()
+    return [(str(d)[:10], int(n)) for d, n in rows]
+
+
+def complete_dates(counts: list[tuple[str, int]], peak: int | None = None) -> list[str]:
+    """Dates of ``counts`` whose row count looks complete, in input order.
+
+    ``peak`` is the reference day size; it defaults to the busiest day in
+    ``counts``.
+    """
+    if not counts:
+        return []
+    ref = max([n for _, n in counts] + ([peak] if peak else []))
+    return [d for d, n in counts if n >= ref * COMPLETE_DAY_MIN_RATIO]
+
+
 def latest_session_date(conn: Any) -> str | None:
-    """Return the latest ISO date in ``equities_bars_daily``, or None."""
-    row = conn.execute("SELECT MAX(date) FROM equities_bars_daily").fetchone()
-    if row is None or row[0] is None:
-        return None
-    return str(row[0])[:10]
+    """Return the latest *complete* ISO date in ``equities_bars_daily``, or None.
+
+    ``MAX(date)`` may be a day holding only the codes a per-code API fallback
+    wrote (#656); precomputing screener results for it would rank a handful
+    of codes.
+    """
+    complete = complete_dates(recent_day_counts(conn))
+    return complete[0] if complete else None
 
 
 def fetch_fy_dividend_history(conn: Any) -> dict[str, list[dict[str, Any]]]:

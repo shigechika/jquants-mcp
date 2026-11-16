@@ -30,6 +30,9 @@ from jquants_mcp.cache.schema import (
     migrate_drop_plan,
 )
 from jquants_mcp.cache.screener_compute import (
+    complete_dates,
+    latest_session_date,
+    recent_day_counts,
     SCREENER_CACHE_LOOKBACK_WEEKS as _SCREENER_CACHE_LOOKBACK_WEEKS,
 )
 
@@ -405,24 +408,6 @@ def verify_and_record(db_path: Path) -> str:
     return status
 
 
-# A trading day in equities_bars_daily is "complete" once it holds at least this
-# share of the busiest day's row count in the recent window (#656). The natural
-# day-to-day variation is well under 1%; a per-code API fallback writes a few
-# codes out of ~4,450.
-_COMPLETE_DAY_MIN_RATIO = 0.5
-# Counted in cached dates, not calendar days, so a long gap since the last bulk
-# import cannot leave the window holding only partial days.
-_COMPLETE_DAY_LOOKBACK_SESSIONS = 60
-
-
-def _complete_dates(counts: list[tuple[str, int]]) -> list[str]:
-    """Return the dates of ``counts`` whose row count looks complete, in input order."""
-    if not counts:
-        return []
-    peak = max(n for _, n in counts)
-    return [d for d, n in counts if n >= peak * _COMPLETE_DAY_MIN_RATIO]
-
-
 class CacheStore:
     """SQLite-based two-tier cache store.
 
@@ -759,10 +744,11 @@ class CacheStore:
         fires) — that needs an external periodic check (e.g. Cloud Scheduler).
         """
         try:
-            row = conn.execute("SELECT MAX(date) FROM equities_bars_daily").fetchone()
+            # The latest *complete* day: a partial tail day written by a
+            # per-code API fallback would otherwise hide a stale bulk import (#656).
+            latest = latest_session_date(conn)
         except sqlite3.Error:
             return
-        latest = row[0] if row else None
         today = date.today().isoformat()
         msg = _cache_stale_message(latest, today, _CACHE_STALE_DAYS)
         if msg:
@@ -2288,13 +2274,15 @@ class CacheStore:
     ) -> dict[str, float]:
         """Return a mapping of 5-digit code to latest adjusted-close price.
 
-        Queries ``equities_bars_daily`` for the single most recent date across
-        all codes and returns AdjC (falling back to C) for every row on that date.
+        Picks the most recent date on or before the latest *complete* day
+        (:meth:`get_latest_complete_equities_date`) and returns AdjC (falling
+        back to C) for every row on that date.
 
         Args:
             as_of_date: Upper bound for date (YYYY-MM-DD).  When supplied,
-                returns the latest date on or before this date, which prevents
-                lookahead bias in back-tests.  Defaults to all data.
+                returns the latest date on or before this date (and on or
+                before the latest complete day), which prevents lookahead bias
+                in back-tests.
 
         Returns an empty dict when the table is empty or unavailable.
         """
@@ -2304,10 +2292,12 @@ class CacheStore:
         # Clamp the upper bound to the plan window so a Free user's "latest"
         # close is the latest session at/before their 12-week delay, not today.
         plan_min, plan_max = self._plan_bounds()
-        # Without an explicit bound, stop at the latest *complete* day: the
-        # newest date may hold only the few codes a per-code API fallback wrote,
-        # and this map would then cover just those codes (#656).
-        upper = as_of_date if as_of_date is not None else self.get_latest_complete_equities_date()
+        # Never land on a partial day: the newest date may hold only the few
+        # codes a per-code API fallback wrote, and this map would then cover
+        # just those codes (#656). An explicit bound is clamped the same way.
+        upper = self.get_latest_complete_equities_date()
+        if as_of_date is not None and (upper is None or as_of_date < upper):
+            upper = as_of_date
         if plan_max and (upper is None or upper > plan_max):
             upper = plan_max
         conds: list[str] = []
@@ -2657,18 +2647,23 @@ class CacheStore:
         row = conn.execute("SELECT COUNT(*) FROM screener_results").fetchone()
         return int(row[0]) if row else 0
 
-    def get_latest_equities_date(self) -> str | None:
+    def get_latest_equities_date(self, code: str | None = None) -> str | None:
         """Return the most recent date in equities_bars_daily, or None when not ready.
 
-        This is "the newest date any row exists for", which is what per-code
-        reads need. Market-wide readers must use
+        This is "the newest date any row exists for" (for ``code`` when given),
+        which is what per-code reads need. Market-wide readers must use
         :meth:`get_latest_complete_equities_date` instead (#656).
         """
         conn = self._ensure_connection()
         if conn is None:
             return None
         try:
-            row = conn.execute("SELECT MAX(date) FROM equities_bars_daily").fetchone()
+            if code:
+                row = conn.execute(
+                    "SELECT MAX(date) FROM equities_bars_daily WHERE code = ?", (code,)
+                ).fetchone()
+            else:
+                row = conn.execute("SELECT MAX(date) FROM equities_bars_daily").fetchone()
             return str(row[0])[:10] if row and row[0] else None
         except sqlite3.OperationalError:
             return None
@@ -2676,8 +2671,8 @@ class CacheStore:
     def get_latest_complete_equities_date(self) -> str | None:
         """Return the most recent date whose equities_bars_daily rows look complete.
 
-        A date counts once its row count is at least ``_COMPLETE_DAY_MIN_RATIO``
-        of the busiest of the last ``_COMPLETE_DAY_LOOKBACK_SESSIONS`` cached
+        A date counts once its row count is at least ``COMPLETE_DAY_MIN_RATIO``
+        of the busiest of the last ``COMPLETE_DAY_LOOKBACK_SESSIONS`` cached
         dates. Per-code tools that fall back to the live API write today's rows
         for just the codes they were asked about, so ``MAX(date)`` can point at
         a day holding a handful of codes long before the bulk import lands
@@ -2689,15 +2684,9 @@ class CacheStore:
         if conn is None:
             return None
         try:
-            rows = conn.execute(
-                "SELECT date, COUNT(*) FROM equities_bars_daily "
-                "GROUP BY date ORDER BY date DESC LIMIT ?",
-                (_COMPLETE_DAY_LOOKBACK_SESSIONS,),
-            ).fetchall()
+            return latest_session_date(conn)
         except sqlite3.OperationalError:
             return None
-        complete = _complete_dates([(str(d)[:10], n) for d, n in rows])
-        return complete[0] if complete else None
 
     def get_market_va_by_date(self, date_from: str, date_to: str) -> dict[str, float]:
         """Return total market turnover value (sum of Va) per trading date.
@@ -2736,7 +2725,14 @@ class CacheStore:
         # report a turnover two to three orders of magnitude too low and skew
         # the volume confirmation of distribution / follow-through days (#656).
         # Leave such days out so callers see "no data" rather than a wrong sum.
-        complete = set(_complete_dates([(str(r[0])[:10], r[2]) for r in rows]))
+        # Judge against the recent baseline as well as the range itself, so a
+        # range made only of partial days (or a single partial day) is not its
+        # own reference.
+        try:
+            recent_peak = max((n for _, n in recent_day_counts(conn)), default=None)
+        except sqlite3.Error:
+            recent_peak = None
+        complete = set(complete_dates([(str(r[0])[:10], r[2]) for r in rows], recent_peak))
         return {
             str(r[0])[:10]: float(r[1])
             for r in rows

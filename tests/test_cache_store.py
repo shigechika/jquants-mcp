@@ -2702,8 +2702,26 @@ class TestPartialDayIsNotLatest:
         self._bars(cache, "2026-11-13", self.CODES)
         self._bars(cache, "2026-11-16", self.CODES[:2])
         assert set(cache.get_latest_close_map()) == set(self.CODES)
-        # an explicit bound is honoured as before
-        assert set(cache.get_latest_close_map(as_of_date="2026-11-16")) == set(self.CODES[:2])
+        # an explicit bound past the complete day is clamped too
+        assert set(cache.get_latest_close_map(as_of_date="2026-11-16")) == set(self.CODES)
+        # an earlier bound is honoured as before
+        self._bars(cache, "2026-11-12", self.CODES[:5])
+        assert set(cache.get_latest_close_map(as_of_date="2026-11-12")) == set(self.CODES[:5])
+        cache.close()
+
+    def test_per_code_latest_date(self, tmp_path: Path):
+        cache = self._cache(tmp_path)
+        self._bars(cache, "2026-11-13", self.CODES)
+        self._bars(cache, "2026-11-16", self.CODES[:2])
+        assert cache.get_latest_equities_date(self.CODES[0]) == "2026-11-16"
+        assert cache.get_latest_equities_date(self.CODES[5]) == "2026-11-13"
+        cache.close()
+
+    def test_market_va_single_partial_day_is_not_its_own_baseline(self, tmp_path: Path):
+        cache = self._cache(tmp_path)
+        self._bars(cache, "2026-11-13", self.CODES)
+        self._bars(cache, "2026-11-16", self.CODES[:1])
+        assert cache.get_market_va_by_date("2026-11-16", "2026-11-16") == {}
         cache.close()
 
     def test_market_va_leaves_out_partial_days(self, tmp_path: Path):
