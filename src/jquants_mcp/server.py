@@ -475,7 +475,7 @@ def _health_check_impl() -> dict[str, Any]:
         status = "degraded"
     cache_ready = integrity == store.INTEGRITY_OK
 
-    latest_date = cache.get_latest_equities_date()
+    latest_date = cache.get_latest_complete_equities_date()
     trading_today = cache.get_trading_date_today()
     today_cache_ready = cache_ready and latest_date is not None and latest_date >= trading_today
 

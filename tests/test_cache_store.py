@@ -2642,11 +2642,11 @@ class TestLatestRowsAsOf:
 
 
 class TestPartialDayIsNotLatest:
-    """A day holding only a few codes (a per-code API fallback) is not "ready" (#656).
+    """A day holding only a few codes (a per-code API fallback) is not "complete" (#656).
 
-    ``get_latest_equities_date`` gates every market-wide tool through
-    ``CacheNotReady``; returning such a day made advances/declines, turnover
-    rankings and market_va silently wrong for two weeks.
+    Readiness and market-wide tools gate on ``get_latest_complete_equities_date``;
+    gating on ``MAX(date)`` made advances/declines, turnover rankings and
+    market_va silently wrong for two weeks. Per-code reads keep ``MAX(date)``.
     """
 
     CODES = [f"{1000 + i}0" for i in range(10)]
@@ -2659,29 +2659,51 @@ class TestPartialDayIsNotLatest:
     def _bars(cache: CacheStore, day: str, codes: list[str], va: float = 1e9) -> None:
         cache.put_rows(
             "equities_bars_daily",
-            [{"Code": c, "Date": day, "C": 100.0, "Va": va, "AdjFactor": 1.0} for c in codes],
+            [
+                {"Code": c, "Date": day, "C": 100.0, "AdjC": 100.0, "Va": va, "AdjFactor": 1.0}
+                for c in codes
+            ],
             key_columns=["Code", "Date"],
             adj_factor_key="AdjFactor",
         )
 
-    def test_partial_latest_day_is_skipped(self, tmp_path: Path):
+    def test_partial_latest_day_is_not_complete(self, tmp_path: Path):
         cache = self._cache(tmp_path)
         self._bars(cache, "2026-11-13", self.CODES)
         self._bars(cache, "2026-11-16", self.CODES[:2])
-        assert cache.get_latest_equities_date() == "2026-11-13"
+        assert cache.get_latest_complete_equities_date() == "2026-11-13"
+        # per-code reads still see the newest row
+        assert cache.get_latest_equities_date() == "2026-11-16"
         cache.close()
 
     def test_complete_latest_day_is_returned(self, tmp_path: Path):
         cache = self._cache(tmp_path)
         self._bars(cache, "2026-11-13", self.CODES)
         self._bars(cache, "2026-11-16", self.CODES[:9])  # natural variation
-        assert cache.get_latest_equities_date() == "2026-11-16"
+        assert cache.get_latest_complete_equities_date() == "2026-11-16"
         cache.close()
 
     def test_single_day_cache_is_its_own_latest(self, tmp_path: Path):
         cache = self._cache(tmp_path)
         self._bars(cache, "2026-11-16", self.CODES[:1])
-        assert cache.get_latest_equities_date() == "2026-11-16"
+        assert cache.get_latest_complete_equities_date() == "2026-11-16"
+        cache.close()
+
+    def test_old_bulk_import_stays_the_baseline(self, tmp_path: Path):
+        """The window counts cached dates, so a long gap does not let a partial day win."""
+        cache = self._cache(tmp_path)
+        self._bars(cache, "2026-09-01", self.CODES)
+        self._bars(cache, "2026-11-16", self.CODES[:2])
+        assert cache.get_latest_complete_equities_date() == "2026-09-01"
+        cache.close()
+
+    def test_latest_close_map_stops_at_the_complete_day(self, tmp_path: Path):
+        cache = self._cache(tmp_path)
+        self._bars(cache, "2026-11-13", self.CODES)
+        self._bars(cache, "2026-11-16", self.CODES[:2])
+        assert set(cache.get_latest_close_map()) == set(self.CODES)
+        # an explicit bound is honoured as before
+        assert set(cache.get_latest_close_map(as_of_date="2026-11-16")) == set(self.CODES[:2])
         cache.close()
 
     def test_market_va_leaves_out_partial_days(self, tmp_path: Path):

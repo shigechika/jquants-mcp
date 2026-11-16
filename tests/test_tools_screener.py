@@ -1815,6 +1815,28 @@ class TestDetectDistributionDays:
         assert result["distribution_count"] >= 4
         assert result["warning"] is True
 
+    async def test_partial_previous_session_leaves_volume_unconfirmed(self, mock_env):
+        """A partial previous session must not be replaced by an older one (#656).
+
+        The previous session holds a single code (a per-code API fallback), so
+        its turnover is unknown. Comparing against the session before it would
+        confirm volume on data that does not exist.
+        """
+        cache = mock_env["cache"]
+        window = [0.5 if i % 2 == 0 else -0.5 for i in range(24)] + [-5.0]
+        topix_rows = _build_topix_series(n_warmup=22, window_data=window)
+        _seed_topix(cache, topix_rows)
+        target_date = topix_rows[-1]["Date"][:10]
+        for r in topix_rows[:-2]:
+            _seed_ebd_va(cache, r["Date"][:10], 1_000_000_000_000)
+        _seed_ebd_va(cache, topix_rows[-2]["Date"][:10], 10_000_000_000, n_stocks=1)
+        _seed_ebd_va(cache, target_date, 1_500_000_000_000)
+
+        result = await _call("detect_distribution_days", date=target_date)
+
+        dist = next(d for d in result["distribution_days"] if d["date"] == target_date)
+        assert dist["volume_confirmed"] is False
+
     async def test_volume_confirmed_field(self, mock_env):
         """distribution_days entries include volume_confirmed."""
         cache = mock_env["cache"]

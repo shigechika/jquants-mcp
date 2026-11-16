@@ -410,7 +410,9 @@ def verify_and_record(db_path: Path) -> str:
 # day-to-day variation is well under 1%; a per-code API fallback writes a few
 # codes out of ~4,450.
 _COMPLETE_DAY_MIN_RATIO = 0.5
-_COMPLETE_DAY_LOOKBACK_DAYS = 21
+# Counted in cached dates, not calendar days, so a long gap since the last bulk
+# import cannot leave the window holding only partial days.
+_COMPLETE_DAY_LOOKBACK_SESSIONS = 60
 
 
 def _complete_dates(counts: list[tuple[str, int]]) -> list[str]:
@@ -2302,7 +2304,10 @@ class CacheStore:
         # Clamp the upper bound to the plan window so a Free user's "latest"
         # close is the latest session at/before their 12-week delay, not today.
         plan_min, plan_max = self._plan_bounds()
-        upper = as_of_date
+        # Without an explicit bound, stop at the latest *complete* day: the
+        # newest date may hold only the few codes a per-code API fallback wrote,
+        # and this map would then cover just those codes (#656).
+        upper = as_of_date if as_of_date is not None else self.get_latest_complete_equities_date()
         if plan_max and (upper is None or upper > plan_max):
             upper = plan_max
         conds: list[str] = []
@@ -2653,16 +2658,30 @@ class CacheStore:
         return int(row[0]) if row else 0
 
     def get_latest_equities_date(self) -> str | None:
-        """Return the most recent *complete* date in equities_bars_daily.
+        """Return the most recent date in equities_bars_daily, or None when not ready.
 
-        A date only counts once its row count is at least
-        ``_COMPLETE_DAY_MIN_RATIO`` of the busiest day in the last
-        ``_COMPLETE_DAY_LOOKBACK_DAYS`` days. ``MAX(date)`` alone is not
-        enough: per-code tools that fall back to the live API write today's
-        rows for just the codes they were asked about, so a day can exist with
-        a handful of codes long before the bulk import lands (#656). Every
-        market-wide tool gates on this date (``CacheNotReady`` when the
-        requested date is newer), so a partial day stays invisible to them.
+        This is "the newest date any row exists for", which is what per-code
+        reads need. Market-wide readers must use
+        :meth:`get_latest_complete_equities_date` instead (#656).
+        """
+        conn = self._ensure_connection()
+        if conn is None:
+            return None
+        try:
+            row = conn.execute("SELECT MAX(date) FROM equities_bars_daily").fetchone()
+            return str(row[0])[:10] if row and row[0] else None
+        except sqlite3.OperationalError:
+            return None
+
+    def get_latest_complete_equities_date(self) -> str | None:
+        """Return the most recent date whose equities_bars_daily rows look complete.
+
+        A date counts once its row count is at least ``_COMPLETE_DAY_MIN_RATIO``
+        of the busiest of the last ``_COMPLETE_DAY_LOOKBACK_SESSIONS`` cached
+        dates. Per-code tools that fall back to the live API write today's rows
+        for just the codes they were asked about, so ``MAX(date)`` can point at
+        a day holding a handful of codes long before the bulk import lands
+        (#656). Readiness checks and market-wide tools use this date.
 
         Returns None when the cache is not ready.
         """
@@ -2670,28 +2689,15 @@ class CacheStore:
         if conn is None:
             return None
         try:
-            row = conn.execute("SELECT MAX(date) FROM equities_bars_daily").fetchone()
-            if not row or not row[0]:
-                return None
-            max_date = str(row[0])[:10]
-            try:
-                # strptime, not date.fromisoformat: tests patch this module's
-                # ``date`` to freeze "today"
-                since = (
-                    datetime.strptime(max_date, "%Y-%m-%d")
-                    - timedelta(days=_COMPLETE_DAY_LOOKBACK_DAYS)
-                ).strftime("%Y-%m-%d")
-            except ValueError:
-                return max_date
-            counts = conn.execute(
-                "SELECT date, COUNT(*) FROM equities_bars_daily WHERE date >= ? "
-                "GROUP BY date ORDER BY date DESC",
-                (since,),
+            rows = conn.execute(
+                "SELECT date, COUNT(*) FROM equities_bars_daily "
+                "GROUP BY date ORDER BY date DESC LIMIT ?",
+                (_COMPLETE_DAY_LOOKBACK_SESSIONS,),
             ).fetchall()
         except sqlite3.OperationalError:
             return None
-        complete = _complete_dates([(str(d)[:10], n) for d, n in counts])
-        return complete[0] if complete else max_date
+        complete = _complete_dates([(str(d)[:10], n) for d, n in rows])
+        return complete[0] if complete else None
 
     def get_market_va_by_date(self, date_from: str, date_to: str) -> dict[str, float]:
         """Return total market turnover value (sum of Va) per trading date.

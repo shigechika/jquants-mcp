@@ -57,7 +57,7 @@ def register(
         if not close_map:
             return {"error": "No price data cached. Run daily_fetch first."}
 
-        price_date = cache.get_latest_equities_date() or ""
+        price_date = cache.get_latest_complete_equities_date() or ""
 
         # Sector membership
         sector_map = cache.get_sector_map()
