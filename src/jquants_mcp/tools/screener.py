@@ -50,7 +50,6 @@ subject to the same plan-based date gating as other cache tables.
 
 from __future__ import annotations
 
-import bisect
 import logging
 import math
 from datetime import date, datetime, timedelta
@@ -126,6 +125,19 @@ def _cache_window_cutoff() -> str:
     rolling window and avoids depending on system tz configuration.
     """
     return (date.today() - timedelta(weeks=_CACHE_LOOKBACK_WEEKS)).isoformat()
+
+
+def _latest_scan_date(cache: Any, code: str | None) -> str | None:
+    """Newest date a scan may report on (#656).
+
+    A market-wide scan uses the latest *complete* day; a scan narrowed to one
+    code uses that code's own latest cached day, since its row may already be
+    there while the bulk import for the day has not landed yet (and a partial
+    day that lacks it must still read as "not ready" for it).
+    """
+    if code:
+        return cache.get_latest_equities_date(normalize_code(code))
+    return cache.get_latest_complete_equities_date()
 
 
 def _cache_not_ready_error(requested_date: str, latest_cache_date: str | None) -> dict[str, Any]:
@@ -214,7 +226,7 @@ def register(
         cache: CacheStore = get_cache()
 
         norm_date = _normalize_date(date)
-        latest_date = cache.get_latest_equities_date()
+        latest_date = _latest_scan_date(cache, code)
         if latest_date is not None and norm_date > latest_date:
             return _cache_not_ready_error(norm_date, latest_date)
 
@@ -432,7 +444,7 @@ def register(
         if norm_date < _cache_window_cutoff():
             return _out_of_cache_error(norm_date)
 
-        latest_date = cache.get_latest_equities_date()
+        latest_date = _latest_scan_date(cache, code)
         if latest_date is not None and norm_date > latest_date:
             return _cache_not_ready_error(norm_date, latest_date)
 
@@ -505,7 +517,7 @@ def register(
         if norm_date < _cache_window_cutoff():
             return _out_of_cache_error(norm_date)
 
-        latest_date = cache.get_latest_equities_date()
+        latest_date = _latest_scan_date(cache, code)
         if latest_date is not None and norm_date > latest_date:
             return _cache_not_ready_error(norm_date, latest_date)
 
@@ -571,7 +583,7 @@ def register(
         cache: CacheStore = get_cache()
 
         norm_date = _normalize_date(date)
-        latest_date = cache.get_latest_equities_date()
+        latest_date = _latest_scan_date(cache, code)
         if latest_date is not None and norm_date > latest_date:
             return _cache_not_ready_error(norm_date, latest_date)
 
@@ -700,7 +712,7 @@ def register(
         if d_from < _cache_window_cutoff():
             return _out_of_cache_error(d_from)
 
-        latest_date = cache.get_latest_equities_date()
+        latest_date = _latest_scan_date(cache, code)
         if latest_date is not None and d_to > latest_date:
             return _cache_not_ready_error(d_to, latest_date)
 
@@ -776,7 +788,7 @@ def register(
         if d_from < _cache_window_cutoff():
             return _out_of_cache_error(d_from)
 
-        latest_date = cache.get_latest_equities_date()
+        latest_date = _latest_scan_date(cache, code)
         if latest_date is not None and d_to > latest_date:
             return _cache_not_ready_error(d_to, latest_date)
 
@@ -833,7 +845,7 @@ def register(
         """
         cache: CacheStore = get_cache()
 
-        latest_date = cache.get_latest_equities_date()
+        latest_date = cache.get_latest_complete_equities_date()
         norm_date = _normalize_date(date) if date else (latest_date or "")
         if not norm_date:
             return {
@@ -887,15 +899,19 @@ def register(
             return _cache_not_ready_error(norm_date, latest)
 
         va_by_date = cache.get_market_va_by_date(start, norm_date)
-        sorted_va_dates = sorted(va_by_date)
+        # Compare against the previous *session* from the TOPIX series, not the
+        # previous key of va_by_date: a partial day is left out of va_by_date,
+        # and skipping to an older session could confirm volume wrongly (#656).
+        session_dates = [row[0] for row in topix_series]
+        prev_session = dict(zip(session_dates[1:], session_dates[:-1], strict=True))
 
         dist_days: list[dict[str, Any]] = []
         for d, pct, z, sigma, close in window:
             if z > -sigma_multiplier:
                 continue
             va_today = va_by_date.get(d)
-            idx = bisect.bisect_left(sorted_va_dates, d)
-            va_prev = va_by_date.get(sorted_va_dates[idx - 1]) if idx > 0 else None
+            prev_d = prev_session.get(d)
+            va_prev = va_by_date.get(prev_d) if prev_d else None
             vol_confirmed = va_today is not None and va_prev is not None and va_today > va_prev
             dist_days.append(
                 {
@@ -943,7 +959,7 @@ def register(
         """
         cache: CacheStore = get_cache()
 
-        latest_date = cache.get_latest_equities_date()
+        latest_date = cache.get_latest_complete_equities_date()
         norm_rally_start = _normalize_date(rally_start)
         norm_date = _normalize_date(date) if date else (latest_date or "")
         if not norm_date:
@@ -1007,9 +1023,10 @@ def register(
 
         va_by_date = cache.get_market_va_by_date(pre_start, norm_date)
         va_today = va_by_date.get(norm_date)
-        sorted_va_dates_ftd = sorted(va_by_date)
-        idx = bisect.bisect_left(sorted_va_dates_ftd, norm_date)
-        va_prev_date = sorted_va_dates_ftd[idx - 1] if idx > 0 else None
+        # Previous session from the TOPIX series, not the previous va_by_date key
+        # (see detect_distribution_days, #656).
+        ftd_sessions = [row[0] for row in topix_series if row[0] < norm_date]
+        va_prev_date = ftd_sessions[-1] if ftd_sessions else None
         va_prev = va_by_date.get(va_prev_date) if va_prev_date else None
         vol_confirmed = va_today is not None and va_prev is not None and va_today > va_prev
 

@@ -160,7 +160,7 @@ def _resolve_screen_date(
 
     Returns (norm_date, None) on success or (None, error_response).
     """
-    latest = cache.get_latest_equities_date()
+    latest = cache.get_latest_complete_equities_date()
     if date is None:
         if latest is None:
             return None, _cache_not_ready_error("latest", None)
@@ -666,7 +666,7 @@ def register(
         norm_date = _normalize_date(date)
         cache: CacheStore = get_cache()
 
-        latest = cache.get_latest_equities_date()
+        latest = cache.get_latest_complete_equities_date()
         if latest and norm_date > latest:
             return _cache_not_ready_error(norm_date, latest)
 
@@ -733,7 +733,7 @@ def register(
         norm_date = _normalize_date(date)
         cache: CacheStore = get_cache()
 
-        latest = cache.get_latest_equities_date()
+        latest = cache.get_latest_complete_equities_date()
         if latest and norm_date > latest:
             return _cache_not_ready_error(norm_date, latest)
 
@@ -808,7 +808,7 @@ def register(
         norm_date = _normalize_date(date)
         cache: CacheStore = get_cache()
 
-        latest = cache.get_latest_equities_date()
+        latest = cache.get_latest_complete_equities_date()
         if latest and norm_date > latest:
             return _cache_not_ready_error(norm_date, latest)
 
@@ -880,7 +880,7 @@ def register(
         norm_date = _normalize_date(date)
         cache: CacheStore = get_cache()
 
-        latest = cache.get_latest_equities_date()
+        latest = cache.get_latest_complete_equities_date()
         if latest and norm_date > latest:
             return _cache_not_ready_error(norm_date, latest)
 
@@ -945,7 +945,7 @@ def register(
         norm_date = _normalize_date(date)
         cache: CacheStore = get_cache()
 
-        latest = cache.get_latest_equities_date()
+        latest = cache.get_latest_complete_equities_date()
         if latest and norm_date > latest:
             return _cache_not_ready_error(norm_date, latest)
 
@@ -996,7 +996,7 @@ def register(
         norm_date = _normalize_date(date)
         cache: CacheStore = get_cache()
 
-        latest = cache.get_latest_equities_date()
+        latest = cache.get_latest_complete_equities_date()
         if latest and norm_date > latest:
             return _cache_not_ready_error(norm_date, latest)
 
@@ -1292,12 +1292,12 @@ def register(
         if cached is not None:
             return cached
 
-        price_date = cache.get_latest_equities_date()
+        price_date = cache.get_latest_complete_equities_date()
         if price_date is None:
             return _cache_not_ready_error("latest", None)
 
         try:
-            close_map = cache.get_latest_close_map()
+            close_map = cache.get_latest_close_map(as_of_date=price_date)
             fins_map = cache.get_all_latest_fy_fins()
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
@@ -1705,7 +1705,7 @@ def register(
         # ``norm_date > latest`` (future date / cache empty) returns CacheNotReady.
         # InsufficientData below fires only when norm_date ≤ latest but the cache
         # has fewer than 2 trading sessions — effectively "first day of data".
-        latest = cache.get_latest_equities_date()
+        latest = cache.get_latest_complete_equities_date()
         if latest and norm_date > latest:
             return _cache_not_ready_error(norm_date, latest)
 

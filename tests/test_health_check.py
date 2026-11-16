@@ -193,6 +193,29 @@ class TestHealthCheck:
         assert result["today_cache_ready"] is True
         assert result["latest_cache_date"] == "2026-04-28"
 
+    async def test_today_cache_ready_false_when_today_is_partial(self, mock_env, monkeypatch):
+        """A few codes written for today by a per-code API fallback are not "ready" (#656)."""
+        cache = mock_env["cache"]
+        cache.put_rows(
+            "equities_bars_daily",
+            [{"Code": f"1000{i}", "Date": "2026-04-27", "C": 100} for i in range(10)]
+            + [{"Code": "10000", "Date": "2026-04-28", "C": 100}],
+            key_columns=["Code", "Date"],
+        )
+        monkeypatch.delenv("JQUANTS_MCP_USER", raising=False)
+        with (
+            patch.object(
+                type(cache),
+                "integrity_status",
+                new_callable=lambda: property(lambda self: "ok"),
+            ),
+            patch("jquants_mcp.cache.store.date") as mock_date,
+        ):
+            mock_date.today.return_value = date(2026, 4, 28)
+            result = await _call("health_check")
+        assert result["today_cache_ready"] is False
+        assert result["latest_cache_date"] == "2026-04-27"
+
     async def test_today_cache_ready_false_when_data_stale(self, mock_env, monkeypatch):
         """today_cache_ready is False when latest_cache_date < trading_date_today."""
         cache = mock_env["cache"]
