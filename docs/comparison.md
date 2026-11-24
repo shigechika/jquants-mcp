@@ -62,9 +62,11 @@ Why this matters:
 - **Quota.** A question like "which Prime stocks hit a 52-week high on the
   latest trading day?" needs a year of bars for every listed stock. Through a
   server that relays each call to the API, every one of those requests counts
-  against your plan's rate limit (Light: 60 requests/min). jquants-mcp answers
-  it from its SQLite cache, within your plan's date window (Free plan data is
-  delayed 12 weeks either way).
+  against your plan's rate limit (Light: 60 requests/min). jquants-mcp's
+  screeners answer it from the SQLite cache once that cache holds the session
+  and its lookback (the bundled daily / bulk fetch scripts keep it filled),
+  within your plan's date window (Free plan data is delayed 12 weeks either
+  way).
 - **Context size.** A 50 KB cap with pagination suits single-stock questions.
   Whole-market questions need the reduction done before the result reaches the
   model; jquants-mcp returns the ranked or filtered list, not the raw rows.
