@@ -25,12 +25,12 @@ and plan.
 | | Official remote MCP server (JPXI) | **jquants-mcp** |
 |---|---|---|
 | Provider | JPXI (the data provider) | Individual open-source project (MIT) |
-| Setup | Add the URL and log in ("about 5 minutes" per the docs) | `uvx jquants-mcp`, `pip install`, or the Claude Code plugin; remote access via a self-hosted gateway |
+| Setup | Add the URL and log in ("about 5 minutes" per the docs) | `uvx jquants-mcp`, `pip install jquants-mcp`, or the Claude Code plugin; remote access via a self-hosted gateway |
 | Where it runs | JPXI's servers | Your machine, or a server you control |
 | Transport | Streamable HTTP (remote) | stdio; remote via an `mcp-stdio` gateway in front of it |
 | Supported clients | Claude (claude.ai / Desktop / Code) and ChatGPT only; the docs say other clients cannot connect | Any MCP client that speaks stdio (Claude Code, Claude Desktop, Codex, …); web clients such as claude.ai via a self-hosted gateway |
 | ChatGPT | Requires a paid ChatGPT plan (custom MCP servers) | Not a target |
-| Authentication | OAuth (J-Quants account login) only; API keys are not accepted | API key (env / config file / `jquants-mcp login` browser flow); gateway OAuth when self-hosted |
+| Authentication | OAuth (J-Quants account login) only; API keys are not accepted | API key (env / config file / `jquants-mcp login` browser flow); when self-hosted, whatever the gateway in front enforces (OAuth via oauth2-proxy on Cloud Run, an optional static bearer token in the Docker Compose setup) |
 | Plans | All plans, including Free; data scope follows your plan | All plans, including Free; plan auto-detected from the key |
 | Extra cost | None | None (you pay only for any server you choose to host) |
 | API quota | MCP calls consume the same quota as REST calls | Rows already in the local cache are served without an API call |
@@ -59,16 +59,19 @@ whole market, before anything reaches the model's context:
 
 Why this matters:
 
-- **Quota.** A question like "which Prime stocks hit a 52-week high today?"
-  needs a year of bars for every listed stock. Through a server that relays
-  each call to the API, every one of those requests counts against your plan's
-  rate limit (Free: 5 requests/min). jquants-mcp answers it from its SQLite
-  cache.
+- **Quota.** A question like "which Prime stocks hit a 52-week high on the
+  latest trading day?" needs a year of bars for every listed stock. Through a
+  server that relays each call to the API, every one of those requests counts
+  against your plan's rate limit (Light: 60 requests/min). jquants-mcp answers
+  it from its SQLite cache, within your plan's date window (Free plan data is
+  delayed 12 weeks either way).
 - **Context size.** A 50 KB cap with pagination suits single-stock questions.
   Whole-market questions need the reduction done before the result reaches the
   model; jquants-mcp returns the ranked or filtered list, not the raw rows.
-- **Corrected history.** jquants-mcp's cache detects retroactive `AdjFactor`
-  changes (splits, consolidations) and refetches the affected rows.
+- **Corrected history.** When jquants-mcp fetches new daily bars, it compares
+  them with the cached rows; if a retroactive `AdjFactor` change (split,
+  consolidation) shows up, it discards that stock's cached bars and refetches
+  them from the API.
 
 ## Where the official server is the better choice
 

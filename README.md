@@ -40,7 +40,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ### Compared with the official remote MCP server
 
-Since 2026-11-24 JPXI also runs an official remote MCP server (`https://mcp.jquants.com/mcp`). It is the quickest start: add the URL to Claude or ChatGPT and log in. jquants-mcp is for what that server does not offer:
+Since 2026-11-24 JPXI also runs an official remote MCP server (`https://mcp.jquants.com/mcp`). It is the quickest start: add the URL to Claude or ChatGPT (paid ChatGPT plans only) and log in. jquants-mcp is for what that server does not offer:
 
 | | Official remote server | jquants-mcp |
 |---|---|---|

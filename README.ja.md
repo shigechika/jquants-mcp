@@ -40,7 +40,7 @@ Claude iPhone アプリ上で jquants-mcp ツールを呼び出した実際の�
 
 ### 公式リモート MCP サーバーとの違い
 
-2026-11-24 から JPX 総研が公式のリモート MCP サーバー（`https://mcp.jquants.com/mcp`）を提供しています。Claude や ChatGPT に URL を登録してログインするだけで使えるので、最短で始めるなら公式が手軽です。jquants-mcp は、公式にないものが必要なときのための選択肢です。
+2026-11-24 から JPX 総研が公式のリモート MCP サーバー（`https://mcp.jquants.com/mcp`）を提供しています。Claude や ChatGPT（ChatGPT は有料プランのみ）に URL を登録してログインするだけで使えるので、最短で始めるなら公式が手軽です。jquants-mcp は、公式にないものが必要なときのための選択肢です。
 
 | | 公式リモートサーバー | jquants-mcp |
 |---|---|---|
