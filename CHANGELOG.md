@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.8.1](https://github.com/shigechika/jquants-mcp/compare/v1.8.0...v1.8.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **earnings:** make the daily_fetch date key reachable from the tool ([#669](https://github.com/shigechika/jquants-mcp/issues/669)) ([a0bc2a3](https://github.com/shigechika/jquants-mcp/commit/a0bc2a3fe78656d0d36fd3517765598bc3d49a68))
+
 ## [1.8.0](https://github.com/shigechika/jquants-mcp/compare/v1.7.0...v1.8.0) (2026-11-25)
 
 
