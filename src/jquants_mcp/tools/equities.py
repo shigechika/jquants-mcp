@@ -12,7 +12,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from ..cache.store import ENDPOINT_TTL, CacheStore, TTL_24H, make_cache_key
+from ..cache.store import ENDPOINT_TTL, CacheStore, TTL_24H, TTL_7D, make_cache_key
 from ..client import JQuantsClient
 from ..exceptions import (
     TOOL_API_ERRORS,
@@ -684,7 +684,7 @@ def _to_iso(d: str | None) -> str | None:
 
 # How long a per-code head record ("no bars before X") is trusted. Short, so a
 # wrong record (e.g. an upstream outage that hid early rows) expires quickly.
-_HEAD_RECORD_TTL = 7 * 24 * 3600
+_HEAD_RECORD_TTL = TTL_7D
 
 
 def _head_floor(record: Any, lo: str | None) -> str | None:
@@ -709,6 +709,7 @@ async def _expected_bar_days(
     hi: str,
     first_bar: str | None,
     cached_dates: set[str],
+    resolve_until: str | None = None,
 ) -> list[str] | None:
     """Trading days in [lo, hi] that must have a cached bar, or None if unknowable.
 
@@ -716,6 +717,8 @@ async def _expected_bar_days(
     to be a business day (no calendar row), the calendar for the missing span is
     loaded once and the expectation recomputed, so a weekday holiday cannot keep
     the range incomplete. A failed calendar load keeps the weekday guess.
+    ``resolve_until`` limits that load to missing days on or before it, for
+    callers whose decision cannot depend on later days.
     """
 
     def compute(guessed: set[str]) -> list[str] | None:
@@ -728,7 +731,11 @@ async def _expected_bar_days(
     expected = compute(guessed)
     if not expected:
         return expected
-    unsure = [d for d in expected if d not in cached_dates and d in guessed]
+    unsure = [
+        d
+        for d in expected
+        if d not in cached_dates and d in guessed and (resolve_until is None or d <= resolve_until)
+    ]
     if not unsure:
         return expected
     try:
@@ -800,20 +807,30 @@ async def _get_bars_daily_with_cache(
         )
 
         full_fetch = True
+        covered = False
         if cached_dates and not date:
             first_bar = _head_floor(cache.get_response(head_key), lo)
             hi_eff = hi or date_cls.today().isoformat()
+            latest_cached = max(cached_dates)
             expected = await _expected_bar_days(
-                client, cache, lo or first_bar, hi_eff, first_bar, cached_dates
+                client,
+                cache,
+                lo or first_bar,
+                hi_eff,
+                first_bar,
+                cached_dates,
+                # Open-ended ranges refetch from latest_cached anyway, so days
+                # after it cannot change the fetch
+                resolve_until=None if hi else latest_cached,
             )
             # An empty or unknowable expectation proves nothing: ask the API
             if expected:
+                covered = all(d in cached_dates for d in expected)
                 # Open-ended ranges (no date_to) always refetch from the latest
                 # cached date, as before, so a corrected AdjFactor there is seen
-                if hi and all(d in cached_dates for d in expected):
+                if hi and covered:
                     logger.info("Bars fully cached: code=%s (%d rows)", code, len(cached_data))
                     return {"count": len(cached_data), "data": cached_data, "source": "cache"}
-                latest_cached = max(cached_dates)
                 head = [d for d in expected if d <= latest_cached]
                 if head and all(d in cached_dates for d in head):
                     # Contiguous up to latest_cached: fetch only the missing tail
@@ -825,7 +842,8 @@ async def _get_bars_daily_with_cache(
         except APIError:
             # Return cached data even on API failure, flagged when it is incomplete
             if cached_data:
-                partial = not (date and lo in cached_dates)
+                # A failed freshness check does not make a covered range partial
+                partial = not (lo in cached_dates if date else covered)
                 logger.info(
                     "API failed, returning cached bars: code=%s (%d rows, partial=%s)",
                     code,
