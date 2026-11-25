@@ -11,7 +11,12 @@ import jquants_mcp.server as server_module
 from jquants_mcp.cache.store import CacheStore, make_cache_key
 from jquants_mcp.config import Settings
 from jquants_mcp.client import JQuantsClient
-from jquants_mcp.exceptions import APIError, PlanRestrictionError
+from jquants_mcp.exceptions import (
+    APIError,
+    AuthenticationError,
+    PlanRestrictionError,
+    RateLimitError,
+)
 
 
 @pytest.fixture()
@@ -550,6 +555,54 @@ class TestBarsDailyCacheCompleteness:
         assert result["source"] == "cache"
         assert result["partial"] is True
         assert result["count"] == len(business) - 3
+
+    @pytest.mark.parametrize(
+        "error", [RateLimitError("slow down"), AuthenticationError("bad token")]
+    )
+    async def test_calendar_auth_or_rate_limit_failure_keeps_the_weekday_guess(
+        self, light_env, window, error
+    ):
+        start, end = window
+        holiday = next(d for d in _days(start + timedelta(days=7), end) if d.weekday() == 2)
+        weekdays = [d.isoformat() for d in _days(start, end) if d.weekday() < 5]
+        _seed_bars(light_env["cache"], [d for d in weekdays if d != holiday.isoformat()])
+        bars_fn = AsyncMock(return_value=[])
+        cal_fn = AsyncMock(side_effect=error)
+        with (
+            patch.object(light_env["client"], "get_all_pages", bars_fn),
+            patch.object(light_env["client"], "get", cal_fn),
+        ):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert cal_fn.call_count == 1
+        assert bars_fn.call_count == 1
+        assert result["count"] == len(weekdays) - 1
+
+    async def test_narrower_ask_does_not_shrink_an_unbounded_head_record(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        listed = business[5:]
+        head_key = "bars_daily_head|code=13060&plan=light"
+        light_env["cache"].put_response(
+            head_key, {"asked_from": None, "first": listed[0]}, ttl_seconds=3600
+        )
+        _seed_bars(light_env["cache"], listed[:3] + listed[6:])  # hole forces a full fetch
+        mock_fn = AsyncMock(return_value=_bars(listed))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=business[2],
+                date_to=end.isoformat(),
+            )
+            result = await _call("get_equities_bars_daily", code="1306", date_to=end.isoformat())
+        assert light_env["cache"].get_response(head_key)["asked_from"] is None
+        assert mock_fn.call_count == 1
+        assert result["source"] == "cache"
 
 
 class TestGetEquitiesBarsMinute:
