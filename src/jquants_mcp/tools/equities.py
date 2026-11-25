@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+import time
 from datetime import date as date_cls
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
@@ -431,12 +432,20 @@ def register(
             if t1_rows:
                 return {"count": len(t1_rows), "data": t1_rows}
             date_key = date.replace("-", "")
-            cache_key = make_cache_key("/equities/earnings-calendar", {"date": date_key})
-            cached = cache.get_response(cache_key)
+            cached = cache.get_response(
+                make_cache_key("/equities/earnings-calendar", {"date": date_key})
+            )
+            if cached is None:
+                # daily_fetch wrote "?date=" keys before #620; published caches
+                # keep them for their 90-day TTL
+                cached = cache.get_response(f"/equities/earnings-calendar?date={date_key}")
             if cached is not None:
                 recs = cached if isinstance(cached, list) else cached.get("data", [])
                 recs = _normalize_earnings_records(recs)
-                return {"count": len(recs), "data": recs}
+                # An empty day from the morning sweep must not block the live
+                # refresh below for today/future dates (it used to be a miss)
+                if recs or norm_date < date_cls.today().isoformat():
+                    return {"count": len(recs), "data": recs}
             if norm_date >= date_cls.today().isoformat() and (
                 await _refresh_earnings_calendar_live(client, cache)
             ):
@@ -719,14 +728,32 @@ def register(
         except sqlite3.OperationalError:
             pass
 
-        # Tier 2 fallback: scan date-keyed response_cache entries
+        # Tier 2 fallback: scan date-keyed response_cache entries, in the current
+        # make_cache_key shape and the "?date=" shape daily_fetch wrote before #620.
+        # A day rewritten under the current key supersedes its legacy entry, which
+        # may still list announcements that have since been withdrawn.
+        # Expired entries are skipped, as get_response would (ttl_seconds <= 0 = no expiry).
         try:
-            t2_rows = conn.execute(
-                "SELECT data FROM response_cache WHERE cache_key LIKE ?",
-                ("/equities/earnings-calendar?date=%",),
+            key_rows = conn.execute(
+                "SELECT cache_key, data FROM response_cache"
+                " WHERE (cache_key LIKE ? OR cache_key LIKE ?)"
+                " AND (ttl_seconds <= 0 OR fetched_at + ttl_seconds > ?)",
+                (
+                    "/equities/earnings-calendar|date=%",
+                    "/equities/earnings-calendar?date=%",
+                    time.time(),
+                ),
             ).fetchall()
         except sqlite3.OperationalError:
-            t2_rows = []
+            key_rows = []
+        current_days = {
+            r["cache_key"].rsplit("=", 1)[-1] for r in key_rows if "|date=" in r["cache_key"]
+        }
+        t2_rows = [
+            r
+            for r in key_rows
+            if "|date=" in r["cache_key"] or r["cache_key"].rsplit("=", 1)[-1] not in current_days
+        ]
 
         matches = []
         seen_dates: set[str] = set()

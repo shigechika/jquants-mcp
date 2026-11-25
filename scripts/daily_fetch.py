@@ -484,6 +484,17 @@ def _earnings_api_call(cli: jquantsapi.ClientV2, date_iso: str, *, max_retries: 
             time.sleep(wait)
 
 
+def _earnings_date_cache_key(date_key: str) -> str:
+    """Tier 2 key for one day's earnings calendar (``date_key`` = YYYYMMDD).
+
+    Must equal the server's ``make_cache_key("/equities/earnings-calendar",
+    {"date": date_key})``, which this script cannot import (it may run in a
+    foreign venv). It used to be ``...?date=...``, which the tool's date branch
+    never looked up (#620).
+    """
+    return f"/equities/earnings-calendar|date={date_key}"
+
+
 def _fetch_earnings_calendar_legacy(cli: jquantsapi.ClientV2, conn: sqlite3.Connection) -> int:
     """Fetch earnings calendar and store in Tier 2 response cache by date.
 
@@ -527,7 +538,7 @@ def _fetch_earnings_calendar_legacy(cli: jquantsapi.ClientV2, conn: sqlite3.Conn
     response_data = json.dumps(records, ensure_ascii=False, default=str)
 
     # Accumulate under date-keyed entries (TTL 90 days)
-    cache_key = f"/equities/earnings-calendar?date={date_key}"
+    cache_key = _earnings_date_cache_key(date_key)
     conn.execute(
         "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
         (cache_key, response_data, now, TTL_90D),
@@ -619,14 +630,14 @@ def _fetch_earnings_calendar_sweep(cli: jquantsapi.ClientV2, conn: sqlite3.Conne
                 (code, ann_date, json.dumps(rec, ensure_ascii=False, default=str), now),
             )
         # Tier 2: these are cache keys, not an endpoint declaration — the data
-        # now comes from /fins/earnings-date, but readers (_search_earnings_by_code's
-        # LIKE scan, the no-arg branch's bare-key fallback) still look under the
-        # legacy key shape, so keep writing it.
+        # now comes from /fins/earnings-date, but the readers (the tool's date
+        # branch, _search_earnings_by_code's LIKE scan, the no-arg branch's
+        # bare-key fallback) look under the /equities/earnings-calendar keys.
         response_data = json.dumps(records, ensure_ascii=False, default=str)
         date_key = date_iso.replace("-", "")
         conn.execute(
             "INSERT OR REPLACE INTO response_cache (cache_key, data, fetched_at, ttl_seconds) VALUES (?, ?, ?, ?)",
-            (f"/equities/earnings-calendar?date={date_key}", response_data, now, TTL_90D),
+            (_earnings_date_cache_key(date_key), response_data, now, TTL_90D),
         )
 
     # Bare no-params key: kept narrow (near-term window) to match the tool's
