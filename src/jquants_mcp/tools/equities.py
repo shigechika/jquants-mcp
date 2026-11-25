@@ -713,11 +713,10 @@ async def _expected_bar_days(
 ) -> list[str] | None:
     """Trading days in [lo, hi] that must have a cached bar, or None if unknowable.
 
-    Days before ``first_bar`` are dropped. When a missing day was only guessed to be a
-    business day (no calendar row), the calendar for the missing span is loaded
-    once and the expectation recomputed, so a weekday holiday cannot keep the
-    range incomplete. A failed calendar load (including auth and rate-limit
-    errors: the bars request decides how those surface) keeps the weekday guess.
+    Days before ``first_bar`` are dropped. When a missing day was only guessed
+    to be a business day (no calendar row), the calendar for the missing span is
+    loaded once and the expectation recomputed, so a weekday holiday cannot keep
+    the range incomplete. A failed calendar load keeps the weekday guess.
     ``resolve_until`` limits that load to missing days on or before it, for
     callers whose decision cannot depend on later days.
     """
@@ -741,7 +740,7 @@ async def _expected_bar_days(
         return expected
     try:
         response = await client.get("/markets/calendar", {"from": min(unsure), "to": max(unsure)})
-    except (*TOOL_API_ERRORS, AuthenticationError, RateLimitError) as e:
+    except TOOL_API_ERRORS as e:
         logger.info("Calendar load for bar completeness failed: %s", e)
         return expected
     rows = response.get("data", []) if isinstance(response, dict) else []
@@ -862,20 +861,8 @@ async def _get_bars_daily_with_cache(
             # returned (listing date or the API's retention floor)
             first = min(str(r.get("Date", ""))[:10] for r in api_data)
             if lo is None or lo < first:
-                asked_from = lo
-                prev = cache.get_response(head_key)
-                # Keep the broader of two records that agree on the first bar,
-                # so a narrower later ask does not shrink what is excused
-                if isinstance(prev, dict) and prev.get("first") == first:
-                    prev_from = prev.get("asked_from")
-                    if prev_from is None or asked_from is None:
-                        asked_from = None
-                    elif isinstance(prev_from, str):
-                        asked_from = min(prev_from, asked_from)
                 cache.put_response(
-                    head_key,
-                    {"asked_from": asked_from, "first": first},
-                    ttl_seconds=_HEAD_RECORD_TTL,
+                    head_key, {"asked_from": lo, "first": first}, ttl_seconds=_HEAD_RECORD_TTL
                 )
 
         if api_data:
