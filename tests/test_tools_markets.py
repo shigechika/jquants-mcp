@@ -134,6 +134,35 @@ class TestGetMarketsMarginInterest:
         assert mock_fn.call_count == 1
         assert result["source"] == "cache"
         assert result["count"] == 1
+        # Only 01-04 of 01-04..01-10 is cached: the answer is incomplete
+        assert result["partial"] is True
+
+    async def test_rate_limit_on_cached_single_date_returns_only_that_day(self, mock_env):
+        mock_env["cache"].put_rows(
+            "markets_margin_interest",
+            [
+                {"Code": "72030", "Date": "2024-01-04", "LoanBalance": 1000000},
+                {"Code": "72030", "Date": "2024-01-05", "LoanBalance": 1100000},
+            ],
+            key_columns=["Code", "Date"],
+        )
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_markets_margin_interest", code="72030", date="2024-01-04")
+        assert [r["Date"] for r in result["data"]] == ["2024-01-04"]
+        assert "partial" not in result
+
+    async def test_rate_limit_on_uncached_single_date_raises(self, mock_env):
+        # Only a later day is cached: it must not stand in for the asked day
+        mock_env["cache"].put_rows(
+            "markets_margin_interest",
+            [{"Code": "72030", "Date": "2024-01-05", "LoanBalance": 1100000}],
+            key_columns=["Code", "Date"],
+        )
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            with pytest.raises(Exception, match="(?i)rate limit"):
+                await _call("get_markets_margin_interest", code="72030", date="2024-01-04")
 
     async def test_rate_limit_without_cache_still_raises(self, mock_env):
         mock_fn = AsyncMock(side_effect=RateLimitError())
@@ -170,6 +199,21 @@ class TestGetMarketsMarginInterest:
         assert result["count"] == 2
         assert result["source"] == "cache"
         assert "data" in result
+
+    async def test_no_params_rate_limit_falls_back_to_tier1(self, mock_env):
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        await self._seed_margin_interest(mock_env["cache"], recent_date)
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_markets_margin_interest", detail=True)
+        assert result["source"] == "cache"
+        assert result["count"] == 2
+
+    async def test_no_params_rate_limit_without_tier1_raises(self, mock_env):
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            with pytest.raises(Exception, match="(?i)rate limit"):
+                await _call("get_markets_margin_interest")
 
     async def test_no_params_api_failure_no_tier1_returns_error(self, mock_env):
         """No-params path: API fails and Tier 1 is empty → returns error dict."""
@@ -646,3 +690,19 @@ class TestGetMarketsCalendar:
         assert mock_fn.call_count == 1
         assert result["source"] == "cache"
         assert result["count"] == 1
+        assert result["partial"] is True
+
+    async def test_rate_limit_with_no_rows_after_hol_div_filter_raises(self, mock_env):
+        # Only a trading day is cached; the holiday filter leaves nothing
+        mock_env["cache"].put_rows(
+            "markets_calendar", [{"Date": "2024-01-04", "HolDiv": "1"}], key_columns=["Date"]
+        )
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(mock_env["client"], "get", mock_fn):
+            with pytest.raises(Exception, match="(?i)rate limit"):
+                await _call(
+                    "get_markets_calendar",
+                    hol_div="0",
+                    date_from="2024-01-04",
+                    date_to="2024-01-06",
+                )
