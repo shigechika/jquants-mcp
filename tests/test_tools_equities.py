@@ -615,7 +615,7 @@ class TestBarsDailyCacheCompleteness:
         assert [r["Date"] for r in result["data"]] == [business[2]]
         assert "partial" not in result
 
-    async def test_failed_split_refetch_keeps_the_cache(self, light_env, window):
+    async def test_failed_split_refetch_drops_the_stale_cache(self, light_env, window):
         start, end = window
         business = _seed_calendar(light_env["cache"], start, end)
         _seed_bars(light_env["cache"], business[:-3])
@@ -632,8 +632,8 @@ class TestBarsDailyCacheCompleteness:
                     date_to=end.isoformat(),
                 )
         assert mock_fn.call_count == 2
-        kept = light_env["cache"].get_rows("equities_bars_daily", key_filter={"code": "13060"})
-        assert len(kept) == len(business) - 3
+        # Pre-split adjusted rows must not survive to answer a later request
+        assert not light_env["cache"].get_rows("equities_bars_daily", key_filter={"code": "13060"})
 
     async def test_rate_limit_without_cache_still_raises(self, light_env, window):
         start, end = window

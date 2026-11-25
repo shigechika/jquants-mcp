@@ -177,8 +177,9 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   (for a single `date`, unless that day is cached); `AuthenticationError`
   propagates without the cached rows. A rate-limited calendar lookup takes the same
   fallback without calling the data endpoint. Exception: when a split is detected
-  and the full-range refetch fails, the error surfaces and the cache is kept (the
-  cached rows carry pre-split adjusted prices). `get_equities_valuation` shares
+  and the full-range refetch fails, the error surfaces with no fallback; the code's
+  cached rows (pre-split adjusted prices) are already invalidated, so they cannot
+  answer a later request. `get_equities_valuation` shares
   this path.
 - This is by design for the common case: cache.db is a **published snapshot**
   (jpx-short-report's `daily.sh` re-fetches and re-exports it once a weekday;

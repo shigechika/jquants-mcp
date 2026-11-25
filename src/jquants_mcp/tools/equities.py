@@ -910,21 +910,21 @@ async def _get_bars_daily_with_cache(
         split_date = cache.detect_split_in_batch(cache_code, api_data)
         if not split_date:
             return api_data, False
-        # Split detected -> refetch all rows, then invalidate the cache
+        # Split detected -> invalidate the cache and refetch all rows.
+        # Invalidate first: the cached rows carry pre-split adjusted prices, so
+        # if the refetch below fails they must not survive to answer a later
+        # request from the cache. The error surfaces; the next call refetches.
+        cache.invalidate_rows("equities_bars_daily", {"code": cache_code})
         logger.info("株式分割検知、キャッシュ再取得: code=%s (発生日: %s)", code, split_date)
         if not full_fetch:
             # Only a tail was fetched: refetch the whole requested range
-            # (a full-range answer is already in hand otherwise). Fetch before
-            # invalidating: if this fails, the error surfaces and the cache is
-            # kept for the next attempt. Falling back to it here would serve
-            # pre-split adjusted prices.
+            # (a full-range answer is already in hand otherwise)
             params_full = {"code": code}
             if date_from:
                 params_full["from"] = date_from
             if date_to:
                 params_full["to"] = date_to
             api_data = await client.get_all_pages("/equities/bars/daily", params_full)
-        cache.invalidate_rows("equities_bars_daily", {"code": cache_code})
         return api_data, True
 
     return await _get_code_series_with_cache(
