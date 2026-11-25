@@ -1036,17 +1036,21 @@ def populate_screener_results(conn: sqlite3.Connection) -> int:
     return written
 
 
-# Most missed valuation deliveries one run catches up on (#628)
+# Most days of valuation deliveries one run covers (#628)
 VALUATION_CATCHUP_DAYS = 10
+# The Free plan sees data 12 weeks late (same as the server's _FREE_DELAY_WEEKS)
+FREE_DELAY_WEEKS = 12
 
 
 def fetch_valuation(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan: str = "free") -> int:
     """Insert daily valuation cross-sections (/equities/valuation) into Tier 1.
 
     One date-wide call per weekday, from the day after the newest cached date
-    through today, capped at VALUATION_CATCHUP_DAYS; an empty table fetches
-    today only. A holiday or a not-yet-published day just returns nothing and
-    is retried on the next run.
+    through the plan's latest accessible day (today, or 12 weeks back on Free),
+    covering at most VALUATION_CATCHUP_DAYS; an empty table starts that many
+    days back, so a first run lands on published days whatever time it runs.
+    A holiday or a not-yet-published day just returns nothing and is retried
+    on the next run.
 
     Needs jquants-api-client 2.7.0+ (``get_eq_valuation``). This script can run
     in a foreign venv, so an older client skips with a notice instead of failing.
@@ -1056,17 +1060,20 @@ def fetch_valuation(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan: st
         print("  skipped: jquants-api-client has no get_eq_valuation (needs >=2.7.0)")
         return 0
 
-    today = datetime.today().date()
+    end = datetime.today().date()
+    if plan == "free":
+        end -= timedelta(weeks=FREE_DELAY_WEEKS)
+    window_start = end - timedelta(days=VALUATION_CATCHUP_DAYS - 1)
     max_date = _get_max_date(conn, "equities_valuation")
     if max_date:
         start = datetime.strptime(max_date, "%Y-%m-%d").date() + timedelta(days=1)
-        start = max(start, today - timedelta(days=VALUATION_CATCHUP_DAYS - 1))
+        start = max(start, window_start)
     else:
-        start = today
+        start = window_start
 
     total = 0
     day = start
-    while day <= today:
+    while day <= end:
         if day.weekday() < 5:
             df = method(date_yyyymmdd=day.strftime("%Y%m%d"))
             if df is not None and len(df) > 0:

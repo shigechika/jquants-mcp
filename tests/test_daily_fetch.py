@@ -1559,16 +1559,34 @@ class TestFetchValuation:
         cli = MagicMock(spec=[])  # no get_eq_valuation
         assert daily_fetch.fetch_valuation(cli, db_conn, "light") == 0
 
-    def test_empty_table_fetches_today_only(self, db_conn):
-        cli = self._cli({"20260819": [self._row("2026-08-19"), self._row("2026-08-19", "67580")]})
+    def test_empty_table_starts_a_window_back(self, db_conn):
+        # Today is not published yet (an empty answer); yesterday is
+        cli = self._cli({"20260818": [self._row("2026-08-18"), self._row("2026-08-18", "67580")]})
         n = daily_fetch.fetch_valuation(cli, db_conn, "light")
         assert n == 2
-        assert [c.kwargs for c in cli.get_eq_valuation.call_args_list] == [
-            {"date_yyyymmdd": "20260819"}
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        # Weekdays of the 10-day window ending today
+        assert asked == [
+            "20260810",
+            "20260811",
+            "20260812",
+            "20260813",
+            "20260814",
+            "20260817",
+            "20260818",
+            "20260819",
         ]
         rows = db_conn.execute("SELECT code, date, data FROM equities_valuation").fetchall()
-        assert {r[1] for r in rows} == {"2026-08-19"}  # key has no time part
-        assert all(json.loads(r[2])["Date"] == "2026-08-19" for r in rows)
+        assert {r[1] for r in rows} == {"2026-08-18"}  # key has no time part
+        assert all(json.loads(r[2])["Date"] == "2026-08-18" for r in rows)
+
+    def test_free_plan_fetches_within_its_delay(self, db_conn):
+        cli = self._cli({})
+        daily_fetch.fetch_valuation(cli, db_conn, "free")
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        # 12 weeks before Wed 2026-08-19 is Wed 2026-05-27
+        assert asked[-1] == "20260527"
+        assert all(d <= "20260527" for d in asked)
 
     def test_catches_up_weekdays_after_the_newest_date(self, db_conn):
         daily_fetch._store_tier1(
