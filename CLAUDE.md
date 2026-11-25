@@ -160,9 +160,21 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
 
 - Tier 1 cache has **no time-based freshness bound**: `CacheStore.get_rows` returns
   cached rows regardless of `fetched_at` age, and the cache-vs-API fetch decision in
-  tools is presence-based (a missing date triggers a live fetch; a cached one never
-  does), not freshness-based. See the `entrypoint-stdio.sh` bullet under
-  "Architecture" for the Cloud Run instance-lifecycle angle on this.
+  tools is presence-based (a missing date triggers a live fetch), not
+  freshness-based. See the `entrypoint-stdio.sh` bullet under "Architecture" for the
+  Cloud Run instance-lifecycle angle on this.
+- `get_equities_bars_daily` refines "presence" into a completeness proof (#625,
+  #662): a range is served from the cache alone only when it has a `date_to` and
+  every expected trading day in it is cached. Expected days come from
+  `markets_calendar` (loaded on demand when a missing day has no calendar row) and
+  skip days before the stock's first bar (a short-lived per-code head record,
+  `bars_daily_head`). A missing tail fetches only the tail; any other gap refetches
+  the whole range, cached days included. Open-ended ranges (no `date_to`) are never
+  served from the cache alone: at best they refetch from the latest cached day. A
+  single `date` always asks the API. When the bars call raises `APIError`, the
+  cached rows (if any; otherwise the error) come back, with `partial=true` unless the range was covered (for a
+  single `date`, unless that day is cached); other errors (`RateLimitError`,
+  `AuthenticationError`) propagate without the cached rows.
 - This is by design for the common case: cache.db is a **published snapshot**
   (jpx-short-report's `daily.sh` re-fetches and re-exports it once a weekday;
   consumers download the new artifact wholesale). A blanket TTL would fight that

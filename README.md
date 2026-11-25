@@ -46,7 +46,7 @@ Since 2026-11-24 JPXI also runs an official remote MCP server (`https://mcp.jqua
 |---|---|---|
 | Setup | URL + J-Quants login, nothing to install | `uvx jquants-mcp` (or self-host behind a gateway) |
 | Clients | Claude and ChatGPT only | Any stdio MCP client; claude.ai via a self-hosted gateway |
-| API quota | Every call uses your REST quota | Range requests with an end date that the cache fully covers cost no API call |
+| API quota | Every call uses your REST quota | Range requests with an end date that the cache fully covers make no bars API call (at most one calendar lookup) |
 | Large responses | Cut at ~50 KB, then paginate | Whole-market rankings and screeners return pre-computed results |
 | Server-side analytics | Not stated in the docs | 10 screeners, rankings, sector/market briefings, technical indicators |
 | Source | Not stated | MIT, 1,280+ tests |
