@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -550,6 +550,135 @@ class TestBarsDailyCacheCompleteness:
         assert result["source"] == "cache"
         assert result["partial"] is True
         assert result["count"] == len(business) - 3
+
+
+def _valuation(days: list[str], code: str = "72030") -> list[dict]:
+    return [
+        {"Date": d, "Code": code, "EPS": 344.11, "PER": 9.9, "PBR": 1.07, "MktCap": 40116710.0}
+        for d in days
+    ]
+
+
+class TestGetEquitiesValuation:
+    """get_equities_valuation (#628)."""
+
+    async def test_requires_code_or_date(self, light_env):
+        result = await _call("get_equities_valuation")
+        assert result["error"] is True
+        result = await _call("get_equities_valuation", date_from="2026-01-05")
+        assert result["error"] is True
+        result = await _call("get_equities_valuation", date="2026-01-05", date_from="2026-01-05")
+        assert result["error"] is True
+
+    async def test_cached_rows_that_left_the_plan_window_are_dropped(self, light_env):
+        today = date.today()
+        old = (today - timedelta(days=5 * 366 + 3)).isoformat()  # past Light's 5 years
+        recent = (today - timedelta(days=3)).isoformat()
+        light_env["cache"].put_response(
+            "/equities/valuation|code=72030&plan=light",
+            {"count": 2, "data": _valuation([old, recent])},
+            ttl_seconds=3600,
+        )
+        mock_fn = AsyncMock(return_value=[])
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_equities_valuation", code="72030")
+        assert mock_fn.call_count == 0
+        assert [r["Date"] for r in result["data"]] == [recent]
+        assert result["count"] == 1
+
+    async def test_code_range_is_cached_in_tier1(self, light_env):
+        today = date.today()
+        start, end = today - timedelta(days=60), today - timedelta(days=30)
+        business = _seed_calendar(light_env["cache"], start, end)
+        mock_fn = AsyncMock(return_value=_valuation(business))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            first = await _call(
+                "get_equities_valuation",
+                code="7203",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+            second = await _call(
+                "get_equities_valuation",
+                code="7203",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert mock_fn.call_count == 1
+        assert mock_fn.call_args.args[0] == "/equities/valuation"
+        assert first["count"] == second["count"] == len(business)
+        assert second["source"] == "cache"
+        # Stored in its own table, not in the bars table
+        rows = light_env["cache"].get_rows(
+            "equities_valuation", key_filter={"code": "72030"}, date_from=start.isoformat()
+        )
+        assert len(rows) == len(business)
+        assert not light_env["cache"].get_rows("equities_bars_daily", key_filter={"code": "72030"})
+
+    async def test_date_only_is_cached_per_plan_and_empty_is_not_cached(self, light_env):
+        mock_fn = AsyncMock(return_value=[])
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            await _call("get_equities_valuation", date="2026-11-20")
+            await _call("get_equities_valuation", date="2026-11-20")
+        assert mock_fn.call_count == 2  # an empty answer is not kept
+
+        rows = _valuation(["2026-11-20"]) + _valuation(["2026-11-20"], code="67580")
+        mock_fn = AsyncMock(return_value=rows)
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            await _call("get_equities_valuation", date="2026-11-20")
+            result = await _call("get_equities_valuation", date="2026-11-20")
+        assert mock_fn.call_count == 1
+        assert result["count"] == 2
+        key = "/equities/valuation|date=2026-11-20&plan=light"
+        assert light_env["cache"].get_response(key) is not None
+        # A past day's cross-section is kept for the plain 24 hours
+        assert self._stored_ttl(light_env["cache"], key) == 24 * 3600
+
+    @staticmethod
+    def _stored_ttl(cache: CacheStore, key: str) -> int:
+        conn = cache._ensure_connection()
+        return conn.execute(
+            "SELECT ttl_seconds FROM response_cache WHERE cache_key = ?", (key,)
+        ).fetchone()[0]
+
+    async def test_full_history_expires_at_the_next_publication(self, light_env):
+        import jquants_mcp.tools.equities as equities_module
+
+        ttl_fn = patch.object(equities_module, "publication_ttl", return_value=1234)
+        mock_fn = AsyncMock(return_value=_valuation(["2026-11-20"]))
+        with ttl_fn as fake, patch.object(light_env["client"], "get_all_pages", mock_fn):
+            await _call("get_equities_valuation", code="72030")
+        assert fake.call_args.args[1] == "/equities/valuation"
+        key = "/equities/valuation|code=72030&plan=light"
+        assert self._stored_ttl(light_env["cache"], key) == 1234
+
+    async def test_free_plan_history_lasts_until_midnight(self, light_env, tmp_path):
+        import jquants_mcp.tools.equities as equities_module
+
+        cache = CacheStore(tmp_path / "free.db", default_plan="free")
+        mock_fn = AsyncMock(return_value=_valuation(["2026-08-20"]))
+        with (
+            patch.object(server_module, "_cache", cache),
+            patch.object(equities_module, "publication_ttl", return_value=1234) as fake,
+            patch.object(equities_module, "_seconds_until_midnight", return_value=4321),
+            patch.object(light_env["client"], "get_all_pages", mock_fn),
+        ):
+            await _call("get_equities_valuation", code="72030")
+        # The 12-week delay means today's row never arrives: no publication
+        # re-checks, but the ceiling moves at midnight, so the entry ends there
+        assert fake.call_count == 0
+        stored = self._stored_ttl(cache, "/equities/valuation|code=72030&plan=free")
+        assert stored == 4321
+        cache.close()
+
+    def test_seconds_until_midnight(self):
+        from jquants_mcp.cache.publication import JST
+        from jquants_mcp.tools.equities import _seconds_until_midnight
+
+        # 30 s before JST midnight: never below the 60 s floor
+        assert _seconds_until_midnight(datetime(2026, 11, 25, 23, 59, 30, tzinfo=JST)) == 60
+        # 10:00 JST: at most the 14 h left in the JST day (less if local midnight is sooner)
+        assert 60 <= _seconds_until_midnight(datetime(2026, 11, 25, 10, 0, tzinfo=JST)) <= 14 * 3600
 
 
 class TestGetEquitiesBarsMinute:

@@ -66,6 +66,7 @@ Drill into a specific code:
 |---|---|
 | "8053 (Sumitomo Corp) — price, financials, and PER at a glance" | `get_stock_briefing` |
 | "7203 (Toyota) — past month daily prices" | `get_equities_bars_daily` |
+| "7203 (Toyota) — PER, PBR and market cap over the past year" | `get_equities_valuation` |
 | "8053 Sumitomo Corp earnings summary" | `get_fins_summary` |
 | "9984 SoftBank dividend history" | `get_fins_dividend` |
 | "285A (Kioxia) — 3-month candlestick chart" | `get_candlestick_data` |
@@ -174,6 +175,6 @@ Add `mode="price"` if you want the raw split-adjusted close instead.
 | "Cache statistics" | `cache_status` |
 | "Clear the cache" | `cache_clear` |
 
-The full list of 55 tools (with endpoints, plan requirements, and parameter
+The full list of 56 tools (with endpoints, plan requirements, and parameter
 tables) is on the
 [Available Tools section of the GitHub README](https://github.com/shigechika/jquants-mcp#available-tools).

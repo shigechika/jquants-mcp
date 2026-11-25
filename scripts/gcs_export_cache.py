@@ -99,6 +99,7 @@ def _trim_to_standard(db_path: Path) -> dict[str, int]:
 _DATE_COLUMN: dict[str, str] = {
     "equities_bars_daily": "date",
     "equities_master": "date",
+    "equities_valuation": "date",
     "fins_summary": "disc_date",
     "indices_bars_daily_topix": "date",
     "investor_types": "pub_date",

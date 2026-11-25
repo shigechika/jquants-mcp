@@ -6,7 +6,7 @@ English | [日本語](README.ja.md)
 
 An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server that retrieves Japanese stock market data via [J-Quants API v2](https://jpx-jquants.com/).
 
-User-facing documentation site: <https://shigechika.github.io/jquants-mcp/> (also available in [日本語](https://shigechika.github.io/jquants-mcp/ja/)) — start there if you want a gentler 5-minute introduction. This README is the technical reference (config schema, all 55 tools with parameter tables, deployment).
+User-facing documentation site: <https://shigechika.github.io/jquants-mcp/> (also available in [日本語](https://shigechika.github.io/jquants-mcp/ja/)) — start there if you want a gentler 5-minute introduction. This README is the technical reference (config schema, all 56 tools with parameter tables, deployment).
 
 Release history and changelog: [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases).
 
@@ -30,7 +30,7 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 
 ## Features
 
-- **55 MCP tools** — 22 J-Quants API v2 endpoints, 11 market overview + valuation, 10 offline screener, 1 technical indicators, 1 single-stock summary, 3 cache-only equity search + earnings (schedule + results), 2 chart tools (JSON, no optional dependencies), and 5 server utilities
+- **56 MCP tools** — 23 J-Quants API v2 endpoints, 11 market overview + valuation, 10 offline screener, 1 technical indicators, 1 single-stock summary, 3 cache-only equity search + earnings (schedule + results), 2 chart tools (JSON, no optional dependencies), and 5 server utilities
 - **Two-tier SQLite cache** — row-level cache for time-series data, response-level cache with TTL for others
 - **Stock split detection** — automatic cache invalidation when AdjFactor changes
 - **Rate limiting** — plan-aware sliding window (Free: 5/min, Light: 60, Standard: 120, Premium: 500)
@@ -425,12 +425,13 @@ Per-user API keys additionally require `MCP_ENCRYPTION_KEY` on the server — se
 
 ## Available Tools
 
-### Equities (8 tools)
+### Equities (9 tools)
 
 | Tool | Endpoint | Plan | Description |
 |---|---|---|---|
 | `get_equities_master` | `/equities/master` | Free+ | Listed issue information |
 | `get_equities_bars_daily` | `/equities/bars/daily` | Free+ | Daily stock prices (OHLC) |
+| `get_equities_valuation` | `/equities/valuation` | Free+ | Daily PER / PBR / ROE / EPS / BPS and market cap |
 | `get_equities_bars_minute` | `/equities/bars/minute` | Light+ | Minute-level stock prices |
 | `get_equities_bars_daily_am` | `/equities/bars/daily/am` | Premium | Morning session prices |
 | `get_equities_investor_types` | `/equities/investor-types` | Light+ | Trading by investor type |
@@ -562,7 +563,7 @@ Indicator options for `get_candlestick_data`:
 The server uses a two-tier SQLite cache:
 
 - **Tier 1 (Row-level)**: Time-series data cached by date and code. Supports incremental fetching and stock split detection via AdjFactor comparison.
-  - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`, `markets_margin_interest`, `markets_margin_alert`, `markets_short_ratio`, `markets_breakdown`, `markets_calendar`
+  - `equities_bars_daily`, `equities_master`, `equities_valuation`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`, `markets_margin_interest`, `markets_margin_alert`, `markets_short_ratio`, `markets_breakdown`, `markets_calendar`
 - **Tier 2 (Response-level)**: Full API responses cached with a TTL (6h / 24h / 7d by endpoint). The daily `/markets/*` answers instead expire at the endpoint's next publication time from the [J-Quants data update schedule](https://jpx-jquants.com/en/spec/data-update), and are re-checked shortly after it until the day's delivery shows up (`cache/publication.py`).
 
 Cache is stored at `~/.cache/jquants-mcp/cache.db` by default.

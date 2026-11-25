@@ -17,9 +17,12 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .store import TTL_24H
+
+if TYPE_CHECKING:
+    from .store import CacheStore
 
 JST = timezone(timedelta(hours=9))
 
@@ -40,6 +43,9 @@ class Publication:
 
 
 PUBLICATIONS: dict[str, Publication] = {
+    # Rows are dated the trading day itself, so a per-code history (or today's
+    # cross-section) shows today's delivery in its newest Date (#628).
+    "/equities/valuation": Publication(16, 30, "Date"),
     "/markets/margin-interest": Publication(16, 0, "PubDate"),
     "/markets/margin-alert": Publication(16, 30, "PubDate"),
     "/markets/short-ratio": Publication(16, 30, "Date"),
@@ -133,3 +139,14 @@ def ttl_until_next_publication(
         return until_next
     recheck = LATE_RECHECK_SECONDS if in_window else LATE_RECHECK_SLOW_SECONDS
     return min(recheck, until_next)
+
+
+def publication_ttl(cache: CacheStore, endpoint: str, rows: Iterable[Any] | None) -> int:
+    """``ttl_until_next_publication`` with today's business-day status read from ``cache``."""
+    today = datetime.now(JST).date().isoformat()
+    return ttl_until_next_publication(
+        endpoint,
+        rows,
+        business_day=cache.is_business_day(today),
+        previous_business_day=cache.previous_business_day(today),
+    )
