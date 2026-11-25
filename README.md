@@ -608,7 +608,7 @@ The script reads the plan from `~/.config/jquants-mcp/config.ini` (or `JQUANTS_P
 
 | Plan | Endpoints |
 |---|---|
-| Free | `fins_summary`, `earnings_cal` |
+| Free | `fins_summary`, `earnings_cal`, `valuation` (needs jquants-api-client 2.7.x) |
 | Light | + `topix`, `investor_types` |
 | Standard | + `short_ratio`, `margin_interest`, `margin_alert`, `short_sale_report` |
 | Premium | + `breakdown` |

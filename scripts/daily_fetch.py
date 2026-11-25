@@ -72,6 +72,7 @@ ENDPOINT_MIN_PLAN: dict[str, str] = {
     "fins_summary": "free",
     "earnings_cal": "free",
     "calendar": "free",
+    "valuation": "free",
     "topix": "light",
     "investor_types": "light",
     "short_ratio": "standard",
@@ -186,6 +187,7 @@ _DAILY_FETCH_TABLES = [
     "markets_breakdown",
     "markets_calendar",
     "equities_earnings_calendar",
+    "equities_valuation",
 ]
 
 
@@ -1034,6 +1036,50 @@ def populate_screener_results(conn: sqlite3.Connection) -> int:
     return written
 
 
+# Most missed valuation deliveries one run catches up on (#628)
+VALUATION_CATCHUP_DAYS = 10
+
+
+def fetch_valuation(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan: str = "free") -> int:
+    """Insert daily valuation cross-sections (/equities/valuation) into Tier 1.
+
+    One date-wide call per weekday, from the day after the newest cached date
+    through today, capped at VALUATION_CATCHUP_DAYS; an empty table fetches
+    today only. A holiday or a not-yet-published day just returns nothing and
+    is retried on the next run.
+
+    Needs jquants-api-client 2.7.0+ (``get_eq_valuation``). This script can run
+    in a foreign venv, so an older client skips with a notice instead of failing.
+    """
+    method = getattr(cli, "get_eq_valuation", None)
+    if method is None:
+        print("  skipped: jquants-api-client has no get_eq_valuation (needs >=2.7.0)")
+        return 0
+
+    today = datetime.today().date()
+    max_date = _get_max_date(conn, "equities_valuation")
+    if max_date:
+        start = datetime.strptime(max_date, "%Y-%m-%d").date() + timedelta(days=1)
+        start = max(start, today - timedelta(days=VALUATION_CATCHUP_DAYS - 1))
+    else:
+        start = today
+
+    total = 0
+    day = start
+    while day <= today:
+        if day.weekday() < 5:
+            df = method(date_yyyymmdd=day.strftime("%Y%m%d"))
+            if df is not None and len(df) > 0:
+                rows = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
+                n = _store_tier1(
+                    conn, "equities_valuation", rows, [("Code", "code"), ("Date", "date")]
+                )
+                print(f"  {day.isoformat()}: {n} rows")
+                total += n
+        day += timedelta(days=1)
+    return total
+
+
 def fetch_calendar(
     cli: jquantsapi.ClientV2,
     conn: sqlite3.Connection,
@@ -1095,6 +1141,7 @@ FETCH_REGISTRY: dict[str, tuple[str, callable]] = {
     "short_sale_report": ("short sale report", fetch_short_sale_report),
     "breakdown": ("trade breakdown", fetch_breakdown),
     "calendar": ("trading calendar", fetch_calendar),
+    "valuation": ("valuation metrics", fetch_valuation),
 }
 
 # Backfill-capable endpoints (those that accept a from/to date range)
@@ -1187,6 +1234,7 @@ _TIER1_TABLES = [
     "markets_short_ratio",
     "markets_breakdown",
     "markets_calendar",
+    "equities_valuation",
     "response_cache",
 ]
 
@@ -1241,6 +1289,9 @@ def main() -> None:
     )
     parser.add_argument("--calendar", action="store_true", help="fetch trading calendar (Free+)")
     parser.add_argument(
+        "--valuation", action="store_true", help="fetch daily valuation metrics (Free+)"
+    )
+    parser.add_argument(
         "--backfill",
         type=int,
         metavar="DAYS",
@@ -1278,6 +1329,7 @@ def main() -> None:
         "short_sale_report": args.short_sale_report,
         "breakdown": args.breakdown,
         "calendar": args.calendar,
+        "valuation": args.valuation,
     }
     has_explicit = any(explicit.values())
 

@@ -1533,3 +1533,70 @@ class TestSharedMigration:
         assert json.loads(rows[0][0])["v"] == 999
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
         conn.close()
+
+
+class TestFetchValuation:
+    """fetch_valuation: daily /equities/valuation cross-sections (#628)."""
+
+    @pytest.fixture(autouse=True)
+    def _frozen_today(self, monkeypatch):
+        monkeypatch.setattr(daily_fetch, "datetime", _FrozenToday)  # Wed 2026-08-19
+
+    @staticmethod
+    def _cli(by_day: dict[str, list[dict]]) -> MagicMock:
+        cli = MagicMock()
+        cli.get_eq_valuation.side_effect = lambda date_yyyymmdd: FakeDataFrame(
+            by_day.get(date_yyyymmdd, [])
+        )
+        return cli
+
+    @staticmethod
+    def _row(day: str, code: str = "72030") -> dict:
+        # jquantsapi returns pandas Timestamps; str() of one carries a time part
+        return {"Date": f"{day} 00:00:00", "Code": code, "PER": 9.9, "MktCap": 4.0e7}
+
+    def test_skips_when_the_client_is_too_old(self, db_conn):
+        cli = MagicMock(spec=[])  # no get_eq_valuation
+        assert daily_fetch.fetch_valuation(cli, db_conn, "light") == 0
+
+    def test_empty_table_fetches_today_only(self, db_conn):
+        cli = self._cli({"20260819": [self._row("2026-08-19"), self._row("2026-08-19", "67580")]})
+        n = daily_fetch.fetch_valuation(cli, db_conn, "light")
+        assert n == 2
+        assert [c.kwargs for c in cli.get_eq_valuation.call_args_list] == [
+            {"date_yyyymmdd": "20260819"}
+        ]
+        rows = db_conn.execute("SELECT code, date, data FROM equities_valuation").fetchall()
+        assert {r[1] for r in rows} == {"2026-08-19"}  # key has no time part
+        assert all(json.loads(r[2])["Date"] == "2026-08-19" for r in rows)
+
+    def test_catches_up_weekdays_after_the_newest_date(self, db_conn):
+        daily_fetch._store_tier1(
+            db_conn,
+            "equities_valuation",
+            [self._row("2026-08-13")],  # Thu
+            [("Code", "code"), ("Date", "date")],
+        )
+        cli = self._cli({"20260814": [self._row("2026-08-14")]})
+        daily_fetch.fetch_valuation(cli, db_conn, "light")
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        # Fri 14, then Mon 17 - Wed 19; the weekend is skipped
+        assert asked == ["20260814", "20260817", "20260818", "20260819"]
+
+    def test_catch_up_is_capped(self, db_conn, monkeypatch):
+        monkeypatch.setattr(daily_fetch, "VALUATION_CATCHUP_DAYS", 3)
+        daily_fetch._store_tier1(
+            db_conn,
+            "equities_valuation",
+            [self._row("2026-07-01")],
+            [("Code", "code"), ("Date", "date")],
+        )
+        cli = self._cli({})
+        daily_fetch.fetch_valuation(cli, db_conn, "light")
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        assert asked == ["20260817", "20260818", "20260819"]
+
+    def test_registered_for_every_plan(self):
+        assert daily_fetch.ENDPOINT_MIN_PLAN["valuation"] == "free"
+        assert "valuation" in daily_fetch.FETCH_REGISTRY
+        assert "equities_valuation" in daily_fetch._DAILY_FETCH_TABLES
