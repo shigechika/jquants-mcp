@@ -172,7 +172,7 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   the whole range, cached days included. Open-ended ranges (no `date_to`) are never
   served from the cache alone: at best they refetch from the latest cached day. A
   single `date` always asks the API. When the bars call raises `APIError`, the
-  cached rows come back, with `partial=true` unless the range was covered (for a
+  cached rows (if any; otherwise the error) come back, with `partial=true` unless the range was covered (for a
   single `date`, unless that day is cached); other errors (`RateLimitError`,
   `AuthenticationError`) propagate without the cached rows.
 - This is by design for the common case: cache.db is a **published snapshot**
