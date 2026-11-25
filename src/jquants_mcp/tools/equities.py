@@ -115,7 +115,8 @@ def register(
         ex-rights corporate action on that date (1=split/free share allotment, 2=merger,
         3=rights issue); null when none. For multi-stock bulk downloads use get_bulk_list
         (date-only queries are very slow). code only → full history; code+range → period;
-        date only → all stocks on that date.
+        date only → all stocks on that date. partial=true: the API failed and only
+        the (incomplete) cached rows were returned.
 
         [Supported plans] Free / Light / Standard / Premium (API fallback on cache miss)
         Retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all.
@@ -675,6 +676,14 @@ def register(
 # ------------------------------------------------------------------
 
 
+def _to_iso(d: str | None) -> str | None:
+    """Convert a validated YYYYMMDD or YYYY-MM-DD date to YYYY-MM-DD."""
+    if d is None:
+        return None
+    s = d.replace("-", "")
+    return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+
+
 async def _get_bars_daily_with_cache(
     client: JQuantsClient,
     cache: CacheStore,
@@ -683,21 +692,29 @@ async def _get_bars_daily_with_cache(
     date_from: str | None,
     date_to: str | None,
 ) -> dict[str, Any]:
-    """Retrieve daily stock bars (OHLC) with Tier 1 cache."""
+    """Retrieve daily stock bars (OHLC) with Tier 1 cache.
+
+    The cache alone answers only when every expected trading day in the
+    requested range is present (jquants-mcp#625). When just the tail is
+    missing, only that tail is fetched and merged; any other gap refetches the
+    whole range from the API, whose answer is then returned as-is.
+    """
     # Normalize 4-digit codes to 5 digits (ordinary shares: trailing 0)
     cache_code = code + "0" if len(code) == 4 else code
+    # The cache stores ISO dates; the tool also accepts YYYYMMDD
+    lo = _to_iso(date or date_from)
+    hi = _to_iso(date or date_to)
 
     try:
         # Fetch existing data from the cache (look up by 5-digit code)
-        effective_date = date or date_from
         cached_data = cache.get_rows(
             "equities_bars_daily",
             key_filter={"code": cache_code},
-            date_from=effective_date or date_from,
-            date_to=date_to,
+            date_from=lo,
+            date_to=hi,
         )
 
-        # Request from the API (pass the original code as-is)
+        # Request from the API (pass the original code and dates as-is)
         params: dict[str, Any] = {"code": code}
         if date:
             params["date"] = date
@@ -710,33 +727,46 @@ async def _get_bars_daily_with_cache(
         cached_dates = cache.get_cached_dates(
             "equities_bars_daily",
             key_filter={"code": cache_code},
-            date_from=date_from or date,
-            date_to=date_to,
+            date_from=lo,
+            date_to=hi,
         )
 
-        if cached_dates and not date:
-            # Incremental fetch: only request the uncached period from the API
-            latest_cached = max(cached_dates)
-            if date_to and latest_cached >= date_to:
-                # Entire range already cached
-                logger.info("全データキャッシュ済み: code=%s (%d件)", code, len(cached_data))
-                return {"count": len(cached_data), "data": cached_data, "source": "cache"}
-
-            # Fetch everything after the latest cached date
-            params["from"] = latest_cached
-            if date_to:
-                params["to"] = date_to
+        full_fetch = True
+        if cached_dates:
+            expected = cache.expected_trading_days(lo, hi or date_cls.today().isoformat())
+            # An empty or unknowable expectation proves nothing: ask the API
+            if expected:
+                if all(d in cached_dates for d in expected):
+                    logger.info("Bars fully cached: code=%s (%d rows)", code, len(cached_data))
+                    return {"count": len(cached_data), "data": cached_data, "source": "cache"}
+                latest_cached = max(cached_dates)
+                head = [d for d in expected if d <= latest_cached]
+                if not date and head and all(d in cached_dates for d in head):
+                    # Contiguous up to latest_cached: fetch only the missing tail
+                    params["from"] = latest_cached
+                    full_fetch = False
 
         try:
             api_data = await client.get_all_pages("/equities/bars/daily", params)
         except APIError:
-            # Return cached data even on API failure, if available
+            # Return cached data even on API failure, but say it is incomplete
             if cached_data:
                 logger.info(
-                    "API失敗、キャッシュデータを返却: code=%s (%d件)", code, len(cached_data)
+                    "API failed, returning incomplete cached bars: code=%s (%d rows)",
+                    code,
+                    len(cached_data),
                 )
-                return {"count": len(cached_data), "data": cached_data, "source": "cache"}
+                return {
+                    "count": len(cached_data),
+                    "data": cached_data,
+                    "source": "cache",
+                    "partial": True,
+                }
             raise
+
+        if full_fetch:
+            # The API answered the whole range: do not mix in stale cached rows
+            cached_data = []
 
         if api_data:
             # Stock split check: scan the whole batch, not just the last row
@@ -749,14 +779,16 @@ async def _get_bars_daily_with_cache(
                 logger.info(
                     "株式分割検知、キャッシュ再取得: code=%s (発生日: %s)", code, split_date
                 )
-                params_full = {"code": code}
-                if date_from:
-                    params_full["from"] = date_from
-                if date_to:
-                    params_full["to"] = date_to
-                if date:
-                    params_full["date"] = date
-                api_data = await client.get_all_pages("/equities/bars/daily", params_full)
+                if not full_fetch:
+                    # A full-range answer is already in hand; refetch only a tail
+                    params_full = {"code": code}
+                    if date_from:
+                        params_full["from"] = date_from
+                    if date_to:
+                        params_full["to"] = date_to
+                    if date:
+                        params_full["date"] = date
+                    api_data = await client.get_all_pages("/equities/bars/daily", params_full)
                 cached_data = []
 
             # Store in the cache

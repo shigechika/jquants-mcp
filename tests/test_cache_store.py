@@ -2733,3 +2733,44 @@ class TestPartialDayIsNotLatest:
         assert set(va) == {"2026-11-12", "2026-11-16"}
         assert va["2026-11-12"] == 10 * 1e9
         cache.close()
+
+
+class TestExpectedTradingDays:
+    """CacheStore.expected_trading_days (jquants-mcp#625)."""
+
+    def test_calendar_rows_win_and_missing_days_fall_back_to_weekdays(self, tmp_path):
+        cache = CacheStore(tmp_path / "c.db", default_plan="premium")
+        # 2024-01-01 (Mon) is a holiday, 01-02 has an unknown code, 01-03.. are unseeded,
+        # and 01-06 (Sat) is an explicit business day stored as an integer code
+        cache.put_rows(
+            "markets_calendar",
+            [
+                {"Date": "2024-01-01", "HolDiv": "0"},
+                {"Date": "2024-01-02", "HolDiv": "9"},
+                {"Date": "2024-01-06", "HolDiv": 1},
+            ],
+            key_columns=["Date"],
+        )
+        days = cache.expected_trading_days("2024-01-01", "2024-01-07")
+        assert days == ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06"]
+        cache.close()
+
+    def test_unknowable_lower_bound_on_premium(self, tmp_path):
+        cache = CacheStore(tmp_path / "c.db", default_plan="premium")
+        assert cache.expected_trading_days(None, "2024-01-05") is None
+        cache.close()
+
+    def test_clamped_to_plan_floor_and_today(self, tmp_path):
+        cache = CacheStore(tmp_path / "c.db", default_plan="light")
+        today = date.today()
+        days = cache.expected_trading_days(None, (today + timedelta(days=30)).isoformat())
+        assert days
+        assert days[-1] <= today.isoformat()
+        assert days[0] >= (today - timedelta(days=5 * 366)).isoformat()
+        cache.close()
+
+    def test_empty_when_range_is_after_free_plan_ceiling(self, tmp_path):
+        cache = CacheStore(tmp_path / "c.db", default_plan="free")
+        lo = (date.today() - timedelta(days=7)).isoformat()
+        assert cache.expected_trading_days(lo, date.today().isoformat()) == []
+        cache.close()

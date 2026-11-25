@@ -2757,6 +2757,75 @@ class CacheStore:
         except (sqlite3.Error, json.JSONDecodeError, TypeError, AttributeError):
             return None
 
+    def expected_trading_days(self, date_from: str | None, date_to: str) -> list[str] | None:
+        """Exchange business days a per-stock series must cover in [date_from, date_to].
+
+        Used to prove that a cached range is complete before serving it without
+        hitting the API (jquants-mcp#625). The range is clamped to the effective
+        plan's bounds and to today, matching what ``get_rows`` can return.
+
+        Each day is classified by its markets_calendar row (``HolDiv`` 1/2 =
+        business, 0/3 = closed). A day with no row or an unrecognized code falls
+        back to Monday-Friday, so a missing calendar can only make a range look
+        incomplete on a holiday (one extra API call), not complete.
+
+        Args:
+            date_from: Range start (YYYY-MM-DD), or None for "earliest available".
+            date_to: Range end (YYYY-MM-DD).
+
+        Returns:
+            Sorted ISO dates, or None when the lower bound is unknowable (no
+            ``date_from`` and a plan without a retention floor).
+        """
+        plan_min, plan_max = self._plan_bounds()
+        lo = date_from
+        if plan_min and (lo is None or lo < plan_min):
+            lo = plan_min
+        if lo is None:
+            return None
+        hi = min(date_to, date.today().isoformat())
+        if plan_max and hi > plan_max:
+            hi = plan_max
+        try:
+            start = date.fromisoformat(lo)
+            end = date.fromisoformat(hi)
+        except ValueError:
+            return None
+        if start > end:
+            return []
+
+        verdicts: dict[str, bool] = {}
+        conn = self._ensure_connection()
+        if conn is not None:
+            try:
+                rows = conn.execute(
+                    "SELECT date, data FROM markets_calendar WHERE date >= ? AND date <= ?",
+                    (lo, hi),
+                ).fetchall()
+            except sqlite3.Error:
+                rows = []
+            for row in rows:
+                try:
+                    data = json.loads(row[1]) if row[1] else {}
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                hol = str(data.get("HolDiv", data.get("HolidayDivision", ""))).strip()
+                if hol in ("1", "2"):
+                    verdicts[str(row[0])[:10]] = True
+                elif hol in ("0", "3"):
+                    verdicts[str(row[0])[:10]] = False
+
+        days: list[str] = []
+        d = start
+        while d <= end:
+            iso = d.isoformat()
+            if verdicts.get(iso, d.weekday() < 5):
+                days.append(iso)
+            d += timedelta(days=1)
+        return days
+
     def previous_business_day(self, day: str) -> str | None:
         """Latest business day strictly before ``day`` per markets_calendar, or None."""
         conn = self._ensure_connection()
