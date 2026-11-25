@@ -1043,6 +1043,8 @@ VALUATION_CATCHUP_DAYS = 10
 VALUATION_MIN_DAY_ROWS = 1000
 # The Free plan sees data 12 weeks late (same as the server's _FREE_DELAY_WEEKS)
 FREE_DELAY_WEEKS = 12
+# Spacing between valuation calls on Free (5 requests a minute)
+FREE_REQUEST_INTERVAL_SECONDS = 13
 _JST = timezone(timedelta(hours=9))
 
 
@@ -1087,18 +1089,29 @@ def fetch_valuation(
             (VALUATION_MIN_DAY_ROWS,),
         )
     ]
+    print(f"  window: {start.isoformat()}..{end.isoformat()}")
     have = {d for d in full_days if d >= start.isoformat()}
     older = [d for d in full_days if d < start.isoformat()]
-    if older and max(older) < (start - timedelta(days=4)).isoformat():
+    # The weekday just before the window should be full; if it is not, a
+    # session may have aged out (holidays can raise a false alarm, never hide one)
+    before = start - timedelta(days=1)
+    while before.weekday() >= 5:
+        before -= timedelta(days=1)
+    if older and max(older) < before.isoformat():
         print(
             f"  gap: nothing full between {max(older)} and {start.isoformat()};"
             " run --valuation --backfill N to fill it"
         )
 
     total = 0
+    calls = 0
     day = start
     while day <= end:
         if day.weekday() < 5 and day.isoformat() not in have:
+            if calls and plan == "free":
+                # Free allows 5 requests a minute; stay under it across the sweep
+                time.sleep(FREE_REQUEST_INTERVAL_SECONDS)
+            calls += 1
             df = method(date_yyyymmdd=day.strftime("%Y%m%d"))
             if df is not None and len(df) > 0:
                 rows = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
@@ -1211,8 +1224,13 @@ def _run_backfill(
     targets: list[str],
     days: int,
     plan: str,
-) -> None:
-    """Run backfill for the specified number of days."""
+) -> list[str]:
+    """Run backfill for the specified number of days.
+
+    Returns the endpoints whose backfill raised, so main() can exit non-zero
+    like the daily path does instead of reporting a partial backfill as done.
+    """
+    failed: list[str] = []
     today = datetime.today()
     from_date = (today - timedelta(days=days)).strftime("%Y%m%d")
     to_date = today.strftime("%Y%m%d")
@@ -1229,6 +1247,7 @@ def _run_backfill(
             except Exception as e:
                 print(f"  error: {e}")
                 n = 0
+                failed.append(ep)
             print(f"  done: {n} rows ({time.time() - t0:.1f}s)")
             continue
         if ep not in BACKFILL_REGISTRY:
@@ -1252,6 +1271,7 @@ def _run_backfill(
         except Exception as e:
             print(f"  error: {e}")
             n = 0
+            failed.append(ep)
         print(f"  done: {n} rows ({time.time() - t0:.1f}s)")
 
     # If the calendar is in the backfill targets, fetch all of it
@@ -1263,7 +1283,9 @@ def _run_backfill(
         except Exception as e:
             print(f"  error: {e}")
             n = 0
+            failed.append("calendar")
         print(f"  done: {n} rows ({time.time() - t0:.1f}s)")
+    return failed
 
 
 # List of Tier 1 tables (for the result summary)
@@ -1415,7 +1437,7 @@ def main() -> None:
 
     # Backfill mode
     if args.backfill:
-        _run_backfill(cli, conn, targets, args.backfill, plan)
+        failed_steps.extend(_run_backfill(cli, conn, targets, args.backfill, plan))
     else:
         # Normal daily fetch
         for ep in targets:

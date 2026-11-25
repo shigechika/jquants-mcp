@@ -1543,6 +1543,8 @@ class TestFetchValuation:
         # Wed 2026-08-19 in JST; one stored row counts as a full day unless a test says not
         monkeypatch.setattr(daily_fetch, "_jst_today", lambda: _FrozenToday.today().date())
         monkeypatch.setattr(daily_fetch, "VALUATION_MIN_DAY_ROWS", 1)
+        self.sleeps: list[float] = []
+        monkeypatch.setattr(daily_fetch.time, "sleep", self.sleeps.append)
 
     @staticmethod
     def _cli(by_day: dict[str, list[dict]]) -> MagicMock:
@@ -1589,6 +1591,18 @@ class TestFetchValuation:
         # 12 weeks before Wed 2026-08-19 is Wed 2026-05-27
         assert asked[-1] == "20260527"
         assert all(d <= "20260527" for d in asked)
+        # Spaced under Free's 5 requests a minute: a pause before every call but the first
+        assert self.sleeps == [daily_fetch.FREE_REQUEST_INTERVAL_SECONDS] * (len(asked) - 1)
+
+    def test_paid_plans_are_not_throttled(self, db_conn, capsys):
+        daily_fetch.fetch_valuation(self._cli({}), db_conn, "light")
+        assert self.sleeps == []
+        assert "window: 2026-08-10..2026-08-19" in capsys.readouterr().out
+
+    def test_backfill_failure_is_reported_to_main(self, db_conn):
+        cli = MagicMock()
+        cli.get_eq_valuation.side_effect = RuntimeError("429 Too Many Requests")
+        assert daily_fetch._run_backfill(cli, db_conn, ["valuation"], 3, "light") == ["valuation"]
 
     def test_asks_window_weekdays_without_a_full_day(self, db_conn):
         daily_fetch._store_tier1(
