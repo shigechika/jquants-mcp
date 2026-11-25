@@ -48,7 +48,7 @@ Since 2026-11-24 JPXI also runs an official remote MCP server (`https://mcp.jqua
 | Clients | Claude and ChatGPT only | Any stdio MCP client; claude.ai via a self-hosted gateway |
 | API quota | Every call uses your REST quota | Cached rows cost no API call |
 | Large responses | Cut at ~50 KB, then paginate | Whole-market rankings and screeners return pre-computed results |
-| Server-side analytics | None listed in the docs | 10 screeners, rankings, sector/market briefings, technical indicators |
+| Server-side analytics | Not stated in the docs | 10 screeners, rankings, sector/market briefings, technical indicators |
 | Source | Not stated | MIT, 1,280+ tests |
 
 Details and sources: [docs/comparison.md](docs/comparison.md).
@@ -500,7 +500,7 @@ Cross-sectional cache-only tools that scan all listed equities. No extra API cal
 
 ### Screener (10 tools)
 
-Offline tools that compute signals directly from the SQLite cache. No extra API calls, pure Python, no numpy/pandas. Intended for AI-assisted stock screening without hitting rate limits.
+Tools that compute signals directly from the SQLite cache. Whole-market queries make no API calls; a per-code query falls back to the API only when the cache lacks that code's rows. Pure Python, no numpy/pandas. Intended for AI-assisted stock screening without hitting rate limits.
 
 | Tool | Description |
 |---|---|

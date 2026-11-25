@@ -454,7 +454,7 @@ mcp-stdio serve ... --enable-oauth \
 
 ### スクリーナー (Screener) — 10ツール
 
-キャッシュ済の `equities_bars_daily` から直接計算するオフラインツール。追加 API コールなし、numpy / pandas 非依存の pure Python 実装。AI と組み合わせた銘柄スクリーニング向け。
+キャッシュ済の `equities_bars_daily` から直接計算するツール。全市場を対象にした問い合わせは API を呼びません。銘柄を指定した問い合わせは、その銘柄の行がキャッシュに無いときだけ API にフォールバックします。numpy / pandas 非依存の pure Python 実装。AI と組み合わせた銘柄スクリーニング向け。
 
 | ツール名 | 説明 |
 |---|---|

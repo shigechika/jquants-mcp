@@ -29,7 +29,7 @@ and plan.
 | Where it runs | JPXI's servers | Your machine, or a server you control |
 | Transport | Streamable HTTP (remote) | stdio; remote via an `mcp-stdio` gateway in front of it |
 | Supported clients | Claude (claude.ai / Desktop / Code) and ChatGPT only; the docs say other clients cannot connect | Any MCP client that speaks stdio (Claude Code, Claude Desktop, Codex, …); web clients such as claude.ai via a self-hosted gateway |
-| ChatGPT | Requires a paid ChatGPT plan (custom MCP servers) | Not a target |
+| ChatGPT | Requires a paid ChatGPT plan (custom MCP servers) | Untested; possible in principle through a self-hosted remote gateway |
 | Authentication | OAuth (J-Quants account login) only; API keys are not accepted | API key (env / config file / `jquants-mcp login` browser flow); when self-hosted, whatever the gateway in front enforces (OAuth via oauth2-proxy on Cloud Run, an optional static bearer token in the Docker Compose setup) |
 | Plans | All plans, including Free; data scope follows your plan | All plans, including Free; plan auto-detected from the key |
 | Extra cost | None | None (you pay only for any server you choose to host) |
@@ -50,7 +50,7 @@ whole market, before anything reaches the model's context:
 |---|---|
 | Whole-market rankings | `get_top_movers`, `get_top_volume`, `get_top_turnover_value`, `get_dividend_yield_ranking`, `get_valuation_ranking` |
 | Market breadth and sectors | `get_advance_decline_ratio`, `get_sector_performance`, `get_sector_briefing`, `get_market_briefing` |
-| Screeners (computed from the cache, no API calls) | `detect_52w_high_low`, `detect_ytd_high_low`, `detect_volume_surge`, `detect_price_limit`, `compare_close_vs_vwap`, `detect_distribution_days`, `detect_follow_through_day`, `detect_consecutive_dividend_increase`, … |
+| Screeners (cache-first: whole-market queries make no API calls; per-code queries fall back to the API when the cache lacks the rows) | `detect_52w_high_low`, `detect_ytd_high_low`, `detect_volume_surge`, `detect_price_limit`, `compare_close_vs_vwap`, `detect_distribution_days`, `detect_follow_through_day`, `detect_consecutive_dividend_increase`, … |
 | Value screen | `get_value_stock_screen` (valuation, dividend and margin ratio in one pass) |
 | Single-stock digest | `get_stock_briefing` |
 | Technical indicators | `get_technical_indicators` (SMA, Bollinger Bands, RSI) |
@@ -65,15 +65,15 @@ Why this matters:
   against your plan's rate limit (Light: 60 requests/min). jquants-mcp's
   screeners answer it from the SQLite cache once that cache holds the session
   and its lookback (the bundled daily / bulk fetch scripts keep it filled),
-  within your plan's date window (Free plan data is delayed 12 weeks either
-  way).
+  within your plan's date window. (On either server, Free plan data is
+  delayed 12 weeks.)
 - **Context size.** A 50 KB cap with pagination suits single-stock questions.
   Whole-market questions need the reduction done before the result reaches the
   model; jquants-mcp returns the ranked or filtered list, not the raw rows.
-- **Corrected history.** When jquants-mcp fetches new daily bars, it compares
-  them with the cached rows; if a retroactive `AdjFactor` change (split,
-  consolidation) shows up, it discards that stock's cached bars and refetches
-  them from the API.
+- **Corrected history.** When `get_equities_bars_daily` fetches new daily
+  bars, it compares them with the cached rows; if a retroactive `AdjFactor`
+  change (split, consolidation) shows up, it discards that stock's cached bars
+  and refetches the requested range from the API.
 
 ## Where the official server is the better choice
 

@@ -4,7 +4,7 @@
 |---|---|
 | **[deploy/](deploy/)** | デプロイガイド — stdio・Docker Compose・セルフホスト HTTP・Cloud Run |
 | **[runbooks/](runbooks/)** | インシデント対応手順書（5xx スパイク・OOM・cache 欠損など） |
-| [comparison.md](comparison.md) | 他の J-Quants MCP サーバー実装との比較 |
+| [comparison.md](comparison.md) | J-Quants 公式リモート MCP サーバー・他のコミュニティ実装との比較 |
 | [slo.md](slo.md) | SLO 定義とエラーバジェットポリシー |
 | [dr.md](dr.md) | 障害復旧（DR）ポスチャー |
 | [gcsfuse-postmortem.md](gcsfuse-postmortem.md) | gcsfuse + SQLite 障害ポストモーテム |
