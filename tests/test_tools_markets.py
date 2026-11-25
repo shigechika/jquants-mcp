@@ -152,6 +152,20 @@ class TestGetMarketsMarginInterest:
         assert [r["Date"] for r in result["data"]] == ["2024-01-04"]
         assert "partial" not in result
 
+    async def test_rate_limit_on_date_only_query_is_partial(self, mock_env):
+        # A per-stock lookup cached one code for the day; a date-only query
+        # asks for every code
+        mock_env["cache"].put_rows(
+            "markets_margin_interest",
+            [{"Code": "72030", "Date": "2024-01-04", "LoanBalance": 1000000}],
+            key_columns=["Code", "Date"],
+        )
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_markets_margin_interest", date="2024-01-04")
+        assert result["count"] == 1
+        assert result["partial"] is True
+
     async def test_rate_limit_on_uncached_single_date_raises(self, mock_env):
         # Only a later day is cached: it must not stand in for the asked day
         mock_env["cache"].put_rows(
@@ -208,6 +222,7 @@ class TestGetMarketsMarginInterest:
             result = await _call("get_markets_margin_interest", detail=True)
         assert result["source"] == "cache"
         assert result["count"] == 2
+        assert result["partial"] is True
 
     async def test_no_params_rate_limit_without_tier1_raises(self, mock_env):
         mock_fn = AsyncMock(side_effect=RateLimitError())

@@ -457,8 +457,10 @@ async def _get_with_tier1_cache(
             # Includes a rate limit that outlasted the client's retries
             if cached_data:
                 # A range reaching this point was not proven covered (a covered
-                # one returned above); a single date is complete when cached
-                partial = date not in cached_dates if date else True
+                # one returned above). A single date for one key is complete when
+                # cached; a date-only query asks for every key, and one cached
+                # key does not prove the rest are there.
+                partial = date not in cached_dates if (date and key_value) else True
                 logger.info(
                     "%s failed (%s), returning cached %s (%d rows, partial=%s)",
                     endpoint,
@@ -591,7 +593,9 @@ async def _tier2_fallback(
             type(error).__name__,
             len(rows),
         )
-        return {"count": len(rows), "data": rows, "source": "cache"}
+        # The newest cached date may hold only the keys that per-key lookups
+        # stored, so the snapshot is not proven to be the full cross-section
+        return {"count": len(rows), "data": rows, "source": "cache", "partial": True}
 
     try:
         data = await client.get_all_pages(endpoint, params)
