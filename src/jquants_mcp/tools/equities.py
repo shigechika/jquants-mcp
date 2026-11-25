@@ -771,14 +771,23 @@ def register(
 # ------------------------------------------------------------------
 
 
-def _seconds_until_midnight() -> int:
-    """Seconds until the next local midnight, when the plan date window moves.
+def _seconds_until_midnight(now: datetime | None = None) -> int:
+    """Seconds until the plan date window next moves; at least 60.
 
-    Local time, like ``_plan_date_bounds`` (``date.today()``); at least 60.
+    That is the earlier of the next local midnight (the clock
+    ``_plan_date_bounds`` uses) and the next JST midnight (the exchange's day,
+    which J-Quants' own delay ceiling follows). They differ on a UTC host.
     """
-    now = datetime.now()
-    midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
-    return max(60, int((midnight - now).total_seconds()))
+    now = (now or datetime.now(JST)).astimezone()
+    local_midnight = datetime.combine(
+        now.date() + timedelta(days=1), datetime.min.time(), tzinfo=now.tzinfo
+    )
+    now_jst = now.astimezone(JST)
+    jst_midnight = datetime.combine(
+        now_jst.date() + timedelta(days=1), datetime.min.time(), tzinfo=JST
+    )
+    seconds = min(local_midnight - now, jst_midnight - now_jst).total_seconds()
+    return max(60, int(seconds))
 
 
 def _clip_to_plan(result: Any, bounds: tuple[str | None, str | None]) -> Any:

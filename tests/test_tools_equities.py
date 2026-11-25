@@ -660,6 +660,7 @@ class TestGetEquitiesValuation:
         with (
             patch.object(server_module, "_cache", cache),
             patch.object(equities_module, "publication_ttl", return_value=1234) as fake,
+            patch.object(equities_module, "_seconds_until_midnight", return_value=4321),
             patch.object(light_env["client"], "get_all_pages", mock_fn),
         ):
             await _call("get_equities_valuation", code="72030")
@@ -667,10 +668,17 @@ class TestGetEquitiesValuation:
         # re-checks, but the ceiling moves at midnight, so the entry ends there
         assert fake.call_count == 0
         stored = self._stored_ttl(cache, "/equities/valuation|code=72030&plan=free")
-        now = datetime.now()
-        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
-        assert 60 <= stored <= (midnight - now).total_seconds() + 1
+        assert stored == 4321
         cache.close()
+
+    def test_seconds_until_midnight(self):
+        from jquants_mcp.cache.publication import JST
+        from jquants_mcp.tools.equities import _seconds_until_midnight
+
+        # 30 s before JST midnight: never below the 60 s floor
+        assert _seconds_until_midnight(datetime(2026, 11, 25, 23, 59, 30, tzinfo=JST)) == 60
+        # 10:00 JST: at most the 14 h left in the JST day (less if local midnight is sooner)
+        assert 60 <= _seconds_until_midnight(datetime(2026, 11, 25, 10, 0, tzinfo=JST)) <= 14 * 3600
 
 
 class TestGetEquitiesBarsMinute:
