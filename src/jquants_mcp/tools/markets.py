@@ -455,7 +455,11 @@ async def _get_with_tier1_cache(
             if date_to and latest_cached >= date_to:
                 logger.info("%s 全データキャッシュ済み (%d件)", table, len(cached_data))
                 return {"count": len(cached_data), "data": cached_data, "source": "cache"}
-            params["from"] = latest_cached
+            # Same reason for the incremental start: it assumes no gap before
+            # latest_cached. A compact date_from never matched cached rows before
+            # dates were normalized, so it kept the caller's start; keep that.
+            if date_from == iso_from:
+                params["from"] = latest_cached
 
         try:
             api_data = await client.get_all_pages(endpoint, params)
@@ -688,7 +692,9 @@ async def _get_calendar_with_cache(
                 # Apply the hol_div filter
                 filtered = _filter_hol_div(cached_data, hol_div)
                 return {"count": len(filtered), "data": filtered, "source": "cache"}
-            params["from"] = latest_cached
+            # A compact date_from keeps the caller's start, as in _get_with_tier1_cache
+            if date_from == iso_from:
+                params["from"] = latest_cached
 
         # The calendar endpoint has no pagination. Fall back to the cache on
         # API failure, mirroring _get_with_tier1_cache's fallback — without

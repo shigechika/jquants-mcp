@@ -188,6 +188,28 @@ class TestGetMarketsMarginInterest:
         assert mock_fn.call_count == 1
         assert result["count"] == 2
 
+    async def test_compact_range_keeps_the_callers_start(self, mock_env):
+        """Only the end of the range is cached: the API must be asked from the start."""
+        mock_env["cache"].put_rows(
+            "markets_margin_interest",
+            [{"Code": "72030", "Date": "2024-01-05", "LoanBalance": 1100000}],
+            key_columns=["Code", "Date"],
+        )
+        api_rows = [
+            {"Code": "72030", "Date": "2024-01-04", "LoanBalance": 1000000},
+            {"Code": "72030", "Date": "2024-01-05", "LoanBalance": 1100000},
+        ]
+        mock_fn = AsyncMock(return_value=api_rows)
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_markets_margin_interest",
+                code="72030",
+                date_from="20240104",
+                date_to="20240105",
+            )
+        assert mock_fn.call_args.args[1]["from"] == "20240104"
+        assert [r["Date"] for r in result["data"]] == ["2024-01-04", "2024-01-05"]
+
     async def test_no_params_summary_keeps_the_partial_flag(self, mock_env):
         recent_date = (date.today() - timedelta(days=3)).isoformat()
         await self._seed_margin_interest(mock_env["cache"], recent_date)
