@@ -5,6 +5,18 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.8.0](https://github.com/shigechika/jquants-mcp/compare/v1.7.0...v1.8.0) (2026-11-25)
+
+
+### Features
+
+* **daily-fetch:** ingest daily /equities/valuation cross-sections ([#668](https://github.com/shigechika/jquants-mcp/issues/668)) ([8b701fe](https://github.com/shigechika/jquants-mcp/commit/8b701fee2fb92e2e61ebcbce823a53476f701635))
+
+
+### Bug Fixes
+
+* **bars:** fall back to cached rows on a rate limit too ([#667](https://github.com/shigechika/jquants-mcp/issues/667)) ([6aeab80](https://github.com/shigechika/jquants-mcp/commit/6aeab801a4f7412d9dece58a8dada4b1eb99ae83))
+
 ## [1.7.0](https://github.com/shigechika/jquants-mcp/compare/v1.6.2...v1.7.0) (2026-11-25)
 
 
