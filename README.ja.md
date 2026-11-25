@@ -6,7 +6,7 @@
 
 [J-Quants API v2](https://jpx-jquants.com/) を使って日本株市場データを取得する [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) サーバーです。
 
-ユーザー向けドキュメントサイト: <https://shigechika.github.io/jquants-mcp/ja/>（5 分で始められる導入ガイド。英語版は [https://shigechika.github.io/jquants-mcp/](https://shigechika.github.io/jquants-mcp/)）。本 README は技術リファレンス（設定 schema、55 ツール全パラメータ表、デプロイ）です。
+ユーザー向けドキュメントサイト: <https://shigechika.github.io/jquants-mcp/ja/>（5 分で始められる導入ガイド。英語版は [https://shigechika.github.io/jquants-mcp/](https://shigechika.github.io/jquants-mcp/)）。本 README は技術リファレンス（設定 schema、56 ツール全パラメータ表、デプロイ）です。
 
 リリース履歴・変更履歴は [GitHub Releases](https://github.com/shigechika/jquants-mcp/releases) を参照してください。
 
@@ -30,7 +30,7 @@ Claude iPhone アプリ上で jquants-mcp ツールを呼び出した実際の�
 
 ## 特徴
 
-- **55 の MCP ツール** — J-Quants API v2 全エンドポイント（22）+ マーケット概況・バリュエーション（11）+ オフライン screener（10）+ テクニカル指標（1）+ 単銘柄サマリー（1）+ 銘柄名検索・決算（カレンダー + 実績、3）+ チャートツール（2、JSON、オプション依存なし）+ サーバーユーティリティ（5）
+- **56 の MCP ツール** — J-Quants API v2 全エンドポイント（23）+ マーケット概況・バリュエーション（11）+ オフライン screener（10）+ テクニカル指標（1）+ 単銘柄サマリー（1）+ 銘柄名検索・決算（カレンダー + 実績、3）+ チャートツール（2、JSON、オプション依存なし）+ サーバーユーティリティ（5）
 - **2層 SQLite キャッシュ** — 時系列データは行レベル、その他はレスポンスレベル（TTL付き）
 - **株式分割検知** — AdjFactor 変化時にキャッシュを自動無効化
 - **レート制限** — プラン別スライディングウィンドウ（Free: 5回/分, Light: 60, Standard: 120, Premium: 500）
@@ -385,6 +385,7 @@ mcp-stdio serve ... --enable-oauth \
 |---|---|---|---|
 | `get_equities_master` | `/equities/master` | Free+ | 上場銘柄一覧 |
 | `get_equities_bars_daily` | `/equities/bars/daily` | Free+ | 株価四本値（日足） |
+| `get_equities_valuation` | `/equities/valuation` | Free+ | 日次の PER・PBR・ROE・EPS・BPS と時価総額 |
 | `get_equities_bars_minute` | `/equities/bars/minute` | Light+ | 株価分足 |
 | `get_equities_bars_daily_am` | `/equities/bars/daily/am` | Premium | 前場四本値 |
 | `get_equities_investor_types` | `/equities/investor-types` | Light+ | 投資部門別売買 |
@@ -515,7 +516,7 @@ mcp-stdio serve ... --enable-oauth \
 2層構造の SQLite キャッシュを使用しています:
 
 - **Tier 1（行レベル）**: 時系列データを日付×コードで管理。増分取得・株式分割検知（AdjFactor 比較）に対応。
-  - `equities_bars_daily`, `equities_master`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`, `markets_margin_interest`, `markets_margin_alert`, `markets_short_ratio`, `markets_breakdown`, `markets_calendar`
+  - `equities_bars_daily`, `equities_master`, `equities_valuation`, `fins_summary`, `indices_bars_daily_topix`, `investor_types`, `markets_margin_interest`, `markets_margin_alert`, `markets_short_ratio`, `markets_breakdown`, `markets_calendar`
 - **Tier 2（レスポンスレベル）**: API レスポンス全体を TTL 付きでキャッシュ（エンドポイントにより 6h / 24h / 7d）。日次の `/markets/*` は [J-Quants のデータ更新時刻](https://jpx-jquants.com/en/spec/data-update) にもとづき次の公表時刻で失効し、公表時刻の直後は当日分が届くまで取り直す（`cache/publication.py`）。
 
 キャッシュの保存先はデフォルトで `~/.cache/jquants-mcp/cache.db` です。

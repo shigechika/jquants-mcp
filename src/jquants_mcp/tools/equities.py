@@ -7,6 +7,7 @@ import json
 import logging
 import sqlite3
 from datetime import date as date_cls
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -109,9 +110,10 @@ def register(
         Use for 株価・日足・OHLC・終値・出来高・調整株価 (AdjC/AdjO etc.), 権利落ち (ExRT)
         queries. MktCap (時価総額): market cap in millions of yen (unadjusted close x listed
         shares, corporate-action aware); null for ETF/ETN and non-trading days. J-Quants
-        stops returning MktCap from this endpoint on 2026-12-28: rows fetched on or after
-        that date have no MktCap key (rows cached earlier keep it), so do not rely on it
-        for recent dates. ExRT:
+        stops returning MktCap from this endpoint on 2026-12-28: rows fetched after that
+        have no MktCap key and a refetch can drop it from cached rows, so use
+        get_equities_valuation instead (its MktCap excludes treasury shares, so values
+        differ). ExRT:
         ex-rights corporate action on that date (1=split/free share allotment, 2=merger,
         3=rights issue); null when none. For multi-stock bulk downloads use get_bulk_list
         (date-only queries are very slow). code only → full history; code+range → period;
@@ -158,6 +160,82 @@ def register(
             data = await client.get_all_pages("/equities/bars/daily", params)
             result = {"count": len(data), "data": data}
             cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
+            return result
+        except TOOL_API_ERRORS as e:
+            return format_api_error(e)
+
+    @mcp.tool(annotations=READ_ONLY_API)
+    async def get_equities_valuation(
+        code: str | None = None,
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        """Daily valuation metrics per stock (バリュエーション指標). All plans.
+
+        Use for PER・PBR・ROE・EPS・BPS・予想PER・時価総額 (MktCap) time series or a
+        one-day cross-section. EPS/BPS: yen, trailing actuals; FwdEPS/FwdPER/FwdROE:
+        from the current-period forecast; ROE/FwdROE are fractions (0.115 = 11.5%);
+        MktCap: millions of yen with treasury shares excluded (a different definition
+        from the MktCap get_equities_bars_daily returns until 2026-12-28). Per-share
+        values are as of each date, not split-adjusted. All fields null for ETF/ETN/REIT.
+        code only → full history; code+range → period; date only → all stocks on that
+        date. partial=true: the API failed and only the (incomplete) cached rows were
+        returned.
+
+        [Supported plans] Free / Light / Standard / Premium (API fallback on cache miss)
+        Retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all.
+
+        Args:
+            code: Stock code (5 digits, e.g. 72030; 4-digit codes match ordinary shares only).
+            date: Single date (YYYYMMDD or YYYY-MM-DD).
+            date_from: Range start inclusive (YYYYMMDD or YYYY-MM-DD); needs code.
+            date_to: Range end inclusive (YYYYMMDD or YYYY-MM-DD); needs code.
+        """
+        if code is None and date is None:
+            return make_validation_error_response(["Either 'code' or 'date' must be specified."])
+        errors = collect_errors(
+            validate_code(code),
+            validate_date(date),
+            validate_date(date_from, "date_from"),
+            validate_date(date_to, "date_to"),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+
+        client: JQuantsClient = await get_client()
+        cache: CacheStore = get_cache()
+
+        # code + date range: Tier 1 cache with the shared completeness check
+        if code and (date_from or date_to or date):
+            return await _get_code_series_with_cache(
+                client,
+                cache,
+                table="equities_valuation",
+                endpoint="/equities/valuation",
+                head_name="valuation_head",
+                code=code,
+                date=date,
+                date_from=date_from,
+                date_to=date_to,
+            )
+
+        # code only (full history) or date only (all stocks): Tier 2 cache, keyed
+        # by plan so one plan's window is never served to another
+        params = {"code": code, "date": date, "from": date_from, "to": date_to}
+        cache_key = make_cache_key(
+            "/equities/valuation", {**params, "plan": cache.effective_plan()}
+        )
+        cached = cache.get_response(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            data = await client.get_all_pages("/equities/valuation", params)
+            result = {"count": len(data), "data": data}
+            # An empty answer (e.g. before the day is published) must not stick for 24h
+            if data:
+                cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
@@ -750,6 +828,13 @@ async def _expected_bar_days(
     return compute(set())
 
 
+# Hook run on a non-empty API batch before it is stored: receives
+# (api_data, full_fetch, cache_code) and returns (api_data, drop_cached).
+_AfterFetch = Callable[
+    [list[dict[str, Any]], bool, str], Awaitable[tuple[list[dict[str, Any]], bool]]
+]
+
+
 async def _get_bars_daily_with_cache(
     client: JQuantsClient,
     cache: CacheStore,
@@ -758,17 +843,69 @@ async def _get_bars_daily_with_cache(
     date_from: str | None,
     date_to: str | None,
 ) -> dict[str, Any]:
-    """Retrieve daily stock bars (OHLC) with Tier 1 cache.
+    """Retrieve daily stock bars (OHLC) with Tier 1 cache and split detection."""
+
+    async def refetch_on_split(
+        api_data: list[dict[str, Any]], full_fetch: bool, cache_code: str
+    ) -> tuple[list[dict[str, Any]], bool]:
+        # Scan the whole batch, not just the last row (AdjFactor is a per-date
+        # event flag, not a running value — see jquants-mcp#597).
+        split_date = cache.detect_split_in_batch(cache_code, api_data)
+        if not split_date:
+            return api_data, False
+        # Split detected -> invalidate the cache and refetch all rows
+        cache.invalidate_rows("equities_bars_daily", {"code": cache_code})
+        logger.info("株式分割検知、キャッシュ再取得: code=%s (発生日: %s)", code, split_date)
+        if not full_fetch:
+            # A full-range answer is already in hand; refetch only a tail
+            params_full = {"code": code}
+            if date_from:
+                params_full["from"] = date_from
+            if date_to:
+                params_full["to"] = date_to
+            api_data = await client.get_all_pages("/equities/bars/daily", params_full)
+        return api_data, True
+
+    return await _get_code_series_with_cache(
+        client,
+        cache,
+        table="equities_bars_daily",
+        endpoint="/equities/bars/daily",
+        head_name="bars_daily_head",
+        code=code,
+        date=date,
+        date_from=date_from,
+        date_to=date_to,
+        adj_factor_key="AdjFactor",
+        after_fetch=refetch_on_split,
+    )
+
+
+async def _get_code_series_with_cache(
+    client: JQuantsClient,
+    cache: CacheStore,
+    *,
+    table: str,
+    endpoint: str,
+    head_name: str,
+    code: str,
+    date: str | None,
+    date_from: str | None,
+    date_to: str | None,
+    adj_factor_key: str | None = None,
+    after_fetch: _AfterFetch | None = None,
+) -> dict[str, Any]:
+    """Retrieve a per-stock daily series (one row per trading day) with Tier 1 cache.
 
     The cache alone answers a range only when every expected trading day in it
     is present (jquants-mcp#625). When just the tail is missing, only that tail
     is fetched; any other gap refetches the whole range. API rows win over
-    cached rows for the same date. A single ``date`` always asks the API, so its
-    adjusted prices pick up corporate actions after it was cached.
+    cached rows for the same date. A single ``date`` always asks the API, so
+    values restated after it was cached are picked up.
 
-    Days that will never get a bar must not keep a range incomplete forever:
+    Days that will never get a row must not keep a range incomplete forever:
     weekday holidays are resolved by loading markets_calendar on demand, and
-    days before the first bar the API returned (listing date, or the API's
+    days before the first row the API returned (listing date, or the API's
     retention floor) are dropped using a short-lived per-code head record.
     """
     # Normalize 4-digit codes to 5 digits (ordinary shares: trailing 0)
@@ -776,14 +913,12 @@ async def _get_bars_daily_with_cache(
     # The cache stores ISO dates; the tool also accepts YYYYMMDD
     lo = _to_iso(date or date_from)
     hi = _to_iso(date or date_to)
-    head_key = make_cache_key(
-        "bars_daily_head", {"code": cache_code, "plan": cache.effective_plan()}
-    )
+    head_key = make_cache_key(head_name, {"code": cache_code, "plan": cache.effective_plan()})
 
     try:
         # Fetch existing data from the cache (look up by 5-digit code)
         cached_data = cache.get_rows(
-            "equities_bars_daily",
+            table,
             key_filter={"code": cache_code},
             date_from=lo,
             date_to=hi,
@@ -800,7 +935,7 @@ async def _get_bars_daily_with_cache(
 
         # Check which dates are already cached
         cached_dates = cache.get_cached_dates(
-            "equities_bars_daily",
+            table,
             key_filter={"code": cache_code},
             date_from=lo,
             date_to=hi,
@@ -829,7 +964,7 @@ async def _get_bars_daily_with_cache(
                 # Open-ended ranges (no date_to) always refetch from the latest
                 # cached date, as before, so a corrected AdjFactor there is seen
                 if hi and covered:
-                    logger.info("Bars fully cached: code=%s (%d rows)", code, len(cached_data))
+                    logger.info("%s fully cached: code=%s (%d rows)", table, code, len(cached_data))
                     return {"count": len(cached_data), "data": cached_data, "source": "cache"}
                 head = [d for d in expected if d <= latest_cached]
                 if head and all(d in cached_dates for d in head):
@@ -838,14 +973,15 @@ async def _get_bars_daily_with_cache(
                     full_fetch = False
 
         try:
-            api_data = await client.get_all_pages("/equities/bars/daily", params)
+            api_data = await client.get_all_pages(endpoint, params)
         except APIError:
             # Return cached data even on API failure, flagged when it is incomplete
             if cached_data:
                 # A failed freshness check does not make a covered range partial
                 partial = not (lo in cached_dates if date else covered)
                 logger.info(
-                    "API failed, returning cached bars: code=%s (%d rows, partial=%s)",
+                    "API failed, returning cached %s: code=%s (%d rows, partial=%s)",
+                    table,
                     code,
                     len(cached_data),
                     partial,
@@ -866,32 +1002,17 @@ async def _get_bars_daily_with_cache(
                 )
 
         if api_data:
-            # Stock split check: scan the whole batch, not just the last row
-            # (AdjFactor is a per-date event flag, not a running value — see
-            # jquants-mcp#597).
-            split_date = cache.detect_split_in_batch(cache_code, api_data)
-            if split_date:
-                # Split detected -> invalidate the cache and refetch all rows
-                cache.invalidate_rows("equities_bars_daily", {"code": cache_code})
-                logger.info(
-                    "株式分割検知、キャッシュ再取得: code=%s (発生日: %s)", code, split_date
-                )
-                if not full_fetch:
-                    # A full-range answer is already in hand; refetch only a tail
-                    params_full = {"code": code}
-                    if date_from:
-                        params_full["from"] = date_from
-                    if date_to:
-                        params_full["to"] = date_to
-                    api_data = await client.get_all_pages("/equities/bars/daily", params_full)
-                cached_data = []
+            if after_fetch is not None:
+                api_data, drop_cached = await after_fetch(api_data, full_fetch, cache_code)
+                if drop_cached:
+                    cached_data = []
 
             # Store in the cache
             cache.put_rows(
-                "equities_bars_daily",
+                table,
                 api_data,
                 key_columns=["Code", "Date"],
-                adj_factor_key="AdjFactor",
+                adj_factor_key=adj_factor_key,
             )
 
         # Merge cached data and API data (dedup)

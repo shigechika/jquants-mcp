@@ -35,7 +35,7 @@ and plan.
 | Extra cost | None | None (you pay only for any server you choose to host) |
 | API quota | MCP calls consume the same quota as REST calls | Rows already in the local cache are served without an API call |
 | Large responses | Truncated at about 50 KB, with guidance to narrow the query or continue via `pagination_key` | Aggregation tools return compact, pre-computed results (see below) |
-| Tool list | Not stated in the official docs | 55 tools, all documented in the [README](../README.md#available-tools) |
+| Tool list | Not stated in the official docs | 56 tools, all documented in the [README](../README.md#available-tools) |
 | Source code | Not stated | Public (MIT), 1,280+ tests, CI on Python 3.11–3.15 |
 
 ## What jquants-mcp adds on top of the raw API

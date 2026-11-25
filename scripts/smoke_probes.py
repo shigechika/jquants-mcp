@@ -97,6 +97,11 @@ PROBES: dict[str, Probe] = {
         date_field="Date",
         fresh_within_days=7,
     ),
+    "get_equities_valuation": Probe(
+        args={"code": TOYOTA, "date_from": "{t-30}", "date_to": "{t}"},
+        date_field="Date",
+        fresh_within_days=7,
+    ),
     "get_equities_bars_daily_am": Probe(args={"code": TOYOTA}, allow_plan_restriction=True),
     "get_equities_bars_minute": Probe(
         args={"code": TOYOTA, "date": "{t}"}, allow_plan_restriction=True

@@ -4,7 +4,7 @@
 
 jquants-mcp is a Japanese-equities-focused [MCP (Model Context Protocol)](https://modelcontextprotocol.io/)
 server. It gives your MCP client — Claude (Desktop, CLI, or mobile), Codex,
-Meta Muse, … — 55 specialist tools and a local SQLite cache, turning it into a hands-on companion for your stock
+Meta Muse, … — 56 specialist tools and a local SQLite cache, turning it into a hands-on companion for your stock
 research rather than a one-off query tool.
 
 <p align="center">

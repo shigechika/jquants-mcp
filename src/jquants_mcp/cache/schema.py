@@ -69,6 +69,13 @@ TIER1_TABLES: dict[str, dict[str, str]] = {
         "primary_key": "code, date",
         "extra_columns": "",
     },
+    # /equities/valuation (J-Quants 2026-09-14): per-share values are as of each
+    # date, not restated on later splits, so cached rows stay valid (#628).
+    "equities_valuation": {
+        "key_columns": "code TEXT NOT NULL, date TEXT NOT NULL",
+        "primary_key": "code, date",
+        "extra_columns": "",
+    },
     # doc_type is part of the PK so same-day multi-document filings coexist
     # (本決算 + 予想修正 の同日開示。issue #473). It is a real column
     # (SQLite generated columns cannot be part of a PRIMARY KEY) populated

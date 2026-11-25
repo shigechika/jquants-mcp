@@ -28,6 +28,7 @@ EXPECTED_ANNOTATIONS: dict[str, dict[str, bool]] = {
     # tools/equities.py — calls J-Quants API with cache fallback
     "get_equities_master": READ_ONLY_API,
     "get_equities_bars_daily": READ_ONLY_API,
+    "get_equities_valuation": READ_ONLY_API,
     "get_equities_bars_minute": READ_ONLY_API,
     "get_equities_bars_daily_am": READ_ONLY_API,
     "get_equities_investor_types": READ_ONLY_API,

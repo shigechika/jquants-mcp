@@ -166,6 +166,7 @@ ENDPOINT_TTL: dict[str, int] = {
 _TABLE_MIN_PLAN: dict[str, str] = {
     "equities_bars_daily": "free",
     "equities_master": "free",
+    "equities_valuation": "free",
     "fins_summary": "free",
     "indices_bars_daily_topix": "light",
     "investor_types": "light",

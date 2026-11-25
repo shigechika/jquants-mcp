@@ -66,6 +66,7 @@ jquants-mcp で AI に何ができるか、ユースケース別ツアー。各�
 |---|---|
 | 「8053 住友商事の株価・財務・PER を一覧で」（株式ブリーフィング） | `get_stock_briefing` |
 | 「7203（トヨタ）のここ 1 か月の株価」 | `get_equities_bars_daily` |
+| 「7203（トヨタ）のこの 1 年の PER・PBR・時価総額」 | `get_equities_valuation` |
 | 「8053 住友商事の決算」 | `get_fins_summary` |
 | 「9984 SBG の配当履歴」 | `get_fins_dividend` |
 | 「285A（キオクシア）のチャートを 3 か月」 | `get_candlestick_data` |
@@ -161,6 +162,6 @@ AI エージェントが `get_comparison_chart_data` を `mode="return_pct"`（�
 | 「キャッシュの状況」 | `cache_status` |
 | 「キャッシュをクリアして」 | `cache_clear` |
 
-55 ツールの完全な一覧（エンドポイント / プラン要件 / パラメータ表）は
+56 ツールの完全な一覧（エンドポイント / プラン要件 / パラメータ表）は
 [GitHub README の Available Tools](https://github.com/shigechika/jquants-mcp#available-tools)
 にまとまっています。
