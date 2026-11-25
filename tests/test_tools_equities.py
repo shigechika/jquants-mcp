@@ -11,7 +11,7 @@ import jquants_mcp.server as server_module
 from jquants_mcp.cache.store import CacheStore, make_cache_key
 from jquants_mcp.config import Settings
 from jquants_mcp.client import JQuantsClient
-from jquants_mcp.exceptions import APIError, PlanRestrictionError
+from jquants_mcp.exceptions import APIError, PlanRestrictionError, RateLimitError
 
 
 @pytest.fixture()
@@ -550,6 +550,47 @@ class TestBarsDailyCacheCompleteness:
         assert result["source"] == "cache"
         assert result["partial"] is True
         assert result["count"] == len(business) - 3
+
+    async def test_rate_limit_on_covered_open_range_returns_cache(self, light_env):
+        today = date.today()
+        start = today - timedelta(days=30)
+        business = _seed_calendar(light_env["cache"], start, today)
+        _seed_bars(light_env["cache"], business)
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily", code="1306", date_from=start.isoformat()
+            )
+        assert result["source"] == "cache"
+        assert result["count"] == len(business)
+        assert "partial" not in result
+
+    async def test_rate_limit_with_incomplete_cache_is_flagged_partial(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business[:3] + business[6:])
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert result["source"] == "cache"
+        assert result["partial"] is True
+
+    async def test_rate_limit_without_cache_still_raises(self, light_env, window):
+        start, end = window
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            with pytest.raises(Exception, match="(?i)rate limit"):
+                await _call(
+                    "get_equities_bars_daily",
+                    code="1306",
+                    date_from=start.isoformat(),
+                    date_to=end.isoformat(),
+                )
 
 
 def _valuation(days: list[str], code: str = "72030") -> list[dict]:

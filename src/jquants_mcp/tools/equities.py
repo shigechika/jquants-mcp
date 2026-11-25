@@ -1032,8 +1032,9 @@ async def _get_code_series_with_cache(
 
         try:
             api_data = await client.get_all_pages(endpoint, params)
-        except APIError:
-            # Return cached data even on API failure, flagged when it is incomplete
+        except (APIError, RateLimitError):
+            # Return cached data even on API failure (including a rate limit that
+            # outlasted the client's retries), flagged when it is incomplete
             if cached_data:
                 # A failed freshness check does not make a covered range partial
                 partial = not (lo in cached_dates if date else covered)

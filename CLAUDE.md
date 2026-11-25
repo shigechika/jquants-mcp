@@ -171,10 +171,11 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   `bars_daily_head`). A missing tail fetches only the tail; any other gap refetches
   the whole range, cached days included. Open-ended ranges (no `date_to`) are never
   served from the cache alone: at best they refetch from the latest cached day. A
-  single `date` always asks the API. When the bars call raises `APIError`, the
-  cached rows (if any; otherwise the error) come back, with `partial=true` unless the range was covered (for a
-  single `date`, unless that day is cached); other errors (`RateLimitError`,
-  `AuthenticationError`) propagate without the cached rows.
+  single `date` always asks the API. When the bars call raises `APIError` or
+  `RateLimitError` (after the client's retries), the cached rows (if any;
+  otherwise the error) come back, with `partial=true` unless the range was covered
+  (for a single `date`, unless that day is cached); `AuthenticationError`
+  propagates without the cached rows. `get_equities_valuation` shares this path.
 - This is by design for the common case: cache.db is a **published snapshot**
   (jpx-short-report's `daily.sh` re-fetches and re-exports it once a weekday;
   consumers download the new artifact wholesale). A blanket TTL would fight that
