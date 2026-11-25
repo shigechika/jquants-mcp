@@ -613,6 +613,26 @@ class TestGetEquitiesValuation:
         assert result["count"] == 2
         key = "/equities/valuation|date=2026-11-20&plan=light"
         assert light_env["cache"].get_response(key) is not None
+        # A past day's cross-section is kept for the plain 24 hours
+        assert self._stored_ttl(light_env["cache"], key) == 24 * 3600
+
+    @staticmethod
+    def _stored_ttl(cache: CacheStore, key: str) -> int:
+        conn = cache._ensure_connection()
+        return conn.execute(
+            "SELECT ttl_seconds FROM response_cache WHERE cache_key = ?", (key,)
+        ).fetchone()[0]
+
+    async def test_full_history_expires_at_the_next_publication(self, light_env):
+        import jquants_mcp.tools.equities as equities_module
+
+        ttl_fn = patch.object(equities_module, "publication_ttl", return_value=1234)
+        mock_fn = AsyncMock(return_value=_valuation(["2026-11-20"]))
+        with ttl_fn as fake, patch.object(light_env["client"], "get_all_pages", mock_fn):
+            await _call("get_equities_valuation", code="72030")
+        assert fake.call_args.args[1] == "/equities/valuation"
+        key = "/equities/valuation|code=72030&plan=light"
+        assert self._stored_ttl(light_env["cache"], key) == 1234
 
 
 class TestGetEquitiesBarsMinute:

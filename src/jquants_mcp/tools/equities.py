@@ -13,6 +13,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
+from ..cache.publication import JST, publication_ttl
 from ..cache.store import ENDPOINT_TTL, CacheStore, TTL_24H, TTL_7D, make_cache_key
 from ..client import JQuantsClient
 from ..exceptions import (
@@ -235,7 +236,14 @@ def register(
             result = {"count": len(data), "data": data}
             # An empty answer (e.g. before the day is published) must not stick for 24h
             if data:
-                cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
+                # A past day's cross-section never changes; anything that can
+                # still gain today's row expires at the next publication
+                today = datetime.now(JST).date().isoformat()
+                if date and (_to_iso(date) or "") < today:
+                    ttl = TTL_24H
+                else:
+                    ttl = publication_ttl(cache, "/equities/valuation", data)
+                cache.put_response(cache_key, result, ttl_seconds=ttl)
             return result
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
