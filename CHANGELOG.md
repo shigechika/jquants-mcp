@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.7.0](https://github.com/shigechika/jquants-mcp/compare/v1.6.2...v1.7.0) (2026-11-25)
+
+
+### Features
+
+* **valuation:** add get_equities_valuation for /equities/valuation ([#664](https://github.com/shigechika/jquants-mcp/issues/664)) ([9c6f660](https://github.com/shigechika/jquants-mcp/commit/9c6f660449cf13917cb8b33c4f6042cf4d45c5e3))
+
 ## [1.6.2](https://github.com/shigechika/jquants-mcp/compare/v1.6.1...v1.6.2) (2026-11-25)
 
 
