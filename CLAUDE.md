@@ -176,8 +176,10 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   otherwise the error) come back, with `partial=true` unless the range was covered
   (for a single `date`, unless that day is cached); `AuthenticationError`
   propagates without the cached rows. A rate-limited calendar lookup takes the same
-  fallback without calling the data endpoint. `get_equities_valuation` shares this
-  path.
+  fallback without calling the data endpoint. Exception: when a split is detected
+  and the full-range refetch fails, the error surfaces and the cache is kept (the
+  cached rows carry pre-split adjusted prices). `get_equities_valuation` shares
+  this path.
 - This is by design for the common case: cache.db is a **published snapshot**
   (jpx-short-report's `daily.sh` re-fetches and re-exports it once a weekday;
   consumers download the new artifact wholesale). A blanket TTL would fight that

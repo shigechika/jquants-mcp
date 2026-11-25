@@ -910,18 +910,21 @@ async def _get_bars_daily_with_cache(
         split_date = cache.detect_split_in_batch(cache_code, api_data)
         if not split_date:
             return api_data, False
-        # Split detected -> invalidate the cache and refetch all rows
-        cache.invalidate_rows("equities_bars_daily", {"code": cache_code})
+        # Split detected -> refetch all rows, then invalidate the cache
         logger.info("株式分割検知、キャッシュ再取得: code=%s (発生日: %s)", code, split_date)
         if not full_fetch:
             # Only a tail was fetched: refetch the whole requested range
-            # (a full-range answer is already in hand otherwise)
+            # (a full-range answer is already in hand otherwise). Fetch before
+            # invalidating: if this fails, the error surfaces and the cache is
+            # kept for the next attempt. Falling back to it here would serve
+            # pre-split adjusted prices.
             params_full = {"code": code}
             if date_from:
                 params_full["from"] = date_from
             if date_to:
                 params_full["to"] = date_to
             api_data = await client.get_all_pages("/equities/bars/daily", params_full)
+        cache.invalidate_rows("equities_bars_daily", {"code": cache_code})
         return api_data, True
 
     return await _get_code_series_with_cache(
@@ -1002,14 +1005,15 @@ async def _get_code_series_with_cache(
         full_fetch = True
         covered = False
 
-        def cached_fallback() -> dict[str, Any] | None:
+        def cached_fallback(reason: str) -> dict[str, Any] | None:
             """Cached rows after a failed API call, flagged when incomplete."""
             if not cached_data:
                 return None
             # A failed freshness check does not make a covered range partial
             partial = not (lo in cached_dates if date else covered)
             logger.info(
-                "API failed, returning cached %s: code=%s (%d rows, partial=%s)",
+                "%s, returning cached %s: code=%s (%d rows, partial=%s)",
+                reason,
                 table,
                 code,
                 len(cached_data),
@@ -1045,7 +1049,7 @@ async def _get_code_series_with_cache(
                 # request would wait through the same limit, so answer from the
                 # cache now. The lookup only runs when a missing day is unverified,
                 # so the range is not proven covered and comes back partial.
-                fallback = cached_fallback()
+                fallback = cached_fallback("Calendar lookup rate-limited")
                 if fallback is not None:
                     return fallback
                 raise
@@ -1065,10 +1069,10 @@ async def _get_code_series_with_cache(
 
         try:
             api_data = await client.get_all_pages(endpoint, params)
-        except (APIError, RateLimitError):
+        except (APIError, RateLimitError) as e:
             # Return cached data even on API failure (including a rate limit that
             # outlasted the client's retries), flagged when it is incomplete
-            fallback = cached_fallback()
+            fallback = cached_fallback(f"{endpoint} failed ({type(e).__name__})")
             if fallback is not None:
                 return fallback
             raise

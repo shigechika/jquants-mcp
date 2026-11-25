@@ -605,6 +605,36 @@ class TestBarsDailyCacheCompleteness:
         assert result["count"] == len(weekdays) - 1
         assert result["partial"] is True
 
+    async def test_rate_limit_on_single_cached_date_is_not_partial(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business)
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_equities_bars_daily", code="1306", date=business[2])
+        assert [r["Date"] for r in result["data"]] == [business[2]]
+        assert "partial" not in result
+
+    async def test_failed_split_refetch_keeps_the_cache(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business[:-3])
+        # The tail fetch shows a retroactive AdjFactor change on a cached day
+        tail = _bars(business[-4:])
+        tail[0]["AdjFactor"] = 0.5
+        mock_fn = AsyncMock(side_effect=[tail, RateLimitError()])
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            with pytest.raises(Exception, match="(?i)rate limit"):
+                await _call(
+                    "get_equities_bars_daily",
+                    code="1306",
+                    date_from=start.isoformat(),
+                    date_to=end.isoformat(),
+                )
+        assert mock_fn.call_count == 2
+        kept = light_env["cache"].get_rows("equities_bars_daily", key_filter={"code": "13060"})
+        assert len(kept) == len(business) - 3
+
     async def test_rate_limit_without_cache_still_raises(self, light_env, window):
         start, end = window
         mock_fn = AsyncMock(side_effect=RateLimitError())
@@ -680,6 +710,21 @@ class TestGetEquitiesValuation:
         )
         assert len(rows) == len(business)
         assert not light_env["cache"].get_rows("equities_bars_daily", key_filter={"code": "72030"})
+
+    async def test_rate_limit_on_covered_open_range_returns_cache(self, light_env):
+        today = date.today()
+        start = today - timedelta(days=30)
+        business = _seed_calendar(light_env["cache"], start, today)
+        light_env["cache"].put_rows(
+            "equities_valuation", _valuation(business), key_columns=["Code", "Date"]
+        )
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_equities_valuation", code="7203", date_from=start.isoformat())
+        assert mock_fn.call_count == 1
+        assert result["source"] == "cache"
+        assert result["count"] == len(business)
+        assert "partial" not in result
 
     async def test_date_only_is_cached_per_plan_and_empty_is_not_cached(self, light_env):
         mock_fn = AsyncMock(return_value=[])
