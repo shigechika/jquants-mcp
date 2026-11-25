@@ -36,7 +36,7 @@ import os
 import sqlite3
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any
@@ -1036,21 +1036,36 @@ def populate_screener_results(conn: sqlite3.Connection) -> int:
     return written
 
 
-# Most days of valuation deliveries one run covers (#628)
+# Days of valuation deliveries a normal run covers (#628)
 VALUATION_CATCHUP_DAYS = 10
+# A cached day with fewer rows than this is not a full cross-section: the MCP
+# server also writes single-code rows into the same table (~4,450 a day)
+VALUATION_MIN_DAY_ROWS = 1000
 # The Free plan sees data 12 weeks late (same as the server's _FREE_DELAY_WEEKS)
 FREE_DELAY_WEEKS = 12
+_JST = timezone(timedelta(hours=9))
 
 
-def fetch_valuation(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan: str = "free") -> int:
+def _jst_today():
+    """Today's date on the exchange's clock, whatever the host's timezone."""
+    return datetime.now(_JST).date()
+
+
+def fetch_valuation(
+    cli: jquantsapi.ClientV2,
+    conn: sqlite3.Connection,
+    plan: str = "free",
+    backfill_days: int | None = None,
+) -> int:
     """Insert daily valuation cross-sections (/equities/valuation) into Tier 1.
 
-    One date-wide call per weekday, from the day after the newest cached date
-    through the plan's latest accessible day (today, or 12 weeks back on Free),
-    covering at most VALUATION_CATCHUP_DAYS; an empty table starts that many
-    days back, so a first run lands on published days whatever time it runs.
-    A holiday or a not-yet-published day just returns nothing and is retried
-    on the next run.
+    One date-wide call for each weekday in the last VALUATION_CATCHUP_DAYS (or
+    ``backfill_days``, from ``--valuation --backfill N``) that has no full
+    cross-section cached yet. The window ends at the plan's latest accessible
+    day: today in JST, or 12 weeks back on Free. A holiday or a not-yet-published
+    day just returns nothing and is asked again on the next run. A full day
+    older than the window is never revisited; a gap behind the window is logged
+    so it can be repaired with a longer backfill.
 
     Needs jquants-api-client 2.7.0+ (``get_eq_valuation``). This script can run
     in a foreign venv, so an older client skips with a notice instead of failing.
@@ -1060,21 +1075,30 @@ def fetch_valuation(cli: jquantsapi.ClientV2, conn: sqlite3.Connection, plan: st
         print("  skipped: jquants-api-client has no get_eq_valuation (needs >=2.7.0)")
         return 0
 
-    end = datetime.today().date()
+    end = _jst_today()
     if plan == "free":
         end -= timedelta(weeks=FREE_DELAY_WEEKS)
-    window_start = end - timedelta(days=VALUATION_CATCHUP_DAYS - 1)
-    max_date = _get_max_date(conn, "equities_valuation")
-    if max_date:
-        start = datetime.strptime(max_date, "%Y-%m-%d").date() + timedelta(days=1)
-        start = max(start, window_start)
-    else:
-        start = window_start
+    start = end - timedelta(days=(backfill_days or VALUATION_CATCHUP_DAYS) - 1)
+
+    full_days = [
+        str(r[0])[:10]
+        for r in conn.execute(
+            "SELECT date FROM equities_valuation GROUP BY date HAVING COUNT(*) >= ?",
+            (VALUATION_MIN_DAY_ROWS,),
+        )
+    ]
+    have = {d for d in full_days if d >= start.isoformat()}
+    older = [d for d in full_days if d < start.isoformat()]
+    if older and max(older) < (start - timedelta(days=4)).isoformat():
+        print(
+            f"  gap: nothing full between {max(older)} and {start.isoformat()};"
+            " run --valuation --backfill N to fill it"
+        )
 
     total = 0
     day = start
     while day <= end:
-        if day.weekday() < 5:
+        if day.weekday() < 5 and day.isoformat() not in have:
             df = method(date_yyyymmdd=day.strftime("%Y%m%d"))
             if df is not None and len(df) > 0:
                 rows = [_sanitize_row(r.to_dict()) for _, r in df.iterrows()]
@@ -1196,6 +1220,17 @@ def _run_backfill(
     print(f"backfill: {from_date} → {to_date} ({days} days)")
 
     for ep in targets:
+        if ep == "valuation":
+            # Date-wide only (the API needs code or date): one call per missing weekday
+            print("backfilling valuation metrics...")
+            t0 = time.time()
+            try:
+                n = fetch_valuation(cli, conn, plan, backfill_days=days)
+            except Exception as e:
+                print(f"  error: {e}")
+                n = 0
+            print(f"  done: {n} rows ({time.time() - t0:.1f}s)")
+            continue
         if ep not in BACKFILL_REGISTRY:
             print(f"  {ep}: backfill not supported, skipping")
             continue

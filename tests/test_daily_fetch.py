@@ -1540,7 +1540,9 @@ class TestFetchValuation:
 
     @pytest.fixture(autouse=True)
     def _frozen_today(self, monkeypatch):
-        monkeypatch.setattr(daily_fetch, "datetime", _FrozenToday)  # Wed 2026-08-19
+        # Wed 2026-08-19 in JST; one stored row counts as a full day unless a test says not
+        monkeypatch.setattr(daily_fetch, "_jst_today", lambda: _FrozenToday.today().date())
+        monkeypatch.setattr(daily_fetch, "VALUATION_MIN_DAY_ROWS", 1)
 
     @staticmethod
     def _cli(by_day: dict[str, list[dict]]) -> MagicMock:
@@ -1588,7 +1590,7 @@ class TestFetchValuation:
         assert asked[-1] == "20260527"
         assert all(d <= "20260527" for d in asked)
 
-    def test_catches_up_weekdays_after_the_newest_date(self, db_conn):
+    def test_asks_window_weekdays_without_a_full_day(self, db_conn):
         daily_fetch._store_tier1(
             db_conn,
             "equities_valuation",
@@ -1598,10 +1600,53 @@ class TestFetchValuation:
         cli = self._cli({"20260814": [self._row("2026-08-14")]})
         daily_fetch.fetch_valuation(cli, db_conn, "light")
         asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
-        # Fri 14, then Mon 17 - Wed 19; the weekend is skipped
-        assert asked == ["20260814", "20260817", "20260818", "20260819"]
+        # Window weekdays minus the full 13th; the weekend is skipped
+        assert asked == [
+            "20260810",
+            "20260811",
+            "20260812",
+            "20260814",
+            "20260817",
+            "20260818",
+            "20260819",
+        ]
 
-    def test_catch_up_is_capped(self, db_conn, monkeypatch):
+    def test_a_partial_day_is_fetched_again(self, db_conn, monkeypatch):
+        # The server stored one code for the 18th; that is not the cross-section
+        monkeypatch.setattr(daily_fetch, "VALUATION_MIN_DAY_ROWS", 1000)
+        daily_fetch._store_tier1(
+            db_conn,
+            "equities_valuation",
+            [self._row("2026-08-18")],
+            [("Code", "code"), ("Date", "date")],
+        )
+        cli = self._cli({})
+        daily_fetch.fetch_valuation(cli, db_conn, "light", backfill_days=2)
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        assert asked == ["20260818", "20260819"]
+
+    def test_backfill_asks_only_missing_weekdays(self, db_conn):
+        for day in ("2026-08-12", "2026-08-18"):
+            daily_fetch._store_tier1(
+                db_conn,
+                "equities_valuation",
+                [self._row(day)],
+                [("Code", "code"), ("Date", "date")],
+            )
+        cli = self._cli({"20260813": [self._row("2026-08-13")]})
+        n = daily_fetch.fetch_valuation(cli, db_conn, "light", backfill_days=10)
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        # 2026-08-10..19 weekdays minus the cached 12th and 18th
+        assert asked == ["20260810", "20260811", "20260813", "20260814", "20260817", "20260819"]
+        assert n == 1
+
+    def test_backfill_flag_runs_valuation(self, db_conn):
+        cli = self._cli({})
+        daily_fetch._run_backfill(cli, db_conn, ["valuation"], 3, "light")
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        assert asked == ["20260817", "20260818", "20260819"]
+
+    def test_catch_up_is_capped_and_the_gap_is_logged(self, db_conn, monkeypatch, capsys):
         monkeypatch.setattr(daily_fetch, "VALUATION_CATCHUP_DAYS", 3)
         daily_fetch._store_tier1(
             db_conn,
@@ -1613,6 +1658,7 @@ class TestFetchValuation:
         daily_fetch.fetch_valuation(cli, db_conn, "light")
         asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
         assert asked == ["20260817", "20260818", "20260819"]
+        assert "gap: nothing full between 2026-07-01 and 2026-08-17" in capsys.readouterr().out
 
     def test_registered_for_every_plan(self):
         assert daily_fetch.ENDPOINT_MIN_PLAN["valuation"] == "free"
