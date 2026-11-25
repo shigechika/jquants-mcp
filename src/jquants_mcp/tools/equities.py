@@ -188,13 +188,16 @@ def register(
         Retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all.
 
         Args:
-            code: Stock code (5 digits, e.g. 72030; 4-digit codes match ordinary shares only).
+            code: Stock code, 4 or 5 characters (e.g. 7203 / 72030, 285A / 285A0); a
+                4-character code matches the ordinary share only.
             date: Single date (YYYYMMDD or YYYY-MM-DD).
             date_from: Range start inclusive (YYYYMMDD or YYYY-MM-DD); needs code.
             date_to: Range end inclusive (YYYYMMDD or YYYY-MM-DD); needs code.
         """
         if code is None and date is None:
             return make_validation_error_response(["Either 'code' or 'date' must be specified."])
+        if code is None and (date_from or date_to):
+            return make_validation_error_response(["'date_from' / 'date_to' need 'code'."])
         errors = collect_errors(
             validate_code(code),
             validate_date(date),
@@ -229,7 +232,8 @@ def register(
         )
         cached = cache.get_response(cache_key)
         if cached is not None:
-            return cached
+            # The plan window moves daily: drop rows that left it since caching
+            return _clip_to_plan(cached, cache.plan_bounds())
 
         try:
             data = await client.get_all_pages("/equities/valuation", params)
@@ -762,6 +766,27 @@ def register(
 # ------------------------------------------------------------------
 
 
+def _clip_to_plan(result: Any, bounds: tuple[str | None, str | None]) -> Any:
+    """Drop rows whose Date is outside the plan's (min, max) window from a cached answer."""
+    lo, hi = bounds
+    if not isinstance(result, dict) or not isinstance(result.get("data"), list):
+        return result
+    if lo is None and hi is None:
+        return result
+    rows = [
+        r
+        for r in result["data"]
+        if not isinstance(r, dict)
+        or (
+            (lo is None or str(r.get("Date", ""))[:10] >= lo)
+            and (hi is None or str(r.get("Date", ""))[:10] <= hi)
+        )
+    ]
+    if len(rows) == len(result["data"]):
+        return result
+    return {**result, "count": len(rows), "data": rows}
+
+
 def _to_iso(d: str | None) -> str | None:
     """Convert a validated YYYYMMDD or YYYY-MM-DD date to YYYY-MM-DD."""
     parsed = _parse_iso_date(d)
@@ -865,7 +890,8 @@ async def _get_bars_daily_with_cache(
         cache.invalidate_rows("equities_bars_daily", {"code": cache_code})
         logger.info("株式分割検知、キャッシュ再取得: code=%s (発生日: %s)", code, split_date)
         if not full_fetch:
-            # A full-range answer is already in hand; refetch only a tail
+            # Only a tail was fetched: refetch the whole requested range
+            # (a full-range answer is already in hand otherwise)
             params_full = {"code": code}
             if date_from:
                 params_full["from"] = date_from

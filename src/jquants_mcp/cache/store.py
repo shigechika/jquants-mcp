@@ -514,6 +514,10 @@ class CacheStore:
         """
         return self._effective_plan()
 
+    def plan_bounds(self) -> tuple[str | None, str | None]:
+        """Return (min_date, max_date) ISO strings for the effective plan (None = no limit)."""
+        return self._plan_bounds()
+
     def _plan_bounds(self) -> tuple[str | None, str | None]:
         """Return (min_date, max_date) ISO strings for the effective plan.
 

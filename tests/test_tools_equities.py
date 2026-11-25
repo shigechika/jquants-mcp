@@ -567,6 +567,24 @@ class TestGetEquitiesValuation:
         assert result["error"] is True
         result = await _call("get_equities_valuation", date_from="2026-01-05")
         assert result["error"] is True
+        result = await _call("get_equities_valuation", date="2026-01-05", date_from="2026-01-05")
+        assert result["error"] is True
+
+    async def test_cached_rows_that_left_the_plan_window_are_dropped(self, light_env):
+        today = date.today()
+        old = (today - timedelta(days=5 * 366 + 3)).isoformat()  # past Light's 5 years
+        recent = (today - timedelta(days=3)).isoformat()
+        light_env["cache"].put_response(
+            "/equities/valuation|code=72030&plan=light",
+            {"count": 2, "data": _valuation([old, recent])},
+            ttl_seconds=3600,
+        )
+        mock_fn = AsyncMock(return_value=[])
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_equities_valuation", code="72030")
+        assert mock_fn.call_count == 0
+        assert [r["Date"] for r in result["data"]] == [recent]
+        assert result["count"] == 1
 
     async def test_code_range_is_cached_in_tier1(self, light_env):
         today = date.today()

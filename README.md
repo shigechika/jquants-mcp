@@ -425,7 +425,7 @@ Per-user API keys additionally require `MCP_ENCRYPTION_KEY` on the server — se
 
 ## Available Tools
 
-### Equities (8 tools)
+### Equities (9 tools)
 
 | Tool | Endpoint | Plan | Description |
 |---|---|---|---|
