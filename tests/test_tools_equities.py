@@ -179,7 +179,11 @@ class TestGetEquitiesBarsDaily:
             {"Code": "72030", "Date": "2024-01-06", "O": 285, "AdjFactor": 1.0},
         ]
         mock_fn = AsyncMock(return_value=incremental_batch)
-        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+        with (
+            patch.object(mock_env["client"], "get_all_pages", mock_fn),
+            # 01-05 has no calendar row, so the completeness check loads the calendar
+            patch.object(mock_env["client"], "get", AsyncMock(return_value={"data": []})),
+        ):
             result = await _call(
                 "get_equities_bars_daily",
                 code="72030",
@@ -191,6 +195,361 @@ class TestGetEquitiesBarsDaily:
             assert mock_fn.call_count == 2, (
                 "バッチ途中の分割が検知されず、無条件再取得が走らなかった"
             )
+
+
+@pytest.fixture()
+def light_env(tmp_path):
+    """Like mock_env, but on the Light plan so date_to-only queries have a lower bound."""
+    settings = Settings(
+        jquants_api_key="test-key",
+        jquants_plan="light",
+        jquants_cache_dir=str(tmp_path),
+        max_retries=1,
+        retry_base_delay=0.01,
+    )
+    client = JQuantsClient(settings)
+    cache = CacheStore(tmp_path / "test.db", default_plan=settings.jquants_plan)
+
+    with (
+        patch.object(server_module, "_settings", settings),
+        patch.object(server_module, "_client", client),
+        patch.object(server_module, "_cache", cache),
+    ):
+        yield {"settings": settings, "client": client, "cache": cache}
+
+    cache.close()
+
+
+def _days(start: date, end: date) -> list[date]:
+    return [start + timedelta(days=i) for i in range((end - start).days + 1)]
+
+
+def _seed_calendar(cache: CacheStore, start: date, end: date, holidays=()) -> list[str]:
+    """Write markets_calendar rows for [start, end]; return the business days (ISO)."""
+    rows, business = [], []
+    for d in _days(start, end):
+        open_day = d.weekday() < 5 and d.isoformat() not in holidays
+        rows.append({"Date": d.isoformat(), "HolDiv": "1" if open_day else "0"})
+        if open_day:
+            business.append(d.isoformat())
+    cache.put_rows("markets_calendar", rows, key_columns=["Date"])
+    return business
+
+
+def _bars(days: list[str], code: str = "13060") -> list[dict]:
+    return [{"Code": code, "Date": d, "O": 100, "C": 101, "AdjFactor": 1.0} for d in days]
+
+
+def _seed_bars(cache: CacheStore, days: list[str]) -> None:
+    cache.put_rows(
+        "equities_bars_daily", _bars(days), key_columns=["Code", "Date"], adj_factor_key="AdjFactor"
+    )
+
+
+class TestBarsDailyCacheCompleteness:
+    """jquants-mcp#625: serve from cache only when the requested range is fully covered."""
+
+    @pytest.fixture()
+    def window(self):
+        today = date.today()
+        return today - timedelta(days=60), today - timedelta(days=30)
+
+    async def test_date_to_only_with_fragmented_cache_fetches_full_history(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business[-4:])  # only the last few days cached
+        api_rows = _bars(business)
+        mock_fn = AsyncMock(return_value=api_rows)
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_equities_bars_daily", code="1306", date_to=end.isoformat())
+        params = mock_fn.call_args.args[1]
+        assert "from" not in params
+        assert params["to"] == end.isoformat()
+        assert result["count"] == len(api_rows)
+
+    async def test_hole_inside_range_refetches_whole_range(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business[:3] + business[6:])  # hole in the middle
+        mock_fn = AsyncMock(return_value=_bars(business))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        params = mock_fn.call_args.args[1]
+        assert params["from"] == start.isoformat()
+        assert params["to"] == end.isoformat()
+        assert [r["Date"] for r in result["data"]] == business
+
+    async def test_missing_tail_fetches_only_the_tail(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business[:-3])
+        mock_fn = AsyncMock(return_value=_bars(business[-4:]))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert mock_fn.call_args.args[1]["from"] == business[-4]
+        assert result["source"] == "cache+api"
+        assert [r["Date"] for r in result["data"]] == business
+
+    async def test_full_range_is_served_from_cache(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business)
+        mock_fn = AsyncMock(return_value=[])
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert mock_fn.call_count == 0
+        assert result["source"] == "cache"
+        assert result["count"] == len(business)
+
+    async def test_open_ended_range_still_refetches_the_latest_cached_day(self, light_env):
+        today = date.today()
+        start = today - timedelta(days=30)
+        business = _seed_calendar(light_env["cache"], start, today)
+        _seed_bars(light_env["cache"], business)
+        mock_fn = AsyncMock(return_value=_bars(business[-1:]))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily", code="1306", date_from=start.isoformat()
+            )
+        assert mock_fn.call_count == 1
+        assert mock_fn.call_args.args[1]["from"] == business[-1]
+        assert result["count"] == len(business)
+
+    async def test_open_ended_covered_range_is_not_partial_when_refresh_fails(self, light_env):
+        today = date.today()
+        start = today - timedelta(days=30)
+        business = _seed_calendar(light_env["cache"], start, today)
+        _seed_bars(light_env["cache"], business)
+        mock_fn = AsyncMock(side_effect=APIError("boom", status_code=500))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily", code="1306", date_from=start.isoformat()
+            )
+        assert result["count"] == len(business)
+        assert "partial" not in result
+
+    async def test_open_ended_range_skips_calendar_load_past_latest_cached(self, light_env):
+        today = date.today()
+        start = today - timedelta(days=30)
+        weekdays = [d.isoformat() for d in _days(start, today) if d.weekday() < 5]
+        _seed_bars(light_env["cache"], weekdays[:-2])  # no calendar, tail missing
+        bars_fn = AsyncMock(return_value=[])
+        cal_fn = AsyncMock(return_value={"data": []})
+        with (
+            patch.object(light_env["client"], "get_all_pages", bars_fn),
+            patch.object(light_env["client"], "get", cal_fn),
+        ):
+            await _call("get_equities_bars_daily", code="1306", date_from=start.isoformat())
+        assert cal_fn.call_count == 0
+        assert bars_fn.call_args.args[1]["from"] == weekdays[-3]
+
+    async def test_calendar_holiday_on_weekday_is_not_expected(self, light_env, window):
+        start, end = window
+        weekday = next(d for d in _days(start + timedelta(days=7), end) if d.weekday() == 2)
+        business = _seed_calendar(light_env["cache"], start, end, holidays={weekday.isoformat()})
+        _seed_bars(light_env["cache"], business)
+        mock_fn = AsyncMock(return_value=[])
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert mock_fn.call_count == 0
+        assert result["source"] == "cache"
+
+    async def test_yyyymmdd_dates_hit_the_cache(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business)
+        mock_fn = AsyncMock(return_value=[])
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.strftime("%Y%m%d"),
+                date_to=end.strftime("%Y%m%d"),
+            )
+        assert mock_fn.call_count == 0
+        assert result["count"] == len(business)
+
+    async def test_single_date_asks_the_api_and_returns_only_that_day(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business)
+        # A later split restated the day: the API answer must win over the cache
+        restated = [{**_bars([business[2]])[0], "C": 50.5}]
+        mock_fn = AsyncMock(return_value=restated)
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_equities_bars_daily", code="1306", date=business[2])
+        assert mock_fn.call_args.args[1]["date"] == business[2]
+        assert result["data"] == restated
+
+    async def test_single_date_api_failure_returns_only_that_cached_day(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business)
+        mock_fn = AsyncMock(side_effect=APIError("boom", status_code=500))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily", code="1306", date=business[2].replace("-", "")
+            )
+        assert [r["Date"] for r in result["data"]] == [business[2]]
+        # The requested day is in the cache, so the answer is complete
+        assert "partial" not in result
+
+    async def test_date_to_only_on_premium_asks_the_api_once_then_uses_the_head(
+        self, mock_env, window
+    ):
+        start, end = window
+        business = _seed_calendar(mock_env["cache"], start, end)
+        _seed_bars(mock_env["cache"], business)
+        mock_fn = AsyncMock(return_value=_bars(business))
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            await _call("get_equities_bars_daily", code="1306", date_to=end.isoformat())
+            result = await _call("get_equities_bars_daily", code="1306", date_to=end.isoformat())
+        # No lower bound to prove at first; the first answer records where bars start
+        assert mock_fn.call_count == 1
+        assert "from" not in mock_fn.call_args.args[1]
+        assert result["source"] == "cache"
+        assert result["count"] == len(business)
+
+    async def test_stock_listed_inside_the_window_stops_refetching(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        listed = business[5:]  # no bars before the listing date
+        _seed_bars(light_env["cache"], listed[-3:])
+        mock_fn = AsyncMock(return_value=_bars(listed))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            await _call("get_equities_bars_daily", code="1306", date_to=end.isoformat())
+            result = await _call("get_equities_bars_daily", code="1306", date_to=end.isoformat())
+        assert mock_fn.call_count == 1
+        assert result["source"] == "cache"
+        assert [r["Date"] for r in result["data"]] == listed
+
+    async def test_head_from_a_bounded_ask_does_not_excuse_earlier_days(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business[5:7])
+        # Asked from business[3]; the API's first bar is business[5]
+        mock_fn = AsyncMock(return_value=_bars(business[5:]))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=business[3],
+                date_to=end.isoformat(),
+            )
+            # Starting before business[3] is not covered by that record
+            await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert mock_fn.call_count == 2
+        assert mock_fn.call_args.args[1]["from"] == start.isoformat()
+
+    async def test_head_never_excuses_a_hole_after_the_first_bar(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        light_env["cache"].put_response(
+            "bars_daily_head|code=13060&plan=light",
+            {"asked_from": None, "first": business[0]},
+            ttl_seconds=3600,
+        )
+        _seed_bars(light_env["cache"], business[:3] + business[6:])
+        mock_fn = AsyncMock(return_value=_bars(business))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            await _call("get_equities_bars_daily", code="1306", date_to=end.isoformat())
+        assert mock_fn.call_count == 1
+        assert "from" not in mock_fn.call_args.args[1]
+
+    async def test_missing_calendar_is_loaded_for_a_weekday_holiday(self, light_env, window):
+        start, end = window
+        holiday = next(d for d in _days(start + timedelta(days=7), end) if d.weekday() == 2)
+        weekdays = [d.isoformat() for d in _days(start, end) if d.weekday() < 5]
+        _seed_bars(light_env["cache"], [d for d in weekdays if d != holiday.isoformat()])
+        calendar = {
+            "data": [
+                {"Date": d.isoformat(), "HolDiv": "1" if d.weekday() < 5 and d != holiday else "0"}
+                for d in _days(start, end)
+            ]
+        }
+        bars_fn = AsyncMock(return_value=[])
+        cal_fn = AsyncMock(return_value=calendar)
+        with (
+            patch.object(light_env["client"], "get_all_pages", bars_fn),
+            patch.object(light_env["client"], "get", cal_fn),
+        ):
+            first = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+            second = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert bars_fn.call_count == 0
+        assert cal_fn.call_count == 1  # stored, so the second call needs no load
+        assert cal_fn.call_args.args[0] == "/markets/calendar"
+        assert first["source"] == second["source"] == "cache"
+
+    async def test_failed_calendar_load_keeps_the_weekday_guess(self, light_env, window):
+        start, end = window
+        holiday = next(d for d in _days(start + timedelta(days=7), end) if d.weekday() == 2)
+        weekdays = [d.isoformat() for d in _days(start, end) if d.weekday() < 5]
+        _seed_bars(light_env["cache"], [d for d in weekdays if d != holiday.isoformat()])
+        bars_fn = AsyncMock(return_value=[])
+        cal_fn = AsyncMock(side_effect=APIError("boom", status_code=500))
+        with (
+            patch.object(light_env["client"], "get_all_pages", bars_fn),
+            patch.object(light_env["client"], "get", cal_fn),
+        ):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert bars_fn.call_count == 1
+        assert result["count"] == len(weekdays) - 1
+
+    async def test_api_failure_with_incomplete_cache_is_flagged_partial(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business[:3] + business[6:])
+        mock_fn = AsyncMock(side_effect=APIError("boom", status_code=500))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert result["source"] == "cache"
+        assert result["partial"] is True
+        assert result["count"] == len(business) - 3
 
 
 class TestGetEquitiesBarsMinute:

@@ -112,16 +112,29 @@ def _normalize_fields(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def calendar_is_business_day(row: dict[str, Any]) -> bool | None:
-    """Whether a markets_calendar row is a business day, or None if it cannot tell.
+_CALENDAR_OPEN_CODES = ("1", "2")
+_CALENDAR_CLOSED_CODES = ("0", "3")
+
+
+def _calendar_code(row: dict[str, Any]) -> str | None:
+    """The holiday-division code of a markets_calendar row, or None if absent.
 
     V2 rows carry ``HolDiv`` and legacy V1 rows ``HolidayDivision``, with the
     same codes: 1 = business day, 2 = half day, 0 / 3 = non-business.
     """
     hol = row.get("HolDiv", row.get("HolidayDivision"))
-    if hol is None:
+    return None if hol is None else str(hol).strip()
+
+
+def calendar_is_business_day(row: dict[str, Any]) -> bool | None:
+    """Whether a markets_calendar row is a business day, or None if it cannot tell.
+
+    An unrecognized code counts as non-business here; see ``_calendar_code``.
+    """
+    code = _calendar_code(row)
+    if code is None:
         return None
-    return str(hol).strip() in ("1", "2")
+    return code in _CALENDAR_OPEN_CODES
 
 
 # Mapping of endpoint path → TTL
@@ -2756,6 +2769,89 @@ class CacheStore:
             return calendar_is_business_day(json.loads(row[0]))
         except (sqlite3.Error, json.JSONDecodeError, TypeError, AttributeError):
             return None
+
+    def expected_trading_days(
+        self,
+        date_from: str | None,
+        date_to: str,
+        guessed: set[str] | None = None,
+    ) -> list[str] | None:
+        """Exchange business days a per-stock series must cover in [date_from, date_to].
+
+        Used to prove that a cached range is complete before serving it without
+        hitting the API (jquants-mcp#625). The range is clamped to the effective
+        plan's bounds and to today, matching what ``get_rows`` can return.
+
+        Each day is classified by its markets_calendar row (``HolDiv`` 1/2 =
+        business, 0/3 = closed). A day with no row or an unrecognized code falls
+        back to Monday-Friday. That guess errs only towards "incomplete": a
+        weekday holiday never gets a bar, so the range keeps missing the cache
+        until the calendar is loaded. Callers see which days were guessed via
+        ``guessed`` and can load the calendar for them.
+
+        Args:
+            date_from: Range start (YYYY-MM-DD), or None for "earliest available".
+            date_to: Range end (YYYY-MM-DD).
+            guessed: If given, receives the business days inferred from the
+                weekday because no calendar row classified them.
+
+        Returns:
+            Sorted ISO dates, or None when the lower bound is unknowable (no
+            ``date_from`` and a plan without a retention floor).
+        """
+        plan_min, plan_max = self._plan_bounds()
+        lo = date_from
+        if plan_min and (lo is None or lo < plan_min):
+            lo = plan_min
+        if lo is None:
+            return None
+        hi = min(date_to, date.today().isoformat())
+        if plan_max and hi > plan_max:
+            hi = plan_max
+        try:
+            start = date.fromisoformat(lo)
+            end = date.fromisoformat(hi)
+        except ValueError:
+            return None
+        if start > end:
+            return []
+
+        verdicts: dict[str, bool] = {}
+        conn = self._ensure_connection()
+        if conn is not None:
+            try:
+                rows = conn.execute(
+                    "SELECT date, data FROM markets_calendar WHERE date >= ? AND date <= ?",
+                    (lo, hi),
+                ).fetchall()
+            except sqlite3.Error:
+                rows = []
+            for row in rows:
+                try:
+                    data = json.loads(row[1]) if row[1] else {}
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                code = _calendar_code(data)
+                if code in _CALENDAR_OPEN_CODES:
+                    verdicts[str(row[0])[:10]] = True
+                elif code in _CALENDAR_CLOSED_CODES:
+                    verdicts[str(row[0])[:10]] = False
+
+        days: list[str] = []
+        d = start
+        while d <= end:
+            iso = d.isoformat()
+            verdict = verdicts.get(iso)
+            if verdict is None and d.weekday() < 5:
+                days.append(iso)
+                if guessed is not None:
+                    guessed.add(iso)
+            elif verdict:
+                days.append(iso)
+            d += timedelta(days=1)
+        return days
 
     def previous_business_day(self, day: str) -> str | None:
         """Latest business day strictly before ``day`` per markets_calendar, or None."""
