@@ -166,7 +166,7 @@ class TestGetMarketsMarginInterest:
         # The API still gets the caller's date form
         assert mock_fn.call_args.args[1]["date"] == "20240104"
 
-    async def test_compact_range_fully_cached_skips_the_api(self, mock_env):
+    async def test_compact_range_still_asks_the_api(self, mock_env):
         mock_env["cache"].put_rows(
             "markets_margin_interest",
             [
@@ -183,8 +183,9 @@ class TestGetMarketsMarginInterest:
                 date_from="20240104",
                 date_to="20240105",
             )
-        assert mock_fn.call_count == 0
-        assert result["source"] == "cache"
+        # The latest-date shortcut checks no gaps, so it stays limited to the
+        # caller's ISO form; the cached rows are still found and merged
+        assert mock_fn.call_count == 1
         assert result["count"] == 2
 
     async def test_no_params_summary_keeps_the_partial_flag(self, mock_env):

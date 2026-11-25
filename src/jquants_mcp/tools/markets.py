@@ -449,7 +449,10 @@ async def _get_with_tier1_cache(
         if cached_dates and not date:
             # Incremental fetch: retrieve everything after the latest cached date
             latest_cached = max(cached_dates)
-            if iso_to and latest_cached >= iso_to:
+            # Compare against the caller's form on purpose: this shortcut does not
+            # check gaps or missing keys, so a compact date_to (which never
+            # compares >= an ISO date) keeps asking the API, as before
+            if date_to and latest_cached >= date_to:
                 logger.info("%s 全データキャッシュ済み (%d件)", table, len(cached_data))
                 return {"count": len(cached_data), "data": cached_data, "source": "cache"}
             params["from"] = latest_cached
@@ -678,7 +681,9 @@ async def _get_calendar_with_cache(
 
         if cached_dates:
             latest_cached = max(cached_dates)
-            if iso_to and latest_cached >= iso_to:
+            # Caller's form on purpose, as in _get_with_tier1_cache: the shortcut
+            # does not check gaps, so a compact date_to keeps asking the API
+            if date_to and latest_cached >= date_to:
                 logger.info("カレンダー全データキャッシュ済み (%d件)", len(cached_data))
                 # Apply the hol_div filter
                 filtered = _filter_hol_div(cached_data, hol_div)
