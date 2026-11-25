@@ -833,6 +833,32 @@ class TestGetEquitiesEarningsCalendar:
         result = await _call("get_equities_earnings_calendar", code="72030")
         assert result["count"] == 1
 
+    async def test_code_query_ignores_a_superseded_legacy_day(self, mock_env):
+        """A day rewritten under the current key must not resurrect its legacy rows."""
+        from jquants_mcp.cache.store import TTL_90D, make_cache_key
+
+        cache = mock_env["cache"]
+        withdrawn = [{"Code": "72030", "Date": "2026-05-10", "FQ": "3Q"}]
+        cache.put_response(
+            "/equities/earnings-calendar?date=20260510", withdrawn, ttl_seconds=TTL_90D
+        )
+        cache.put_response(
+            make_cache_key("/equities/earnings-calendar", {"date": "20260510"}),
+            [{"Code": "67580", "Date": "2026-05-10", "FQ": "3Q"}],
+            ttl_seconds=TTL_90D,
+        )
+        # A legacy-only day is still read
+        cache.put_response(
+            "/equities/earnings-calendar?date=20260511",
+            [{"Code": "72030", "Date": "2026-05-11", "FQ": "3Q"}],
+            ttl_seconds=TTL_90D,
+        )
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=[]
+        ):
+            result = await _call("get_equities_earnings_calendar", code="72030")
+        assert [r["Date"] for r in result["data"]] == ["2026-05-11"]
+
     async def test_date_query_no_data_returns_empty(self, mock_env):
         """date= returns empty result when neither Tier 1 nor Tier 2 has data."""
         result = await _call("get_equities_earnings_calendar", date="2026-05-10")

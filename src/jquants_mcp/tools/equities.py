@@ -725,14 +725,24 @@ def register(
             pass
 
         # Tier 2 fallback: scan date-keyed response_cache entries, in the current
-        # make_cache_key shape and the "?date=" shape daily_fetch wrote before #620
+        # make_cache_key shape and the "?date=" shape daily_fetch wrote before #620.
+        # A day rewritten under the current key supersedes its legacy entry, which
+        # may still list announcements that have since been withdrawn.
         try:
-            t2_rows = conn.execute(
-                "SELECT data FROM response_cache WHERE cache_key LIKE ? OR cache_key LIKE ?",
+            key_rows = conn.execute(
+                "SELECT cache_key, data FROM response_cache WHERE cache_key LIKE ? OR cache_key LIKE ?",
                 ("/equities/earnings-calendar|date=%", "/equities/earnings-calendar?date=%"),
             ).fetchall()
         except sqlite3.OperationalError:
-            t2_rows = []
+            key_rows = []
+        current_days = {
+            r["cache_key"].rsplit("=", 1)[-1] for r in key_rows if "|date=" in r["cache_key"]
+        }
+        t2_rows = [
+            r
+            for r in key_rows
+            if "|date=" in r["cache_key"] or r["cache_key"].rsplit("=", 1)[-1] not in current_days
+        ]
 
         matches = []
         seen_dates: set[str] = set()
