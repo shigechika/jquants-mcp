@@ -240,10 +240,12 @@ def register(
             result = {"count": len(data), "data": data}
             # An empty answer (e.g. before the day is published) must not stick for 24h
             if data:
-                # A past day's cross-section never changes; anything that can
+                # A past day's cross-section never changes, and a plan with a
+                # delay ceiling (Free) never sees today's row; anything that can
                 # still gain today's row expires at the next publication
                 today = datetime.now(JST).date().isoformat()
-                if date and (_to_iso(date) or "") < today:
+                _, plan_max = cache.plan_bounds()
+                if plan_max is not None or (date and (_to_iso(date) or "") < today):
                     ttl = TTL_24H
                 else:
                     ttl = publication_ttl(cache, "/equities/valuation", data)

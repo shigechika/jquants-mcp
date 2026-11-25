@@ -652,6 +652,22 @@ class TestGetEquitiesValuation:
         key = "/equities/valuation|code=72030&plan=light"
         assert self._stored_ttl(light_env["cache"], key) == 1234
 
+    async def test_free_plan_history_keeps_24_hours(self, light_env, tmp_path):
+        import jquants_mcp.tools.equities as equities_module
+
+        cache = CacheStore(tmp_path / "free.db", default_plan="free")
+        mock_fn = AsyncMock(return_value=_valuation(["2026-08-20"]))
+        with (
+            patch.object(server_module, "_cache", cache),
+            patch.object(equities_module, "publication_ttl", return_value=1234) as fake,
+            patch.object(light_env["client"], "get_all_pages", mock_fn),
+        ):
+            await _call("get_equities_valuation", code="72030")
+        # The 12-week delay means today's row never arrives: no publication re-checks
+        assert fake.call_count == 0
+        assert self._stored_ttl(cache, "/equities/valuation|code=72030&plan=free") == 24 * 3600
+        cache.close()
+
 
 class TestGetEquitiesBarsMinute:
     async def test_returns_data(self, mock_env):
