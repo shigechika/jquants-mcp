@@ -606,10 +606,18 @@ class TestFetchEarningsCalendarLegacyFree:
         # 日付別キー（蓄積用）
         row_dated = db_conn.execute(
             "SELECT data, ttl_seconds FROM response_cache WHERE cache_key=?",
-            ("/equities/earnings-calendar?date=20260301",),
+            ("/equities/earnings-calendar|date=20260301",),
         ).fetchone()
         assert row_dated is not None
         assert row_dated[1] == TTL_90D
+
+    def test_date_key_matches_the_servers_make_cache_key(self):
+        """#620: the tool's date branch looks this key up via make_cache_key."""
+        from jquants_mcp.cache.store import make_cache_key
+
+        assert daily_fetch._earnings_date_cache_key("20260301") == make_cache_key(
+            "/equities/earnings-calendar", {"date": "20260301"}
+        )
 
     def test_tier1_rows_written(self, db_conn):
         """Tier 1 equities_earnings_calendar rows are written alongside Tier 2."""
@@ -880,7 +888,7 @@ class TestFetchEarningsCalendarSweep:
 
         dated = db_conn.execute(
             "SELECT ttl_seconds FROM response_cache WHERE cache_key=?",
-            (f"/equities/earnings-calendar?date={today}",),
+            (f"/equities/earnings-calendar|date={today}",),
         ).fetchone()
         assert dated is not None
         assert dated[0] == TTL_90D

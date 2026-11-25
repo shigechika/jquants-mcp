@@ -431,8 +431,13 @@ def register(
             if t1_rows:
                 return {"count": len(t1_rows), "data": t1_rows}
             date_key = date.replace("-", "")
-            cache_key = make_cache_key("/equities/earnings-calendar", {"date": date_key})
-            cached = cache.get_response(cache_key)
+            cached = cache.get_response(
+                make_cache_key("/equities/earnings-calendar", {"date": date_key})
+            )
+            if cached is None:
+                # daily_fetch wrote "?date=" keys before #620; published caches
+                # keep them for their 90-day TTL
+                cached = cache.get_response(f"/equities/earnings-calendar?date={date_key}")
             if cached is not None:
                 recs = cached if isinstance(cached, list) else cached.get("data", [])
                 recs = _normalize_earnings_records(recs)
@@ -719,11 +724,12 @@ def register(
         except sqlite3.OperationalError:
             pass
 
-        # Tier 2 fallback: scan date-keyed response_cache entries
+        # Tier 2 fallback: scan date-keyed response_cache entries, in the current
+        # make_cache_key shape and the "?date=" shape daily_fetch wrote before #620
         try:
             t2_rows = conn.execute(
-                "SELECT data FROM response_cache WHERE cache_key LIKE ?",
-                ("/equities/earnings-calendar?date=%",),
+                "SELECT data FROM response_cache WHERE cache_key LIKE ? OR cache_key LIKE ?",
+                ("/equities/earnings-calendar|date=%", "/equities/earnings-calendar?date=%"),
             ).fetchall()
         except sqlite3.OperationalError:
             t2_rows = []

@@ -809,6 +809,30 @@ class TestGetEquitiesEarningsCalendar:
         result = await _call("get_equities_earnings_calendar", date="2026-05-10")
         assert result["count"] == 1
 
+    async def test_date_query_reads_the_legacy_question_mark_key(self, mock_env):
+        """#620: caches published before the fix hold "?date=" keys for 90 days."""
+        from jquants_mcp.cache.store import TTL_90D
+
+        tier2_data = [{"Code": "72030", "Date": "2026-05-10", "FQ": "3Q"}]
+        mock_env["cache"].put_response(
+            "/equities/earnings-calendar?date=20260510", tier2_data, ttl_seconds=TTL_90D
+        )
+        result = await _call("get_equities_earnings_calendar", date="2026-05-10")
+        assert result["count"] == 1
+
+    async def test_code_query_scans_the_current_key_shape(self, mock_env):
+        """#620: daily_fetch now writes make_cache_key-shaped date keys."""
+        from jquants_mcp.cache.store import TTL_90D, make_cache_key
+
+        tier2_data = [{"Code": "72030", "Date": "2026-05-10", "FQ": "3Q"}]
+        mock_env["cache"].put_response(
+            make_cache_key("/equities/earnings-calendar", {"date": "20260510"}),
+            tier2_data,
+            ttl_seconds=TTL_90D,
+        )
+        result = await _call("get_equities_earnings_calendar", code="72030")
+        assert result["count"] == 1
+
     async def test_date_query_no_data_returns_empty(self, mock_env):
         """date= returns empty result when neither Tier 1 nor Tier 2 has data."""
         result = await _call("get_equities_earnings_calendar", date="2026-05-10")
