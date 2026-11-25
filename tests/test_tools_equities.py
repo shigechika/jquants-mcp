@@ -11,7 +11,7 @@ import jquants_mcp.server as server_module
 from jquants_mcp.cache.store import CacheStore, make_cache_key
 from jquants_mcp.config import Settings
 from jquants_mcp.client import JQuantsClient
-from jquants_mcp.exceptions import APIError, PlanRestrictionError
+from jquants_mcp.exceptions import APIError, PlanRestrictionError, RateLimitError
 
 
 @pytest.fixture()
@@ -551,6 +551,102 @@ class TestBarsDailyCacheCompleteness:
         assert result["partial"] is True
         assert result["count"] == len(business) - 3
 
+    async def test_rate_limit_on_covered_open_range_returns_cache(self, light_env):
+        today = date.today()
+        start = today - timedelta(days=30)
+        business = _seed_calendar(light_env["cache"], start, today)
+        _seed_bars(light_env["cache"], business)
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily", code="1306", date_from=start.isoformat()
+            )
+        assert result["source"] == "cache"
+        assert result["count"] == len(business)
+        assert "partial" not in result
+
+    async def test_rate_limit_with_incomplete_cache_is_flagged_partial(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business[:3] + business[6:])
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert result["source"] == "cache"
+        assert result["partial"] is True
+
+    async def test_rate_limit_on_calendar_lookup_returns_cache_without_bars_call(
+        self, light_env, window
+    ):
+        start, end = window
+        holiday = next(d for d in _days(start + timedelta(days=7), end) if d.weekday() == 2)
+        weekdays = [d.isoformat() for d in _days(start, end) if d.weekday() < 5]
+        _seed_bars(light_env["cache"], [d for d in weekdays if d != holiday.isoformat()])
+        bars_fn = AsyncMock(return_value=[])
+        cal_fn = AsyncMock(side_effect=RateLimitError())
+        with (
+            patch.object(light_env["client"], "get_all_pages", bars_fn),
+            patch.object(light_env["client"], "get", cal_fn),
+        ):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert cal_fn.call_count == 1
+        assert bars_fn.call_count == 0  # would hit the same limit
+        assert result["source"] == "cache"
+        assert result["count"] == len(weekdays) - 1
+        assert result["partial"] is True
+
+    async def test_rate_limit_on_single_cached_date_is_not_partial(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business)
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_equities_bars_daily", code="1306", date=business[2])
+        assert [r["Date"] for r in result["data"]] == [business[2]]
+        assert "partial" not in result
+
+    async def test_failed_split_refetch_drops_the_stale_cache(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business[:-3])
+        # The tail fetch shows a retroactive AdjFactor change on a cached day
+        tail = _bars(business[-4:])
+        tail[0]["AdjFactor"] = 0.5
+        mock_fn = AsyncMock(side_effect=[tail, RateLimitError()])
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            with pytest.raises(Exception, match="(?i)rate limit"):
+                await _call(
+                    "get_equities_bars_daily",
+                    code="1306",
+                    date_from=start.isoformat(),
+                    date_to=end.isoformat(),
+                )
+        assert mock_fn.call_count == 2
+        # Pre-split adjusted rows must not survive to answer a later request
+        assert not light_env["cache"].get_rows("equities_bars_daily", key_filter={"code": "13060"})
+
+    async def test_rate_limit_without_cache_still_raises(self, light_env, window):
+        start, end = window
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            with pytest.raises(Exception, match="(?i)rate limit"):
+                await _call(
+                    "get_equities_bars_daily",
+                    code="1306",
+                    date_from=start.isoformat(),
+                    date_to=end.isoformat(),
+                )
+
 
 def _valuation(days: list[str], code: str = "72030") -> list[dict]:
     return [
@@ -614,6 +710,21 @@ class TestGetEquitiesValuation:
         )
         assert len(rows) == len(business)
         assert not light_env["cache"].get_rows("equities_bars_daily", key_filter={"code": "72030"})
+
+    async def test_rate_limit_on_covered_open_range_returns_cache(self, light_env):
+        today = date.today()
+        start = today - timedelta(days=30)
+        business = _seed_calendar(light_env["cache"], start, today)
+        light_env["cache"].put_rows(
+            "equities_valuation", _valuation(business), key_columns=["Code", "Date"]
+        )
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_equities_valuation", code="7203", date_from=start.isoformat())
+        assert mock_fn.call_count == 1
+        assert result["source"] == "cache"
+        assert result["count"] == len(business)
+        assert "partial" not in result
 
     async def test_date_only_is_cached_per_plan_and_empty_is_not_cached(self, light_env):
         mock_fn = AsyncMock(return_value=[])
