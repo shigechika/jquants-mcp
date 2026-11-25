@@ -38,6 +38,21 @@ Individual frames are in [docs/screenshots/](docs/screenshots/).
 - **Pagination** — transparent multi-page fetching
 - **Plan-aware** — all tools registered regardless of plan; graceful error messages on restriction
 
+### Compared with the official remote MCP server
+
+Since 2026-11-24 JPXI also runs an official remote MCP server (`https://mcp.jquants.com/mcp`). It is the quickest start: add the URL to Claude or ChatGPT (paid ChatGPT plans only) and log in. jquants-mcp is for what that server does not offer:
+
+| | Official remote server | jquants-mcp |
+|---|---|---|
+| Setup | URL + J-Quants login, nothing to install | `uvx jquants-mcp` (or self-host behind a gateway) |
+| Clients | Claude and ChatGPT only | Any stdio MCP client; claude.ai via a self-hosted gateway |
+| API quota | Every call uses your REST quota | Cached rows cost no API call |
+| Large responses | Cut at ~50 KB, then paginate | Whole-market rankings and screeners return pre-computed results |
+| Server-side analytics | Not stated in the docs | 10 screeners, rankings, sector/market briefings, technical indicators |
+| Source | Not stated | MIT, 1,280+ tests |
+
+Details and sources: [docs/comparison.md](docs/comparison.md).
+
 ## Requirements
 
 - Python 3.11+
@@ -485,7 +500,7 @@ Cross-sectional cache-only tools that scan all listed equities. No extra API cal
 
 ### Screener (10 tools)
 
-Offline tools that compute signals directly from the SQLite cache. No extra API calls, pure Python, no numpy/pandas. Intended for AI-assisted stock screening without hitting rate limits.
+Tools that compute signals directly from the SQLite cache. Whole-market queries make no API calls; a per-code query falls back to the API only when the cache lacks that code's rows. Pure Python, no numpy/pandas. Intended for AI-assisted stock screening without hitting rate limits.
 
 | Tool | Description |
 |---|---|

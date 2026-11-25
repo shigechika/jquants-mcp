@@ -11,7 +11,7 @@
 
 Free プランでもチャートツール、スクリーナー、マーケット概況ランキングは試せます。
 個人投資家用途なら Light でほぼ十分。網羅的な比較表は
-[plan comparison](https://github.com/shigechika/jquants-mcp/blob/main/docs/comparison.md)
+[J-Quants plan comparison](https://jpx-jquants.com/ja/spec/data-spec)
 を参照。
 
 ## なぜ最初のクエリが遅いのですか？

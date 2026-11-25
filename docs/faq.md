@@ -11,7 +11,7 @@
 
 The Free plan is enough to try the chart tools, screeners, and the
 market-overview ranking tools. Most retail use cases fit in Light. See
-[plan comparison](https://github.com/shigechika/jquants-mcp/blob/main/docs/comparison.md)
+[J-Quants plan comparison](https://jpx-jquants.com/en/spec/data-spec)
 for the exhaustive table.
 
 ## Why is the first query slow?
