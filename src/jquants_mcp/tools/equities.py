@@ -240,13 +240,16 @@ def register(
             result = {"count": len(data), "data": data}
             # An empty answer (e.g. before the day is published) must not stick for 24h
             if data:
-                # A past day's cross-section never changes, and a plan with a
-                # delay ceiling (Free) never sees today's row; anything that can
-                # still gain today's row expires at the next publication
+                # A past day's cross-section never changes. A plan with a delay
+                # ceiling (Free) never sees today's row, but its ceiling moves at
+                # midnight, so its answers last until then. Anything that can
+                # still gain today's row expires at the next publication.
                 today = datetime.now(JST).date().isoformat()
                 _, plan_max = cache.plan_bounds()
-                if plan_max is not None or (date and (_to_iso(date) or "") < today):
+                if date and (_to_iso(date) or "") < today:
                     ttl = TTL_24H
+                elif plan_max is not None:
+                    ttl = _seconds_until_midnight()
                 else:
                     ttl = publication_ttl(cache, "/equities/valuation", data)
                 cache.put_response(cache_key, result, ttl_seconds=ttl)
@@ -766,6 +769,16 @@ def register(
 # ------------------------------------------------------------------
 # Tier 1 cache: incremental fetch of daily OHLC bars
 # ------------------------------------------------------------------
+
+
+def _seconds_until_midnight() -> int:
+    """Seconds until the next local midnight, when the plan date window moves.
+
+    Local time, like ``_plan_date_bounds`` (``date.today()``); at least 60.
+    """
+    now = datetime.now()
+    midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
+    return max(60, int((midnight - now).total_seconds()))
 
 
 def _clip_to_plan(result: Any, bounds: tuple[str | None, str | None]) -> Any:

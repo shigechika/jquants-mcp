@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -652,7 +652,7 @@ class TestGetEquitiesValuation:
         key = "/equities/valuation|code=72030&plan=light"
         assert self._stored_ttl(light_env["cache"], key) == 1234
 
-    async def test_free_plan_history_keeps_24_hours(self, light_env, tmp_path):
+    async def test_free_plan_history_lasts_until_midnight(self, light_env, tmp_path):
         import jquants_mcp.tools.equities as equities_module
 
         cache = CacheStore(tmp_path / "free.db", default_plan="free")
@@ -663,9 +663,13 @@ class TestGetEquitiesValuation:
             patch.object(light_env["client"], "get_all_pages", mock_fn),
         ):
             await _call("get_equities_valuation", code="72030")
-        # The 12-week delay means today's row never arrives: no publication re-checks
+        # The 12-week delay means today's row never arrives: no publication
+        # re-checks, but the ceiling moves at midnight, so the entry ends there
         assert fake.call_count == 0
-        assert self._stored_ttl(cache, "/equities/valuation|code=72030&plan=free") == 24 * 3600
+        stored = self._stored_ttl(cache, "/equities/valuation|code=72030&plan=free")
+        now = datetime.now()
+        midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
+        assert 60 <= stored <= (midnight - now).total_seconds() + 1
         cache.close()
 
 
