@@ -2751,8 +2751,10 @@ class TestExpectedTradingDays:
             ],
             key_columns=["Date"],
         )
-        days = cache.expected_trading_days("2024-01-01", "2024-01-07")
+        guessed: set[str] = set()
+        days = cache.expected_trading_days("2024-01-01", "2024-01-07", guessed)
         assert days == ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-06"]
+        assert guessed == {"2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05"}
         cache.close()
 
     def test_unknowable_lower_bound_on_premium(self, tmp_path):

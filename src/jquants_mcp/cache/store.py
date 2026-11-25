@@ -2770,7 +2770,12 @@ class CacheStore:
         except (sqlite3.Error, json.JSONDecodeError, TypeError, AttributeError):
             return None
 
-    def expected_trading_days(self, date_from: str | None, date_to: str) -> list[str] | None:
+    def expected_trading_days(
+        self,
+        date_from: str | None,
+        date_to: str,
+        guessed: set[str] | None = None,
+    ) -> list[str] | None:
         """Exchange business days a per-stock series must cover in [date_from, date_to].
 
         Used to prove that a cached range is complete before serving it without
@@ -2779,12 +2784,16 @@ class CacheStore:
 
         Each day is classified by its markets_calendar row (``HolDiv`` 1/2 =
         business, 0/3 = closed). A day with no row or an unrecognized code falls
-        back to Monday-Friday, so a missing calendar can only make a range look
-        incomplete on a holiday (one extra API call), not complete.
+        back to Monday-Friday. That guess errs only towards "incomplete": a
+        weekday holiday never gets a bar, so the range keeps missing the cache
+        until the calendar is loaded. Callers see which days were guessed via
+        ``guessed`` and can load the calendar for them.
 
         Args:
             date_from: Range start (YYYY-MM-DD), or None for "earliest available".
             date_to: Range end (YYYY-MM-DD).
+            guessed: If given, receives the business days inferred from the
+                weekday because no calendar row classified them.
 
         Returns:
             Sorted ISO dates, or None when the lower bound is unknowable (no
@@ -2834,7 +2843,12 @@ class CacheStore:
         d = start
         while d <= end:
             iso = d.isoformat()
-            if verdicts.get(iso, d.weekday() < 5):
+            verdict = verdicts.get(iso)
+            if verdict is None and d.weekday() < 5:
+                days.append(iso)
+                if guessed is not None:
+                    guessed.add(iso)
+            elif verdict:
                 days.append(iso)
             d += timedelta(days=1)
         return days

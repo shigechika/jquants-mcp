@@ -682,6 +682,67 @@ def _to_iso(d: str | None) -> str | None:
     return parsed.isoformat() if parsed else None
 
 
+# How long a per-code head record ("no bars before X") is trusted. Short, so a
+# wrong record (e.g. an upstream outage that hid early rows) expires quickly.
+_HEAD_RECORD_TTL = 7 * 24 * 3600
+
+
+def _head_floor(record: Any, lo: str | None) -> str | None:
+    """First bar date from a head record, if it covers a request starting at ``lo``.
+
+    A record says the API returned nothing in [asked_from, first). It applies
+    only when the request starts at or after asked_from (an unbounded ask covers
+    every request); days on or after ``first`` are never excused by it.
+    """
+    if not isinstance(record, dict) or not isinstance(record.get("first"), str):
+        return None
+    asked_from = record.get("asked_from")
+    if asked_from is None or (lo is not None and lo >= asked_from):
+        return record["first"]
+    return None
+
+
+async def _expected_bar_days(
+    client: JQuantsClient,
+    cache: CacheStore,
+    lo: str | None,
+    hi: str,
+    first_bar: str | None,
+    cached_dates: set[str],
+) -> list[str] | None:
+    """Trading days in [lo, hi] that must have a cached bar, or None if unknowable.
+
+    Days before ``first_bar`` are dropped. When a missing day was only guessed
+    to be a business day (no calendar row), the calendar for the missing span is
+    loaded once and the expectation recomputed, so a weekday holiday cannot keep
+    the range incomplete. A failed calendar load keeps the weekday guess.
+    """
+
+    def compute(guessed: set[str]) -> list[str] | None:
+        days = cache.expected_trading_days(lo, hi, guessed)
+        if days is not None and first_bar:
+            days = [d for d in days if d >= first_bar]
+        return days
+
+    guessed: set[str] = set()
+    expected = compute(guessed)
+    if not expected:
+        return expected
+    unsure = [d for d in expected if d not in cached_dates and d in guessed]
+    if not unsure:
+        return expected
+    try:
+        response = await client.get("/markets/calendar", {"from": min(unsure), "to": max(unsure)})
+    except TOOL_API_ERRORS as e:
+        logger.info("Calendar load for bar completeness failed: %s", e)
+        return expected
+    rows = response.get("data", []) if isinstance(response, dict) else []
+    if not rows:
+        return expected
+    cache.put_rows("markets_calendar", rows, key_columns=["Date"])
+    return compute(set())
+
+
 async def _get_bars_daily_with_cache(
     client: JQuantsClient,
     cache: CacheStore,
@@ -694,15 +755,23 @@ async def _get_bars_daily_with_cache(
 
     The cache alone answers a range only when every expected trading day in it
     is present (jquants-mcp#625). When just the tail is missing, only that tail
-    is fetched and merged; any other gap refetches the whole range from the
-    API, whose answer is then returned as-is. A single ``date`` always asks the
-    API, so its adjusted prices pick up corporate actions after it was cached.
+    is fetched; any other gap refetches the whole range. API rows win over
+    cached rows for the same date. A single ``date`` always asks the API, so its
+    adjusted prices pick up corporate actions after it was cached.
+
+    Days that will never get a bar must not keep a range incomplete forever:
+    weekday holidays are resolved by loading markets_calendar on demand, and
+    days before the first bar the API returned (listing date, or the API's
+    retention floor) are dropped using a short-lived per-code head record.
     """
     # Normalize 4-digit codes to 5 digits (ordinary shares: trailing 0)
     cache_code = code + "0" if len(code) == 4 else code
     # The cache stores ISO dates; the tool also accepts YYYYMMDD
     lo = _to_iso(date or date_from)
     hi = _to_iso(date or date_to)
+    head_key = make_cache_key(
+        "bars_daily_head", {"code": cache_code, "plan": cache.effective_plan()}
+    )
 
     try:
         # Fetch existing data from the cache (look up by 5-digit code)
@@ -732,10 +801,16 @@ async def _get_bars_daily_with_cache(
 
         full_fetch = True
         if cached_dates and not date:
-            expected = cache.expected_trading_days(lo, hi or date_cls.today().isoformat())
+            first_bar = _head_floor(cache.get_response(head_key), lo)
+            hi_eff = hi or date_cls.today().isoformat()
+            expected = await _expected_bar_days(
+                client, cache, lo or first_bar, hi_eff, first_bar, cached_dates
+            )
             # An empty or unknowable expectation proves nothing: ask the API
             if expected:
-                if all(d in cached_dates for d in expected):
+                # Open-ended ranges (no date_to) always refetch from the latest
+                # cached date, as before, so a corrected AdjFactor there is seen
+                if hi and all(d in cached_dates for d in expected):
                     logger.info("Bars fully cached: code=%s (%d rows)", code, len(cached_data))
                     return {"count": len(cached_data), "data": cached_data, "source": "cache"}
                 latest_cached = max(cached_dates)
@@ -748,24 +823,29 @@ async def _get_bars_daily_with_cache(
         try:
             api_data = await client.get_all_pages("/equities/bars/daily", params)
         except APIError:
-            # Return cached data even on API failure, but say it is incomplete
+            # Return cached data even on API failure, flagged when it is incomplete
             if cached_data:
+                partial = not (date and lo in cached_dates)
                 logger.info(
-                    "API failed, returning incomplete cached bars: code=%s (%d rows)",
+                    "API failed, returning cached bars: code=%s (%d rows, partial=%s)",
                     code,
                     len(cached_data),
+                    partial,
                 )
-                return {
-                    "count": len(cached_data),
-                    "data": cached_data,
-                    "source": "cache",
-                    "partial": True,
-                }
+                result = {"count": len(cached_data), "data": cached_data, "source": "cache"}
+                if partial:
+                    result["partial"] = True
+                return result
             raise
 
-        if full_fetch:
-            # The API answered the whole range: do not mix in stale cached rows
-            cached_data = []
+        if full_fetch and not date and api_data:
+            # Nothing exists between the asked lower bound and the first bar
+            # returned (listing date or the API's retention floor)
+            first = min(str(r.get("Date", ""))[:10] for r in api_data)
+            if lo is None or lo < first:
+                cache.put_response(
+                    head_key, {"asked_from": lo, "first": first}, ttl_seconds=_HEAD_RECORD_TTL
+                )
 
         if api_data:
             # Stock split check: scan the whole batch, not just the last row
