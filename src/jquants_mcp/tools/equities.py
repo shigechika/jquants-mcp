@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+import time
 from datetime import date as date_cls
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
@@ -441,7 +442,10 @@ def register(
             if cached is not None:
                 recs = cached if isinstance(cached, list) else cached.get("data", [])
                 recs = _normalize_earnings_records(recs)
-                return {"count": len(recs), "data": recs}
+                # An empty day from the morning sweep must not block the live
+                # refresh below for today/future dates (it used to be a miss)
+                if recs or norm_date < date_cls.today().isoformat():
+                    return {"count": len(recs), "data": recs}
             if norm_date >= date_cls.today().isoformat() and (
                 await _refresh_earnings_calendar_live(client, cache)
             ):
@@ -728,10 +732,17 @@ def register(
         # make_cache_key shape and the "?date=" shape daily_fetch wrote before #620.
         # A day rewritten under the current key supersedes its legacy entry, which
         # may still list announcements that have since been withdrawn.
+        # Expired entries are skipped, as get_response would (ttl_seconds <= 0 = no expiry).
         try:
             key_rows = conn.execute(
-                "SELECT cache_key, data FROM response_cache WHERE cache_key LIKE ? OR cache_key LIKE ?",
-                ("/equities/earnings-calendar|date=%", "/equities/earnings-calendar?date=%"),
+                "SELECT cache_key, data FROM response_cache"
+                " WHERE (cache_key LIKE ? OR cache_key LIKE ?)"
+                " AND (ttl_seconds <= 0 OR fetched_at + ttl_seconds > ?)",
+                (
+                    "/equities/earnings-calendar|date=%",
+                    "/equities/earnings-calendar?date=%",
+                    time.time(),
+                ),
             ).fetchall()
         except sqlite3.OperationalError:
             key_rows = []

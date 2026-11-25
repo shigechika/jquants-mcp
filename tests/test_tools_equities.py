@@ -858,6 +858,26 @@ class TestGetEquitiesEarningsCalendar:
         ):
             result = await _call("get_equities_earnings_calendar", code="72030")
         assert [r["Date"] for r in result["data"]] == ["2026-05-11"]
+        # The date branch also prefers the current key for that day
+        by_date = await _call("get_equities_earnings_calendar", date="2026-05-10")
+        assert [r["Code"] for r in by_date["data"]] == ["67580"]
+
+    async def test_empty_cached_future_day_still_tries_the_live_feed(self, mock_env):
+        """#620: an empty sweep entry, now reachable, must not block the live refresh."""
+        from jquants_mcp.cache.store import TTL_90D, make_cache_key
+
+        tomorrow = date.today() + timedelta(days=1)
+        mock_env["cache"].put_response(
+            make_cache_key("/equities/earnings-calendar", {"date": tomorrow.strftime("%Y%m%d")}),
+            [],
+            ttl_seconds=TTL_90D,
+        )
+        live = [{"Code": "72030", "Date": tomorrow.isoformat(), "FQ": "3Q"}]
+        with patch.object(
+            mock_env["client"], "get_all_pages", new_callable=AsyncMock, return_value=live
+        ):
+            result = await _call("get_equities_earnings_calendar", date=tomorrow.isoformat())
+        assert result["count"] == 1
 
     async def test_date_query_no_data_returns_empty(self, mock_env):
         """date= returns empty result when neither Tier 1 nor Tier 2 has data."""
