@@ -112,16 +112,29 @@ def _normalize_fields(row: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def calendar_is_business_day(row: dict[str, Any]) -> bool | None:
-    """Whether a markets_calendar row is a business day, or None if it cannot tell.
+_CALENDAR_OPEN_CODES = ("1", "2")
+_CALENDAR_CLOSED_CODES = ("0", "3")
+
+
+def _calendar_code(row: dict[str, Any]) -> str | None:
+    """The holiday-division code of a markets_calendar row, or None if absent.
 
     V2 rows carry ``HolDiv`` and legacy V1 rows ``HolidayDivision``, with the
     same codes: 1 = business day, 2 = half day, 0 / 3 = non-business.
     """
     hol = row.get("HolDiv", row.get("HolidayDivision"))
-    if hol is None:
+    return None if hol is None else str(hol).strip()
+
+
+def calendar_is_business_day(row: dict[str, Any]) -> bool | None:
+    """Whether a markets_calendar row is a business day, or None if it cannot tell.
+
+    An unrecognized code counts as non-business here; see ``_calendar_code``.
+    """
+    code = _calendar_code(row)
+    if code is None:
         return None
-    return str(hol).strip() in ("1", "2")
+    return code in _CALENDAR_OPEN_CODES
 
 
 # Mapping of endpoint path → TTL
@@ -2811,10 +2824,10 @@ class CacheStore:
                     continue
                 if not isinstance(data, dict):
                     continue
-                hol = str(data.get("HolDiv", data.get("HolidayDivision", ""))).strip()
-                if hol in ("1", "2"):
+                code = _calendar_code(data)
+                if code in _CALENDAR_OPEN_CODES:
                     verdicts[str(row[0])[:10]] = True
-                elif hol in ("0", "3"):
+                elif code in _CALENDAR_CLOSED_CODES:
                     verdicts[str(row[0])[:10]] = False
 
         days: list[str] = []

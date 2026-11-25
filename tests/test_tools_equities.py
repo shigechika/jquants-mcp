@@ -345,15 +345,29 @@ class TestBarsDailyCacheCompleteness:
         assert mock_fn.call_count == 0
         assert result["count"] == len(business)
 
-    async def test_single_date_returns_only_that_day(self, light_env, window):
+    async def test_single_date_asks_the_api_and_returns_only_that_day(self, light_env, window):
         start, end = window
         business = _seed_calendar(light_env["cache"], start, end)
         _seed_bars(light_env["cache"], business)
-        mock_fn = AsyncMock(return_value=[])
+        # A later split restated the day: the API answer must win over the cache
+        restated = [{**_bars([business[2]])[0], "C": 50.5}]
+        mock_fn = AsyncMock(return_value=restated)
         with patch.object(light_env["client"], "get_all_pages", mock_fn):
             result = await _call("get_equities_bars_daily", code="1306", date=business[2])
-        assert mock_fn.call_count == 0
+        assert mock_fn.call_args.args[1]["date"] == business[2]
+        assert result["data"] == restated
+
+    async def test_single_date_api_failure_returns_only_that_cached_day(self, light_env, window):
+        start, end = window
+        business = _seed_calendar(light_env["cache"], start, end)
+        _seed_bars(light_env["cache"], business)
+        mock_fn = AsyncMock(side_effect=APIError("boom", status_code=500))
+        with patch.object(light_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_equities_bars_daily", code="1306", date=business[2].replace("-", "")
+            )
         assert [r["Date"] for r in result["data"]] == [business[2]]
+        assert result["partial"] is True
 
     async def test_date_to_only_on_premium_always_asks_the_api(self, mock_env, window):
         start, end = window

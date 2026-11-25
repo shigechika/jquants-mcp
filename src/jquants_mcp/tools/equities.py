@@ -678,10 +678,8 @@ def register(
 
 def _to_iso(d: str | None) -> str | None:
     """Convert a validated YYYYMMDD or YYYY-MM-DD date to YYYY-MM-DD."""
-    if d is None:
-        return None
-    s = d.replace("-", "")
-    return f"{s[:4]}-{s[4:6]}-{s[6:8]}"
+    parsed = _parse_iso_date(d)
+    return parsed.isoformat() if parsed else None
 
 
 async def _get_bars_daily_with_cache(
@@ -694,10 +692,11 @@ async def _get_bars_daily_with_cache(
 ) -> dict[str, Any]:
     """Retrieve daily stock bars (OHLC) with Tier 1 cache.
 
-    The cache alone answers only when every expected trading day in the
-    requested range is present (jquants-mcp#625). When just the tail is
-    missing, only that tail is fetched and merged; any other gap refetches the
-    whole range from the API, whose answer is then returned as-is.
+    The cache alone answers a range only when every expected trading day in it
+    is present (jquants-mcp#625). When just the tail is missing, only that tail
+    is fetched and merged; any other gap refetches the whole range from the
+    API, whose answer is then returned as-is. A single ``date`` always asks the
+    API, so its adjusted prices pick up corporate actions after it was cached.
     """
     # Normalize 4-digit codes to 5 digits (ordinary shares: trailing 0)
     cache_code = code + "0" if len(code) == 4 else code
@@ -732,7 +731,7 @@ async def _get_bars_daily_with_cache(
         )
 
         full_fetch = True
-        if cached_dates:
+        if cached_dates and not date:
             expected = cache.expected_trading_days(lo, hi or date_cls.today().isoformat())
             # An empty or unknowable expectation proves nothing: ask the API
             if expected:
@@ -741,7 +740,7 @@ async def _get_bars_daily_with_cache(
                     return {"count": len(cached_data), "data": cached_data, "source": "cache"}
                 latest_cached = max(cached_dates)
                 head = [d for d in expected if d <= latest_cached]
-                if not date and head and all(d in cached_dates for d in head):
+                if head and all(d in cached_dates for d in head):
                     # Contiguous up to latest_cached: fetch only the missing tail
                     params["from"] = latest_cached
                     full_fetch = False
@@ -786,8 +785,6 @@ async def _get_bars_daily_with_cache(
                         params_full["from"] = date_from
                     if date_to:
                         params_full["to"] = date_to
-                    if date:
-                        params_full["date"] = date
                     api_data = await client.get_all_pages("/equities/bars/daily", params_full)
                 cached_data = []
 
