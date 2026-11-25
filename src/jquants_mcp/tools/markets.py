@@ -413,9 +413,12 @@ async def _get_with_tier1_cache(
             )
             key_filter[key_name] = cache_key_val
 
+        # The cache stores YYYY-MM-DD; the tools also accept YYYYMMDD. The API
+        # params below keep the caller's form.
+        iso_date, iso_from, iso_to = _iso(date), _iso(date_from), _iso(date_to)
         # A single date bounds the lookup on both sides
-        effective_date_from = date or date_from
-        effective_date_to = date or date_to
+        effective_date_from = iso_date or iso_from
+        effective_date_to = iso_date or iso_to
         # Fetch existing data from the cache
         cached_data = cache.get_rows(
             table,
@@ -446,7 +449,7 @@ async def _get_with_tier1_cache(
         if cached_dates and not date:
             # Incremental fetch: retrieve everything after the latest cached date
             latest_cached = max(cached_dates)
-            if date_to and latest_cached >= date_to:
+            if iso_to and latest_cached >= iso_to:
                 logger.info("%s 全データキャッシュ済み (%d件)", table, len(cached_data))
                 return {"count": len(cached_data), "data": cached_data, "source": "cache"}
             params["from"] = latest_cached
@@ -460,7 +463,7 @@ async def _get_with_tier1_cache(
                 # one returned above). A single date for one key is complete when
                 # cached; a date-only query asks for every key, and one cached
                 # key does not prove the rest are there.
-                partial = date not in cached_dates if (date and key_value) else True
+                partial = iso_date not in cached_dates if (iso_date and key_value) else True
                 logger.info(
                     "%s failed (%s), returning cached %s (%d rows, partial=%s)",
                     endpoint,
@@ -509,12 +512,22 @@ def _summarise(result: dict[str, Any]) -> dict[str, Any]:
     """Return a compact summary of a no-params result (omits data rows)."""
     data = result.get("data", [])
     latest = max((r.get("Date", "") for r in data), default=None) if data else None
-    return {
+    summary = {
         "count": result.get("count", len(data)),
         "latest_date": latest,
         "source": result.get("source"),
         "note": "Use detail=True or specify a filter parameter for full data.",
     }
+    if result.get("partial"):
+        summary["partial"] = True
+    return summary
+
+
+def _iso(d: str | None) -> str | None:
+    """Normalize a validated YYYYMMDD date to the cache's YYYY-MM-DD form."""
+    if d and len(d) == 8 and d.isdigit():
+        return f"{d[:4]}-{d[4:6]}-{d[6:]}"
+    return d
 
 
 def _get_latest_tier1_snapshot(
@@ -636,11 +649,13 @@ async def _get_calendar_with_cache(
         # resolves to an unrestricted date window (_plan_date_bounds), so a
         # non-Premium plan still gets cache hits and the API-failure
         # fallback below instead of a spurious clamped-empty miss.
+        # The cache stores YYYY-MM-DD; the tool also accepts YYYYMMDD
+        iso_from, iso_to = _iso(date_from), _iso(date_to)
         cached_data = cache.get_rows(
             "markets_calendar",
             key_filter={},
-            date_from=date_from,
-            date_to=date_to,
+            date_from=iso_from,
+            date_to=iso_to,
             plan="premium",
         )
 
@@ -648,8 +663,8 @@ async def _get_calendar_with_cache(
         cached_dates = cache.get_cached_dates(
             "markets_calendar",
             key_filter={},
-            date_from=date_from,
-            date_to=date_to,
+            date_from=iso_from,
+            date_to=iso_to,
             plan="premium",
         )
 
@@ -663,7 +678,7 @@ async def _get_calendar_with_cache(
 
         if cached_dates:
             latest_cached = max(cached_dates)
-            if date_to and latest_cached >= date_to:
+            if iso_to and latest_cached >= iso_to:
                 logger.info("カレンダー全データキャッシュ済み (%d件)", len(cached_data))
                 # Apply the hol_div filter
                 filtered = _filter_hol_div(cached_data, hol_div)

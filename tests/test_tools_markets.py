@@ -152,6 +152,50 @@ class TestGetMarketsMarginInterest:
         assert [r["Date"] for r in result["data"]] == ["2024-01-04"]
         assert "partial" not in result
 
+    async def test_compact_single_date_hits_the_cache(self, mock_env):
+        mock_env["cache"].put_rows(
+            "markets_margin_interest",
+            [{"Code": "72030", "Date": "2024-01-04", "LoanBalance": 1000000}],
+            key_columns=["Code", "Date"],
+        )
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_markets_margin_interest", code="72030", date="20240104")
+        assert [r["Date"] for r in result["data"]] == ["2024-01-04"]
+        assert "partial" not in result
+        # The API still gets the caller's date form
+        assert mock_fn.call_args.args[1]["date"] == "20240104"
+
+    async def test_compact_range_fully_cached_skips_the_api(self, mock_env):
+        mock_env["cache"].put_rows(
+            "markets_margin_interest",
+            [
+                {"Code": "72030", "Date": "2024-01-04", "LoanBalance": 1000000},
+                {"Code": "72030", "Date": "2024-01-05", "LoanBalance": 1100000},
+            ],
+            key_columns=["Code", "Date"],
+        )
+        mock_fn = AsyncMock(return_value=[])
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_markets_margin_interest",
+                code="72030",
+                date_from="20240104",
+                date_to="20240105",
+            )
+        assert mock_fn.call_count == 0
+        assert result["source"] == "cache"
+        assert result["count"] == 2
+
+    async def test_no_params_summary_keeps_the_partial_flag(self, mock_env):
+        recent_date = (date.today() - timedelta(days=3)).isoformat()
+        await self._seed_margin_interest(mock_env["cache"], recent_date)
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call("get_markets_margin_interest")
+        assert "data" not in result
+        assert result["partial"] is True
+
     async def test_rate_limit_on_date_only_query_is_partial(self, mock_env):
         # A per-stock lookup cached one code for the day; a date-only query
         # asks for every code
