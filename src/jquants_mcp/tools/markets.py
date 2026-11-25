@@ -14,6 +14,7 @@ from ..client import JQuantsClient
 from ..exceptions import (
     TOOL_API_ERRORS,
     APIError,
+    RateLimitError,
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_API
@@ -435,7 +436,8 @@ async def _get_with_tier1_cache(
 
         try:
             api_data = await client.get_all_pages(endpoint, params)
-        except APIError:
+        except (APIError, RateLimitError):
+            # Includes a rate limit that outlasted the client's retries
             if cached_data:
                 logger.info("API失敗、キャッシュデータを返却: %s (%d件)", table, len(cached_data))
                 return {"count": len(cached_data), "data": cached_data, "source": "cache"}
@@ -625,7 +627,8 @@ async def _get_calendar_with_cache(
         # the requested range is already sitting in the local cache.
         try:
             response = await client.get("/markets/calendar", params)
-        except APIError:
+        except (APIError, RateLimitError):
+            # Includes a rate limit that outlasted the client's retries
             if cached_data:
                 logger.info("カレンダーAPI失敗、キャッシュデータを返却 (%d件)", len(cached_data))
                 filtered = _filter_hol_div(cached_data, hol_div)

@@ -11,7 +11,7 @@ import jquants_mcp.server as server_module
 from jquants_mcp.cache.store import CacheStore
 from jquants_mcp.client import JQuantsClient
 from jquants_mcp.config import Settings
-from jquants_mcp.exceptions import APIError, PlanRestrictionError
+from jquants_mcp.exceptions import APIError, PlanRestrictionError, RateLimitError
 
 
 @pytest.fixture()
@@ -116,6 +116,35 @@ class TestGetMarketsMarginInterest:
         ):
             result = await _call("get_markets_margin_interest", code="99999")
             assert result["error"] is True
+
+    async def test_rate_limit_falls_back_to_tier1_cache(self, mock_env):
+        mock_env["cache"].put_rows(
+            "markets_margin_interest",
+            [{"Code": "72030", "Date": "2024-01-04", "LoanBalance": 1000000}],
+            key_columns=["Code", "Date"],
+        )
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_markets_margin_interest",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-01-10",
+            )
+        assert mock_fn.call_count == 1
+        assert result["source"] == "cache"
+        assert result["count"] == 1
+
+    async def test_rate_limit_without_cache_still_raises(self, mock_env):
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            with pytest.raises(Exception, match="(?i)rate limit"):
+                await _call(
+                    "get_markets_margin_interest",
+                    code="72030",
+                    date_from="2024-01-04",
+                    date_to="2024-01-10",
+                )
 
     async def _seed_margin_interest(self, cache, recent_date):
         rows = [
@@ -602,5 +631,18 @@ class TestGetMarketsCalendar:
                 "get_markets_calendar", date_from="2024-01-01", date_to="2024-01-10"
             )
         assert result.get("error") is not True
+        assert result["source"] == "cache"
+        assert result["count"] == 1
+
+    async def test_rate_limit_falls_back_to_cache(self, mock_env):
+        mock_env["cache"].put_rows(
+            "markets_calendar", [{"Date": "2024-01-04", "HolDiv": "0"}], key_columns=["Date"]
+        )
+        mock_fn = AsyncMock(side_effect=RateLimitError())
+        with patch.object(mock_env["client"], "get", mock_fn):
+            result = await _call(
+                "get_markets_calendar", date_from="2024-01-01", date_to="2024-01-10"
+            )
+        assert mock_fn.call_count == 1
         assert result["source"] == "cache"
         assert result["count"] == 1
