@@ -561,7 +561,7 @@ CSV サイドロードスクリプト（`import_csv_to_cache.py`）はこのキ�
 
 | プラン | 取得対象 |
 |---|---|
-| Free | `fins_summary`（決算サマリー）、`earnings_cal`（決算発表予定） |
+| Free | `fins_summary`（決算サマリー）、`earnings_cal`（決算発表予定）、`valuation`（バリュエーション指標。jquants-api-client 2.7.x が必要） |
 | Light | + `topix`（TOPIX 日足）、`investor_types`（投資部門別売買動向） |
 | Standard | + `short_ratio`（業種別空売り比率）、`margin_interest`（信用取引残高）、`margin_alert`（増担保規制情報）、`short_sale_report`（空売り残高報告） |
 | Premium | + `breakdown`（売買内訳） |

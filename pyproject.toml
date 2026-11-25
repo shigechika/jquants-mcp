@@ -53,8 +53,11 @@ fetch = [
     # that would otherwise satisfy this import: jquants-api-client<2.4.0 is
     # missing the native ROE field and validators.py's ROE resolution
     # (see its docstring, #565) silently falls back to a less precise
-    # EPS/BPS approximation on older resolves.
-    "jquants-api-client>=2.4.0,<3",
+    # EPS/BPS approximation on older resolves. Raised to >=2.7.0 for
+    # get_eq_valuation (#628). Capped <2.8: 2.8.0 makes get_mkt_margin_interest
+    # raise ValueError for code-less from/to calls and changes its columns,
+    # which daily_fetch's margin ingestion still relies on.
+    "jquants-api-client>=2.7.0,<2.8",
 ]
 [project.scripts]
 jquants-mcp = "jquants_mcp.cli:main"

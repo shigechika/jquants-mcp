@@ -673,7 +673,7 @@ wheels = [
 
 [[package]]
 name = "jquants-api-client"
-version = "2.4.0"
+version = "2.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
@@ -684,9 +684,9 @@ dependencies = [
     { name = "typing-extensions", version = "4.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "typing-extensions", version = "4.16.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.12.*'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c6/c5/83f65638205071c1125fae5ebeb706e29945172d77ae41ecbfe25a16a25d/jquants_api_client-2.4.0.tar.gz", hash = "sha256:300fabd1f489e4960a1f0c846a878049af4bf5a93c92c79bdaf245abeb978cfe", size = 32598, upload-time = "2026-08-07T04:27:29.642Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1f/98/44ed9ffbf5ed98e75bb7720b6932775d17a96edbc9157bb88f592ce62da5/jquants_api_client-2.7.0.tar.gz", hash = "sha256:fcdce8c504ea36fb21a08d854fe0450658c026ae377f4151f332c11dfb8e446a", size = 34299, upload-time = "2026-09-14T06:30:57.665Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/33/c8/20e9ffac0cb740ea82630e3614ce65bb4a0a32ce11ac2b004e58b11f06d0/jquants_api_client-2.4.0-py3-none-any.whl", hash = "sha256:563740ca2fcfe4e669171e40d6f2f9ad6caf9330a7dc2e77a12cb2335761a682", size = 38702, upload-time = "2026-08-07T04:27:30.566Z" },
+    { url = "https://files.pythonhosted.org/packages/75/2a/69c76f8ac7355c70470fe11d48e6360f13ad35d6469d62b891d4fa66b8a1/jquants_api_client-2.7.0-py3-none-any.whl", hash = "sha256:47a6fd3b3e9097eb1d8ef5e0b583c2f8f37502295b679e840ba93e69884f8ce4", size = 40182, upload-time = "2026-09-14T06:30:58.629Z" },
 ]
 
 [[package]]
@@ -729,7 +729,7 @@ requires-dist = [
     { name = "google-cloud-firestore", marker = "extra == 'cloud-run'", specifier = ">=2.0.0" },
     { name = "google-cloud-storage", marker = "extra == 'cloud-run'", specifier = ">=2.0.0" },
     { name = "httpx", specifier = ">=0.25.0" },
-    { name = "jquants-api-client", marker = "extra == 'fetch'", specifier = ">=2.4.0,<3" },
+    { name = "jquants-api-client", marker = "extra == 'fetch'", specifier = ">=2.7.0,<2.8" },
     { name = "mcp", specifier = ">=2.1,<3" },
     { name = "mcp-stdio", extras = ["firestore"], marker = "extra == 'cloud-run'", specifier = ">=0.42.0" },
     { name = "zstandard", marker = "extra == 'cloud-run'", specifier = ">=0.21.0" },

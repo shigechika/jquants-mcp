@@ -1533,3 +1533,148 @@ class TestSharedMigration:
         assert json.loads(rows[0][0])["v"] == 999
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
         conn.close()
+
+
+class TestFetchValuation:
+    """fetch_valuation: daily /equities/valuation cross-sections (#628)."""
+
+    @pytest.fixture(autouse=True)
+    def _frozen_today(self, monkeypatch):
+        # Wed 2026-08-19 in JST; one stored row counts as a full day unless a test says not
+        monkeypatch.setattr(daily_fetch, "_jst_today", lambda: _FrozenToday.today().date())
+        monkeypatch.setattr(daily_fetch, "VALUATION_MIN_DAY_ROWS", 1)
+        self.sleeps: list[float] = []
+        monkeypatch.setattr(daily_fetch.time, "sleep", self.sleeps.append)
+
+    @staticmethod
+    def _cli(by_day: dict[str, list[dict]]) -> MagicMock:
+        cli = MagicMock()
+        cli.get_eq_valuation.side_effect = lambda date_yyyymmdd: FakeDataFrame(
+            by_day.get(date_yyyymmdd, [])
+        )
+        return cli
+
+    @staticmethod
+    def _row(day: str, code: str = "72030") -> dict:
+        # jquantsapi returns pandas Timestamps; str() of one carries a time part
+        return {"Date": f"{day} 00:00:00", "Code": code, "PER": 9.9, "MktCap": 4.0e7}
+
+    def test_skips_when_the_client_is_too_old(self, db_conn):
+        cli = MagicMock(spec=[])  # no get_eq_valuation
+        assert daily_fetch.fetch_valuation(cli, db_conn, "light") == 0
+
+    def test_empty_table_starts_a_window_back(self, db_conn):
+        # Today is not published yet (an empty answer); yesterday is
+        cli = self._cli({"20260818": [self._row("2026-08-18"), self._row("2026-08-18", "67580")]})
+        n = daily_fetch.fetch_valuation(cli, db_conn, "light")
+        assert n == 2
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        # Weekdays of the 10-day window ending today
+        assert asked == [
+            "20260810",
+            "20260811",
+            "20260812",
+            "20260813",
+            "20260814",
+            "20260817",
+            "20260818",
+            "20260819",
+        ]
+        rows = db_conn.execute("SELECT code, date, data FROM equities_valuation").fetchall()
+        assert {r[1] for r in rows} == {"2026-08-18"}  # key has no time part
+        assert all(json.loads(r[2])["Date"] == "2026-08-18" for r in rows)
+
+    def test_free_plan_fetches_within_its_delay(self, db_conn):
+        cli = self._cli({})
+        daily_fetch.fetch_valuation(cli, db_conn, "free")
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        # 12 weeks before Wed 2026-08-19 is Wed 2026-05-27
+        assert asked[-1] == "20260527"
+        assert all(d <= "20260527" for d in asked)
+        # Spaced under Free's 5 requests a minute: a pause before every call but the first
+        assert self.sleeps == [daily_fetch.FREE_REQUEST_INTERVAL_SECONDS] * (len(asked) - 1)
+
+    def test_paid_plans_are_not_throttled(self, db_conn, capsys):
+        daily_fetch.fetch_valuation(self._cli({}), db_conn, "light")
+        assert self.sleeps == []
+        assert "window: 2026-08-10..2026-08-19" in capsys.readouterr().out
+
+    def test_backfill_failure_is_reported_to_main(self, db_conn):
+        cli = MagicMock()
+        cli.get_eq_valuation.side_effect = RuntimeError("429 Too Many Requests")
+        assert daily_fetch._run_backfill(cli, db_conn, ["valuation"], 3, "light") == ["valuation"]
+
+    def test_asks_window_weekdays_without_a_full_day(self, db_conn):
+        daily_fetch._store_tier1(
+            db_conn,
+            "equities_valuation",
+            [self._row("2026-08-13")],  # Thu
+            [("Code", "code"), ("Date", "date")],
+        )
+        cli = self._cli({"20260814": [self._row("2026-08-14")]})
+        daily_fetch.fetch_valuation(cli, db_conn, "light")
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        # Window weekdays minus the full 13th; the weekend is skipped
+        assert asked == [
+            "20260810",
+            "20260811",
+            "20260812",
+            "20260814",
+            "20260817",
+            "20260818",
+            "20260819",
+        ]
+
+    def test_a_partial_day_is_fetched_again(self, db_conn, monkeypatch):
+        # The server stored one code for the 18th; that is not the cross-section
+        monkeypatch.setattr(daily_fetch, "VALUATION_MIN_DAY_ROWS", 1000)
+        daily_fetch._store_tier1(
+            db_conn,
+            "equities_valuation",
+            [self._row("2026-08-18")],
+            [("Code", "code"), ("Date", "date")],
+        )
+        cli = self._cli({})
+        daily_fetch.fetch_valuation(cli, db_conn, "light", backfill_days=2)
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        assert asked == ["20260818", "20260819"]
+
+    def test_backfill_asks_only_missing_weekdays(self, db_conn):
+        for day in ("2026-08-12", "2026-08-18"):
+            daily_fetch._store_tier1(
+                db_conn,
+                "equities_valuation",
+                [self._row(day)],
+                [("Code", "code"), ("Date", "date")],
+            )
+        cli = self._cli({"20260813": [self._row("2026-08-13")]})
+        n = daily_fetch.fetch_valuation(cli, db_conn, "light", backfill_days=10)
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        # 2026-08-10..19 weekdays minus the cached 12th and 18th
+        assert asked == ["20260810", "20260811", "20260813", "20260814", "20260817", "20260819"]
+        assert n == 1
+
+    def test_backfill_flag_runs_valuation(self, db_conn):
+        cli = self._cli({})
+        daily_fetch._run_backfill(cli, db_conn, ["valuation"], 3, "light")
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        assert asked == ["20260817", "20260818", "20260819"]
+
+    def test_catch_up_is_capped_and_the_gap_is_logged(self, db_conn, monkeypatch, capsys):
+        monkeypatch.setattr(daily_fetch, "VALUATION_CATCHUP_DAYS", 3)
+        daily_fetch._store_tier1(
+            db_conn,
+            "equities_valuation",
+            [self._row("2026-07-01")],
+            [("Code", "code"), ("Date", "date")],
+        )
+        cli = self._cli({})
+        daily_fetch.fetch_valuation(cli, db_conn, "light")
+        asked = [c.kwargs["date_yyyymmdd"] for c in cli.get_eq_valuation.call_args_list]
+        assert asked == ["20260817", "20260818", "20260819"]
+        assert "gap: nothing full between 2026-07-01 and 2026-08-17" in capsys.readouterr().out
+
+    def test_registered_for_every_plan(self):
+        assert daily_fetch.ENDPOINT_MIN_PLAN["valuation"] == "free"
+        assert "valuation" in daily_fetch.FETCH_REGISTRY
+        assert "equities_valuation" in daily_fetch._DAILY_FETCH_TABLES
