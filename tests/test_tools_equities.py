@@ -580,6 +580,31 @@ class TestBarsDailyCacheCompleteness:
         assert result["source"] == "cache"
         assert result["partial"] is True
 
+    async def test_rate_limit_on_calendar_lookup_returns_cache_without_bars_call(
+        self, light_env, window
+    ):
+        start, end = window
+        holiday = next(d for d in _days(start + timedelta(days=7), end) if d.weekday() == 2)
+        weekdays = [d.isoformat() for d in _days(start, end) if d.weekday() < 5]
+        _seed_bars(light_env["cache"], [d for d in weekdays if d != holiday.isoformat()])
+        bars_fn = AsyncMock(return_value=[])
+        cal_fn = AsyncMock(side_effect=RateLimitError())
+        with (
+            patch.object(light_env["client"], "get_all_pages", bars_fn),
+            patch.object(light_env["client"], "get", cal_fn),
+        ):
+            result = await _call(
+                "get_equities_bars_daily",
+                code="1306",
+                date_from=start.isoformat(),
+                date_to=end.isoformat(),
+            )
+        assert cal_fn.call_count == 1
+        assert bars_fn.call_count == 0  # would hit the same limit
+        assert result["source"] == "cache"
+        assert result["count"] == len(weekdays) - 1
+        assert result["partial"] is True
+
     async def test_rate_limit_without_cache_still_raises(self, light_env, window):
         start, end = window
         mock_fn = AsyncMock(side_effect=RateLimitError())
