@@ -106,9 +106,12 @@ def register(
     ) -> dict[str, Any]:
         """Per-stock or per-day OHLC bars (日足株価). All plans.
 
-        Use for 株価・日足・OHLC・終値・出来高・調整株価 (AdjC/AdjO etc.), 時価総額 (MktCap),
-        権利落ち (ExRT) queries. MktCap: market cap in millions of yen (unadjusted close x
-        listed shares, corporate-action aware); null for ETF/ETN and non-trading days. ExRT:
+        Use for 株価・日足・OHLC・終値・出来高・調整株価 (AdjC/AdjO etc.), 権利落ち (ExRT)
+        queries. MktCap (時価総額): market cap in millions of yen (unadjusted close x listed
+        shares, corporate-action aware); null for ETF/ETN and non-trading days. J-Quants
+        stops returning MktCap from this endpoint on 2026-12-28: rows fetched on or after
+        that date have no MktCap key (rows cached earlier keep it), so do not rely on it
+        for recent dates. ExRT:
         ex-rights corporate action on that date (1=split/free share allotment, 2=merger,
         3=rights issue); null when none. For multi-stock bulk downloads use get_bulk_list
         (date-only queries are very slow). code only → full history; code+range → period;
