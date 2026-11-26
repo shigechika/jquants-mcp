@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.9.0](https://github.com/shigechika/jquants-mcp/compare/v1.8.3...v1.9.0) (2026-11-26)
+
+
+### Features
+
+* **verify:** report business days with no rows in the daily tables ([#674](https://github.com/shigechika/jquants-mcp/issues/674)) ([efb9eee](https://github.com/shigechika/jquants-mcp/commit/efb9eee94c4f352201ac678ade79232545739bfa))
+
 ## [1.8.3](https://github.com/shigechika/jquants-mcp/compare/v1.8.2...v1.8.3) (2026-11-26)
 
 
