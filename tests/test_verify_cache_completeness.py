@@ -25,6 +25,7 @@ from verify_cache_completeness import (  # noqa: E402
     _trading_dates_in_range,
     auto_fix_gaps,
     check_all,
+    check_missing_days,
     check_date_gaps,
 )
 
@@ -892,3 +893,70 @@ def test_margin_interest_legacy_calendar_rows_fall_back(conn):
     result = _check_daily_table(conn, "markets_margin_interest", "date", "2026-10-09")
     assert "gap_business_days" not in result
     assert result["status"] == "stale"  # 8 calendar days > fallback 7
+
+
+# ---------------------------------------------------------------------------
+# check_missing_days
+# ---------------------------------------------------------------------------
+
+
+def _seed_calendar(conn, start: date, end: date, holidays=()) -> None:
+    d = start
+    while d <= end:
+        business = d.weekday() < 5 and d.isoformat() not in holidays
+        conn.execute(
+            "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+            (d.isoformat(), json.dumps({"HolDiv": "1" if business else "0"}), time.time()),
+        )
+        d += timedelta(days=1)
+    conn.commit()
+
+
+def test_missing_days_reports_a_hole_between_cached_days(conn):
+    """A feed that skipped days and then resumed leaves business days with no row."""
+    _seed_calendar(conn, date(2026, 3, 2), date(2026, 3, 31), holidays={"2026-03-20"})
+    for day in ("2026-03-09", "2026-03-10", "2026-03-11", "2026-03-19", "2026-03-30"):
+        _insert(conn, "markets_short_ratio", s33="0050", date=day)
+    missing = check_missing_days(conn, "2026-03-31", lookback_days=60)
+    days = missing["markets_short_ratio"]
+    assert days[0] == "2026-03-12" and days[-1] == "2026-03-27"
+    # Weekends, the calendar holiday and days that do have rows are not reported
+    assert "2026-03-14" not in days and "2026-03-20" not in days and "2026-03-19" not in days
+    # Nothing outside the table's own span (before 03-09 or after 03-30)
+    assert all("2026-03-09" < d < "2026-03-30" for d in days)
+
+
+def test_missing_days_skips_empty_tables_and_respects_the_lookback(conn):
+    _seed_calendar(conn, date(2026, 1, 5), date(2026, 3, 31))
+    recent = ("2026-03-20", "2026-03-23", "2026-03-24", "2026-03-25", "2026-03-26", "2026-03-27")
+    for day in ("2026-01-05", "2026-01-09", *recent, "2026-03-30", "2026-03-31"):
+        _insert(conn, "markets_margin_alert", code="72030", date=day)
+    # The January hole is older than the 10-day window; margin_alert's span inside it is full
+    assert check_missing_days(conn, "2026-03-31", lookback_days=10) == {}
+    assert "markets_margin_alert" in check_missing_days(conn, "2026-03-31", lookback_days=120)
+    assert check_missing_days(conn, "2026-03-31", lookback_days=0) == {}
+
+
+def test_missing_days_known_empty_day_and_weekly_era(conn):
+    _seed_calendar(conn, date(2020, 9, 28), date(2020, 10, 5))
+    for day in ("2020-09-30", "2020-10-02"):  # 2020-10-01: TSE outage, no data upstream
+        _insert(conn, "markets_short_ratio", s33="0050", date=day)
+    # Margin interest was weekly before 2026-09-25, so its old gaps are not holes
+    for day in ("2020-09-28", "2020-10-05"):
+        _insert(conn, "markets_margin_interest", code="72030", date=day)
+    assert check_missing_days(conn, "2020-10-05", lookback_days=30) == {}
+
+
+def test_check_all_is_degraded_by_missing_days(conn):
+    today = date.today()
+    _seed_calendar(conn, today - timedelta(days=40), today)
+    weekdays = [
+        (today - timedelta(days=i)).isoformat()
+        for i in range(40, -1, -1)
+        if (today - timedelta(days=i)).weekday() < 5
+    ]
+    for day in weekdays[:3] + weekdays[-3:]:
+        _insert(conn, "equities_bars_daily", code="72030", date=day)
+    result = check_all(conn, "free")
+    assert result["missing_days"]["equities_bars_daily"] == weekdays[3:-3]
+    assert result["overall"] == "degraded"

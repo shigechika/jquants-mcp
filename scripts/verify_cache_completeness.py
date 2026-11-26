@@ -18,9 +18,12 @@ Usage:
     # Re-fetch gap and trailing-missing dates via J-Quants API
     uv run python scripts/verify_cache_completeness.py --check-gaps --auto-fix
 
+    # Audit the whole history for business days with no rows (default: last 90 days)
+    uv run python scripts/verify_cache_completeness.py --missing-days-lookback 4000
+
 Exit code:
-    0  all tables ok (and no gaps when --check-gaps is used)
-    1  one or more tables stale / empty / missing (or gaps found)
+    0  all tables ok, no business day without rows (and no gaps when --check-gaps is used)
+    1  one or more tables stale / empty / missing, a business day without rows (or gaps found)
 """
 
 from __future__ import annotations
@@ -263,6 +266,85 @@ def _business_days_between(conn: sqlite3.Connection, start: str, end: str) -> in
     return n
 
 
+# Tables that carry rows on every exchange business day: table -> (date column, first date
+# from which that holds, or None for the whole history). Margin interest was weekly before
+# its 2026-09-25 application date.
+_EVERY_BUSINESS_DAY_TABLES: dict[str, tuple[str, str | None]] = {
+    "equities_bars_daily": ("date", None),
+    "indices_bars_daily_topix": ("date", None),
+    "markets_short_ratio": ("date", None),
+    "markets_margin_interest": ("date", "2026-09-25"),
+    "markets_margin_alert": ("date", None),
+    "markets_breakdown": ("date", None),
+}
+
+# Business days on which the source itself has no data, so they are not reported.
+# 2020-10-01: the TSE system outage halted trading for the whole day.
+_KNOWN_EMPTY_DAYS: dict[str, frozenset[str]] = {
+    "markets_short_ratio": frozenset({"2020-10-01"}),
+}
+
+_MISSING_DAYS_DEFAULT_LOOKBACK = 90  # calendar days back from the latest trading day
+
+
+def check_missing_days(
+    conn: sqlite3.Connection,
+    trading_day: str,
+    lookback_days: int = _MISSING_DAYS_DEFAULT_LOOKBACK,
+) -> dict[str, list[str]]:
+    """Business days with no row at all, per table, inside each table's own date span.
+
+    The staleness checks only look at each table's newest date, so a hole in the
+    middle (a feed that skipped days and then resumed) goes unnoticed. This reports
+    the business days, per markets_calendar, that lie between a table's oldest and
+    newest dates within the lookback window and have no row.
+
+    Tables that are missing or empty are skipped (not every plan has them), and so
+    are days markets_calendar cannot classify. Returns only tables with missing days.
+    """
+    if lookback_days <= 0 or not _table_exists(conn, "markets_calendar"):
+        return {}
+    window_start = (date.fromisoformat(trading_day) - timedelta(days=lookback_days)).isoformat()
+    missing: dict[str, list[str]] = {}
+    for table, (date_col, daily_since) in _EVERY_BUSINESS_DAY_TABLES.items():
+        if not _table_exists(conn, table):
+            continue
+        try:
+            span = conn.execute(
+                f"SELECT MIN({date_col}) AS lo, MAX({date_col}) AS hi FROM {table}"
+            ).fetchone()
+            if span is None or span["lo"] is None:
+                continue
+            lo = max(str(span["lo"])[:10], window_start, daily_since or "")
+            hi = str(span["hi"])[:10]
+            if lo > hi:
+                continue
+            present = {
+                str(r[0])[:10]
+                for r in conn.execute(
+                    f"SELECT DISTINCT {date_col} FROM {table} WHERE {date_col} >= ?", (lo,)
+                )
+            }
+            calendar = conn.execute(
+                "SELECT date, data FROM markets_calendar WHERE date >= ? AND date <= ?", (lo, hi)
+            ).fetchall()
+        except sqlite3.OperationalError:
+            continue
+        known_empty = _KNOWN_EMPTY_DAYS.get(table, frozenset())
+        days = []
+        for row in calendar:
+            day = str(row["date"])[:10]
+            try:
+                cal = json.loads(row["data"]) if row["data"] else {}
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if _is_business_day(cal) and day not in present and day not in known_empty:
+                days.append(day)
+        if days:
+            missing[table] = sorted(days)
+    return missing
+
+
 def _check_markets_calendar(conn: sqlite3.Connection) -> dict:
     """markets_calendar should have thousands of trading day entries."""
     if not _table_exists(conn, "markets_calendar"):
@@ -417,7 +499,11 @@ def check_date_gaps(
 # ---------------------------------------------------------------------------
 
 
-def check_all(conn: sqlite3.Connection, plan: str) -> dict:
+def check_all(
+    conn: sqlite3.Connection,
+    plan: str,
+    missing_days_lookback: int = _MISSING_DAYS_DEFAULT_LOOKBACK,
+) -> dict:
     """Run all applicable checks and return a summary dict."""
     trading_day = _latest_trading_day(conn)
     plan_level = PLAN_LEVELS.get(plan, 0)
@@ -461,11 +547,13 @@ def check_all(conn: sqlite3.Connection, plan: str) -> dict:
             conn, "markets_breakdown", "date", trading_day
         )
 
+    missing_days = check_missing_days(conn, trading_day, missing_days_lookback)
+
     statuses = [t["status"] for t in tables.values()]
-    if all(s == "ok" for s in statuses):
-        overall = "ok"
-    elif any(s in ("error", "missing_table") for s in statuses):
+    if any(s in ("error", "missing_table") for s in statuses):
         overall = "error"
+    elif all(s == "ok" for s in statuses) and not missing_days:
+        overall = "ok"
     else:
         overall = "degraded"
 
@@ -474,6 +562,7 @@ def check_all(conn: sqlite3.Connection, plan: str) -> dict:
         "plan": plan,
         "trading_day": trading_day,
         "tables": tables,
+        "missing_days": missing_days,
     }
 
 
@@ -511,6 +600,9 @@ def _print_text(result: dict) -> None:
                     f"         {tool:<51}"
                     f" rows={tinfo['count']:<8} latest={tinfo.get('latest_date', '-')}"
                 )
+    for table, days in result.get("missing_days", {}).items():
+        shown = ", ".join(days[:5]) + (f", ... (+{len(days) - 5} more)" if len(days) > 5 else "")
+        print(f"  [!] {table:<35} {len(days)} business day(s) with no rows: {shown}")
 
 
 def _print_gaps(gaps_result: dict) -> None:
@@ -879,6 +971,17 @@ def main() -> None:
         action="store_true",
         help="Show the --auto-fix repair plan without making API calls. Requires --check-gaps --auto-fix.",
     )
+    parser.add_argument(
+        "--missing-days-lookback",
+        type=int,
+        default=_MISSING_DAYS_DEFAULT_LOOKBACK,
+        metavar="DAYS",
+        help=(
+            "Report business days with no rows in the daily tables within the last DAYS "
+            f"calendar days (default: {_MISSING_DAYS_DEFAULT_LOOKBACK}; 0 disables; "
+            "use a large value such as 4000 for a full-history audit)."
+        ),
+    )
     args = parser.parse_args()
 
     if (args.auto_fix or args.dry_run) and not args.check_gaps:
@@ -905,7 +1008,7 @@ def main() -> None:
     gaps_result = None
     fix_result = None
     try:
-        result = check_all(conn, plan)
+        result = check_all(conn, plan, args.missing_days_lookback)
 
         if args.check_gaps:
             gaps_result = check_date_gaps(
