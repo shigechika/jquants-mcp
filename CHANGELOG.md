@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.8.3](https://github.com/shigechika/jquants-mcp/compare/v1.8.2...v1.8.3) (2026-11-26)
+
+
+### Bug Fixes
+
+* **markets:** stop answering unproven ranges from the cache alone ([#675](https://github.com/shigechika/jquants-mcp/issues/675)) ([66aeba2](https://github.com/shigechika/jquants-mcp/commit/66aeba2084d7b2194b1224987eee350f5c820f89))
+
 ## [1.8.2](https://github.com/shigechika/jquants-mcp/compare/v1.8.1...v1.8.2) (2026-11-26)
 
 
