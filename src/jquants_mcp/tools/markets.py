@@ -642,6 +642,10 @@ async def _tier2_fallback(
     try:
         data = await client.get_all_pages(endpoint, params)
         result = {"count": len(data), "data": data}
+        if getattr(data, "truncated", False):
+            # Cut short by the page limit: say so, and do not cache it
+            result["partial"] = True
+            return result
         cache.put_response(cache_key, result, ttl_seconds=_publication_ttl(cache, endpoint, data))
         return result
     except RateLimitError as e:

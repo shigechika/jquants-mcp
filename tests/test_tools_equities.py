@@ -127,6 +127,18 @@ class TestGetEquitiesBarsDaily:
             result = await _call("get_equities_bars_daily", date="2024-01-04")
             assert result["count"] == 2
 
+    async def test_date_only_answer_cut_by_the_page_limit_is_partial_and_not_cached(self, mock_env):
+        from jquants_mcp.client import PagedRows
+
+        rows = PagedRows([{"Code": "72030", "Date": "2024-01-04", "O": 2800}])
+        rows.truncated = True
+        mock_fn = AsyncMock(return_value=rows)
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            first = await _call("get_equities_bars_daily", date="2024-01-04")
+            await _call("get_equities_bars_daily", date="2024-01-04")
+        assert first["partial"] is True
+        assert mock_fn.call_count == 2  # the cut-off answer was not kept for 24h
+
     async def test_plan_restriction_error(self, mock_env):
         with patch.object(
             mock_env["client"],

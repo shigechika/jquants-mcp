@@ -162,7 +162,11 @@ def register(
         try:
             data = await client.get_all_pages("/equities/bars/daily", params)
             result = {"count": len(data), "data": data}
-            cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
+            if getattr(data, "truncated", False):
+                # Cut short by the page limit: say so, and do not keep it for 24h
+                result["partial"] = True
+            else:
+                cache.put_response(cache_key, result, ttl_seconds=TTL_24H)
             return result
         except TOOL_API_ERRORS as e:
             return format_api_error(e)
@@ -241,6 +245,10 @@ def register(
         try:
             data = await client.get_all_pages("/equities/valuation", params)
             result = {"count": len(data), "data": data}
+            if getattr(data, "truncated", False):
+                # Cut short by the page limit: say so, and do not cache it
+                result["partial"] = True
+                return result
             # An empty answer (e.g. before the day is published) must not stick for 24h
             if data:
                 # A past day's cross-section never changes. A plan with a delay
@@ -840,6 +848,16 @@ def _clip_to_plan(result: Any, bounds: tuple[str | None, str | None]) -> Any:
     return {**result, "count": len(rows), "data": rows}
 
 
+def _is_iso_day(value: Any) -> bool:
+    """Whether ``value`` is exactly a real YYYY-MM-DD date."""
+    if not isinstance(value, str) or len(value) != 10:
+        return False
+    try:
+        return date_cls.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
+
+
 def _to_iso(d: str | None) -> str | None:
     """Convert a validated YYYYMMDD or YYYY-MM-DD date to YYYY-MM-DD."""
     parsed = _parse_iso_date(d)
@@ -1041,9 +1059,7 @@ async def _get_code_series_with_cache(
 
         # Ignore malformed date keys ("None", timestamps): one of them as the
         # latest cached date would corrupt the incremental "from"
-        cached_dates = {
-            d for d in cached_dates if isinstance(d, str) and len(d) == 10 and d[:4].isdigit()
-        }
+        cached_dates = {d for d in cached_dates if _is_iso_day(d)}
 
         full_fetch = True
         covered = False
