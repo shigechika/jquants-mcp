@@ -309,7 +309,10 @@ def check_missing_days(
     """
     if lookback_days <= 0 or not _table_exists(conn, "markets_calendar"):
         return {}
-    window_start = (date.fromisoformat(trading_day) - timedelta(days=lookback_days)).isoformat()
+    try:
+        window_start = (date.fromisoformat(trading_day) - timedelta(days=lookback_days)).isoformat()
+    except OverflowError:
+        window_start = date.min.isoformat()  # a lookback beyond any date: the whole history
     missing: dict[str, list[str]] = {}
     plan_level = PLAN_LEVELS.get(plan, 0)
     for table, (date_col, min_plan, daily_since) in _EVERY_BUSINESS_DAY_TABLES.items():
@@ -344,6 +347,8 @@ def check_missing_days(
                 cal = json.loads(row["data"]) if row["data"] else {}
             except (json.JSONDecodeError, TypeError):
                 continue
+            if not isinstance(cal, dict):
+                continue  # not a calendar record: cannot classify the day
             if _is_business_day(cal) and day not in present and day not in known_empty:
                 days.append(day)
         if days:

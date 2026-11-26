@@ -949,7 +949,7 @@ def test_missing_days_known_empty_day_and_weekly_era(conn):
     assert check_missing_days(conn, "2020-10-05", lookback_days=30) == {}
 
 
-def test_check_all_is_degraded_by_missing_days(conn):
+def test_check_all_is_degraded_by_missing_days(conn, monkeypatch):
     today = date.today()
     _seed_calendar(conn, today - timedelta(days=40), today)
     weekdays = [
@@ -959,6 +959,34 @@ def test_check_all_is_degraded_by_missing_days(conn):
     ]
     for day in weekdays[:3] + weekdays[-3:]:
         _insert(conn, "equities_bars_daily", code="72030", date=day)
+    # Make every per-table check pass, so only the missing days can degrade the result
+    import verify_cache_completeness as vcc
+
+    for name in (
+        "_check_daily_table",
+        "_check_earnings_calendar",
+        "_check_markets_calendar",
+        "_check_screener_results",
+    ):
+        monkeypatch.setattr(vcc, name, lambda *a, **k: {"status": "ok", "count": 1})
+
     result = check_all(conn, "free")
     assert result["missing_days"]["equities_bars_daily"] == weekdays[3:-3]
     assert result["overall"] == "degraded"
+    # Same cache with the check disabled: nothing else is wrong
+    assert check_all(conn, "free", missing_days_lookback=0)["overall"] == "ok"
+
+
+def test_missing_days_survives_bad_calendar_rows_and_a_huge_lookback(conn):
+    _seed_calendar(conn, date(2026, 3, 2), date(2026, 3, 6))
+    # A calendar row whose JSON is not an object must not crash the scan
+    conn.execute(
+        "INSERT OR REPLACE INTO markets_calendar (date, data, fetched_at) VALUES (?,?,?)",
+        ("2026-03-04", "[1, 2]", time.time()),
+    )
+    conn.commit()
+    for day in ("2026-03-02", "2026-03-06"):
+        _insert(conn, "markets_short_ratio", s33="0050", date=day)
+    # A lookback larger than any date range is clamped instead of overflowing
+    missing = check_missing_days(conn, "2026-03-06", lookback_days=10**9)
+    assert missing["markets_short_ratio"] == ["2026-03-03", "2026-03-05"]
