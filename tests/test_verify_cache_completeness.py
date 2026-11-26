@@ -914,18 +914,34 @@ def _seed_calendar(conn, start: date, end: date, holidays=()) -> None:
 
 def test_missing_days_reports_a_hole_between_cached_days(conn):
     """A feed that skipped days and then resumed leaves business days with no row."""
-    _seed_calendar(conn, date(2026, 3, 2), date(2026, 3, 31), holidays={"2026-03-20"})
-    for day in ("2026-03-09", "2026-03-10", "2026-03-11", "2026-03-19", "2026-03-30"):
+    _seed_calendar(conn, date(2025, 3, 3), date(2025, 3, 31), holidays={"2025-03-20"})
+    for day in ("2025-03-10", "2025-03-11", "2025-03-12", "2025-03-19", "2025-03-31"):
         _insert(conn, "markets_short_ratio", s33="0050", date=day)
-    missing = check_missing_days(conn, "2026-03-31", lookback_days=60)
+    missing = check_missing_days(conn, "2025-03-31", lookback_days=60)
     days = missing["markets_short_ratio"]
-    assert days[0] == "2026-03-12" and days[-1] == "2026-03-27"
+    assert days[0] == "2025-03-13" and days[-1] == "2025-03-28"
     # Weekends, the calendar holiday and days that do have rows are not reported
-    assert "2026-03-14" not in days and "2026-03-20" not in days and "2026-03-19" not in days
-    # Nothing outside the table's own span (before 03-09 or after 03-30)
-    assert all("2026-03-09" < d < "2026-03-30" for d in days)
+    assert "2025-03-15" not in days and "2025-03-20" not in days and "2025-03-19" not in days
+    # Nothing outside the table's own span (before 03-10 or after 03-31)
+    assert all("2025-03-10" < d < "2025-03-31" for d in days)
     # A plan that does not cover the table does not check it (data left from a higher plan)
-    assert check_missing_days(conn, "2026-03-31", lookback_days=60, plan="light") == {}
+    assert check_missing_days(conn, "2025-03-31", lookback_days=60, plan="light") == {}
+
+
+def test_missing_days_skips_days_that_cannot_be_filled(conn):
+    """The published cache's unrecoverable days are excused; a day next to them is not."""
+    _seed_calendar(conn, date(2026, 3, 9), date(2026, 5, 8), holidays={"2026-03-20", "2026-04-29"})
+    for day in ("2026-03-09", "2026-03-10", "2026-03-11", "2026-03-19", "2026-05-08"):
+        _insert(conn, "markets_short_ratio", s33="0050", date=day)
+    missing = check_missing_days(conn, "2026-05-08", lookback_days=90)
+    # 2026-03-12..04-30 is excused; the May days after the hole are still reported
+    assert missing["markets_short_ratio"] == [
+        "2026-05-01",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-05-06",
+        "2026-05-07",
+    ]
 
 
 def test_missing_days_skips_empty_tables_and_respects_the_lookback(conn):

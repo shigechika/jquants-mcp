@@ -280,10 +280,24 @@ _EVERY_BUSINESS_DAY_TABLES: dict[str, tuple[str, str, str | None]] = {
     "markets_breakdown": ("date", "premium", None),
 }
 
-# Business days on which the source itself has no data, so they are not reported.
-# 2020-10-01: the TSE system outage halted trading for the whole day.
+# Business days that are not reported because they cannot be filled:
+# - 2020-10-01: the TSE system outage halted trading for the whole day, so the
+#   source has no data at all.
+# - The other days were missed by the publisher's feed and are no longer
+#   obtainable on its plan: JPX keeps the daily sector short-selling PDFs for about
+#   a month and the margin-alert file for the latest day only, and the J-Quants
+#   endpoints (and their Bulk files) need a higher plan. Remove a day from here if
+#   it is ever filled, so a later loss of it is reported again.
+_SHORT_RATIO_MISSED_2026 = (
+    "2026-03-12 2026-03-13 2026-03-16 2026-03-17 2026-03-18 2026-03-23 2026-03-24 "
+    "2026-03-25 2026-03-26 2026-03-27 2026-03-30 2026-03-31 2026-04-01 2026-04-02 "
+    "2026-04-03 2026-04-06 2026-04-07 2026-04-08 2026-04-09 2026-04-10 2026-04-13 "
+    "2026-04-14 2026-04-15 2026-04-16 2026-04-17 2026-04-20 2026-04-21 2026-04-22 "
+    "2026-04-23 2026-04-24 2026-04-27 2026-04-28 2026-04-30"
+).split()
 _KNOWN_EMPTY_DAYS: dict[str, frozenset[str]] = {
-    "markets_short_ratio": frozenset({"2020-10-01"}),
+    "markets_short_ratio": frozenset({"2020-10-01", *_SHORT_RATIO_MISSED_2026}),
+    "markets_margin_alert": frozenset({"2018-08-09", "2026-10-21"}),
 }
 
 _MISSING_DAYS_DEFAULT_LOOKBACK = 90  # calendar days back from the latest trading day
