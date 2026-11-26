@@ -969,6 +969,29 @@ def test_ignore_days_rejects_a_malformed_line(tmp_path):
         load_ignore_days(str(gaps))
 
 
+def test_ignore_days_error_never_echoes_the_line(tmp_path):
+    """A credentials file passed by mistake must not end up in a job log."""
+    wrong = tmp_path / "env"
+    wrong.write_text("JQUANTS_API_KEY=supersecretvalue\n", encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_ignore_days(str(wrong))
+    assert "supersecretvalue" not in str(exc.value)
+    assert "env:1" in str(exc.value)
+
+
+def test_ignore_days_rejects_an_unknown_table(tmp_path):
+    gaps = tmp_path / "known-gaps.txt"
+    gaps.write_text("markets_short_rato 2026-03-12\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="known-gaps.txt:1: unknown table"):
+        load_ignore_days(str(gaps))
+
+
+def test_ignore_days_accepts_a_bom(tmp_path):
+    gaps = tmp_path / "known-gaps.txt"
+    gaps.write_bytes("﻿markets_short_ratio 2026-03-12\n".encode("utf-8"))
+    assert load_ignore_days(str(gaps)) == {"markets_short_ratio": {"2026-03-12"}}
+
+
 def test_missing_days_skips_empty_tables_and_respects_the_lookback(conn):
     _seed_calendar(conn, date(2026, 1, 5), date(2026, 3, 31))
     recent = ("2026-03-20", "2026-03-23", "2026-03-24", "2026-03-25", "2026-03-26", "2026-03-27")

@@ -303,10 +303,15 @@ def load_ignore_days(path: str) -> dict[str, set[str]]:
     without hiding the same days in other caches.
 
     Raises:
-        ValueError: A line is not ``table date`` with a real YYYY-MM-DD date.
+        ValueError: A line is not ``table date`` with a real YYYY-MM-DD date, or
+            names a table the missing-day check does not cover (a typo would
+            otherwise silently excuse nothing). The message names the file and
+            line but never echoes the line: a wrong file passed by mistake (a
+            credentials file, say) must not end up in a job log.
     """
     days: dict[str, set[str]] = {}
-    with open(path, encoding="utf-8") as fh:
+    # utf-8-sig: a file saved with a BOM must not glue it to the first table name
+    with open(path, encoding="utf-8-sig") as fh:
         for n, raw in enumerate(fh, 1):
             line = raw.split("#", 1)[0].strip()
             if not line:
@@ -316,7 +321,12 @@ def load_ignore_days(path: str) -> dict[str, set[str]]:
                 if len(parts) != 2 or date.fromisoformat(parts[1]).isoformat() != parts[1]:
                     raise ValueError
             except ValueError:
-                raise ValueError(f"{path}:{n}: expected 'table YYYY-MM-DD', got {raw.strip()!r}")
+                raise ValueError(f"{path}:{n}: expected 'table YYYY-MM-DD'") from None
+            if parts[0] not in _EVERY_BUSINESS_DAY_TABLES:
+                raise ValueError(
+                    f"{path}:{n}: unknown table; expected one of "
+                    + ", ".join(sorted(_EVERY_BUSINESS_DAY_TABLES))
+                )
             days.setdefault(parts[0], set()).add(parts[1])
     return days
 
