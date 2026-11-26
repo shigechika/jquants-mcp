@@ -976,14 +976,17 @@ async def _get_code_series_with_cache(
     table: str,
     endpoint: str,
     head_name: str,
-    code: str,
+    code: str | None,
     date: str | None,
     date_from: str | None,
     date_to: str | None,
     adj_factor_key: str | None = None,
     after_fetch: _AfterFetch | None = None,
 ) -> dict[str, Any]:
-    """Retrieve a per-stock daily series (one row per trading day) with Tier 1 cache.
+    """Retrieve a daily series (one row per trading day) with Tier 1 cache.
+
+    ``code`` selects one stock's series; None is for a table that holds a single
+    series keyed by date alone (TOPIX).
 
     The cache alone answers a range only when every expected trading day in it
     is present (jquants-mcp#625). When just the tail is missing, only that tail
@@ -997,7 +1000,8 @@ async def _get_code_series_with_cache(
     retention floor) are dropped using a short-lived per-code head record.
     """
     # Normalize 4-digit codes to 5 digits (ordinary shares: trailing 0)
-    cache_code = code + "0" if len(code) == 4 else code
+    cache_code = code + "0" if code and len(code) == 4 else code
+    key_filter: dict[str, str] = {"code": cache_code} if cache_code else {}
     # The cache stores ISO dates; the tool also accepts YYYYMMDD
     lo = _to_iso(date or date_from)
     hi = _to_iso(date or date_to)
@@ -1007,13 +1011,13 @@ async def _get_code_series_with_cache(
         # Fetch existing data from the cache (look up by 5-digit code)
         cached_data = cache.get_rows(
             table,
-            key_filter={"code": cache_code},
+            key_filter=key_filter,
             date_from=lo,
             date_to=hi,
         )
 
         # Request from the API (pass the original code and dates as-is)
-        params: dict[str, Any] = {"code": code}
+        params: dict[str, Any] = {"code": code} if code else {}
         if date:
             params["date"] = date
         if date_from:
@@ -1024,10 +1028,16 @@ async def _get_code_series_with_cache(
         # Check which dates are already cached
         cached_dates = cache.get_cached_dates(
             table,
-            key_filter={"code": cache_code},
+            key_filter=key_filter,
             date_from=lo,
             date_to=hi,
         )
+
+        # Ignore malformed date keys ("None", timestamps): one of them as the
+        # latest cached date would corrupt the incremental "from"
+        cached_dates = {
+            d for d in cached_dates if isinstance(d, str) and len(d) == 10 and d[:4].isdigit()
+        }
 
         full_fetch = True
         covered = False
@@ -1115,7 +1125,7 @@ async def _get_code_series_with_cache(
 
         if api_data:
             if after_fetch is not None:
-                api_data, drop_cached = await after_fetch(api_data, full_fetch, cache_code)
+                api_data, drop_cached = await after_fetch(api_data, full_fetch, cache_code or "")
                 if drop_cached:
                     cached_data = []
 
@@ -1123,7 +1133,7 @@ async def _get_code_series_with_cache(
             cache.put_rows(
                 table,
                 api_data,
-                key_columns=["Code", "Date"],
+                key_columns=["Code", "Date"] if code else ["Date"],
                 adj_factor_key=adj_factor_key,
             )
 

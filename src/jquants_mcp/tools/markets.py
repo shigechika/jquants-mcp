@@ -446,21 +446,12 @@ async def _get_with_tier1_cache(
             date_to=effective_date_to,
         )
 
-        if cached_dates and not date:
-            # Incremental fetch: retrieve everything after the latest cached date
-            latest_cached = max(cached_dates)
-            # Compare against the caller's form on purpose: this shortcut does not
-            # check gaps or missing keys, so a compact date_to (which never
-            # compares >= an ISO date) keeps asking the API, as before
-            if date_to and latest_cached >= date_to:
-                logger.info("%s 全データキャッシュ済み (%d件)", table, len(cached_data))
-                return {"count": len(cached_data), "data": cached_data, "source": "cache"}
-            # Same reason for the incremental start: it assumes no gap before
-            # latest_cached. A compact date_from never matched cached rows before
-            # dates were normalized, so it kept the caller's start; keep that.
-            if date_from == iso_from:
-                params["from"] = latest_cached
-
+        # Always ask the API for the requested range. These tables cannot prove a
+        # cached range complete: a key's series may be sparse by nature (margin
+        # alerts, weekly margin interest), a date-only query asks for every key,
+        # and whole days can be missing in the middle. The old "latest cached date
+        # >= date_to" shortcut returned such ranges as complete, and starting the
+        # fetch at the latest cached date never filled a gap before it.
         try:
             api_data = await client.get_all_pages(endpoint, params)
         except (APIError, RateLimitError) as e:
@@ -683,18 +674,14 @@ async def _get_calendar_with_cache(
         if date_to:
             params["to"] = date_to
 
-        if cached_dates:
-            latest_cached = max(cached_dates)
-            # Caller's form on purpose, as in _get_with_tier1_cache: the shortcut
-            # does not check gaps, so a compact date_to keeps asking the API
-            if date_to and latest_cached >= date_to:
-                logger.info("カレンダー全データキャッシュ済み (%d件)", len(cached_data))
-                # Apply the hol_div filter
-                filtered = _filter_hol_div(cached_data, hol_div)
-                return {"count": len(filtered), "data": filtered, "source": "cache"}
-            # A compact date_from keeps the caller's start, as in _get_with_tier1_cache
-            if date_from == iso_from:
-                params["from"] = latest_cached
+        # The calendar has one row per calendar day, so a bounded range is complete
+        # exactly when every day of it is cached. Checked on the unfiltered rows:
+        # hol_div only narrows what is returned. Anything else asks the API for
+        # the requested range.
+        if _calendar_range_is_cached(iso_from, iso_to, cached_dates):
+            logger.info("Calendar range fully cached (%d rows)", len(cached_data))
+            filtered = _filter_hol_div(cached_data, hol_div)
+            return {"count": len(filtered), "data": filtered, "source": "cache"}
 
         # The calendar endpoint has no pagination. Fall back to the cache on
         # API failure, mirroring _get_with_tier1_cache's fallback — without
@@ -753,6 +740,31 @@ async def _get_calendar_with_cache(
 
     except TOOL_API_ERRORS as e:
         return format_api_error(e)
+
+
+def _calendar_range_is_cached(
+    iso_from: str | None, iso_to: str | None, cached_dates: set[str]
+) -> bool:
+    """Whether every calendar day of [iso_from, iso_to] is among ``cached_dates``.
+
+    False for an open-ended or unparsable range: without both bounds there is no
+    fixed set of days to check.
+    """
+    if not iso_from or not iso_to:
+        return False
+    try:
+        start, end = date.fromisoformat(iso_from), date.fromisoformat(iso_to)
+    except ValueError:
+        return False
+    if start > end:
+        return False
+    days = {str(d)[:10] for d in cached_dates}
+    day = start
+    while day <= end:
+        if day.isoformat() not in days:
+            return False
+        day += timedelta(days=1)
+    return True
 
 
 def _filter_hol_div(data: list[dict[str, Any]], hol_div: str | None) -> list[dict[str, Any]]:

@@ -152,6 +152,27 @@ def _insert_margin(
     )
 
 
+def _seed_calendar_matching_topix(cache: CacheStore, end: str = "2026-05-02", days: int = 100):
+    """Write markets_calendar so the business days are exactly the cached TOPIX dates.
+
+    get_indices_bars_daily_topix serves a range from the cache only when every
+    expected trading day of it is cached, so a test that wants a cache-only answer
+    needs a calendar under which its seeded rows cover the range.
+    """
+    from datetime import date as date_, timedelta
+
+    cached = {
+        str(d)[:10]
+        for d in cache.get_cached_dates("indices_bars_daily_topix", key_filter={}, plan="premium")
+    }
+    last = date_.fromisoformat(end)
+    rows = []
+    for i in range(days + 1):
+        day = (last - timedelta(days=i)).isoformat()
+        rows.append({"Date": day, "HolDiv": "1" if day in cached else "0"})
+    cache.put_rows("markets_calendar", rows, key_columns=["Date"])
+
+
 def _make_topix_rows(
     n: int = 50,
     last_date: str = "2026-05-02",
@@ -1228,6 +1249,7 @@ class TestGetMarketBriefing:
         # Pin _plan_detected and supply a stub client so the indices tool can
         # acquire a client without triggering plan auto-detection (which would
         # otherwise fire an API call and AuthenticationError on no key).
+        _seed_calendar_matching_topix(cache)
         stub_client = MagicMock(spec=JQuantsClient)
         with (
             patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
@@ -1275,6 +1297,7 @@ class TestGetMarketBriefing:
         conn.commit()
         conn.close()
 
+        _seed_calendar_matching_topix(cache)
         stub_client = MagicMock(spec=JQuantsClient)
         with (
             patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
@@ -1308,6 +1331,7 @@ class TestGetMarketBriefing:
         conn.close()
         # 50 rows: alternating ±0.5% — no big drops, so distribution_count=0
         cache.put_rows("indices_bars_daily_topix", _make_topix_rows(n=50), key_columns=["Date"])
+        _seed_calendar_matching_topix(cache)
         stub_client = MagicMock(spec=JQuantsClient)
         with (
             patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
@@ -1343,6 +1367,7 @@ class TestGetMarketBriefing:
         # index (rows 27–30), placing all 4 distribution days within the 25-session window.
         rows = _make_topix_rows(n=50, drops_at=[26, 27, 28, 29])
         cache.put_rows("indices_bars_daily_topix", rows, key_columns=["Date"])
+        _seed_calendar_matching_topix(cache)
         stub_client = MagicMock(spec=JQuantsClient)
         with (
             patch.object(server_module, "_settings", Settings(jquants_plan="premium")),
@@ -1376,6 +1401,7 @@ class TestGetMarketBriefing:
         # 50 rows in continuous downtrend: current close is the minimum
         rows = _make_topix_rows(n=50, downtrend=True)
         cache.put_rows("indices_bars_daily_topix", rows, key_columns=["Date"])
+        _seed_calendar_matching_topix(cache)
         stub_client = MagicMock(spec=JQuantsClient)
         with (
             patch.object(server_module, "_settings", Settings(jquants_plan="premium")),

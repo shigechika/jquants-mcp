@@ -179,8 +179,23 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   fallback without calling the data endpoint. Exception: when a split is detected
   and the full-range refetch fails, the error surfaces with no fallback; the code's
   cached rows (pre-split adjusted prices) are already invalidated, so they cannot
-  answer a later request. `get_equities_valuation` shares
-  this path.
+  answer a later request. `get_equities_valuation` and
+  `get_indices_bars_daily_topix` (a single key-less series) share this path.
+- The `tools/markets.py` tables cannot use that proof, so they do not answer a range
+  from the cache alone. `get_markets_margin_interest`, `get_markets_margin_alert`,
+  `get_markets_short_ratio` and `get_markets_breakdown` ask the API for the requested
+  range on every call and merge the cached rows in; the cache is the fallback when
+  that call raises `APIError` or `RateLimitError` (`partial=true` unless a single
+  date for one key is cached). The reasons: a key's series can be sparse by nature
+  (margin alerts list an issue only while designated; margin interest was weekly
+  before 2026-09-25), a date-only query asks for every key, and whole days can be
+  missing in the middle (`markets_short_ratio` has no rows for 2026-03-12..04-30 in
+  the published cache). The former "latest cached date >= date_to" shortcut returned
+  such ranges as complete. Do not reintroduce a shortcut without a proof that covers
+  those cases. `get_markets_calendar` is the exception: one row per calendar day, so
+  a bounded range is served from the cache exactly when every day of it is cached.
+  `scripts/verify_cache_completeness.py` reports business days with no rows in these
+  tables.
 - This is by design for the common case: cache.db is a **published snapshot**
   (jpx-short-report's `daily.sh` re-fetches and re-exports it once a weekday;
   consumers download the new artifact wholesale). A blanket TTL would fight that
