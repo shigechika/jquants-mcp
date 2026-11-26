@@ -11,6 +11,7 @@ from mcp.server.mcpserver import MCPServer
 from ..cache.publication import JST, ttl_until_next_publication
 from ..cache.store import TTL_24H, CacheStore, make_cache_key
 from ..client import JQuantsClient
+from .equities import _get_code_series_with_cache
 from ..exceptions import (
     TOOL_API_ERRORS,
     APIError,
@@ -61,8 +62,9 @@ def register(
         to retrieve full row data for the latest available date. Specifying any
         filter parameter (``code``, ``date``, etc.) always returns full data.
 
-        partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Standard / Premium
 
@@ -85,7 +87,7 @@ def register(
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
-        # When any parameter is given, use the Tier 1 cache for incremental fetch
+        # When any parameter is given, go through the Tier 1 cache path
         if code or date or date_from or date_to:
             return await _get_with_tier1_cache(
                 client,
@@ -124,8 +126,9 @@ def register(
         Use for 追証, 規制銘柄, 増担保規制, 信用規制, margin restriction/alert.
         For margin balances (買残・売残・貸借倍率), use get_markets_margin_interest instead.
 
-        partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Standard / Premium
 
@@ -189,8 +192,9 @@ def register(
         to retrieve full row data for the latest available date. Specifying any
         filter parameter (``s33``, ``date``, etc.) always returns full data.
 
-        partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Standard / Premium
 
@@ -302,8 +306,9 @@ def register(
         Returns daily buy/sell breakdown by investor type (proprietary, brokered, foreign, etc.)
         per individual issue.
 
-        partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Premium
 
@@ -358,8 +363,9 @@ def register(
         Returns trading calendar data including trading days, holidays, and half-day classifications.
         All data is returned in a single response without pagination.
 
-        partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Free / Light / Standard / Premium
 
@@ -368,6 +374,14 @@ def register(
             date_from: Start date for range query (YYYYMMDD or YYYY-MM-DD)
             date_to: End date for range query (YYYYMMDD or YYYY-MM-DD)
         """
+        # The cache lookup and the completeness check both rely on these two forms
+        errors = collect_errors(
+            validate_date(date_from, "date_from"),
+            validate_date(date_to, "date_to"),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -401,9 +415,29 @@ async def _get_with_tier1_cache(
 ) -> dict[str, Any]:
     """Generic Tier 1 cache retrieval for market tools.
 
+    One key's range on a table with a row for that key on every trading day is
+    provable, so it goes through the completeness proof of
+    ``_get_code_series_with_cache`` and needs no API call once covered. Everything
+    else asks the API for the requested range (see below).
+
     Args:
         date_field: Date field name in the API response (e.g. "Date", "PubDate").
     """
+    if key_value and not date and _has_a_row_every_trading_day(table, _iso(date_from)):
+        return await _get_code_series_with_cache(
+            client,
+            cache,
+            table=table,
+            endpoint=endpoint,
+            head_name=f"{table}_head",
+            code=key_value,
+            date=None,
+            date_from=date_from,
+            date_to=date_to,
+            key_name=key_name,
+            key_column=key_column,
+        )
+
     try:
         # Build the key filter
         key_filter: dict[str, str] = {}
@@ -438,30 +472,23 @@ async def _get_with_tier1_cache(
         if date_to:
             params["to"] = date_to
 
-        # Check which dates are already cached
-        cached_dates = cache.get_cached_dates(
-            table,
-            key_filter=key_filter,
-            date_from=effective_date_from,
-            date_to=effective_date_to,
-        )
-
-        # Always ask the API for the requested range. These tables cannot prove a
-        # cached range complete: a key's series may be sparse by nature (margin
-        # alerts, weekly margin interest), a date-only query asks for every key,
-        # and whole days can be missing in the middle. The old "latest cached date
-        # >= date_to" shortcut returned such ranges as complete, and starting the
-        # fetch at the latest cached date never filled a gap before it.
+        # Always ask the API for the requested range. What reaches this point
+        # cannot be proven complete from the cache: a key's series may be sparse by
+        # nature (margin alerts, weekly margin interest), a date-only query asks for
+        # every key, and whole days can be missing in the middle. The old "latest
+        # cached date >= date_to" shortcut returned such ranges as complete, and
+        # starting the fetch at the latest cached date never filled a gap before it.
         try:
             api_data = await client.get_all_pages(endpoint, params)
         except (APIError, RateLimitError) as e:
-            # Includes a rate limit that outlasted the client's retries
+            # Includes a rate limit that outlasted the client's retries, and a
+            # plan that does not cover the endpoint
             if cached_data:
-                # A range reaching this point was not proven covered (a covered
-                # one returned above). A single date for one key is complete when
-                # cached; a date-only query asks for every key, and one cached
-                # key does not prove the rest are there.
-                partial = iso_date not in cached_dates if (iso_date and key_value) else True
+                # Nothing here is proven covered. The exception is a single date
+                # for one key: the lookup is bounded to that day, so the cached
+                # row is the whole answer. A date-only query asks for every key,
+                # and one cached key does not prove the rest are there.
+                partial = not (iso_date and key_value)
                 logger.info(
                     "%s failed (%s), returning cached %s (%d rows, partial=%s)",
                     endpoint,
@@ -500,7 +527,11 @@ async def _get_with_tier1_cache(
         merged.sort(key=lambda r: r.get(date_field, ""))
 
         source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")
-        return {"count": len(merged), "data": merged, "source": source}
+        result = {"count": len(merged), "data": merged, "source": source}
+        if getattr(api_data, "truncated", False):
+            # The page limit cut the API answer short: later rows are missing
+            result["partial"] = True
+        return result
 
     except TOOL_API_ERRORS as e:
         return format_api_error(e)
@@ -740,6 +771,25 @@ async def _get_calendar_with_cache(
 
     except TOOL_API_ERRORS as e:
         return format_api_error(e)
+
+
+# Margin interest became daily with the 2026-09-25 application date; before that it
+# was weekly, so a per-code series has no row on most trading days.
+_MARGIN_INTEREST_DAILY_SINCE = "2026-09-25"
+
+
+def _has_a_row_every_trading_day(table: str, iso_from: str | None) -> bool:
+    """Whether one key's series in ``table`` has a row on every trading day from ``iso_from``.
+
+    True for sector short-sale ratios and the trade breakdown, and for margin
+    interest when the range starts in its daily era. Margin alerts list an issue
+    only while it is designated, so its per-code series is sparse by nature.
+    """
+    if table in ("markets_short_ratio", "markets_breakdown"):
+        return True
+    if table == "markets_margin_interest":
+        return bool(iso_from) and iso_from >= _MARGIN_INTEREST_DAILY_SINCE
+    return False
 
 
 def _calendar_range_is_cached(

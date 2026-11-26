@@ -86,8 +86,9 @@ def register(
 
         Returns daily OHLC data for TOPIX using a dedicated endpoint.
         Supports efficient incremental fetching via row-level (Tier 1) cache.
-        partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Light / Standard / Premium
 

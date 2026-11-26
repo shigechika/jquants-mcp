@@ -221,3 +221,22 @@ class TestPagination:
         )
         result = await c.get_all_pages("/test")
         assert len(result) == 1
+        # The caller can tell this cut-off answer from a whole one
+        assert result.truncated is True
+
+    @respx.mock
+    async def test_whole_answer_is_not_truncated(self, tmp_path):
+        settings = Settings(
+            jquants_api_key="test-key",
+            jquants_base_url="https://api.example.com/v2",
+            jquants_plan="premium",
+            jquants_cache_dir=str(tmp_path),
+            max_retries=2,
+            retry_base_delay=0.01,
+            max_pages=1,
+        )
+        c = JQuantsClient(settings)
+        respx.get("https://api.example.com/v2/test").respond(200, json={"data": [{"id": 1}]})
+        result = await c.get_all_pages("/test")
+        assert result == [{"id": 1}]
+        assert result.truncated is False

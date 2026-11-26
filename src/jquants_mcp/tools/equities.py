@@ -119,8 +119,9 @@ def register(
         ex-rights corporate action on that date (1=split/free share allotment, 2=merger,
         3=rights issue); null when none. For multi-stock bulk downloads use get_bulk_list
         (date-only queries are very slow). code only → full history; code+range → period;
-        date only → all stocks on that date. partial=true: the API failed and only
-        the (incomplete) cached rows were returned.
+        date only → all stocks on that date. partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Free / Light / Standard / Premium (API fallback on cache miss)
         Retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all.
@@ -182,8 +183,9 @@ def register(
         from the MktCap get_equities_bars_daily returns until 2026-12-28). Per-share
         values are as of each date, not split-adjusted. All fields null for ETF/ETN/REIT.
         code only → full history; code+range → period; date only → all stocks on that
-        date. partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        date. partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Free / Light / Standard / Premium (API fallback on cache miss)
         Retention: Free=2y (12w delay), Light=5y, Standard=10y, Premium=all.
@@ -982,11 +984,15 @@ async def _get_code_series_with_cache(
     date_to: str | None,
     adj_factor_key: str | None = None,
     after_fetch: _AfterFetch | None = None,
+    key_name: str = "code",
+    key_column: str = "Code",
 ) -> dict[str, Any]:
     """Retrieve a daily series (one row per trading day) with Tier 1 cache.
 
-    ``code`` selects one stock's series; None is for a table that holds a single
-    series keyed by date alone (TOPIX).
+    ``code`` selects one key's series; None is for a table that holds a single
+    series keyed by date alone (TOPIX). The key is a stock code by default;
+    ``key_name`` / ``key_column`` name another key's cache column / API parameter
+    and its row field (e.g. ``s33`` / ``S33`` for sector short-sale ratios).
 
     The cache alone answers a range only when every expected trading day in it
     is present (jquants-mcp#625). When just the tail is missing, only that tail
@@ -1000,12 +1006,12 @@ async def _get_code_series_with_cache(
     retention floor) are dropped using a short-lived per-code head record.
     """
     # Normalize 4-digit codes to 5 digits (ordinary shares: trailing 0)
-    cache_code = code + "0" if code and len(code) == 4 else code
-    key_filter: dict[str, str] = {"code": cache_code} if cache_code else {}
+    cache_code = code + "0" if code and len(code) == 4 and key_name == "code" else code
+    key_filter: dict[str, str] = {key_name: cache_code} if cache_code else {}
     # The cache stores ISO dates; the tool also accepts YYYYMMDD
     lo = _to_iso(date or date_from)
     hi = _to_iso(date or date_to)
-    head_key = make_cache_key(head_name, {"code": cache_code, "plan": cache.effective_plan()})
+    head_key = make_cache_key(head_name, {key_name: cache_code, "plan": cache.effective_plan()})
 
     try:
         # Fetch existing data from the cache (look up by 5-digit code)
@@ -1017,7 +1023,7 @@ async def _get_code_series_with_cache(
         )
 
         # Request from the API (pass the original code and dates as-is)
-        params: dict[str, Any] = {"code": code} if code else {}
+        params: dict[str, Any] = {key_name: code} if code else {}
         if date:
             params["date"] = date
         if date_from:
@@ -1133,7 +1139,7 @@ async def _get_code_series_with_cache(
             cache.put_rows(
                 table,
                 api_data,
-                key_columns=["Code", "Date"] if code else ["Date"],
+                key_columns=[key_column, "Date"] if code else ["Date"],
                 adj_factor_key=adj_factor_key,
             )
 
@@ -1141,12 +1147,12 @@ async def _get_code_series_with_cache(
         seen_keys: set[str] = set()
         merged: list[dict[str, Any]] = []
         for row in api_data:
-            key = f"{row.get('Code')}_{row.get('Date')}"
+            key = f"{row.get(key_column)}_{row.get('Date')}"
             if key not in seen_keys:
                 seen_keys.add(key)
                 merged.append(row)
         for row in cached_data:
-            key = f"{row.get('Code')}_{row.get('Date')}"
+            key = f"{row.get(key_column)}_{row.get('Date')}"
             if key not in seen_keys:
                 seen_keys.add(key)
                 merged.append(row)
@@ -1155,7 +1161,11 @@ async def _get_code_series_with_cache(
         merged.sort(key=lambda r: r.get("Date", ""))
 
         source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")
-        return {"count": len(merged), "data": merged, "source": source}
+        result = {"count": len(merged), "data": merged, "source": source}
+        if getattr(api_data, "truncated", False):
+            # The page limit cut the API answer short: later rows are missing
+            result["partial"] = True
+        return result
 
     except TOOL_API_ERRORS as e:
         return format_api_error(e)

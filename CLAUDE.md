@@ -181,21 +181,26 @@ uv run python scripts/smoke_test.py --only earnings --traceback   # Debug one to
   cached rows (pre-split adjusted prices) are already invalidated, so they cannot
   answer a later request. `get_equities_valuation` and
   `get_indices_bars_daily_topix` (a single key-less series) share this path.
-- The `tools/markets.py` tables cannot use that proof, so they do not answer a range
-  from the cache alone. `get_markets_margin_interest`, `get_markets_margin_alert`,
-  `get_markets_short_ratio` and `get_markets_breakdown` ask the API for the requested
-  range on every call and merge the cached rows in; the cache is the fallback when
-  that call raises `APIError` or `RateLimitError` (`partial=true` unless a single
-  date for one key is cached). The reasons: a key's series can be sparse by nature
-  (margin alerts list an issue only while designated; margin interest was weekly
-  before 2026-09-25), a date-only query asks for every key, and whole days can be
-  missing in the middle (`markets_short_ratio` has no rows for 2026-03-12..04-30 in
-  the published cache). The former "latest cached date >= date_to" shortcut returned
-  such ranges as complete. Do not reintroduce a shortcut without a proof that covers
-  those cases. `get_markets_calendar` is the exception: one row per calendar day, so
-  a bounded range is served from the cache exactly when every day of it is cached.
-  `scripts/verify_cache_completeness.py` reports business days with no rows in these
-  tables.
+- In `tools/markets.py`, only what can be proven is answered from the cache alone.
+  One key's range uses the same proof where that key has a row on every trading day
+  (`_has_a_row_every_trading_day`): `get_markets_short_ratio` with `s33`,
+  `get_markets_breakdown` with `code`, and `get_markets_margin_interest` with `code`
+  for a range starting on or after 2026-09-25 (it was weekly before). A plan that
+  does not cover the endpoint therefore still gets a covered range without a doomed
+  request. Everything else asks the API for the requested range on every call and
+  merges the cached rows in: `get_markets_margin_alert` (an issue is listed only
+  while designated, so its series is sparse by nature), margin interest before the
+  daily era, and every date-only or key-less range (it asks for every key). The
+  cache is then the fallback when the call raises `APIError` (including a plan
+  restriction) or `RateLimitError`, with `partial=true` unless it is a single date
+  for one key. The former "latest cached date >= date_to" shortcut returned ranges
+  with a hole as complete (`markets_short_ratio` has no rows for 2026-03-12..04-30
+  in the published cache). Do not reintroduce a shortcut without a proof.
+  `get_markets_calendar` has one row per calendar day, so a bounded range is served
+  from the cache exactly when every day of it is cached. An answer the page limit
+  (`MAX_PAGES`) cut short carries `partial=true` (`PagedRows.truncated`).
+  `scripts/verify_cache_completeness.py` reports business days with no rows in
+  these tables.
 - This is by design for the common case: cache.db is a **published snapshot**
   (jpx-short-report's `daily.sh` re-fetches and re-exports it once a weekday;
   consumers download the new artifact wholesale). A blanket TTL would fight that
