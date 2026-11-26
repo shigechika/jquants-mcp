@@ -822,7 +822,8 @@ class TestGetMarketsCalendar:
             result = await _call(
                 "get_markets_calendar", hol_div="1", date_from="2024-01-04", date_to="2024-01-06"
             )
-        assert mock_fn.call_args.args[1]["from"] == "2024-01-04"
+        # The API is asked for every day (no hol_div), so the range can become complete
+        assert mock_fn.call_args.args[1] == {"from": "2024-01-04", "to": "2024-01-06"}
         assert [r["Date"] for r in result["data"]] == ["2024-01-04", "2024-01-05"]
 
     async def test_compact_dates_hit_a_fully_cached_range(self, mock_env):

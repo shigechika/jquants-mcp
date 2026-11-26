@@ -698,8 +698,9 @@ async def _get_calendar_with_cache(
         )
 
         params: dict[str, Any] = {}
-        if hol_div:
-            params["hol_div"] = hol_div
+        # hol_div is not sent: the API would return only the matching days, and
+        # storing those could never make a range "every calendar day cached".
+        # The filter is applied locally to whatever is returned.
         if date_from:
             params["from"] = date_from
         if date_to:
