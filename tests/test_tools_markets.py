@@ -83,8 +83,7 @@ class TestGetMarketsMarginInterest:
             assert result2["count"] == 2
             assert mock_fn.call_count == 2
 
-    async def test_tier1_cache_full_hit(self, mock_env):
-        """Tier 1 キャッシュ: 全期間キャッシュ済みなら API 呼び出しなし。"""
+    async def test_cached_range_still_asks_the_api(self, mock_env):
         mock_data = [
             {"Code": "72030", "Date": "2024-01-04", "LoanBalance": 1000000},
             {"Code": "72030", "Date": "2024-01-05", "LoanBalance": 1100000},
@@ -104,8 +103,10 @@ class TestGetMarketsMarginInterest:
                 date_to="2024-01-05",
             )
             assert result["count"] == 2
-            assert result["source"] == "cache"
-            assert mock_fn.call_count == 1
+            # A cached range cannot be proven complete for these tables, so
+            # it asks the API again; cached and API rows are merged
+            assert result["source"] == "cache+api"
+            assert mock_fn.call_count == 2
 
     async def test_api_error_returns_error_dict(self, mock_env):
         with patch.object(
@@ -166,49 +167,96 @@ class TestGetMarketsMarginInterest:
         # The API still gets the caller's date form
         assert mock_fn.call_args.args[1]["date"] == "20240104"
 
-    async def test_compact_range_still_asks_the_api(self, mock_env):
+    @staticmethod
+    def _q1_rows() -> list[dict]:
+        return [
+            {"Code": "72030", "Date": d, "LoanBalance": 1000000}
+            for d in ("2024-01-05", "2024-02-15", "2024-03-29")
+        ]
+
+    async def test_range_with_only_the_end_cached_asks_the_api(self, mock_env):
+        """Only 03-29 is cached: the old shortcut returned that one row for 01-04..03-29."""
         mock_env["cache"].put_rows(
-            "markets_margin_interest",
-            [
-                {"Code": "72030", "Date": "2024-01-04", "LoanBalance": 1000000},
-                {"Code": "72030", "Date": "2024-01-05", "LoanBalance": 1100000},
-            ],
-            key_columns=["Code", "Date"],
+            "markets_margin_interest", self._q1_rows()[-1:], key_columns=["Code", "Date"]
         )
+        mock_fn = AsyncMock(return_value=self._q1_rows())
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_markets_margin_interest",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-03-29",
+            )
+        assert mock_fn.call_count == 1
+        assert mock_fn.call_args.args[1]["from"] == "2024-01-04"
+        assert result["count"] == 3
+
+    async def test_answer_cut_by_the_page_limit_is_flagged_partial(self, mock_env):
+        """A date-wide range can exceed max_pages; the cut-off answer must say so."""
+        from jquants_mcp.client import PagedRows
+
+        rows = PagedRows(self._q1_rows()[:2])
+        rows.truncated = True
+        mock_fn = AsyncMock(return_value=rows)
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_markets_margin_interest", date_from="2024-01-04", date_to="2024-03-29"
+            )
+        assert result["count"] == 2
+        assert result["partial"] is True
+
+    async def test_range_with_a_middle_day_cached_asks_from_the_start(self, mock_env):
+        """Only 02-15 is cached: the old incremental fetch started there and lost January."""
+        mock_env["cache"].put_rows(
+            "markets_margin_interest", self._q1_rows()[1:2], key_columns=["Code", "Date"]
+        )
+        mock_fn = AsyncMock(return_value=self._q1_rows())
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_markets_margin_interest",
+                code="72030",
+                date_from="2024-01-04",
+                date_to="2024-03-29",
+            )
+        assert mock_fn.call_args.args[1]["from"] == "2024-01-04"
+        assert [r["Date"] for r in result["data"]] == ["2024-01-05", "2024-02-15", "2024-03-29"]
+
+    async def test_compact_range_behaves_like_iso(self, mock_env):
+        """YYYYMMDD finds the cached rows and still asks the API in the caller's form."""
+        mock_env["cache"].put_rows(
+            "markets_margin_interest", self._q1_rows()[-1:], key_columns=["Code", "Date"]
+        )
+        mock_fn = AsyncMock(return_value=self._q1_rows()[:2])
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_markets_margin_interest",
+                code="72030",
+                date_from="20240104",
+                date_to="20240329",
+            )
+        assert mock_fn.call_args.args[1] == {"code": "72030", "from": "20240104", "to": "20240329"}
+        # API rows merged with the cached 03-29 row
+        assert result["count"] == 3
+        assert result["source"] == "cache+api"
+
+    async def test_daily_era_code_range_is_proven_and_served_from_cache(self, mock_env):
+        """Daily since 2026-09-25: a code has a row every trading day, so coverage is provable."""
+        rows = [
+            {"Code": "72030", "Date": d, "LoanBalance": 1000000}
+            for d in ("2026-10-01", "2026-10-02")  # Thu, Fri
+        ]
+        mock_env["cache"].put_rows("markets_margin_interest", rows, key_columns=["Code", "Date"])
         mock_fn = AsyncMock(return_value=[])
         with patch.object(mock_env["client"], "get_all_pages", mock_fn):
             result = await _call(
                 "get_markets_margin_interest",
-                code="72030",
-                date_from="20240104",
-                date_to="20240105",
+                code="7203",
+                date_from="2026-10-01",
+                date_to="2026-10-02",
             )
-        # The latest-date shortcut checks no gaps, so it stays limited to the
-        # caller's ISO form; the cached rows are still found and merged
-        assert mock_fn.call_count == 1
+        assert mock_fn.call_count == 0
+        assert result["source"] == "cache"
         assert result["count"] == 2
-
-    async def test_compact_range_keeps_the_callers_start(self, mock_env):
-        """Only the end of the range is cached: the API must be asked from the start."""
-        mock_env["cache"].put_rows(
-            "markets_margin_interest",
-            [{"Code": "72030", "Date": "2024-01-05", "LoanBalance": 1100000}],
-            key_columns=["Code", "Date"],
-        )
-        api_rows = [
-            {"Code": "72030", "Date": "2024-01-04", "LoanBalance": 1000000},
-            {"Code": "72030", "Date": "2024-01-05", "LoanBalance": 1100000},
-        ]
-        mock_fn = AsyncMock(return_value=api_rows)
-        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
-            result = await _call(
-                "get_markets_margin_interest",
-                code="72030",
-                date_from="20240104",
-                date_to="20240105",
-            )
-        assert mock_fn.call_args.args[1]["from"] == "20240104"
-        assert [r["Date"] for r in result["data"]] == ["2024-01-04", "2024-01-05"]
 
     async def test_no_params_summary_keeps_the_partial_flag(self, mock_env):
         recent_date = (date.today() - timedelta(days=3)).isoformat()
@@ -357,7 +405,7 @@ class TestGetMarketsMarginAlert:
             result = await _call("get_markets_margin_alert", code="72030")
             assert result["count"] == 1
 
-    async def test_tier1_cache_full_hit(self, mock_env):
+    async def test_cached_range_still_asks_the_api(self, mock_env):
         mock_data = [
             {"Code": "72030", "PubDate": "2024-01-04", "AlertType": "1"},
         ]
@@ -376,8 +424,10 @@ class TestGetMarketsMarginAlert:
                 date_to="2024-01-04",
             )
             assert result["count"] == 1
-            assert result["source"] == "cache"
-            assert mock_fn.call_count == 1
+            # A cached range cannot be proven complete for these tables, so
+            # it asks the API again; cached and API rows are merged
+            assert result["source"] == "cache+api"
+            assert mock_fn.call_count == 2
 
     async def test_no_params_api_failure_falls_back_to_tier1(self, mock_env):
         """No-params path: API fails → returns Tier 1 snapshot."""
@@ -428,7 +478,7 @@ class TestGetMarketsShortRatio:
             assert result["count"] == 1
             assert result["data"][0]["ShortSaleRatio"] == 40.5
 
-    async def test_tier1_cache_full_hit(self, mock_env):
+    async def test_covered_key_range_is_served_from_cache(self, mock_env):
         mock_data = [
             {"Date": "2024-01-04", "S33": "0050", "ShortSaleRatio": 40.5},
         ]
@@ -447,8 +497,61 @@ class TestGetMarketsShortRatio:
                 date_to="2024-01-04",
             )
             assert result["count"] == 1
+            # One key has a row on every trading day here, so the covered
+            # range is proven and needs no second API call
             assert result["source"] == "cache"
             assert mock_fn.call_count == 1
+
+    @staticmethod
+    def _sector_rows(days: list[str]) -> list[dict]:
+        return [{"Date": d, "S33": "0050", "ShortSaleRatio": 40.5} for d in days]
+
+    async def test_sector_range_with_a_hole_refetches_the_whole_range(self, mock_env):
+        """The published cache has such a hole; the old check served it as complete."""
+        days = ["2024-01-04", "2024-01-05", "2024-01-09", "2024-01-10"]  # 01-08: holiday
+        mock_env["cache"].put_rows(
+            "markets_calendar",
+            [
+                {"Date": f"2024-01-{d:02d}", "HolDiv": "1" if f"2024-01-{d:02d}" in days else "0"}
+                for d in range(4, 11)
+            ],
+            key_columns=["Date"],
+        )
+        mock_env["cache"].put_rows(
+            "markets_short_ratio",
+            self._sector_rows([days[0], days[3]]),
+            key_columns=["S33", "Date"],
+        )
+        mock_fn = AsyncMock(return_value=self._sector_rows(days))
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_markets_short_ratio", s33="0050", date_from="2024-01-04", date_to="2024-01-10"
+            )
+        assert mock_fn.call_args.args[1] == {
+            "s33": "0050",
+            "from": "2024-01-04",
+            "to": "2024-01-10",
+        }
+        assert [r["Date"] for r in result["data"]] == days
+
+    async def test_plan_restricted_user_gets_a_covered_sector_range_without_a_call(self, mock_env):
+        """A plan without this endpoint: no doomed request, no partial flag, when covered."""
+        days = ["2024-01-04", "2024-01-05"]
+        mock_env["cache"].put_rows(
+            "markets_short_ratio", self._sector_rows(days), key_columns=["S33", "Date"]
+        )
+        mock_fn = AsyncMock(side_effect=PlanRestrictionError("Forbidden", status_code=403))
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            covered = await _call(
+                "get_markets_short_ratio", s33="0050", date_from="2024-01-04", date_to="2024-01-05"
+            )
+            # Every sector for the range cannot be proven: asks, fails, flags partial
+            all_keys = await _call(
+                "get_markets_short_ratio", date_from="2024-01-04", date_to="2024-01-05"
+            )
+        assert covered["source"] == "cache" and "partial" not in covered
+        assert mock_fn.call_count == 1
+        assert all_keys["partial"] is True
 
     async def _seed_short_ratio(self, cache, recent_date):
         rows = [
@@ -581,7 +684,7 @@ class TestGetMarketsBreakdown:
             assert result["count"] == 1
             assert result["data"][0]["FrgnBuy"] == 500000
 
-    async def test_tier1_cache_full_hit(self, mock_env):
+    async def test_covered_key_range_is_served_from_cache(self, mock_env):
         mock_data = [
             {"Code": "72030", "Date": "2024-01-04", "FrgnBuy": 500000},
         ]
@@ -600,6 +703,8 @@ class TestGetMarketsBreakdown:
                 date_to="2024-01-04",
             )
             assert result["count"] == 1
+            # One key has a row on every trading day here, so the covered
+            # range is proven and needs no second API call
             assert result["source"] == "cache"
             assert mock_fn.call_count == 1
 
@@ -683,6 +788,7 @@ class TestGetMarketsCalendar:
             assert result["count"] == 2
 
     async def test_tier1_cache_full_hit(self, mock_env):
+        """A range whose every calendar day is cached is served without the API."""
         mock_response = {
             "data": [
                 {"Date": "2024-01-04", "HolDiv": "0"},
@@ -697,6 +803,55 @@ class TestGetMarketsCalendar:
             assert result["count"] == 1
             assert result["source"] == "cache"
             assert mock_fn.call_count == 1
+
+    async def test_range_with_a_missing_day_asks_for_the_whole_range(self, mock_env):
+        """Only the last day is cached: the old check returned it as the full answer."""
+        mock_env["cache"].put_rows(
+            "markets_calendar", [{"Date": "2024-01-06", "HolDiv": "0"}], key_columns=["Date"]
+        )
+        full = {
+            "data": [
+                {"Date": "2024-01-04", "HolDiv": "1"},
+                {"Date": "2024-01-05", "HolDiv": "1"},
+                {"Date": "2024-01-06", "HolDiv": "0"},
+            ]
+        }
+        mock_fn = AsyncMock(return_value=full)
+        with patch.object(mock_env["client"], "get", mock_fn):
+            # hol_div=1 filters the cached Saturday out; completeness is judged first
+            result = await _call(
+                "get_markets_calendar", hol_div="1", date_from="2024-01-04", date_to="2024-01-06"
+            )
+        # The API is asked for every day (no hol_div), so the range can become complete
+        assert mock_fn.call_args.args[1] == {"from": "2024-01-04", "to": "2024-01-06"}
+        assert [r["Date"] for r in result["data"]] == ["2024-01-04", "2024-01-05"]
+
+    async def test_compact_dates_hit_a_fully_cached_range(self, mock_env):
+        mock_env["cache"].put_rows(
+            "markets_calendar",
+            [{"Date": "2024-01-04", "HolDiv": "1"}, {"Date": "2024-01-05", "HolDiv": "1"}],
+            key_columns=["Date"],
+        )
+        mock_fn = AsyncMock(return_value={"data": []})
+        with patch.object(mock_env["client"], "get", mock_fn):
+            result = await _call("get_markets_calendar", date_from="20240104", date_to="20240105")
+        assert mock_fn.call_count == 0
+        assert result["count"] == 2
+
+    async def test_unsupported_date_form_is_rejected(self, mock_env):
+        """An ISO week date would give the cache lookup and the check different bounds."""
+        result = await _call("get_markets_calendar", date_from="2024-01-04", date_to="2024-W01-4")
+        assert result["error"] is True
+
+    async def test_open_ended_range_asks_the_api(self, mock_env):
+        mock_env["cache"].put_rows(
+            "markets_calendar", [{"Date": "2024-01-04", "HolDiv": "1"}], key_columns=["Date"]
+        )
+        mock_fn = AsyncMock(return_value={"data": [{"Date": "2024-01-04", "HolDiv": "1"}]})
+        with patch.object(mock_env["client"], "get", mock_fn):
+            await _call("get_markets_calendar", date_from="2024-01-04")
+        assert mock_fn.call_count == 1
+        assert mock_fn.call_args.args[1] == {"from": "2024-01-04"}
 
     async def test_api_error_returns_error_dict(self, mock_env):
         with patch.object(

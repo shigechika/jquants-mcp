@@ -59,6 +59,15 @@ class RateLimiter:
                 await asyncio.sleep(wait_time)
 
 
+class PagedRows(list):
+    """Rows from ``get_all_pages``; ``truncated`` tells a cut-off answer from a whole one.
+
+    A plain list otherwise, so existing callers are unaffected.
+    """
+
+    truncated: bool = False
+
+
 class JQuantsClient:
     """J-Quants API v2 HTTP client."""
 
@@ -203,9 +212,11 @@ class JQuantsClient:
             data_key: Key in response containing the data array
 
         Returns:
-            Combined list of all data records across pages
+            Combined list of all data records across pages. It is a ``PagedRows``:
+            ``truncated`` is True when the page limit stopped the fetch while the
+            API still had more data.
         """
-        all_data: list[dict[str, Any]] = []
+        all_data = PagedRows()
         params = dict(params or {})
         pages_fetched = 0
 
@@ -218,6 +229,7 @@ class JQuantsClient:
             pagination_key = response.get("pagination_key")
             if not pagination_key or pages_fetched >= self._settings.max_pages:
                 if pagination_key:
+                    all_data.truncated = True
                     logger.info(
                         "Pagination limit reached (%d pages); more data available.",
                         self._settings.max_pages,

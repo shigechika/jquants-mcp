@@ -11,6 +11,7 @@ from mcp.server.mcpserver import MCPServer
 from ..cache.publication import JST, ttl_until_next_publication
 from ..cache.store import TTL_24H, CacheStore, make_cache_key
 from ..client import JQuantsClient
+from .equities import _get_code_series_with_cache
 from ..exceptions import (
     TOOL_API_ERRORS,
     APIError,
@@ -61,8 +62,9 @@ def register(
         to retrieve full row data for the latest available date. Specifying any
         filter parameter (``code``, ``date``, etc.) always returns full data.
 
-        partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Standard / Premium
 
@@ -85,7 +87,7 @@ def register(
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
-        # When any parameter is given, use the Tier 1 cache for incremental fetch
+        # When any parameter is given, go through the Tier 1 cache path
         if code or date or date_from or date_to:
             return await _get_with_tier1_cache(
                 client,
@@ -124,8 +126,9 @@ def register(
         Use for 追証, 規制銘柄, 増担保規制, 信用規制, margin restriction/alert.
         For margin balances (買残・売残・貸借倍率), use get_markets_margin_interest instead.
 
-        partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Standard / Premium
 
@@ -189,8 +192,9 @@ def register(
         to retrieve full row data for the latest available date. Specifying any
         filter parameter (``s33``, ``date``, etc.) always returns full data.
 
-        partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Standard / Premium
 
@@ -302,8 +306,9 @@ def register(
         Returns daily buy/sell breakdown by investor type (proprietary, brokered, foreign, etc.)
         per individual issue.
 
-        partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Premium
 
@@ -358,8 +363,9 @@ def register(
         Returns trading calendar data including trading days, holidays, and half-day classifications.
         All data is returned in a single response without pagination.
 
-        partial=true: the API failed and only the (incomplete) cached rows were
-        returned.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Free / Light / Standard / Premium
 
@@ -368,6 +374,14 @@ def register(
             date_from: Start date for range query (YYYYMMDD or YYYY-MM-DD)
             date_to: End date for range query (YYYYMMDD or YYYY-MM-DD)
         """
+        # The cache lookup and the completeness check both rely on these two forms
+        errors = collect_errors(
+            validate_date(date_from, "date_from"),
+            validate_date(date_to, "date_to"),
+        )
+        if errors:
+            return make_validation_error_response(errors)
+
         client: JQuantsClient = await get_client()
         cache: CacheStore = get_cache()
 
@@ -401,9 +415,29 @@ async def _get_with_tier1_cache(
 ) -> dict[str, Any]:
     """Generic Tier 1 cache retrieval for market tools.
 
+    One key's range on a table with a row for that key on every trading day is
+    provable, so it goes through the completeness proof of
+    ``_get_code_series_with_cache`` and needs no API call once covered. Everything
+    else asks the API for the requested range (see below).
+
     Args:
         date_field: Date field name in the API response (e.g. "Date", "PubDate").
     """
+    if key_value and not date and _has_a_row_every_trading_day(table, _iso(date_from)):
+        return await _get_code_series_with_cache(
+            client,
+            cache,
+            table=table,
+            endpoint=endpoint,
+            head_name=f"{table}_head",
+            code=key_value,
+            date=None,
+            date_from=date_from,
+            date_to=date_to,
+            key_name=key_name,
+            key_column=key_column,
+        )
+
     try:
         # Build the key filter
         key_filter: dict[str, str] = {}
@@ -438,39 +472,23 @@ async def _get_with_tier1_cache(
         if date_to:
             params["to"] = date_to
 
-        # Check which dates are already cached
-        cached_dates = cache.get_cached_dates(
-            table,
-            key_filter=key_filter,
-            date_from=effective_date_from,
-            date_to=effective_date_to,
-        )
-
-        if cached_dates and not date:
-            # Incremental fetch: retrieve everything after the latest cached date
-            latest_cached = max(cached_dates)
-            # Compare against the caller's form on purpose: this shortcut does not
-            # check gaps or missing keys, so a compact date_to (which never
-            # compares >= an ISO date) keeps asking the API, as before
-            if date_to and latest_cached >= date_to:
-                logger.info("%s 全データキャッシュ済み (%d件)", table, len(cached_data))
-                return {"count": len(cached_data), "data": cached_data, "source": "cache"}
-            # Same reason for the incremental start: it assumes no gap before
-            # latest_cached. A compact date_from never matched cached rows before
-            # dates were normalized, so it kept the caller's start; keep that.
-            if date_from == iso_from:
-                params["from"] = latest_cached
-
+        # Always ask the API for the requested range. What reaches this point
+        # cannot be proven complete from the cache: a key's series may be sparse by
+        # nature (margin alerts, weekly margin interest), a date-only query asks for
+        # every key, and whole days can be missing in the middle. The old "latest
+        # cached date >= date_to" shortcut returned such ranges as complete, and
+        # starting the fetch at the latest cached date never filled a gap before it.
         try:
             api_data = await client.get_all_pages(endpoint, params)
         except (APIError, RateLimitError) as e:
-            # Includes a rate limit that outlasted the client's retries
+            # Includes a rate limit that outlasted the client's retries, and a
+            # plan that does not cover the endpoint
             if cached_data:
-                # A range reaching this point was not proven covered (a covered
-                # one returned above). A single date for one key is complete when
-                # cached; a date-only query asks for every key, and one cached
-                # key does not prove the rest are there.
-                partial = iso_date not in cached_dates if (iso_date and key_value) else True
+                # Nothing here is proven covered. The exception is a single date
+                # for one key: the lookup is bounded to that day, so the cached
+                # row is the whole answer. A date-only query asks for every key,
+                # and one cached key does not prove the rest are there.
+                partial = not (iso_date and key_value)
                 logger.info(
                     "%s failed (%s), returning cached %s (%d rows, partial=%s)",
                     endpoint,
@@ -509,7 +527,11 @@ async def _get_with_tier1_cache(
         merged.sort(key=lambda r: r.get(date_field, ""))
 
         source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")
-        return {"count": len(merged), "data": merged, "source": source}
+        result = {"count": len(merged), "data": merged, "source": source}
+        if getattr(api_data, "truncated", False):
+            # The page limit cut the API answer short: later rows are missing
+            result["partial"] = True
+        return result
 
     except TOOL_API_ERRORS as e:
         return format_api_error(e)
@@ -620,6 +642,10 @@ async def _tier2_fallback(
     try:
         data = await client.get_all_pages(endpoint, params)
         result = {"count": len(data), "data": data}
+        if getattr(data, "truncated", False):
+            # Cut short by the page limit: say so, and do not cache it
+            result["partial"] = True
+            return result
         cache.put_response(cache_key, result, ttl_seconds=_publication_ttl(cache, endpoint, data))
         return result
     except RateLimitError as e:
@@ -676,25 +702,22 @@ async def _get_calendar_with_cache(
         )
 
         params: dict[str, Any] = {}
-        if hol_div:
-            params["hol_div"] = hol_div
+        # hol_div is not sent: the API would return only the matching days, and
+        # storing those could never make a range "every calendar day cached".
+        # The filter is applied locally to whatever is returned.
         if date_from:
             params["from"] = date_from
         if date_to:
             params["to"] = date_to
 
-        if cached_dates:
-            latest_cached = max(cached_dates)
-            # Caller's form on purpose, as in _get_with_tier1_cache: the shortcut
-            # does not check gaps, so a compact date_to keeps asking the API
-            if date_to and latest_cached >= date_to:
-                logger.info("カレンダー全データキャッシュ済み (%d件)", len(cached_data))
-                # Apply the hol_div filter
-                filtered = _filter_hol_div(cached_data, hol_div)
-                return {"count": len(filtered), "data": filtered, "source": "cache"}
-            # A compact date_from keeps the caller's start, as in _get_with_tier1_cache
-            if date_from == iso_from:
-                params["from"] = latest_cached
+        # The calendar has one row per calendar day, so a bounded range is complete
+        # exactly when every day of it is cached. Checked on the unfiltered rows:
+        # hol_div only narrows what is returned. Anything else asks the API for
+        # the requested range.
+        if _calendar_range_is_cached(iso_from, iso_to, cached_dates):
+            logger.info("Calendar range fully cached (%d rows)", len(cached_data))
+            filtered = _filter_hol_div(cached_data, hol_div)
+            return {"count": len(filtered), "data": filtered, "source": "cache"}
 
         # The calendar endpoint has no pagination. Fall back to the cache on
         # API failure, mirroring _get_with_tier1_cache's fallback — without
@@ -753,6 +776,50 @@ async def _get_calendar_with_cache(
 
     except TOOL_API_ERRORS as e:
         return format_api_error(e)
+
+
+# Margin interest became daily with the 2026-09-25 application date; before that it
+# was weekly, so a per-code series has no row on most trading days.
+_MARGIN_INTEREST_DAILY_SINCE = "2026-09-25"
+
+
+def _has_a_row_every_trading_day(table: str, iso_from: str | None) -> bool:
+    """Whether one key's series in ``table`` has a row on every trading day from ``iso_from``.
+
+    True for sector short-sale ratios and the trade breakdown, and for margin
+    interest when the range starts in its daily era. Margin alerts list an issue
+    only while it is designated, so its per-code series is sparse by nature.
+    """
+    if table in ("markets_short_ratio", "markets_breakdown"):
+        return True
+    if table == "markets_margin_interest":
+        return bool(iso_from) and iso_from >= _MARGIN_INTEREST_DAILY_SINCE
+    return False
+
+
+def _calendar_range_is_cached(
+    iso_from: str | None, iso_to: str | None, cached_dates: set[str]
+) -> bool:
+    """Whether every calendar day of [iso_from, iso_to] is among ``cached_dates``.
+
+    False for an open-ended or unparsable range: without both bounds there is no
+    fixed set of days to check.
+    """
+    if not iso_from or not iso_to:
+        return False
+    try:
+        start, end = date.fromisoformat(iso_from), date.fromisoformat(iso_to)
+    except ValueError:
+        return False
+    if start > end:
+        return False
+    days = {str(d)[:10] for d in cached_dates}
+    day = start
+    while day <= end:
+        if day.isoformat() not in days:
+            return False
+        day += timedelta(days=1)
+    return True
 
 
 def _filter_hol_div(data: list[dict[str, Any]], hol_div: str | None) -> list[dict[str, Any]]:

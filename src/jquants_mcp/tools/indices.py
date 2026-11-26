@@ -14,6 +14,7 @@ from ..exceptions import (
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_API
+from .equities import _get_code_series_with_cache
 from ..validators import (
     collect_errors,
     make_validation_error_response,
@@ -85,6 +86,9 @@ def register(
 
         Returns daily OHLC data for TOPIX using a dedicated endpoint.
         Supports efficient incremental fetching via row-level (Tier 1) cache.
+        partial=true: rows may be missing
+        (the API failed and cached rows were returned, or the page limit
+        cut the answer short).
 
         [Supported plans] Light / Standard / Premium
 
@@ -111,70 +115,22 @@ async def _get_topix_with_cache(
     date_from: str | None,
     date_to: str | None,
 ) -> dict[str, Any]:
-    """Retrieve TOPIX daily bars with Tier 1 cache."""
-    try:
-        # Fetch existing data from the cache
-        cached_data = cache.get_rows(
-            "indices_bars_daily_topix",
-            key_filter={},
-            date_from=date_from,
-            date_to=date_to,
-        )
+    """Retrieve TOPIX daily bars with Tier 1 cache.
 
-        # Check which dates are already cached
-        cached_dates = cache.get_cached_dates(
-            "indices_bars_daily_topix",
-            key_filter={},
-            date_from=date_from,
-            date_to=date_to,
-        )
-
-        params: dict[str, Any] = {}
-        if date_from:
-            params["from"] = date_from
-        if date_to:
-            params["to"] = date_to
-
-        # Filter out malformed keys ("None", "", timestamps with spaces/T-separator)
-        # that would corrupt params["from"] after client-side hyphen stripping.
-        # Only accept "YYYY-MM-DD" (10) or "YYYYMMDD" (8) — the two formats the API accepts.
-        valid_dates = {d for d in cached_dates if d and d[0].isdigit() and len(d) in (8, 10)}
-        if valid_dates:
-            # Incremental fetch: retrieve everything after the latest cached date
-            latest_cached = max(valid_dates)
-            if date_to and latest_cached >= date_to:
-                # Entire range already cached
-                logger.info("TOPIX fully cached (%d rows)", len(cached_data))
-                return {"count": len(cached_data), "data": cached_data, "source": "cache"}
-            params["from"] = latest_cached
-
-        api_data = await client.get_all_pages("/indices/bars/daily/topix", params)
-
-        if api_data:
-            cache.put_rows(
-                "indices_bars_daily_topix",
-                api_data,
-                key_columns=["Date"],
-            )
-
-        # Merge (dedup)
-        seen_keys: set[str] = set()
-        merged: list[dict[str, Any]] = []
-        for row in api_data:
-            key = row.get("Date", "")
-            if key not in seen_keys:
-                seen_keys.add(key)
-                merged.append(row)
-        for row in cached_data:
-            key = row.get("Date", "")
-            if key not in seen_keys:
-                seen_keys.add(key)
-                merged.append(row)
-
-        merged.sort(key=lambda r: r.get("Date", ""))
-
-        source = "cache+api" if cached_data and api_data else ("cache" if cached_data else "api")
-        return {"count": len(merged), "data": merged, "source": source}
-
-    except TOOL_API_ERRORS as e:
-        return format_api_error(e)
+    Uses the same completeness proof as the per-stock series
+    (``_get_code_series_with_cache``, jquants-mcp#625): the cache alone answers
+    only when every expected trading day of the range is cached; a missing tail
+    is fetched incrementally and any other gap refetches the range. The previous
+    "latest cached date >= date_to" check served a range with a hole in it.
+    """
+    return await _get_code_series_with_cache(
+        client,
+        cache,
+        table="indices_bars_daily_topix",
+        endpoint="/indices/bars/daily/topix",
+        head_name="topix_head",
+        code=None,
+        date=None,
+        date_from=date_from,
+        date_to=date_to,
+    )

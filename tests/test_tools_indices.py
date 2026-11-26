@@ -149,3 +149,68 @@ class TestGetIndicesBarsDailyTopix:
         ):
             result = await _call("get_indices_bars_daily_topix")
             assert result["error"] is True
+
+
+class TestTopixCacheCompleteness:
+    """get_indices_bars_daily_topix uses the bars completeness proof (jquants-mcp#625)."""
+
+    DAYS = ["2024-01-04", "2024-01-05", "2024-01-09", "2024-01-10"]  # 01-08 is a holiday
+
+    @pytest.fixture()
+    def calendar(self, mock_env):
+        rows = [
+            {"Date": f"2024-01-{d:02d}", "HolDiv": "1" if f"2024-01-{d:02d}" in self.DAYS else "0"}
+            for d in range(4, 11)
+        ]
+        mock_env["cache"].put_rows("markets_calendar", rows, key_columns=["Date"])
+
+    @staticmethod
+    def _rows(days: list[str]) -> list[dict]:
+        return [{"Date": d, "Close": 2500.0} for d in days]
+
+    def _seed(self, mock_env, days: list[str]) -> None:
+        mock_env["cache"].put_rows(
+            "indices_bars_daily_topix", self._rows(days), key_columns=["Date"]
+        )
+
+    async def test_fully_cached_range_needs_no_api(self, mock_env, calendar):
+        self._seed(mock_env, self.DAYS)
+        mock_fn = AsyncMock(return_value=[])
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_indices_bars_daily_topix", date_from="2024-01-04", date_to="2024-01-10"
+            )
+        assert mock_fn.call_count == 0
+        assert result["source"] == "cache"
+        assert result["count"] == 4
+
+    async def test_hole_in_the_range_refetches_the_whole_range(self, mock_env, calendar):
+        """The old check saw the latest cached date reach date_to and returned the hole."""
+        self._seed(mock_env, [self.DAYS[0], self.DAYS[3]])
+        mock_fn = AsyncMock(return_value=self._rows(self.DAYS))
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_indices_bars_daily_topix", date_from="2024-01-04", date_to="2024-01-10"
+            )
+        assert mock_fn.call_args.args[1] == {"from": "2024-01-04", "to": "2024-01-10"}
+        assert [r["Date"] for r in result["data"]] == self.DAYS
+
+    async def test_missing_tail_fetches_only_the_tail(self, mock_env, calendar):
+        self._seed(mock_env, self.DAYS[:2])
+        mock_fn = AsyncMock(return_value=self._rows(self.DAYS[1:]))
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_indices_bars_daily_topix", date_from="2024-01-04", date_to="2024-01-10"
+            )
+        assert mock_fn.call_args.args[1]["from"] == "2024-01-05"
+        assert [r["Date"] for r in result["data"]] == self.DAYS
+
+    async def test_api_failure_returns_cached_rows_as_partial(self, mock_env, calendar):
+        self._seed(mock_env, [self.DAYS[0], self.DAYS[3]])
+        mock_fn = AsyncMock(side_effect=APIError("boom", status_code=500))
+        with patch.object(mock_env["client"], "get_all_pages", mock_fn):
+            result = await _call(
+                "get_indices_bars_daily_topix", date_from="2024-01-04", date_to="2024-01-10"
+            )
+        assert result["count"] == 2
+        assert result["partial"] is True
