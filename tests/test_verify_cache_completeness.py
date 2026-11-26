@@ -26,6 +26,7 @@ from verify_cache_completeness import (  # noqa: E402
     auto_fix_gaps,
     check_all,
     check_missing_days,
+    load_ignore_days,
     check_date_gaps,
 )
 
@@ -914,18 +915,81 @@ def _seed_calendar(conn, start: date, end: date, holidays=()) -> None:
 
 def test_missing_days_reports_a_hole_between_cached_days(conn):
     """A feed that skipped days and then resumed leaves business days with no row."""
-    _seed_calendar(conn, date(2026, 3, 2), date(2026, 3, 31), holidays={"2026-03-20"})
-    for day in ("2026-03-09", "2026-03-10", "2026-03-11", "2026-03-19", "2026-03-30"):
+    _seed_calendar(conn, date(2025, 3, 3), date(2025, 3, 31), holidays={"2025-03-20"})
+    for day in ("2025-03-10", "2025-03-11", "2025-03-12", "2025-03-19", "2025-03-31"):
         _insert(conn, "markets_short_ratio", s33="0050", date=day)
-    missing = check_missing_days(conn, "2026-03-31", lookback_days=60)
+    missing = check_missing_days(conn, "2025-03-31", lookback_days=60)
     days = missing["markets_short_ratio"]
-    assert days[0] == "2026-03-12" and days[-1] == "2026-03-27"
+    assert days[0] == "2025-03-13" and days[-1] == "2025-03-28"
     # Weekends, the calendar holiday and days that do have rows are not reported
-    assert "2026-03-14" not in days and "2026-03-20" not in days and "2026-03-19" not in days
-    # Nothing outside the table's own span (before 03-09 or after 03-30)
-    assert all("2026-03-09" < d < "2026-03-30" for d in days)
+    assert "2025-03-15" not in days and "2025-03-20" not in days and "2025-03-19" not in days
+    # Nothing outside the table's own span (before 03-10 or after 03-31)
+    assert all("2025-03-10" < d < "2025-03-31" for d in days)
     # A plan that does not cover the table does not check it (data left from a higher plan)
-    assert check_missing_days(conn, "2026-03-31", lookback_days=60, plan="light") == {}
+    assert check_missing_days(conn, "2025-03-31", lookback_days=60, plan="light") == {}
+
+
+def test_ignore_days_excuses_only_the_listed_days(conn, tmp_path):
+    """Days a deployment cannot refetch are passed in; nothing else is hidden."""
+    _seed_calendar(conn, date(2026, 3, 9), date(2026, 3, 20))
+    for day in ("2026-03-09", "2026-03-20"):
+        _insert(conn, "markets_short_ratio", s33="0050", date=day)
+    gaps = tmp_path / "known-gaps.txt"
+    gaps.write_text(
+        "# missed by our feed, no longer obtainable on our plan\n"
+        "markets_short_ratio 2026-03-12\n"
+        "markets_short_ratio 2026-03-13  # inline comment\n"
+        "\n"
+        "markets_margin_alert 2026-03-16\n",
+        encoding="utf-8",
+    )
+    ignore = load_ignore_days(str(gaps))
+    assert ignore == {
+        "markets_short_ratio": {"2026-03-12", "2026-03-13"},
+        "markets_margin_alert": {"2026-03-16"},
+    }
+    missing = check_missing_days(conn, "2026-03-20", lookback_days=30, ignore_days=ignore)
+    assert missing["markets_short_ratio"] == [
+        "2026-03-10",
+        "2026-03-11",
+        "2026-03-16",
+        "2026-03-17",
+        "2026-03-18",
+        "2026-03-19",
+    ]
+    # Without the file, the same days are reported (another cache can still fill them)
+    plain = check_missing_days(conn, "2026-03-20", lookback_days=30)
+    assert "2026-03-12" in plain["markets_short_ratio"]
+
+
+def test_ignore_days_rejects_a_malformed_line(tmp_path):
+    gaps = tmp_path / "known-gaps.txt"
+    gaps.write_text("markets_short_ratio 2026-02-30\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="known-gaps.txt:1"):
+        load_ignore_days(str(gaps))
+
+
+def test_ignore_days_error_never_echoes_the_line(tmp_path):
+    """A credentials file passed by mistake must not end up in a job log."""
+    wrong = tmp_path / "env"
+    wrong.write_text("JQUANTS_API_KEY=supersecretvalue\n", encoding="utf-8")
+    with pytest.raises(ValueError) as exc:
+        load_ignore_days(str(wrong))
+    assert "supersecretvalue" not in str(exc.value)
+    assert "env:1" in str(exc.value)
+
+
+def test_ignore_days_rejects_an_unknown_table(tmp_path):
+    gaps = tmp_path / "known-gaps.txt"
+    gaps.write_text("markets_short_rato 2026-03-12\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="known-gaps.txt:1: unknown table"):
+        load_ignore_days(str(gaps))
+
+
+def test_ignore_days_accepts_a_bom(tmp_path):
+    gaps = tmp_path / "known-gaps.txt"
+    gaps.write_bytes("﻿markets_short_ratio 2026-03-12\n".encode("utf-8"))
+    assert load_ignore_days(str(gaps)) == {"markets_short_ratio": {"2026-03-12"}}
 
 
 def test_missing_days_skips_empty_tables_and_respects_the_lookback(conn):
