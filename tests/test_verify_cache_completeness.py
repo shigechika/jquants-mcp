@@ -924,6 +924,8 @@ def test_missing_days_reports_a_hole_between_cached_days(conn):
     assert "2026-03-14" not in days and "2026-03-20" not in days and "2026-03-19" not in days
     # Nothing outside the table's own span (before 03-09 or after 03-30)
     assert all("2026-03-09" < d < "2026-03-30" for d in days)
+    # A plan that does not cover the table does not check it (data left from a higher plan)
+    assert check_missing_days(conn, "2026-03-31", lookback_days=60, plan="light") == {}
 
 
 def test_missing_days_skips_empty_tables_and_respects_the_lookback(conn):

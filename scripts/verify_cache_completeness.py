@@ -266,16 +266,18 @@ def _business_days_between(conn: sqlite3.Connection, start: str, end: str) -> in
     return n
 
 
-# Tables that carry rows on every exchange business day: table -> (date column, first date
-# from which that holds, or None for the whole history). Margin interest was weekly before
-# its 2026-09-25 application date.
-_EVERY_BUSINESS_DAY_TABLES: dict[str, tuple[str, str | None]] = {
-    "equities_bars_daily": ("date", None),
-    "indices_bars_daily_topix": ("date", None),
-    "markets_short_ratio": ("date", None),
-    "markets_margin_interest": ("date", "2026-09-25"),
-    "markets_margin_alert": ("date", None),
-    "markets_breakdown": ("date", None),
+# Tables that carry rows on every exchange business day:
+# table -> (date column, minimum plan, first date from which that holds or None for the
+# whole history). Margin interest was weekly before its 2026-09-25 application date.
+# Margin alerts list every designated issue each day; a real cache has 208-428 rows on
+# every business day over ten years, so a day with none is a hole, not a quiet day.
+_EVERY_BUSINESS_DAY_TABLES: dict[str, tuple[str, str, str | None]] = {
+    "equities_bars_daily": ("date", "free", None),
+    "indices_bars_daily_topix": ("date", "light", None),
+    "markets_short_ratio": ("date", "standard", None),
+    "markets_margin_interest": ("date", "standard", "2026-09-25"),
+    "markets_margin_alert": ("date", "standard", None),
+    "markets_breakdown": ("date", "premium", None),
 }
 
 # Business days on which the source itself has no data, so they are not reported.
@@ -291,6 +293,7 @@ def check_missing_days(
     conn: sqlite3.Connection,
     trading_day: str,
     lookback_days: int = _MISSING_DAYS_DEFAULT_LOOKBACK,
+    plan: str = "premium",
 ) -> dict[str, list[str]]:
     """Business days with no row at all, per table, inside each table's own date span.
 
@@ -299,15 +302,18 @@ def check_missing_days(
     the business days, per markets_calendar, that lie between a table's oldest and
     newest dates within the lookback window and have no row.
 
-    Tables that are missing or empty are skipped (not every plan has them), and so
-    are days markets_calendar cannot classify. Returns only tables with missing days.
+    Only the tables ``plan`` covers are checked, like the staleness checks, so data
+    left over from a higher plan does not fail the run. Missing or empty tables are
+    skipped, and so are days markets_calendar cannot classify. Returns only tables
+    with missing days.
     """
     if lookback_days <= 0 or not _table_exists(conn, "markets_calendar"):
         return {}
     window_start = (date.fromisoformat(trading_day) - timedelta(days=lookback_days)).isoformat()
     missing: dict[str, list[str]] = {}
-    for table, (date_col, daily_since) in _EVERY_BUSINESS_DAY_TABLES.items():
-        if not _table_exists(conn, table):
+    plan_level = PLAN_LEVELS.get(plan, 0)
+    for table, (date_col, min_plan, daily_since) in _EVERY_BUSINESS_DAY_TABLES.items():
+        if PLAN_LEVELS[min_plan] > plan_level or not _table_exists(conn, table):
             continue
         try:
             span = conn.execute(
@@ -547,7 +553,7 @@ def check_all(
             conn, "markets_breakdown", "date", trading_day
         )
 
-    missing_days = check_missing_days(conn, trading_day, missing_days_lookback)
+    missing_days = check_missing_days(conn, trading_day, missing_days_lookback, plan)
 
     statuses = [t["status"] for t in tables.values()]
     if any(s in ("error", "missing_table") for s in statuses):
