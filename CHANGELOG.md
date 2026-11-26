@@ -5,6 +5,13 @@ For entries prior to the introduction of release-please (up to v0.3.0, released 
 
 ---
 
+## [1.10.0](https://github.com/shigechika/jquants-mcp/compare/v1.9.0...v1.10.0) (2026-11-26)
+
+
+### Features
+
+* **verify:** --ignore-days for days a deployment cannot refetch ([#678](https://github.com/shigechika/jquants-mcp/issues/678)) ([1fdcaee](https://github.com/shigechika/jquants-mcp/commit/1fdcaee9a4634002db5605d94ef33981fbeef9a9))
+
 ## [1.9.0](https://github.com/shigechika/jquants-mcp/compare/v1.8.3...v1.9.0) (2026-11-26)
 
 
