@@ -14,6 +14,7 @@ from ..client import JQuantsClient
 from ..exceptions import (
     TOOL_API_ERRORS,
     APIError,
+    RateLimitError,
     format_api_error,
 )
 from ..tool_annotations import READ_ONLY_API
@@ -59,6 +60,9 @@ def register(
         (``detail=False``): ``{count, latest_date, source, note}``. Pass ``detail=True``
         to retrieve full row data for the latest available date. Specifying any
         filter parameter (``code``, ``date``, etc.) always returns full data.
+
+        partial=true: the API failed and only the (incomplete) cached rows were
+        returned.
 
         [Supported plans] Standard / Premium
 
@@ -119,6 +123,9 @@ def register(
 
         Use for 追証, 規制銘柄, 増担保規制, 信用規制, margin restriction/alert.
         For margin balances (買残・売残・貸借倍率), use get_markets_margin_interest instead.
+
+        partial=true: the API failed and only the (incomplete) cached rows were
+        returned.
 
         [Supported plans] Standard / Premium
 
@@ -181,6 +188,9 @@ def register(
         (``detail=False``): ``{count, latest_date, source, note}``. Pass ``detail=True``
         to retrieve full row data for the latest available date. Specifying any
         filter parameter (``s33``, ``date``, etc.) always returns full data.
+
+        partial=true: the API failed and only the (incomplete) cached rows were
+        returned.
 
         [Supported plans] Standard / Premium
 
@@ -292,6 +302,9 @@ def register(
         Returns daily buy/sell breakdown by investor type (proprietary, brokered, foreign, etc.)
         per individual issue.
 
+        partial=true: the API failed and only the (incomplete) cached rows were
+        returned.
+
         [Supported plans] Premium
 
         Args:
@@ -345,6 +358,9 @@ def register(
         Returns trading calendar data including trading days, holidays, and half-day classifications.
         All data is returned in a single response without pagination.
 
+        partial=true: the API failed and only the (incomplete) cached rows were
+        returned.
+
         [Supported plans] Free / Light / Standard / Premium
 
         Args:
@@ -397,13 +413,18 @@ async def _get_with_tier1_cache(
             )
             key_filter[key_name] = cache_key_val
 
-        effective_date_from = date or date_from
+        # The cache stores YYYY-MM-DD; the tools also accept YYYYMMDD. The API
+        # params below keep the caller's form.
+        iso_date, iso_from, iso_to = _iso(date), _iso(date_from), _iso(date_to)
+        # A single date bounds the lookup on both sides
+        effective_date_from = iso_date or iso_from
+        effective_date_to = iso_date or iso_to
         # Fetch existing data from the cache
         cached_data = cache.get_rows(
             table,
             key_filter=key_filter,
             date_from=effective_date_from,
-            date_to=date_to,
+            date_to=effective_date_to,
         )
 
         # Build the API parameters
@@ -422,23 +443,46 @@ async def _get_with_tier1_cache(
             table,
             key_filter=key_filter,
             date_from=effective_date_from,
-            date_to=date_to,
+            date_to=effective_date_to,
         )
 
         if cached_dates and not date:
             # Incremental fetch: retrieve everything after the latest cached date
             latest_cached = max(cached_dates)
+            # Compare against the caller's form on purpose: this shortcut does not
+            # check gaps or missing keys, so a compact date_to (which never
+            # compares >= an ISO date) keeps asking the API, as before
             if date_to and latest_cached >= date_to:
                 logger.info("%s 全データキャッシュ済み (%d件)", table, len(cached_data))
                 return {"count": len(cached_data), "data": cached_data, "source": "cache"}
-            params["from"] = latest_cached
+            # Same reason for the incremental start: it assumes no gap before
+            # latest_cached. A compact date_from never matched cached rows before
+            # dates were normalized, so it kept the caller's start; keep that.
+            if date_from == iso_from:
+                params["from"] = latest_cached
 
         try:
             api_data = await client.get_all_pages(endpoint, params)
-        except APIError:
+        except (APIError, RateLimitError) as e:
+            # Includes a rate limit that outlasted the client's retries
             if cached_data:
-                logger.info("API失敗、キャッシュデータを返却: %s (%d件)", table, len(cached_data))
-                return {"count": len(cached_data), "data": cached_data, "source": "cache"}
+                # A range reaching this point was not proven covered (a covered
+                # one returned above). A single date for one key is complete when
+                # cached; a date-only query asks for every key, and one cached
+                # key does not prove the rest are there.
+                partial = iso_date not in cached_dates if (iso_date and key_value) else True
+                logger.info(
+                    "%s failed (%s), returning cached %s (%d rows, partial=%s)",
+                    endpoint,
+                    type(e).__name__,
+                    table,
+                    len(cached_data),
+                    partial,
+                )
+                result = {"count": len(cached_data), "data": cached_data, "source": "cache"}
+                if partial:
+                    result["partial"] = True
+                return result
             raise
 
         if api_data:
@@ -475,12 +519,22 @@ def _summarise(result: dict[str, Any]) -> dict[str, Any]:
     """Return a compact summary of a no-params result (omits data rows)."""
     data = result.get("data", [])
     latest = max((r.get("Date", "") for r in data), default=None) if data else None
-    return {
+    summary = {
         "count": result.get("count", len(data)),
         "latest_date": latest,
         "source": result.get("source"),
         "note": "Use detail=True or specify a filter parameter for full data.",
     }
+    if result.get("partial"):
+        summary["partial"] = True
+    return summary
+
+
+def _iso(d: str | None) -> str | None:
+    """Normalize a validated YYYYMMDD date to the cache's YYYY-MM-DD form."""
+    if d and len(d) == 8 and d.isdigit():
+        return f"{d[:4]}-{d[4:6]}-{d[6:]}"
+    return d
 
 
 def _get_latest_tier1_snapshot(
@@ -547,21 +601,38 @@ async def _tier2_fallback(
     if cached is not None:
         return cached
 
+    def snapshot(error: Exception) -> dict[str, Any] | None:
+        if not tier1_table:
+            return None
+        rows = _get_latest_tier1_snapshot(cache, tier1_table, tier1_date_col)
+        if not rows:
+            return None
+        logger.warning(
+            "API call to %s failed (%s); returning Tier 1 snapshot (%d rows)",
+            endpoint,
+            type(error).__name__,
+            len(rows),
+        )
+        # The newest cached date may hold only the keys that per-key lookups
+        # stored, so the snapshot is not proven to be the full cross-section
+        return {"count": len(rows), "data": rows, "source": "cache", "partial": True}
+
     try:
         data = await client.get_all_pages(endpoint, params)
         result = {"count": len(data), "data": data}
         cache.put_response(cache_key, result, ttl_seconds=_publication_ttl(cache, endpoint, data))
         return result
+    except RateLimitError as e:
+        # A rate limit that outlasted the client's retries: serve the snapshot,
+        # otherwise let the error surface as before
+        fallback = snapshot(e)
+        if fallback is not None:
+            return fallback
+        raise
     except TOOL_API_ERRORS as e:
-        if tier1_table:
-            rows = _get_latest_tier1_snapshot(cache, tier1_table, tier1_date_col)
-            if rows:
-                logger.warning(
-                    "API call to %s failed; returning Tier 1 snapshot (%d rows)",
-                    endpoint,
-                    len(rows),
-                )
-                return {"count": len(rows), "data": rows, "source": "cache"}
+        fallback = snapshot(e)
+        if fallback is not None:
+            return fallback
         return format_api_error(e)
 
 
@@ -585,11 +656,13 @@ async def _get_calendar_with_cache(
         # resolves to an unrestricted date window (_plan_date_bounds), so a
         # non-Premium plan still gets cache hits and the API-failure
         # fallback below instead of a spurious clamped-empty miss.
+        # The cache stores YYYY-MM-DD; the tool also accepts YYYYMMDD
+        iso_from, iso_to = _iso(date_from), _iso(date_to)
         cached_data = cache.get_rows(
             "markets_calendar",
             key_filter={},
-            date_from=date_from,
-            date_to=date_to,
+            date_from=iso_from,
+            date_to=iso_to,
             plan="premium",
         )
 
@@ -597,8 +670,8 @@ async def _get_calendar_with_cache(
         cached_dates = cache.get_cached_dates(
             "markets_calendar",
             key_filter={},
-            date_from=date_from,
-            date_to=date_to,
+            date_from=iso_from,
+            date_to=iso_to,
             plan="premium",
         )
 
@@ -612,12 +685,16 @@ async def _get_calendar_with_cache(
 
         if cached_dates:
             latest_cached = max(cached_dates)
+            # Caller's form on purpose, as in _get_with_tier1_cache: the shortcut
+            # does not check gaps, so a compact date_to keeps asking the API
             if date_to and latest_cached >= date_to:
                 logger.info("カレンダー全データキャッシュ済み (%d件)", len(cached_data))
                 # Apply the hol_div filter
                 filtered = _filter_hol_div(cached_data, hol_div)
                 return {"count": len(filtered), "data": filtered, "source": "cache"}
-            params["from"] = latest_cached
+            # A compact date_from keeps the caller's start, as in _get_with_tier1_cache
+            if date_from == iso_from:
+                params["from"] = latest_cached
 
         # The calendar endpoint has no pagination. Fall back to the cache on
         # API failure, mirroring _get_with_tier1_cache's fallback — without
@@ -625,11 +702,23 @@ async def _get_calendar_with_cache(
         # the requested range is already sitting in the local cache.
         try:
             response = await client.get("/markets/calendar", params)
-        except APIError:
-            if cached_data:
-                logger.info("カレンダーAPI失敗、キャッシュデータを返却 (%d件)", len(cached_data))
-                filtered = _filter_hol_div(cached_data, hol_div)
-                return {"count": len(filtered), "data": filtered, "source": "cache"}
+        except (APIError, RateLimitError) as e:
+            # Includes a rate limit that outlasted the client's retries. Filter
+            # first: rows that the hol_div filter drops cannot answer the call.
+            filtered = _filter_hol_div(cached_data, hol_div)
+            if filtered:
+                # A covered range returned above, so this one is incomplete
+                logger.info(
+                    "/markets/calendar failed (%s), returning cached rows (%d, partial)",
+                    type(e).__name__,
+                    len(filtered),
+                )
+                return {
+                    "count": len(filtered),
+                    "data": filtered,
+                    "source": "cache",
+                    "partial": True,
+                }
             raise
         api_data = response.get("data", [])
 
