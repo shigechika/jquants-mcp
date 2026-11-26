@@ -21,6 +21,9 @@ Usage:
     # Audit the whole history for business days with no rows (default: last 90 days)
     uv run python scripts/verify_cache_completeness.py --missing-days-lookback 4000
 
+    # Do not report days this cache missed and cannot refetch ('table YYYY-MM-DD' lines)
+    uv run python scripts/verify_cache_completeness.py --ignore-days known-gaps.txt
+
 Exit code:
     0  all tables ok, no business day without rows (and no gaps when --check-gaps is used)
     1  one or more tables stale / empty / missing, a business day without rows (or gaps found)
@@ -280,27 +283,42 @@ _EVERY_BUSINESS_DAY_TABLES: dict[str, tuple[str, str, str | None]] = {
     "markets_breakdown": ("date", "premium", None),
 }
 
-# Business days that are not reported because they cannot be filled:
-# - 2020-10-01: the TSE system outage halted trading for the whole day, so the
-#   source has no data at all.
-# - The other days were missed by the publisher's feed and are no longer
-#   obtainable on its plan: JPX keeps the daily sector short-selling PDFs for about
-#   a month and the margin-alert file for the latest day only, and the J-Quants
-#   endpoints (and their Bulk files) need a higher plan. Remove a day from here if
-#   it is ever filled, so a later loss of it is reported again.
-_SHORT_RATIO_MISSED_2026 = (
-    "2026-03-12 2026-03-13 2026-03-16 2026-03-17 2026-03-18 2026-03-23 2026-03-24 "
-    "2026-03-25 2026-03-26 2026-03-27 2026-03-30 2026-03-31 2026-04-01 2026-04-02 "
-    "2026-04-03 2026-04-06 2026-04-07 2026-04-08 2026-04-09 2026-04-10 2026-04-13 "
-    "2026-04-14 2026-04-15 2026-04-16 2026-04-17 2026-04-20 2026-04-21 2026-04-22 "
-    "2026-04-23 2026-04-24 2026-04-27 2026-04-28 2026-04-30"
-).split()
+# Business days on which the source itself has no data, for every cache.
+# 2020-10-01: the TSE system outage halted trading for the whole day.
+# Days one deployment missed and cannot refetch on its plan are not listed here,
+# because another cache (or a higher plan) can still fill them: pass those with
+# --ignore-days FILE instead.
 _KNOWN_EMPTY_DAYS: dict[str, frozenset[str]] = {
-    "markets_short_ratio": frozenset({"2020-10-01", *_SHORT_RATIO_MISSED_2026}),
-    "markets_margin_alert": frozenset({"2018-08-09", "2026-10-21"}),
+    "markets_short_ratio": frozenset({"2020-10-01"}),
 }
 
 _MISSING_DAYS_DEFAULT_LOOKBACK = 90  # calendar days back from the latest trading day
+
+
+def load_ignore_days(path: str) -> dict[str, set[str]]:
+    """Read ``table YYYY-MM-DD`` lines (``#`` starts a comment) into {table: days}.
+
+    For days a deployment knows it cannot fill (missed by its feed and no longer
+    obtainable on its plan), so the missing-day check stops reporting them there
+    without hiding the same days in other caches.
+
+    Raises:
+        ValueError: A line is not ``table date`` with a real YYYY-MM-DD date.
+    """
+    days: dict[str, set[str]] = {}
+    with open(path, encoding="utf-8") as fh:
+        for n, raw in enumerate(fh, 1):
+            line = raw.split("#", 1)[0].strip()
+            if not line:
+                continue
+            parts = line.split()
+            try:
+                if len(parts) != 2 or date.fromisoformat(parts[1]).isoformat() != parts[1]:
+                    raise ValueError
+            except ValueError:
+                raise ValueError(f"{path}:{n}: expected 'table YYYY-MM-DD', got {raw.strip()!r}")
+            days.setdefault(parts[0], set()).add(parts[1])
+    return days
 
 
 def check_missing_days(
@@ -308,6 +326,7 @@ def check_missing_days(
     trading_day: str,
     lookback_days: int = _MISSING_DAYS_DEFAULT_LOOKBACK,
     plan: str = "premium",
+    ignore_days: dict[str, set[str]] | None = None,
 ) -> dict[str, list[str]]:
     """Business days with no row at all, per table, inside each table's own date span.
 
@@ -353,7 +372,9 @@ def check_missing_days(
             ).fetchall()
         except sqlite3.OperationalError:
             continue
-        known_empty = _KNOWN_EMPTY_DAYS.get(table, frozenset())
+        known_empty = _KNOWN_EMPTY_DAYS.get(table, frozenset()) | (ignore_days or {}).get(
+            table, set()
+        )
         days = []
         for row in calendar:
             day = str(row["date"])[:10]
@@ -528,6 +549,7 @@ def check_all(
     conn: sqlite3.Connection,
     plan: str,
     missing_days_lookback: int = _MISSING_DAYS_DEFAULT_LOOKBACK,
+    ignore_days: dict[str, set[str]] | None = None,
 ) -> dict:
     """Run all applicable checks and return a summary dict."""
     trading_day = _latest_trading_day(conn)
@@ -572,7 +594,7 @@ def check_all(
             conn, "markets_breakdown", "date", trading_day
         )
 
-    missing_days = check_missing_days(conn, trading_day, missing_days_lookback, plan)
+    missing_days = check_missing_days(conn, trading_day, missing_days_lookback, plan, ignore_days)
 
     statuses = [t["status"] for t in tables.values()]
     if any(s in ("error", "missing_table") for s in statuses):
@@ -1007,6 +1029,14 @@ def main() -> None:
             "use a large value such as 4000 for a full-history audit)."
         ),
     )
+    parser.add_argument(
+        "--ignore-days",
+        metavar="FILE",
+        help=(
+            "Do not report the business days listed in FILE ('table YYYY-MM-DD' per "
+            "line, '#' comments): days this cache missed and cannot refetch."
+        ),
+    )
     args = parser.parse_args()
 
     if (args.auto_fix or args.dry_run) and not args.check_gaps:
@@ -1033,7 +1063,12 @@ def main() -> None:
     gaps_result = None
     fix_result = None
     try:
-        result = check_all(conn, plan, args.missing_days_lookback)
+        try:
+            ignore_days = load_ignore_days(args.ignore_days) if args.ignore_days else None
+        except (OSError, ValueError) as e:
+            print(f"ERROR: --ignore-days: {e}", file=sys.stderr)
+            sys.exit(2)
+        result = check_all(conn, plan, args.missing_days_lookback, ignore_days)
 
         if args.check_gaps:
             gaps_result = check_date_gaps(
